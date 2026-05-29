@@ -1,0 +1,61 @@
+{
+  "schema_version": "ubag.adapter.v0",
+  "id": "mock",
+  "display_name": "Mock",
+  "version": "0.1.0",
+  "status": "mock",
+  "adapter_path": "mock",
+  "entrypoint": "ubag_mock_adapter:MockAdapter",
+  "target_homepage": "about:blank",
+  "aliases": [],
+  "login_posture": "none",
+  "supported_command_types": [
+    "mock.complete",
+    "chat.prompt",
+    "chat.stream"
+  ],
+  "capabilities": [
+    "deterministic_output",
+    "token_streaming",
+    "conversation_resume",
+    "artifact_free"
+  ],
+  "selector_strategy": {
+    "type": "none",
+    "drift_baseline_required": false
+  },
+  "artifact_policy": {
+    "screenshots": "disabled",
+    "dom_snapshots": "disabled",
+    "recordings": "disabled"
+  },
+  "safe_mode": {
+    "manual_login_required": false,
+    "user_owned_sessions_only": true,
+    "automated_login": "forbidden",
+    "credential_scraping": "forbidden",
+    "credential_storage": "forbidden",
+    "captcha_solving": "forbidden",
+    "captcha_bypass": "forbidden"
+  },
+  "credential_policy": {
+    "collect_credentials": false,
+    "read_credentials_from_payload": false,
+    "scrape_credentials": false,
+    "store_credentials": false
+  },
+  "captcha_policy": {
+    "solve": false,
+    "bypass": false,
+    "delegate_to_solver": false,
+    "manual_only": true
+  },
+  "synthetic_test_prompts": [
+    "hello from mock"
+  ],
+  "resource_policy": {
+    "network": "disabled",
+    "browser": "not_required"
+  },
+  "not_implemented_reason": ""
+}

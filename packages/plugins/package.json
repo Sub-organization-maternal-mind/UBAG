@@ -1,0 +1,21 @@
+{
+  "name": "@ubag/plugins",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "WASM plugin host and SDK for UBAG job pre/post hooks and response normalization.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./host": "./src/host.ts",
+    "./manifest": "./src/manifest.ts",
+    "./permissions": "./src/permissions.ts",
+    "./schema": "./schema/plugin-manifest.schema.json"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/manifest.test.mjs test/permissions.test.mjs test/host.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

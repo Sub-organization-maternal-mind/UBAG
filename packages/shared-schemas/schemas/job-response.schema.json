@@ -1,0 +1,329 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ubag.dev/v1/rest/job-response.schema.json",
+  "title": "UBAG Job Response",
+  "description": "Stable response envelope for accepted, running, completed, and failed UBAG jobs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "job_id",
+    "idempotent_replay",
+    "status",
+    "target",
+    "metadata",
+    "trace_id",
+    "events_url"
+  ],
+  "properties": {
+    "api_version": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "examples": ["2026-05-22"]
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^job_[A-Za-z0-9]+$",
+      "examples": ["job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU"]
+    },
+    "idempotent_replay": {
+      "type": "boolean",
+      "description": "True when this response is replayed from a previous matching idempotent request."
+    },
+    "status": {
+      "$ref": "#/$defs/job_status"
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "examples": ["deepseek_web"]
+    },
+    "result": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/result"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "examples": ["4bf92f3577b34da6a3ce29d0f3b"]
+    },
+    "events_url": {
+      "type": "string",
+      "pattern": "^/v1/jobs/job_[A-Za-z0-9]+/events$",
+      "examples": ["/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU/events"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "job_status": {
+      "type": "string",
+      "enum": [
+        "created",
+        "queued",
+        "assigned",
+        "running",
+        "token_streaming",
+        "completing",
+        "completed",
+        "completed_with_warnings",
+        "failed_retryable",
+        "failed_terminal",
+        "dead_letter",
+        "cancelled",
+        "timed_out"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "output": {
+          "$ref": "#/$defs/output"
+        },
+        "validation": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "properties": {
+            "schema_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "passed": {
+              "type": "boolean"
+            },
+            "errors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "cached": {
+          "type": "boolean",
+          "default": false
+        },
+        "cache_source": {
+          "type": ["string", "null"],
+          "maxLength": 160
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/artifact"
+          },
+          "default": []
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/warning"
+          },
+          "default": []
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": ["string", "null"]
+        },
+        "markdown": {
+          "type": ["string", "null"]
+        },
+        "plain_text": {
+          "type": ["string", "null"]
+        },
+        "html": {
+          "type": ["string", "null"]
+        },
+        "json": true,
+        "sections": {
+          "type": ["object", "null"],
+          "additionalProperties": true
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "type", "content_type", "size_bytes", "url"],
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "pattern": "^art_[A-Za-z0-9]+$"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "screenshot",
+            "dom_snapshot",
+            "har",
+            "playwright_trace",
+            "video_recording",
+            "console_log",
+            "downloaded_file",
+            "normalized_output"
+          ]
+        },
+        "content_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri-reference"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "warning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^UBAG-[A-Z0-9-]+-[0-9]{3}$"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "queued_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "started_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "browser_session_id": {
+          "type": ["string", "null"],
+          "maxLength": 160
+        },
+        "adapter": {
+          "type": ["string", "null"],
+          "maxLength": 160
+        },
+        "worker": {
+          "type": ["string", "null"],
+          "maxLength": 160
+        },
+        "retries": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "cost": {
+          "type": ["object", "null"],
+          "additionalProperties": {
+            "anyOf": [
+              { "type": "number" },
+              { "type": "string" },
+              { "type": "null" }
+            ]
+          }
+        },
+        "command_type": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "app_id": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "tenant_id": {
+          "type": ["string", "null"],
+          "maxLength": 128
+        },
+        "retry_of": {
+          "type": ["string", "null"],
+          "pattern": "^job_[A-Za-z0-9]+$"
+        },
+        "conversation_id": {
+          "type": ["string", "null"],
+          "maxLength": 160
+        },
+        "template_id": {
+          "type": ["string", "null"],
+          "maxLength": 160
+        },
+        "client": {
+          "type": ["object", "null"],
+          "additionalProperties": true
+        },
+        "input": {
+          "type": ["object", "null"],
+          "additionalProperties": true
+        },
+        "options": {
+          "type": ["object", "null"],
+          "additionalProperties": true
+        },
+        "callbacks": {
+          "type": ["object", "null"],
+          "additionalProperties": true,
+          "description": "Callback metadata is redacted before being returned."
+        },
+        "context": {
+          "type": ["object", "null"],
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

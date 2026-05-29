@@ -1,0 +1,29 @@
+{
+  "name": "@ubag/sidecar",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Loopback localhost sidecar for legacy UBAG clients and local gateway proxying.",
+  "type": "module",
+  "bin": {
+    "ubag-sidecar": "./dist/index.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm run build && node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20.12.0"
+  }
+}

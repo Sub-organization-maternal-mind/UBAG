@@ -1,0 +1,48 @@
+# Argo CD ApplicationSet generating one UBAG Application per region/cluster.
+# Useful for the enterprise (multi-region) profile: register each region's
+# cluster as an Argo CD cluster secret labelled with region=<name>, then this
+# set fans out the same chart with per-region value overrides.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: ubag-gateway-regions
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - clusters:
+        selector:
+          matchLabels:
+            ubag.io/managed: "true"
+  template:
+    metadata:
+      name: 'ubag-gateway-{{.name}}'
+      labels:
+        app.kubernetes.io/part-of: ubag
+    spec:
+      project: default
+      source:
+        repoURL: https://github.com/ubag/ubag.git
+        targetRevision: main
+        path: deploy/helm/ubag
+        helm:
+          releaseName: ubag
+          valueFiles:
+            - values.yaml
+            - values-production.yaml
+          parameters:
+            - name: secrets.existingSecret
+              value: ubag-gateway-secrets
+            # Region label flows into a pod label for observability.
+            - name: podLabels.region
+              value: '{{index .metadata.labels "region"}}'
+      destination:
+        server: '{{.server}}'
+        namespace: ubag
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

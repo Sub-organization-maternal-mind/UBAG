@@ -1,0 +1,31 @@
+[package]
+name = "ubag-sidecar"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.78"
+description = "Loopback-only localhost sidecar that proxies legacy UBAG clients to the gateway (Rust port of @ubag/sidecar)."
+license = "Apache-2.0"
+repository = "https://github.com/ubag/ubag"
+keywords = ["ubag", "sidecar", "proxy", "loopback", "gateway"]
+categories = ["command-line-utilities", "web-programming::http-server"]
+
+[[bin]]
+name = "ubag-sidecar"
+path = "src/main.rs"
+
+[lib]
+name = "ubag_sidecar"
+path = "src/lib.rs"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive", "env"] }
+url = "2"
+getrandom = "0.2"
+bytes = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "io-util"] }

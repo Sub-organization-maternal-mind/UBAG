@@ -1,0 +1,1166 @@
+{
+  "suite": "ubag.v0.sdk.baseline",
+  "api_version": "2026-05-22",
+  "description": "Executable JSON scenarios for TypeScript, Python, and Go SDK conformance runners.",
+  "coverage_scenarios": [
+    {
+      "id": "retries.retryable-error",
+      "category": "retries",
+      "title": "Retry policy keeps the same idempotency key for retryable gateway failures",
+      "assertions": ["same_idempotency_key", "bounded_attempts", "jittered_backoff"]
+    },
+    {
+      "id": "streaming.sse-ordered-events",
+      "category": "streaming",
+      "title": "SSE helpers preserve per-job event ordering",
+      "assertions": ["ordered_sequence", "terminal_event_required", "bounded_reader"]
+    },
+    {
+      "id": "timeouts.client-abort",
+      "category": "timeouts",
+      "title": "Client timeout aborts without changing idempotency state",
+      "assertions": ["caller_timeout", "transport_abort", "retryable_transport_error"]
+    },
+    {
+      "id": "unicode.prompt-roundtrip",
+      "category": "unicode",
+      "title": "Unicode prompts round-trip through request serialization",
+      "assertions": ["utf8_request_body", "no_mojibake", "stable_content_length"]
+    },
+    {
+      "id": "large-payload.request-limit",
+      "category": "large_payloads",
+      "title": "Large request bodies surface stable validation errors",
+      "assertions": ["body_limit_error", "trace_id_preserved", "no_partial_retry"]
+    },
+    {
+      "id": "malformed-response.error-surface",
+      "category": "malformed_responses",
+      "title": "Malformed gateway responses surface transport errors with raw body access",
+      "assertions": ["raw_body_preserved", "typed_transport_error", "no_secret_logging"]
+    },
+    {
+      "id": "webhooks.signature-helpers",
+      "category": "webhooks",
+      "title": "Webhook helper signs timestamp.nonce.body and rejects replay",
+      "assertions": ["hmac_base_string", "timestamp_tolerance", "nonce_replay_rejection"]
+    },
+    {
+      "id": "sidecar.discovery-loopback",
+      "category": "sidecar",
+      "title": "Sidecar discovery prefers loopback and rejects public binding by default",
+      "assertions": ["loopback_default", "health_probe", "gateway_proxy"]
+    },
+    {
+      "id": "executor.gateway-dispatch",
+      "category": "executor",
+      "title": "Gateway dispatches accepted work once after payload policy and idempotency checks",
+      "assertions": ["payload_policy_before_enqueue", "single_enqueue_per_idempotency_key", "queue_metrics_exposed"]
+    },
+    {
+      "id": "worker.file-spool-result-ingestion",
+      "category": "worker",
+      "title": "File-spool worker consumer leases gateway work and ingests normalized terminal results",
+      "assertions": ["atomic_file_lease", "worker_jsonl_event_ingestion", "terminal_result_persisted", "cancelled_jobs_not_revived"]
+    },
+    {
+      "id": "worker.nats-result-ingestion",
+      "category": "worker",
+      "title": "NATS worker consumer leases JetStream jobs and ingests normalized terminal results",
+      "assertions": ["durable_pull_consumer", "cancel_subjects_not_executed", "ack_after_terminal_ingestion", "poison_mismatched_envelopes"]
+    },
+    {
+      "id": "webhooks.outbox-retry-worker",
+      "category": "webhooks",
+      "title": "Webhook outbox persists terminal job callbacks and retries signed delivery attempts",
+      "assertions": ["durable_outbox_delivery", "hmac_signed_http_post", "bounded_retry_backoff", "replay_requires_existing_delivery"]
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "health.ok",
+      "category": "health",
+      "title": "Health endpoint returns a healthy gateway state",
+      "request": {
+        "method": "GET",
+        "path": "/v1/health",
+        "headers": {
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "status": "ok",
+          "service": "ubag-gateway",
+          "version": "0.0.0",
+          "checked_at": "2026-05-22T00:00:00Z",
+          "checks": {
+            "database": "ok",
+            "queue": "ok"
+          },
+          "trace_id": "trace_health_ok"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.status": "ok"
+      }
+    },
+    {
+      "id": "ready.ok",
+      "category": "health",
+      "title": "Readiness endpoint returns ready true",
+      "request": {
+        "method": "GET",
+        "path": "/v1/ready",
+        "headers": {
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+          "body": {
+            "ready": true,
+            "status": "ready",
+            "service": "ubag-gateway",
+            "checked_at": "2026-05-22T00:00:00Z",
+            "checks": {
+              "migrations": true,
+              "workers": "available",
+              "templates": true
+            },
+            "trace_id": "trace_ready_ok"
+          }
+      },
+      "expect": {
+        "ok": true,
+        "body.ready": true
+      }
+    },
+    {
+      "id": "version.ok",
+      "category": "health",
+      "title": "Version endpoint returns supported API versions",
+      "request": {
+        "method": "GET",
+        "path": "/v1/version"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "service": "ubag-gateway",
+          "version": "0.0.0",
+          "api_versions": [
+            "2026-05-22"
+          ],
+          "default_api_version": "2026-05-22",
+          "commit": "local-fixture",
+          "built_at": "2026-05-22T00:00:00Z",
+          "trace_id": "trace_version_ok"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.default_api_version": "2026-05-22"
+      }
+    },
+    {
+      "id": "workflows.list.ok",
+      "category": "workflows",
+      "title": "Workflow catalog endpoint returns a scoped collection envelope",
+      "request": {
+        "method": "GET",
+        "path": "/v1/workflows",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "workflows",
+          "data": [],
+          "next_cursor": null,
+          "trace_id": "trace_workflows_list"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "workflows"
+      }
+    },
+    {
+      "id": "templates.list.ok",
+      "category": "templates",
+      "title": "Template catalog endpoint returns configured template records",
+      "request": {
+        "method": "GET",
+        "path": "/v1/templates",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "templates",
+          "data": [
+            {
+              "id": "mock.echo.v1",
+              "name": "Mock echo",
+              "target": "mock_target",
+              "command_type": "echo",
+              "sensitive": false
+            }
+          ],
+          "next_cursor": null,
+          "trace_id": "trace_templates_list"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "templates"
+      }
+    },
+    {
+      "id": "targets.list.ok",
+      "category": "targets",
+      "title": "Target catalog endpoint returns target descriptors",
+      "request": {
+        "method": "GET",
+        "path": "/v1/targets?limit=1",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "targets",
+          "data": [
+            {
+              "key": "mock",
+              "label": "Mock"
+            }
+          ],
+          "next_cursor": "mock",
+          "trace_id": "trace_targets_list"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "targets",
+        "body.data.length": 1
+      }
+    },
+    {
+      "id": "adapters.list.ok",
+      "category": "targets",
+      "title": "Adapter catalog endpoint returns adapter manifests",
+      "request": {
+        "method": "GET",
+        "path": "/v1/adapters?limit=1",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "adapters",
+          "data": [
+            {
+              "id": "mock",
+              "status": "available"
+            }
+          ],
+          "next_cursor": "mock",
+          "trace_id": "trace_adapters_list"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "adapters",
+        "body.data.length": 1
+      }
+    },
+    {
+      "id": "apps.list.ok",
+      "category": "apps",
+      "title": "Application catalog endpoint returns scoped app records",
+      "request": {
+        "method": "GET",
+        "path": "/v1/apps?limit=1",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "apps",
+          "data": [
+            {
+              "app_id": "fixture-app",
+              "name": "Fixture app",
+              "status": "active"
+            }
+          ],
+          "next_cursor": null,
+          "trace_id": "trace_apps_list"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "apps",
+        "body.data.length": 1
+      }
+    },
+    {
+      "id": "devices.list.ok",
+      "category": "devices",
+      "title": "Device catalog endpoint returns scoped device records",
+      "request": {
+        "method": "GET",
+        "path": "/v1/devices?limit=1",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "devices",
+          "data": [
+            {
+              "device_id": "device-fixture",
+              "app_id": "fixture-app",
+              "status": "active"
+            }
+          ],
+          "next_cursor": null,
+          "trace_id": "trace_devices_list"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "devices",
+        "body.data.0.device_id": "device-fixture"
+      }
+    },
+    {
+      "id": "audit.list.ok",
+      "category": "audit",
+      "title": "Audit endpoint returns append-only audit records",
+      "request": {
+        "method": "GET",
+        "path": "/v1/audit?limit=1",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "audit",
+          "data": [
+            {
+              "event_id": "audit_01",
+              "type": "job.created",
+              "actor": "fixture-app"
+            }
+          ],
+          "next_cursor": null,
+          "trace_id": "trace_audit_list"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "audit",
+        "body.data.length": 1
+      }
+    },
+    {
+      "id": "webhooks.list.ok",
+      "category": "webhooks",
+      "title": "Webhook destination endpoint returns a collection envelope",
+      "request": {
+        "method": "GET",
+        "path": "/v1/webhooks?limit=1",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "webhooks",
+          "data": [],
+          "next_cursor": null,
+          "trace_id": "trace_webhooks_list"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "webhooks"
+      }
+    },
+    {
+      "id": "events.list.ok",
+      "category": "events",
+      "title": "Global event list endpoint returns a collection envelope",
+      "request": {
+        "method": "GET",
+        "path": "/v1/events?limit=1",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "events",
+          "data": [
+            {
+              "event_id": "evt_01",
+              "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
+              "type": "queued",
+              "sequence": 1
+            }
+          ],
+          "next_cursor": "1",
+          "trace_id": "trace_events_list"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "events",
+        "body.data.length": 1
+      }
+    },
+    {
+      "id": "cache.status.ok",
+      "category": "cache",
+      "title": "Cache status endpoint reports the current edge cache posture",
+      "request": {
+        "method": "GET",
+        "path": "/v1/cache",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "profile": "edge",
+          "enabled": false,
+          "entries": [],
+          "trace_id": "trace_cache_status"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.enabled": false
+      }
+    },
+    {
+      "id": "metrics.get.ok",
+      "category": "metrics",
+      "title": "Metrics endpoint returns Prometheus text",
+      "request": {
+        "method": "GET",
+        "path": "/v1/metrics",
+        "headers": {
+          "Accept": "text/plain",
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/plain; version=0.0.4"
+        },
+        "body_text": "ubag_gateway_requests_total 1\n"
+      },
+      "expect": {
+        "ok": true,
+        "body.body": "ubag_gateway_requests_total 1\n"
+      }
+    },
+    {
+      "id": "jobs.create.accepted",
+      "category": "jobs",
+      "title": "Create job sends API version and idempotency key",
+      "request": {
+        "method": "POST",
+        "path": "/v1/jobs",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Content-Type": "application/json",
+          "Idempotency-Key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1AT",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1AT",
+          "client": {
+            "app_id": "fixture-app",
+            "app_version": "0.0.0",
+            "sdk": {
+              "name": "__SDK_NAME__",
+              "version": "__SDK_VERSION__"
+            }
+          },
+          "job": {
+            "target": "mock_target",
+            "command_type": "echo",
+            "input": {
+              "prompt": "Hello UBAG"
+            },
+            "options": {
+              "priority": "normal",
+              "return_mode": "final"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_version": "2026-05-22",
+          "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
+          "idempotent_replay": false,
+          "status": "queued",
+          "target": "mock_target",
+          "metadata": {
+            "queued_at": "2026-05-22T00:00:01Z",
+            "retries": 0
+          },
+          "trace_id": "trace_job_create",
+          "events_url": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU/events"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.status": "queued",
+        "body.idempotent_replay": false
+      }
+    },
+    {
+      "id": "jobs.create.idempotent-replay",
+      "category": "idempotency",
+      "title": "Create job replay preserves the original job id",
+      "request": {
+        "method": "POST",
+        "path": "/v1/jobs",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Content-Type": "application/json",
+          "Idempotency-Key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1AT",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1AT",
+          "client": {
+            "app_id": "fixture-app",
+            "app_version": "0.0.0",
+            "sdk": {
+              "name": "__SDK_NAME__",
+              "version": "__SDK_VERSION__"
+            }
+          },
+          "job": {
+            "target": "mock_target",
+            "command_type": "echo",
+            "input": {
+              "prompt": "Hello UBAG"
+            },
+            "options": {
+              "priority": "normal",
+              "return_mode": "final"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_version": "2026-05-22",
+          "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
+          "idempotent_replay": true,
+          "status": "queued",
+          "target": "mock_target",
+          "metadata": {
+            "queued_at": "2026-05-22T00:00:01Z",
+            "retries": 0
+          },
+          "trace_id": "trace_job_replay",
+          "events_url": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU/events"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.idempotent_replay": true
+      }
+    },
+    {
+      "id": "jobs.get.completed",
+      "category": "jobs",
+      "title": "Get job returns completed output",
+      "request": {
+        "method": "GET",
+        "path": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
+          "idempotent_replay": false,
+          "status": "completed",
+          "target": "mock_target",
+          "result": {
+            "output": {
+              "text": "Hello UBAG",
+              "plain_text": "Hello UBAG",
+              "sections": {}
+            },
+            "validation": {
+              "schema_id": "mock.echo.out",
+              "passed": true
+            },
+            "cached": false,
+            "cache_source": null
+          },
+          "metadata": {
+            "queued_at": "2026-05-22T00:00:01Z",
+            "started_at": "2026-05-22T00:00:02Z",
+            "completed_at": "2026-05-22T00:00:03Z",
+            "duration_ms": 1000,
+            "worker": "worker-fixture",
+            "retries": 0
+          },
+          "trace_id": "trace_job_get",
+          "events_url": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU/events"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.status": "completed",
+        "body.result.output.plain_text": "Hello UBAG"
+      }
+    },
+    {
+      "id": "jobs.events.list.ok",
+      "category": "events",
+      "title": "Job event list uses cursor pagination",
+      "request": {
+        "method": "GET",
+        "path": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU/events?cursor=1&limit=1",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
+          "events": [
+            {
+              "event_id": "evt_02",
+              "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
+              "api_version": "2026-05-22",
+              "type": "running",
+              "created_at": "2026-05-22T00:00:02Z",
+              "sequence": 2,
+              "data": {
+                "status": "running"
+              },
+              "trace_id": "trace_job_events_item"
+            }
+          ],
+          "next_cursor": null,
+          "trace_id": "trace_job_events"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.events.length": 1,
+        "body.events.0.sequence": 2
+      }
+    },
+    {
+      "id": "jobs.events.stream-sse.ok",
+      "category": "events",
+      "title": "SSE event helper reads per-job event stream bytes",
+      "request": {
+        "method": "GET",
+        "path": "/v1/sse/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
+        "headers": {
+          "Accept": "text/event-stream",
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/event-stream"
+        },
+        "body_text": "event: job.running\ndata: {\"job_id\":\"job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU\"}\n\n"
+      },
+      "expect": {
+        "ok": true,
+        "body.body": "event: job.running\ndata: {\"job_id\":\"job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU\"}\n\n"
+      }
+    },
+    {
+      "id": "jobs.artifacts.list.ok",
+      "category": "artifacts",
+      "title": "Job artifact list returns artifact metadata without bucket internals",
+      "request": {
+        "method": "GET",
+        "path": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU/artifacts",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
+          "kind": "artifacts",
+          "data": [
+            {
+              "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
+              "key": "report.txt",
+              "content_type": "text/plain",
+              "size_bytes": 11,
+              "checksum": "sha256_fixture",
+              "created_at": "2026-05-22T00:00:04Z"
+            }
+          ],
+          "trace_id": "trace_artifacts_list"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "artifacts",
+        "body.data.length": 1
+      }
+    },
+    {
+      "id": "jobs.artifacts.get.ok",
+      "category": "artifacts",
+      "title": "Job artifact download returns artifact bytes and checksum headers",
+      "request": {
+        "method": "GET",
+        "path": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU/artifacts/report.txt",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/plain",
+          "ubag-artifact-checksum": "sha256_fixture"
+        },
+        "body_text": "hello artifact"
+      },
+      "expect": {
+        "ok": true,
+        "body.content_type": "text/plain",
+        "body.checksum": "sha256_fixture",
+        "body.body": "hello artifact"
+      }
+    },
+    {
+      "id": "jobs.artifacts.put.accepted",
+      "category": "artifacts",
+      "title": "Job artifact upload sends bytes with an idempotency key",
+      "request": {
+        "method": "PUT",
+        "path": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU/artifacts/report.txt",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Content-Type": "text/plain",
+          "Idempotency-Key": "01HXY6ARTPUT000000000001",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body_text": "hello artifact"
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "api_version": "2026-05-22",
+          "artifact": {
+            "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
+            "key": "report.txt",
+            "content_type": "text/plain",
+            "size_bytes": 14,
+            "checksum": "sha256_fixture",
+            "created_at": "2026-05-22T00:00:04Z"
+          },
+          "idempotent_replay": false,
+          "trace_id": "trace_artifact_put"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.artifact.key": "report.txt",
+        "body.artifact.size_bytes": 14
+      }
+    },
+    {
+      "id": "jobs.artifacts.delete.accepted",
+      "category": "artifacts",
+      "title": "Job artifact delete is an idempotent mutating request",
+      "request": {
+        "method": "DELETE",
+        "path": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU/artifacts/report.txt",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Idempotency-Key": "01HXY6ARTDELETE0000000001",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 204
+      },
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "id": "jobs.list.filtered",
+      "category": "jobs",
+      "title": "List jobs supports cursor and status filtering",
+      "request": {
+        "method": "GET",
+        "path": "/v1/jobs?cursor=cursor_1&limit=1&filter%5Bstatus%5D=completed",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "jobs": [
+            {
+              "api_version": "2026-05-22",
+              "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
+              "idempotent_replay": false,
+              "status": "completed",
+              "target": "mock_target",
+              "metadata": {
+                "template_id": "mock.echo.v1"
+              },
+              "events_url": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU/events",
+              "trace_id": "trace_job_list_item"
+            }
+          ],
+          "next_cursor": null,
+          "trace_id": "trace_job_list"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.jobs.length": 1
+      }
+    },
+    {
+      "id": "jobs.cancel.accepted",
+      "category": "jobs",
+      "title": "Cancel job is a state-mutating idempotent request",
+      "request": {
+        "method": "POST",
+        "path": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU/cancel",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Idempotency-Key": "01HXY6B7MT3S0P7K8WD6T1K4ZA",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY6B7MT3S0P7K8WD6T1K4ZA",
+          "reason": "caller_cancelled"
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_version": "2026-05-22",
+          "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
+          "idempotent_replay": false,
+          "status": "cancelled",
+          "target": "mock_target",
+          "trace_id": "trace_job_cancel"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.status": "cancelled"
+      }
+    },
+    {
+      "id": "jobs.retry.accepted",
+      "category": "jobs",
+      "title": "Retry job is a state-mutating idempotent request",
+      "request": {
+        "method": "POST",
+        "path": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU/retry",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Idempotency-Key": "01HXY6F9BPGX7H6HMN5V0G0VQC",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY6F9BPGX7H6HMN5V0G0VQC"
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_version": "2026-05-22",
+          "job_id": "job_01HXY8VK7TW0B7WZS3QZP7G9QB",
+          "idempotent_replay": false,
+          "status": "queued",
+          "target": "mock_target",
+          "metadata": {
+            "retries": 1
+          },
+          "trace_id": "trace_job_retry",
+          "events_url": "/v1/jobs/job_01HXY8VK7TW0B7WZS3QZP7G9QB/events"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.metadata.retries": 1
+      }
+    },
+    {
+      "id": "webhooks.replay.accepted",
+      "category": "webhooks",
+      "title": "Webhook replay request is idempotent",
+      "request": {
+        "method": "POST",
+        "path": "/v1/webhooks/replay",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Content-Type": "application/json",
+          "Idempotency-Key": "01HXY6WHRMRM5TXXZA7D7T8WQ0",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY6WHRMRM5TXXZA7D7T8WQ0",
+          "delivery_id": "whdel_fixture",
+          "reason": "operator_retry"
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_version": "2026-05-22",
+          "status": "accepted",
+          "delivery_id": "whdel_fixture",
+          "idempotent_replay": false,
+          "audit_event": "webhook.delivery_replayed",
+          "trace_id": "trace_webhook_replay"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.status": "accepted",
+        "body.audit_event": "webhook.delivery_replayed"
+      }
+    },
+    {
+      "id": "errors.auth-missing",
+      "category": "errors",
+      "title": "Missing credential preserves stable auth error envelope",
+      "request": {
+        "method": "GET",
+        "path": "/v1/jobs"
+      },
+      "response": {
+        "status": 401,
+        "body": {
+          "error": {
+            "code": "UBAG-AUTH-MISSING-001",
+            "category": "auth",
+            "message": "No supported credential was provided",
+            "retryable": false,
+            "details": {},
+            "doc_url": "https://docs.ubag.dev/errors/UBAG-AUTH-MISSING",
+            "trace_id": "trace_auth_missing"
+          }
+        }
+      },
+      "expect": {
+        "throws": "UbagApiError",
+        "error.code": "UBAG-AUTH-MISSING-001",
+        "error.retryable": false
+      }
+    },
+    {
+      "id": "errors.idempotency-conflict",
+      "category": "idempotency",
+      "title": "Idempotency conflict preserves validation error envelope",
+      "request": {
+        "method": "POST",
+        "path": "/v1/jobs",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Content-Type": "application/json",
+          "Idempotency-Key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1AT",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1AT",
+          "client": {
+            "app_id": "fixture-app",
+            "app_version": "0.0.0",
+            "sdk": {
+              "name": "__SDK_NAME__",
+              "version": "__SDK_VERSION__"
+            }
+          },
+          "job": {
+            "target": "mock_target",
+            "command_type": "echo",
+            "input": {
+              "prompt": "Different UBAG"
+            },
+            "options": {
+              "priority": "normal",
+              "return_mode": "final"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "error": {
+            "code": "UBAG-VALIDATION-IDEMPOTENCY-CONFLICT-001",
+            "category": "validation",
+            "message": "Same idempotency key was replayed with a different canonical payload",
+            "retryable": false,
+            "details": {
+              "idempotency_key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1AT"
+            },
+            "doc_url": "https://docs.ubag.dev/errors/UBAG-VALIDATION-IDEMPOTENCY-CONFLICT",
+            "trace_id": "trace_idempotency_conflict"
+          }
+        }
+      },
+      "expect": {
+        "throws": "UbagApiError",
+        "error.code": "UBAG-VALIDATION-IDEMPOTENCY-CONFLICT-001",
+        "error.retryable": false
+      }
+    },
+    {
+      "id": "errors.rate-limited",
+      "category": "errors",
+      "title": "Rate limit error exposes retry-after metadata",
+      "request": {
+        "method": "POST",
+        "path": "/v1/jobs",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Content-Type": "application/json",
+          "Idempotency-Key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1AT",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1AT",
+          "client": {
+            "app_id": "fixture-app",
+            "app_version": "0.0.0",
+            "sdk": {
+              "name": "__SDK_NAME__",
+              "version": "__SDK_VERSION__"
+            }
+          },
+          "job": {
+            "target": "mock_target",
+            "command_type": "echo",
+            "input": {
+              "prompt": "Hello UBAG"
+            },
+            "options": {
+              "priority": "normal",
+              "return_mode": "final"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "Retry-After": "5"
+        },
+        "body": {
+          "error": {
+            "code": "UBAG-RATE-LIMITED-001",
+            "category": "rate",
+            "message": "Request exceeded a rate limit",
+            "retryable": true,
+            "retry_after_ms": 5000,
+            "details": {
+              "scope": "app"
+            },
+            "doc_url": "https://docs.ubag.dev/errors/UBAG-RATE-LIMITED",
+            "trace_id": "trace_rate_limited"
+          }
+        }
+      },
+      "expect": {
+        "throws": "UbagApiError",
+        "error.code": "UBAG-RATE-LIMITED-001",
+        "error.retryable": true,
+        "error.retry_after_ms": 5000
+      }
+    }
+  ]
+}

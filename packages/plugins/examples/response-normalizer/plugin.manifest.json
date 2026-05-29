@@ -1,0 +1,24 @@
+{
+  "schema_version": "ubag.plugin.v0",
+  "id": "response-normalizer",
+  "display_name": "Response Normalizer",
+  "version": "0.1.0",
+  "description": "Normalizes provider response payloads: trims trailing whitespace, collapses excess blank lines, and stamps a normalization timestamp.",
+  "entrypoint": {
+    "type": "wasi-component",
+    "module": "build/response_normalizer.wasm",
+    "exports": {
+      "transform": "transform"
+    }
+  },
+  "capabilities": ["transform.response"],
+  "permissions": {
+    "host_functions": ["log", "clock"],
+    "max_memory_bytes": 16777216,
+    "max_execution_ms": 500
+  },
+  "engine": {
+    "runtime": "wasi-preview2",
+    "min_host_version": "0.0.0"
+  }
+}

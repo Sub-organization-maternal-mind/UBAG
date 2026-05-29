@@ -1,0 +1,28 @@
+[package]
+name = "ubag"
+version = "0.0.0"
+edition = "2021"
+description = "Official Rust SDK for the UBAG (Universal Browser-Automation Gateway) REST API."
+license = "Apache-2.0"
+repository = "https://github.com/ubag/ubag"
+keywords = ["ubag", "automation", "gateway", "sdk"]
+categories = ["api-bindings"]
+
+[lib]
+name = "ubag"
+path = "src/lib.rs"
+
+[features]
+# `transport` pulls in a blocking HTTP client so the SDK can actually send
+# requests. Disable it (default-features = false) to depend only on the
+# toolchain-free request-construction core, which is what the unit tests use.
+default = ["transport"]
+transport = ["dep:reqwest"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
+
+[dev-dependencies]
+serde_json = "1"

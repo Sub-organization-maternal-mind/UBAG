@@ -1,0 +1,36 @@
+[package]
+name = "ubag-mobile"
+version = "0.0.0"
+description = "UBAG mobile monitoring app"
+authors = ["UBAG"]
+edition = "2021"
+rust-version = "1.78"
+license = "Apache-2.0"
+
+# The desktop binary entry point. Mobile targets compile the `lib` crate via the
+# generated platform projects (`tauri android/ios init`).
+[[bin]]
+name = "ubag-mobile"
+path = "src/main.rs"
+
+[lib]
+# `_lib` suffix avoids a name clash with the binary on some toolchains.
+name = "ubag_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-http = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# OS-native credential store for the gateway app-secret (Windows Credential
+# Manager / macOS Keychain / Linux Secret Service / iOS Keychain Services).
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+log = "0.4"
+
+[features]
+# This feature is used by mobile platform projects.
+custom-protocol = ["tauri/custom-protocol"]

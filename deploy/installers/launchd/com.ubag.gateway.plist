@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd plist for the UBAG gateway (macOS).
+
+  Install (system-wide LaunchDaemon):
+    sudo cp deploy/installers/launchd/com.ubag.gateway.plist /Library/LaunchDaemons/
+    sudo chown root:wheel /Library/LaunchDaemons/com.ubag.gateway.plist
+    sudo chmod 0644 /Library/LaunchDaemons/com.ubag.gateway.plist
+    sudo launchctl load -w /Library/LaunchDaemons/com.ubag.gateway.plist
+
+  Edit ProgramArguments path and the EnvironmentVariables / env file as needed.
+  Secrets should be provided via a root-owned env mechanism, not inlined here.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ubag.gateway</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/ubag-gateway</string>
+  </array>
+
+  <!-- Provide non-secret config here; load secrets from a protected source. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>UBAG_GATEWAY_ADDR</key>
+    <string>:8080</string>
+    <key>UBAG_API_VERSION</key>
+    <string>2026-05-22</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>/usr/local/var/ubag</string>
+  <key>StandardOutPath</key>
+  <string>/usr/local/var/log/ubag-gateway.log</string>
+  <key>StandardErrorPath</key>
+  <string>/usr/local/var/log/ubag-gateway.err.log</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

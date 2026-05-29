@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="UBAG dashboard prototype for local operator workflows."
+    />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' http://127.0.0.1:8080 http://127.0.0.1:8081 http://localhost:8080 http://localhost:8081 http://localhost:4177; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+    />
+    <title>UBAG Dashboard</title>
+    <link rel="stylesheet" href="./styles/app.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#dashboard-panel">Skip to dashboard content</a>
+    <div class="dashboard-shell">
+      <header class="masthead" aria-labelledby="dashboard-title">
+        <div class="brand-block">
+          <p class="brand-mark" aria-label="UBAG">UBAG</p>
+          <div>
+            <h1 id="dashboard-title">Operator Dashboard</h1>
+            <p class="lede">
+              Local MVP surface for the edge queue, browser sessions, targets,
+              templates, and release-lane checks.
+            </p>
+          </div>
+        </div>
+        <div class="source-strip" aria-label="Dashboard data source">
+          <span class="source-pill">Local mock data</span>
+          <span id="last-sync">Last sync pending</span>
+        </div>
+      </header>
+
+      <section class="status-band" aria-labelledby="status-title">
+        <div>
+          <p class="section-kicker">Edge MVP</p>
+          <h2 id="status-title">Control plane not connected</h2>
+          <p>
+            Configure the gateway URL and app-secret below to switch from mock
+            data to live API responses.
+          </p>
+        </div>
+        <div class="action-row" aria-label="Dashboard actions">
+          <button class="control-button" type="button" data-state="success">
+            Refresh mock data
+          </button>
+          <button class="control-button" type="button" id="btn-connect-gateway">
+            Connect live gateway
+          </button>
+          <button class="control-button secondary" type="button" id="btn-settings">
+            Settings
+          </button>
+        </div>
+        <p id="refresh-status" class="sr-status" role="status" aria-live="polite">
+          Mock dashboard data has not been refreshed in this session.
+        </p>
+      </section>
+
+      <dialog id="settings-dialog" class="settings-dialog" aria-labelledby="settings-title">
+        <form method="dialog" class="settings-form">
+          <h2 id="settings-title">Gateway connection</h2>
+          <label>
+            Gateway URL
+            <input type="url" id="cfg-gateway-url" placeholder="http://127.0.0.1:8081" autocomplete="off" />
+          </label>
+          <label>
+            App secret (Bearer token)
+            <input type="password" id="cfg-app-secret" placeholder="paste your UBAG_APP_SECRET" autocomplete="off" />
+          </label>
+          <p class="settings-hint">
+            Stored in localStorage only. Roles: viewer | service | developer | operator | admin.
+            Change the role on the gateway with <code>UBAG_ACTOR_ROLE</code> env var.
+          </p>
+          <div class="settings-actions">
+            <button type="submit" class="control-button" id="btn-save-settings">Save &amp; connect</button>
+            <button type="button" class="control-button secondary" id="btn-cancel-settings">Cancel</button>
+          </div>
+        </form>
+      </dialog>
+
+      <nav class="tab-nav" aria-label="Dashboard sections">
+        <div class="tab-list" role="tablist" aria-label="Dashboard views">
+          <button
+            id="tab-overview"
+            class="tab-button"
+            type="button"
+            role="tab"
+            aria-controls="panel-overview"
+            aria-selected="true"
+            data-tab="overview"
+          >
+            Overview
+          </button>
+          <button
+            id="tab-apps"
+            class="tab-button"
+            type="button"
+            role="tab"
+            aria-controls="panel-apps"
+            aria-selected="false"
+            tabindex="-1"
+            data-tab="apps"
+          >
+            Apps
+          </button>
+          <button
+            id="tab-targets"
+            class="tab-button"
+            type="button"
+            role="tab"
+            aria-controls="panel-targets"
+            aria-selected="false"
+            tabindex="-1"
+            data-tab="targets"
+          >
+            Targets
+          </button>
+          <button
+            id="tab-jobs"
+            class="tab-button"
+            type="button"
+            role="tab"
+            aria-controls="panel-jobs"
+            aria-selected="false"
+            tabindex="-1"
+            data-tab="jobs"
+          >
+            Jobs
+          </button>
+          <button
+            id="tab-sessions"
+            class="tab-button"
+            type="button"
+            role="tab"
+            aria-controls="panel-sessions"
+            aria-selected="false"
+            tabindex="-1"
+            data-tab="sessions"
+          >
+            Sessions
+          </button>
+          <button
+            id="tab-templates"
+            class="tab-button"
+            type="button"
+            role="tab"
+            aria-controls="panel-templates"
+            aria-selected="false"
+            tabindex="-1"
+            data-tab="templates"
+          >
+            Templates
+          </button>
+          <button
+            id="tab-runtime"
+            class="tab-button"
+            type="button"
+            role="tab"
+            aria-controls="panel-runtime"
+            aria-selected="false"
+            tabindex="-1"
+            data-tab="runtime"
+          >
+            Runtime
+          </button>
+          <button
+            id="tab-activation"
+            class="tab-button"
+            type="button"
+            role="tab"
+            aria-controls="panel-activation"
+            aria-selected="false"
+            tabindex="-1"
+            data-tab="activation"
+          >
+            Activation
+          </button>
+        </div>
+      </nav>
+
+      <main id="dashboard-panel" class="panel-stack" tabindex="-1"></main>
+    </div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

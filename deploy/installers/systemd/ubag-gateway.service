@@ -1,0 +1,36 @@
+[Unit]
+Description=UBAG Gateway
+Documentation=https://github.com/ubag/ubag
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+# Environment file holds UBAG_* config and secrets (chmod 0600, root-owned).
+EnvironmentFile=@ENVFILE@
+ExecStart=@PREFIX@/bin/ubag-gateway
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# Hardening.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+# Gateway needs to write its executor spool directory.
+ReadWritePaths=/var/lib/ubag/executor-spool
+StateDirectory=ubag
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,316 @@
+name: ubag-small
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/small/gateway.Dockerfile
+    image: ${UBAG_GATEWAY_IMAGE:-ubag/gateway:small-local}
+    restart: unless-stopped
+    environment:
+      UBAG_GATEWAY_ADDR: ":8080"
+      UBAG_APP_SECRET: ${UBAG_APP_SECRET:?Set UBAG_APP_SECRET in deploy/small/env.local}
+      UBAG_API_VERSION: ${UBAG_API_VERSION:-2026-05-22}
+      UBAG_GATEWAY_VERSION: ${UBAG_GATEWAY_VERSION:-0.0.0-small}
+      UBAG_BUILD_COMMIT: ${UBAG_BUILD_COMMIT:-local}
+      UBAG_ACTOR_ROLE: ${UBAG_ACTOR_ROLE:-}
+      UBAG_GATEWAY_STORE: ${UBAG_GATEWAY_STORE:-memory}
+      UBAG_POSTGRES_DSN: ${UBAG_POSTGRES_DSN:-}
+      UBAG_IDEMPOTENCY_TTL_HOURS: ${UBAG_IDEMPOTENCY_TTL_HOURS:-24}
+      UBAG_DATABASE_MAX_OPEN_CONNS: ${UBAG_DATABASE_MAX_OPEN_CONNS:-10}
+      UBAG_DATABASE_MAX_IDLE_CONNS: ${UBAG_DATABASE_MAX_IDLE_CONNS:-5}
+      UBAG_DATABASE_CONN_MAX_LIFETIME_SECONDS: ${UBAG_DATABASE_CONN_MAX_LIFETIME_SECONDS:-300}
+      UBAG_EXECUTOR_MODE: ${UBAG_EXECUTOR_MODE:-noop}
+      UBAG_EXECUTOR_SPOOL_DIR: ${UBAG_EXECUTOR_SPOOL_DIR:-/var/lib/ubag/executor-spool}
+      UBAG_NATS_URL: ${UBAG_NATS_URL:-nats://nats:4222}
+      UBAG_NATS_STREAM: ${UBAG_NATS_STREAM:-UBAG_JOBS}
+      UBAG_NATS_SUBJECT: ${UBAG_NATS_SUBJECT:-ubag.jobs}
+      UBAG_NATS_WORKER_DURABLE: ${UBAG_NATS_WORKER_DURABLE:-ubag-worker}
+      UBAG_NATS_WORKER_ACK_WAIT_MS: ${UBAG_NATS_WORKER_ACK_WAIT_MS:-35000}
+      UBAG_NATS_WORKER_NAK_DELAY_MS: ${UBAG_NATS_WORKER_NAK_DELAY_MS:-1000}
+      UBAG_NATS_WORKER_FETCH_WAIT_MS: ${UBAG_NATS_WORKER_FETCH_WAIT_MS:-500}
+      UBAG_NATS_WORKER_MAX_DELIVER: ${UBAG_NATS_WORKER_MAX_DELIVER:-5}
+      UBAG_ARTIFACT_STORE: ${UBAG_ARTIFACT_STORE:-memory}
+      UBAG_MINIO_ENDPOINT: ${UBAG_MINIO_ENDPOINT:-minio:9000}
+      UBAG_MINIO_ACCESS_KEY: ${UBAG_MINIO_ACCESS_KEY:-}
+      UBAG_MINIO_SECRET_KEY: ${UBAG_MINIO_SECRET_KEY:-}
+      UBAG_MINIO_BUCKET: ${UBAG_MINIO_BUCKET:-ubag-artifacts}
+      UBAG_MINIO_USE_SSL: ${UBAG_MINIO_USE_SSL:-false}
+      UBAG_WORKER_CONSUMER_ENABLED: ${UBAG_WORKER_CONSUMER_ENABLED:-false}
+      UBAG_WORKER_PYTHON: ${UBAG_WORKER_PYTHON:-/usr/bin/python3}
+      UBAG_WORKER_SCRIPT: ${UBAG_WORKER_SCRIPT:-/app/apps/worker/run_mock_worker.py}
+      UBAG_WORKER_POLL_INTERVAL_MS: ${UBAG_WORKER_POLL_INTERVAL_MS:-500}
+      UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-30000}
+      UBAG_WEBHOOK_OUTBOX: ${UBAG_WEBHOOK_OUTBOX:-}
+      UBAG_WEBHOOK_WORKER_ENABLED: ${UBAG_WEBHOOK_WORKER_ENABLED:-false}
+      UBAG_WEBHOOK_SECRET: ${UBAG_WEBHOOK_SECRET:-}
+      UBAG_WEBHOOK_SECRET_ENV_PREFIX: ${UBAG_WEBHOOK_SECRET_ENV_PREFIX:-UBAG_WEBHOOK_SECRET_}
+      UBAG_WEBHOOK_MAX_ATTEMPTS: ${UBAG_WEBHOOK_MAX_ATTEMPTS:-8}
+      UBAG_WEBHOOK_POLL_INTERVAL_MS: ${UBAG_WEBHOOK_POLL_INTERVAL_MS:-1000}
+      UBAG_WEBHOOK_BATCH_SIZE: ${UBAG_WEBHOOK_BATCH_SIZE:-10}
+      UBAG_WEBHOOK_LEASE_MS: ${UBAG_WEBHOOK_LEASE_MS:-30000}
+      UBAG_WEBHOOK_REQUEST_TIMEOUT_MS: ${UBAG_WEBHOOK_REQUEST_TIMEOUT_MS:-10000}
+      UBAG_WEBHOOK_RETRY_BASE_MS: ${UBAG_WEBHOOK_RETRY_BASE_MS:-1000}
+      UBAG_WEBHOOK_RETRY_MAX_MS: ${UBAG_WEBHOOK_RETRY_MAX_MS:-300000}
+      UBAG_WEBHOOK_MAX_RESPONSE_BYTES: ${UBAG_WEBHOOK_MAX_RESPONSE_BYTES:-8192}
+      UBAG_WEBHOOK_WORKER_ID: ${UBAG_WEBHOOK_WORKER_ID:-gateway-webhook-worker}
+      UBAG_WEBHOOK_ALLOW_INSECURE_HTTP: ${UBAG_WEBHOOK_ALLOW_INSECURE_HTTP:-false}
+      UBAG_WEBHOOK_ALLOW_PRIVATE_HOSTS: ${UBAG_WEBHOOK_ALLOW_PRIVATE_HOSTS:-false}
+      UBAG_WEBHOOK_ALLOWED_HOSTS: ${UBAG_WEBHOOK_ALLOWED_HOSTS:-}
+      UBAG_WEBHOOK_ALLOW_ANY_PUBLIC_HOST: ${UBAG_WEBHOOK_ALLOW_ANY_PUBLIC_HOST:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${UBAG_GATEWAY_PORT:-8080}:8080"
+    volumes:
+      - executor_spool:/var/lib/ubag/executor-spool
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/v1/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ubag-private
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+    ports:
+      - "${UBAG_EDGE_BIND_HOST:-127.0.0.1}:${UBAG_CADDY_HTTP_PORT:-8081}:80"
+      - "${UBAG_EDGE_BIND_HOST:-127.0.0.1}:${UBAG_CADDY_HTTPS_PORT:-8443}:443"
+    volumes:
+      - "${UBAG_CADDYFILE:-./deploy/small/caddy/Caddyfile}:/etc/caddy/Caddyfile:ro"
+      - "./apps/dashboard/src:/srv/dashboard:ro"
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - ubag-public
+      - ubag-private
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ubag}
+      POSTGRES_USER: ${POSTGRES_USER:-ubag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/small/env.local}
+    ports:
+      - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/postgres/0001_gateway_stores.sql:/docker-entrypoint-initdb.d/0001_gateway_stores.sql:ro
+      - ./migrations/postgres/0002_artifact_metadata.sql:/docker-entrypoint-initdb.d/0002_artifact_metadata.sql:ro
+      - ./migrations/postgres/0003_webhook_outbox.sql:/docker-entrypoint-initdb.d/0003_webhook_outbox.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ubag-private
+
+  postgres-migrate:
+    image: postgres:16-alpine
+    restart: "no"
+    profiles: ["migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ubag}
+      POSTGRES_USER: ${POSTGRES_USER:-ubag}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/small/env.local}
+    command:
+      - sh
+      - -ec
+      - |
+        for migration in /migrations/*.sql; do
+          echo "Applying $${migration}"
+          psql -v ON_ERROR_STOP=1 -h postgres -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -f "$${migration}"
+        done
+    volumes:
+      - ./migrations/postgres:/migrations:ro
+    networks:
+      - ubag-private
+
+  dragonfly:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.30.3
+    restart: unless-stopped
+    command: ["--logtostderr"]
+    ports:
+      - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${DRAGONFLY_PORT:-6379}:6379"
+    volumes:
+      - dragonfly_data:/data
+    networks:
+      - ubag-private
+    healthcheck:
+      test: ["CMD-SHELL", "printf 'PING\\r\\n' | nc 127.0.0.1 6379 | grep -q PONG"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-ubag-root}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/small/env.local}
+      MINIO_BROWSER_REDIRECT_URL: ${MINIO_BROWSER_REDIRECT_URL:-http://127.0.0.1:9001}
+    ports:
+      - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${MINIO_API_PORT:-9000}:9000"
+      - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - ubag-private
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-ubag-root}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in deploy/small/env.local}
+      UBAG_MINIO_ACCESS_KEY: ${UBAG_MINIO_ACCESS_KEY:?Set UBAG_MINIO_ACCESS_KEY in deploy/small/env.local}
+      UBAG_MINIO_SECRET_KEY: ${UBAG_MINIO_SECRET_KEY:?Set UBAG_MINIO_SECRET_KEY in deploy/small/env.local}
+      UBAG_MINIO_BUCKET: ${UBAG_MINIO_BUCKET:-ubag-artifacts}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc mb --ignore-existing "local/$${UBAG_MINIO_BUCKET}"
+        cat >/tmp/ubag-artifacts-rw.json <<EOF
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"],
+              "Resource": ["arn:aws:s3:::$${UBAG_MINIO_BUCKET}", "arn:aws:s3:::$${UBAG_MINIO_BUCKET}/*"]
+            }
+          ]
+        }
+        EOF
+        if ! mc admin user info local "$${UBAG_MINIO_ACCESS_KEY}" >/dev/null 2>&1; then
+          mc admin user add local "$${UBAG_MINIO_ACCESS_KEY}" "$${UBAG_MINIO_SECRET_KEY}"
+        fi
+        if ! mc admin policy info local ubag-artifacts-rw >/dev/null 2>&1; then
+          mc admin policy create local ubag-artifacts-rw /tmp/ubag-artifacts-rw.json
+        fi
+        mc admin policy attach local ubag-artifacts-rw --user "$${UBAG_MINIO_ACCESS_KEY}"
+    networks:
+      - ubag-private
+
+  prometheus:
+    image: prom/prometheus:v3.4.2
+    restart: unless-stopped
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+    ports:
+      - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./deploy/small/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - ubag-private
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  grafana:
+    image: grafana/grafana-oss:12.0.2
+    restart: unless-stopped
+    profiles: ["observability"]
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in deploy/small/env.local}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./deploy/small/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - ubag-private
+
+  nats:
+    image: nats:2-alpine
+    restart: unless-stopped
+    profiles: ["queue"]
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${NATS_CLIENT_PORT:-4222}:4222"
+      - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${NATS_MONITOR_PORT:-8222}:8222"
+    volumes:
+      - nats_data:/data
+    networks:
+      - ubag-private
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8222/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  mock-worker-smoke:
+    build:
+      context: .
+      dockerfile: deploy/small/mock-worker.Dockerfile
+    image: ${UBAG_MOCK_WORKER_IMAGE:-ubag/mock-worker:small-local}
+    profiles: ["smoke"]
+    command: ["python", "apps/worker/run_mock_worker.py", "--input", "/fixtures/smoke-job.json"]
+    volumes:
+      - ./deploy/small/worker/smoke-job.json:/fixtures/smoke-job.json:ro
+    networks:
+      - ubag-private
+
+networks:
+  ubag-public:
+  ubag-private:
+    internal: true
+
+volumes:
+  caddy_data:
+  caddy_config:
+  postgres_data:
+  dragonfly_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:
+  nats_data:
+  executor_spool:

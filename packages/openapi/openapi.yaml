@@ -1,0 +1,1384 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: UBAG REST API
+  version: 0.1.0
+  summary: Initial UBAG v1 REST contract.
+  description: |
+    Contract-first REST surface for UBAG v0/v1 workers. This file defines
+    route stability, request and response envelopes, stable errors, and job
+    event retrieval for the gateway, SDK, worker, CLI, and dashboard surfaces.
+  license:
+    name: Apache-2.0 for public contract artifacts
+    url: https://www.apache.org/licenses/LICENSE-2.0
+servers:
+  - url: https://api.ubag.dev
+    description: Public production API placeholder.
+tags:
+  - name: System
+    description: Operational health, readiness, and version endpoints.
+  - name: Jobs
+    description: Job creation, retrieval, listing, and lifecycle events.
+  - name: Events
+    description: Cross-job event history and streaming entry points.
+  - name: Workflows
+    description: Workflow definitions and execution templates.
+  - name: Templates
+    description: Prompt, extraction, and normalization templates.
+  - name: Targets
+    description: Registered target adapters and browser automation destinations.
+  - name: Apps
+    description: Client applications allowed to submit work.
+  - name: Devices
+    description: Device enrollment and token surfaces.
+  - name: Webhooks
+    description: Signed callback destinations.
+  - name: Cache
+    description: Semantic and artifact cache visibility.
+  - name: Audit
+    description: Immutable operator and automation audit entries.
+  - name: Observability
+    description: Metrics and runtime telemetry.
+security:
+  - bearerAuth: []
+paths:
+  /v1/health:
+    get:
+      tags: [System]
+      operationId: getHealth
+      summary: Get shallow service health.
+      description: Returns process-level health without checking downstream dependencies.
+      security: []
+      responses:
+        "200":
+          description: Service process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /v1/ready:
+    get:
+      tags: [System]
+      operationId: getReadiness
+      summary: Get dependency readiness.
+      description: Returns readiness for accepting job traffic, including required dependencies.
+      security: []
+      responses:
+        "200":
+          description: Service is ready to accept traffic.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessStatus"
+        "503":
+          description: Service is alive but not ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /v1/version:
+    get:
+      tags: [System]
+      operationId: getVersion
+      summary: Get gateway version information.
+      security: []
+      responses:
+        "200":
+          description: Version metadata for the running gateway.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VersionStatus"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /v1/metrics:
+    get:
+      tags: [Observability]
+      operationId: getMetrics
+      summary: Get Prometheus gateway metrics.
+      description: Includes gateway HTTP, readiness, job, SSE, queue dispatch, and worker execution metric families without per-job labels.
+      security: []
+      responses:
+        "200":
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema:
+                type: string
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/events:
+    get:
+      tags: [Events]
+      operationId: listEvents
+      summary: List cross-job events.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Event records returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/stream:
+    get:
+      tags: [Events]
+      operationId: streamEventsWebSocket
+      summary: Open the WebSocket event stream.
+      responses:
+        "101":
+          description: WebSocket upgrade accepted.
+        "426":
+          description: Request must use a WebSocket upgrade.
+          headers:
+            Upgrade:
+              description: Required protocol.
+              schema:
+                type: string
+                const: websocket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/workflows:
+    get:
+      tags: [Workflows]
+      operationId: listWorkflows
+      summary: List workflow definitions.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Workflow records returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/templates:
+    get:
+      tags: [Templates]
+      operationId: listTemplates
+      summary: List templates.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Template records returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/targets:
+    get:
+      tags: [Targets]
+      operationId: listTargets
+      summary: List configured targets.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Target records returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/adapters:
+    get:
+      tags: [Targets]
+      operationId: listAdapters
+      summary: List adapter manifests.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Adapter records returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/apps:
+    get:
+      tags: [Apps]
+      operationId: listApps
+      summary: List client applications.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: App records returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/devices:
+    get:
+      tags: [Devices]
+      operationId: listDevices
+      summary: List enrolled devices.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Device records returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/webhooks:
+    get:
+      tags: [Webhooks]
+      operationId: listWebhooks
+      summary: List webhook destinations.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Webhook records returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/webhooks/replay:
+    post:
+      tags: [Webhooks]
+      operationId: replayWebhookDelivery
+      summary: Replay a webhook delivery.
+      description: Idempotently requests replay of a prior webhook delivery and records an audit event.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookReplayRequest"
+      responses:
+        "202":
+          description: Webhook replay accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookReplayResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Idempotency key conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/cache:
+    get:
+      tags: [Cache]
+      operationId: getCacheStatus
+      summary: Get cache status and visible entries.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "200":
+          description: Cache status returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CacheStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/audit:
+    get:
+      tags: [Audit]
+      operationId: listAuditEvents
+      summary: List audit events.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Audit records returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs:
+    get:
+      tags: [Jobs]
+      operationId: listJobs
+      summary: List jobs.
+      description: Returns a cursor-paginated list of jobs visible to the caller.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: filter[status]
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/JobStatus"
+          description: Filter jobs by current status.
+        - name: filter[target]
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: "^[a-z0-9][a-z0-9._-]*$"
+          description: Filter jobs by target adapter key.
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [created_at, -created_at]
+            default: -created_at
+      responses:
+        "200":
+          description: Jobs returned.
+          headers:
+            Ubag-Api-Version-Used:
+              $ref: "#/components/headers/UbagApiVersionUsed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Jobs]
+      operationId: createJob
+      summary: Create a job.
+      description: |
+        Creates or replays a job submission. Idempotency-Key is required for
+        raw REST calls and must match requestBody.idempotency_key when both are present.
+        Executable payload sections are rejected before storage or executor dispatch
+        when they contain credentials, cookies, tokens, API keys, browser session
+        state, client-supplied noVNC URLs, private keys, MFA/TOTP material, or
+        CAPTCHA-solving instructions.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobRequest"
+            examples:
+              basicJob:
+                summary: Accepted browser automation job.
+                value:
+                  api_version: "2026-05-22"
+                  idempotency_key: 01HXY5ZS3KAFQ3PZ8NQ8C7H1AT
+                  client:
+                    app_id: radiology-reporting-windows
+                    app_version: 1.4.2
+                    device_id: dev_01HX
+                    user_ref: user@example.com
+                    sdk:
+                      name: ubag-dotnet
+                      version: 2.0.1
+                  job:
+                    target: deepseek_web
+                    command_type: medical_report_generation
+                    conversation_id: conv_123
+                    template_id: radiology_ct_brain_v3
+                    input: {}
+                    options:
+                      priority: normal
+                      timeout_seconds: 180
+                      return_mode: accepted
+                      response_formats: [markdown, plain_text]
+                      retry_policy: default
+                      cache_policy: semantic_30d
+                    callbacks:
+                      webhook_url: https://app.example.com/ubag/callback
+                      webhook_secret_id: wh_sec_abc
+                    context:
+                      locale: en-GB
+                      tags: [radiology]
+                      cost_center: rad-dept
+      responses:
+        "202":
+          description: Job accepted or idempotent response replayed.
+          headers:
+            Location:
+              description: URL of the created or replayed job.
+              schema:
+                type: string
+                examples: [/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU]
+            Ubag-Api-Version-Used:
+              $ref: "#/components/headers/UbagApiVersionUsed"
+            Ubag-Trace-Id:
+              $ref: "#/components/headers/UbagTraceId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: Idempotency key conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Job request failed schema or command validation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs/{job_id}:
+    get:
+      tags: [Jobs]
+      operationId: getJob
+      summary: Get a job by ID.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job found.
+          headers:
+            Ubag-Api-Version-Used:
+              $ref: "#/components/headers/UbagApiVersionUsed"
+            Ubag-Trace-Id:
+              $ref: "#/components/headers/UbagTraceId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs/{job_id}/events:
+    get:
+      tags: [Jobs]
+      operationId: listJobEvents
+      summary: List historical events for a job.
+      description: Returns a cursor-paginated event log. Live SSE streaming is a separate transport surface.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/JobId"
+        - $ref: "#/components/parameters/JobEventCursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: after_sequence
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: Return events with sequence greater than this value.
+      responses:
+        "200":
+          description: Events returned.
+          headers:
+            Ubag-Api-Version-Used:
+              $ref: "#/components/headers/UbagApiVersionUsed"
+            Ubag-Trace-Id:
+              $ref: "#/components/headers/UbagTraceId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobEventListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs/{job_id}/artifacts:
+    get:
+      tags: [Jobs]
+      operationId: listJobArtifacts
+      summary: List artifacts for a job.
+      description: Returns gateway-owned artifact metadata visible to the caller. Internal storage bucket names are not exposed.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Artifact metadata returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs/{job_id}/artifacts/{key}:
+    put:
+      tags: [Jobs]
+      operationId: putJobArtifact
+      summary: Upload or replace a job artifact.
+      description: Stores artifact bytes for a visible job. Artifact keys are single path segments. The gateway computes SHA-256 metadata and enforces a 32 MiB upload limit.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/JobId"
+        - $ref: "#/components/parameters/ArtifactKey"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+          text/plain:
+            schema:
+              type: string
+      responses:
+        "201":
+          description: Artifact stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: Idempotency key conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: Artifact body exceeds the gateway upload limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    get:
+      tags: [Jobs]
+      operationId: getJobArtifact
+      summary: Download a job artifact.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/JobId"
+        - $ref: "#/components/parameters/ArtifactKey"
+      responses:
+        "200":
+          description: Artifact bytes.
+          headers:
+            Ubag-Artifact-Checksum:
+              description: Hex-encoded SHA-256 checksum computed by the gateway.
+              schema:
+                type: string
+            X-Content-Type-Options:
+              description: Always set to nosniff for untrusted artifact downloads.
+              schema:
+                type: string
+                const: nosniff
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            text/plain:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+    delete:
+      tags: [Jobs]
+      operationId: deleteJobArtifact
+      summary: Delete a job artifact.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/JobId"
+        - $ref: "#/components/parameters/ArtifactKey"
+      responses:
+        "204":
+          description: Artifact deleted.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: Idempotency key conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs/{job_id}/cancel:
+    post:
+      tags: [Jobs]
+      operationId: cancelJob
+      summary: Cancel a job.
+      description: Idempotently requests cooperative cancellation for a non-terminal job.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/JobId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobMutationRequest"
+      responses:
+        "200":
+          description: Existing cancellation response replayed or job cancelled by the gateway skeleton.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "202":
+          description: Cancellation accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Idempotency key conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/jobs/{job_id}/retry:
+    post:
+      tags: [Jobs]
+      operationId: retryJob
+      summary: Retry a job.
+      description: Idempotently creates a replacement queued job linked to the original job.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/JobId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobMutationRequest"
+      responses:
+        "202":
+          description: Retry job accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: Idempotency key conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/sse/jobs/{job_id}:
+    get:
+      tags: [Jobs]
+      operationId: streamJobEventsSse
+      summary: Stream live job events over SSE.
+      description: |
+        Streams newline-delimited Server-Sent Events from the durable job event log.
+        v0 emits gateway lifecycle events; workers append token, artifact, and terminal
+        events through the same event envelope.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: SSE event stream opened.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: App-secret or token bearer credential issued by UBAG.
+  parameters:
+    UbagApiVersion:
+      name: Ubag-Api-Version
+      in: header
+      required: false
+      schema:
+        type: string
+        pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        examples: ["2026-05-22"]
+      description: Requested behavior version. Request bodies with api_version must match this header.
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+        pattern: "^[A-Za-z0-9._:-]+$"
+        examples: ["01HXY5ZS3KAFQ3PZ8NQ8C7H1AT"]
+      description: Required idempotency key for mutating routes.
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^job_[A-Za-z0-9]+$"
+      description: UBAG job identifier.
+    ArtifactKey:
+      name: key
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+        pattern: "^[^/\\\\]+$"
+      description: Single path segment artifact key scoped to the job.
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+      description: Opaque pagination cursor.
+    JobEventCursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 0
+      description: Numeric event sequence cursor alias for after_sequence. If both cursor and after_sequence are supplied, they must match.
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+      description: Maximum number of records to return.
+  headers:
+    UbagApiVersionUsed:
+      description: Behavior version used for this response.
+      schema:
+        type: string
+        pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        examples: ["2026-05-22"]
+    UbagTraceId:
+      description: Cross-component trace identifier.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  responses:
+    BadRequest:
+      description: Request syntax, query, or header validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Unauthorized:
+      description: Missing or invalid caller credentials.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Forbidden:
+      description: Caller is authenticated but not authorized for the tenant, app, resource, or action.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource was not found or is not visible to the caller.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    MethodNotAllowed:
+      description: The route exists but does not allow this HTTP method.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    RateLimited:
+      description: Caller exceeded an applicable rate limit.
+      headers:
+        Retry-After:
+          description: Seconds until the caller should retry.
+          schema:
+            type: integer
+            minimum: 0
+        RateLimit-Limit:
+          description: Maximum requests in the current window.
+          schema:
+            type: integer
+            minimum: 0
+        RateLimit-Remaining:
+          description: Requests remaining in the current window.
+          schema:
+            type: integer
+            minimum: 0
+        RateLimit-Reset:
+          description: Epoch seconds when the current rate-limit window resets.
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    InternalError:
+      description: Unexpected service error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    JobRequest:
+      $ref: ../shared-schemas/schemas/job-request.schema.json
+    JobResponse:
+      $ref: ../shared-schemas/schemas/job-response.schema.json
+    ErrorResponse:
+      $ref: ../shared-schemas/schemas/error.schema.json
+    JobEvent:
+      $ref: ../shared-schemas/schemas/job-event.schema.json
+    CollectionResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, data, next_cursor, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        kind:
+          type: string
+          enum:
+            - events
+            - workflows
+            - templates
+            - targets
+            - adapters
+            - apps
+            - devices
+            - webhooks
+            - audit
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        next_cursor:
+          type: ["string", "null"]
+        trace_id:
+          type: string
+          minLength: 1
+    CacheStatus:
+      type: object
+      additionalProperties: false
+      required: [api_version, profile, enabled, entries, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        profile:
+          type: string
+          enum: [edge, small, standard, enterprise]
+        enabled:
+          type: boolean
+        entries:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        trace_id:
+          type: string
+          minLength: 1
+    JobMutationRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        idempotency_key:
+          type: string
+          minLength: 16
+          maxLength: 128
+          pattern: "^[A-Za-z0-9._:-]+$"
+        job_id:
+          type: string
+          pattern: "^job_[A-Za-z0-9]+$"
+          description: Optional body copy of the path job_id; when present it must match the route.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 512
+        metadata:
+          type: object
+          additionalProperties: true
+    ArtifactRecord:
+      type: object
+      additionalProperties: false
+      required: [job_id, key, content_type, size_bytes, created_at]
+      properties:
+        job_id:
+          type: string
+        key:
+          type: string
+          minLength: 1
+        content_type:
+          type: string
+        size_bytes:
+          type: integer
+          minimum: 0
+        checksum:
+          type: string
+          description: Hex-encoded SHA-256 checksum when known.
+        created_at:
+          type: string
+          format: date-time
+    ArtifactListResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, job_id, kind, data, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        job_id:
+          type: string
+        kind:
+          type: string
+          const: artifacts
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ArtifactRecord"
+        trace_id:
+          type: string
+          minLength: 1
+    ArtifactResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, artifact, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        artifact:
+          $ref: "#/components/schemas/ArtifactRecord"
+        idempotent_replay:
+          type: boolean
+        trace_id:
+          type: string
+          minLength: 1
+    WebhookReplayRequest:
+      type: object
+      additionalProperties: false
+      required: [delivery_id, reason]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        idempotency_key:
+          type: string
+          minLength: 16
+          maxLength: 128
+          pattern: "^[A-Za-z0-9._:-]+$"
+        webhook_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        delivery_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 512
+        metadata:
+          type: object
+          additionalProperties: true
+    WebhookReplayResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, status, idempotent_replay, audit_event, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        status:
+          type: string
+          enum: [accepted]
+        idempotent_replay:
+          type: boolean
+        webhook_id:
+          type: string
+        delivery_id:
+          type: string
+        audit_event:
+          type: string
+          enum: [webhook.delivery_replayed]
+        metadata:
+          type: object
+          additionalProperties: true
+        trace_id:
+          type: string
+          minLength: 1
+    JobStatus:
+      type: string
+      enum:
+        - created
+        - queued
+        - assigned
+        - running
+        - token_streaming
+        - completing
+        - completed
+        - completed_with_warnings
+        - failed_retryable
+        - failed_terminal
+        - dead_letter
+        - cancelled
+        - timed_out
+    HealthStatus:
+      type: object
+      additionalProperties: false
+      required: [status, service, checked_at, trace_id]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        service:
+          type: string
+          const: ubag-gateway
+        version:
+          type: string
+          minLength: 1
+        checked_at:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          additionalProperties: true
+        trace_id:
+          type: string
+          minLength: 1
+    ReadinessStatus:
+      type: object
+      additionalProperties: false
+      required: [ready, status, service, checked_at, trace_id]
+      properties:
+        ready:
+          type: boolean
+        status:
+          type: string
+          enum: [ready, not_ready]
+        service:
+          type: string
+          const: ubag-gateway
+        version:
+          type: string
+          minLength: 1
+        checked_at:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          additionalProperties: true
+        dependencies:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, status]
+            properties:
+              name:
+                type: string
+                minLength: 1
+              status:
+                type: string
+                enum: [ready, not_ready, degraded]
+              latency_ms:
+                type: integer
+                minimum: 0
+              message:
+                type: string
+        trace_id:
+          type: string
+          minLength: 1
+    VersionStatus:
+      type: object
+      additionalProperties: false
+      required: [service, version, api_versions, default_api_version, trace_id]
+      properties:
+        service:
+          type: string
+          const: ubag-gateway
+        version:
+          type: string
+          minLength: 1
+        commit:
+          type: ["string", "null"]
+        built_at:
+          type: ["string", "null"]
+          format: date-time
+        api_versions:
+          type: array
+          items:
+            type: string
+            pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          minItems: 1
+        default_api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        trace_id:
+          type: string
+          minLength: 1
+    JobListResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, jobs, next_cursor, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        jobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobResponse"
+        next_cursor:
+          type: ["string", "null"]
+        trace_id:
+          type: string
+          minLength: 1
+    JobEventListResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, job_id, events, next_cursor, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        job_id:
+          type: string
+          pattern: "^job_[A-Za-z0-9]+$"
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobEvent"
+        next_cursor:
+          type: ["string", "null"]
+          description: Last returned event sequence as a string when another page may be available, otherwise null.
+        trace_id:
+          type: string
+          minLength: 1

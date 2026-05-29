@@ -1,0 +1,52 @@
+# Argo CD Application for the UBAG gateway.
+#
+# Apply to your Argo CD instance (typically in the argocd namespace):
+#   kubectl apply -f deploy/gitops/argocd/application.yaml
+#
+# Replace repoURL/targetRevision with your fork/branch. Secrets are NOT managed
+# here: this Application references an externally-managed Secret via the chart's
+# secrets.existingSecret value (see deploy/helm/ubag/README.md).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ubag-gateway
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/part-of: ubag
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ubag/ubag.git
+    targetRevision: main
+    path: deploy/helm/ubag
+    helm:
+      releaseName: ubag
+      valueFiles:
+        - values.yaml
+        - values-production.yaml
+      parameters:
+        - name: image.tag
+          value: "1.0.0"
+        - name: secrets.existingSecret
+          value: ubag-gateway-secrets
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ubag
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10

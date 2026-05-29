@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ubag.dev/v1/rest/job-request.schema.json",
+  "title": "UBAG Job Request",
+  "description": "Client request envelope for creating a UBAG browser automation job.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["api_version", "idempotency_key", "client", "job"],
+  "properties": {
+    "api_version": {
+      "type": "string",
+      "description": "Behavior version requested by the client. It must match Ubag-Api-Version when both are present.",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "examples": ["2026-05-22"]
+    },
+    "idempotency_key": {
+      "type": "string",
+      "description": "Client-generated key used to make retries safe. REST calls must also send this value in the Idempotency-Key header.",
+      "minLength": 16,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$",
+      "examples": ["01HXY5ZS3KAFQ3PZ8NQ8C7H1AT"]
+    },
+    "client": {
+      "$ref": "#/$defs/client"
+    },
+    "job": {
+      "$ref": "#/$defs/job"
+    }
+  },
+  "$defs": {
+    "client": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["app_id", "app_version", "sdk"],
+      "properties": {
+        "app_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+          "examples": ["radiology-reporting-windows"]
+        },
+        "app_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "examples": ["1.4.2"]
+        },
+        "device_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "examples": ["dev_01HX"]
+        },
+        "user_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Application-scoped user reference. It must not contain credentials or secrets.",
+          "examples": ["user@example.com"]
+        },
+        "sdk": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 96,
+              "examples": ["ubag-dotnet"]
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "examples": ["2.0.1"]
+            }
+          }
+        }
+      }
+    },
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "command_type", "input"],
+      "properties": {
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "examples": ["deepseek_web"]
+        },
+        "command_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "examples": ["medical_report_generation"]
+        },
+        "conversation_id": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 160,
+          "examples": ["conv_123"]
+        },
+        "template_id": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 160,
+          "examples": ["radiology_ct_brain_v3"]
+        },
+        "input": {
+          "type": "object",
+          "description": "Command-specific payload validated by the command_type schema. It must not contain credentials, cookies, tokens, API keys, browser session state, noVNC URLs, private keys, MFA/TOTP material, or CAPTCHA-solving instructions.",
+          "additionalProperties": true
+        },
+        "options": {
+          "$ref": "#/$defs/job_options"
+        },
+        "callbacks": {
+          "$ref": "#/$defs/callbacks"
+        },
+        "context": {
+          "$ref": "#/$defs/context",
+          "description": "Client execution context. Manual session references are allowed, but browser session secrets and runtime-generated noVNC URLs are not accepted from clients."
+        }
+      }
+    },
+    "job_options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "priority": {
+          "type": "string",
+          "enum": ["low", "normal", "high", "urgent"],
+          "default": "normal"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "default": 180
+        },
+        "return_mode": {
+          "type": "string",
+          "enum": ["accepted", "final", "stream", "final_and_stream"],
+          "default": "accepted"
+        },
+        "response_formats": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["markdown", "plain_text", "html", "json", "sections", "artifacts"]
+          },
+          "uniqueItems": true,
+          "minItems": 1,
+          "default": ["markdown", "plain_text"]
+        },
+        "retry_policy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "default": "default"
+        },
+        "cache_policy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96,
+          "default": "none"
+        },
+        "trace_context": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "W3C traceparent or gateway-compatible trace context."
+        },
+        "safety_mode": {
+          "type": "string",
+          "enum": ["standard", "hipaa", "gdpr", "debug"],
+          "default": "standard"
+        },
+        "artifact_policy": {
+          "type": "object",
+          "description": "Optional per-job artifact capture limits. The gateway may only tighten this policy.",
+          "additionalProperties": true
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Optional model temperature hint passed to compatible adapters."
+        }
+      }
+    },
+    "callbacks": {
+      "type": "object",
+      "additionalProperties": false,
+      "dependentRequired": {
+        "webhook_url": ["webhook_secret_id"]
+      },
+      "properties": {
+        "webhook_url": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 2048
+        },
+        "webhook_secret_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "event_types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96
+          },
+          "uniqueItems": true
+        },
+        "webhook_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Application-scoped callback endpoint reference. Direct webhook_url remains available for local/dev callbacks."
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "locale": {
+          "type": "string",
+          "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$",
+          "examples": ["en-GB"]
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "uniqueItems": true,
+          "maxItems": 32
+        },
+        "cost_center": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "correlation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "account_binding_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "description": "Opaque user-owned manual-session account binding reference. It must not contain credentials or browser session material."
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Small client metadata map. Values must not contain secrets.",
+          "additionalProperties": {
+            "anyOf": [
+              { "type": "string" },
+              { "type": "number" },
+              { "type": "boolean" },
+              { "type": "null" }
+            ]
+          },
+          "maxProperties": 32
+        }
+      }
+    }
+  }
+}

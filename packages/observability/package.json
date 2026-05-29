@@ -1,0 +1,22 @@
+{
+  "name": "@ubag/observability",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Executable observability, QA, and ops health contracts for UBAG.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.mjs",
+    "./events": "./src/events.mjs",
+    "./health": "./src/health.mjs",
+    "./logs": "./src/logs.mjs",
+    "./metrics": "./src/metrics.mjs",
+    "./smoke-checklist": "./src/smoke-checklist.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "validate": "node scripts/validate-observability-contracts.mjs",
+    "print:smoke": "node scripts/print-smoke-checklist.mjs",
+    "health": "node scripts/run-health-probes.mjs"
+  }
+}

@@ -1,0 +1,64 @@
+﻿{
+  "schema_version": "ubag.adapter.v0",
+  "id": "perplexity_web",
+  "display_name": "Perplexity Web",
+  "version": "0.1.0",
+  "status": "stub",
+  "adapter_path": "perplexity_web",
+  "entrypoint": "ubag_perplexity_web_adapter:PerplexityWebAdapter",
+  "target_homepage": "https://www.perplexity.ai/",
+  "aliases": [
+    "perplexity",
+    "perplexity-web"
+  ],
+  "login_posture": "manual_required",
+  "supported_command_types": [
+    "chat.prompt",
+    "chat.stream"
+  ],
+  "capabilities": [
+    "prompt_run",
+    "streaming_optional",
+    "citation_output_normalization",
+    "conversation_resume_later",
+    "drift_baseline_required"
+  ],
+  "selector_strategy": {
+    "type": "provider_specific",
+    "drift_baseline_required": true
+  },
+  "artifact_policy": {
+    "screenshots": "on_failure_only",
+    "dom_snapshots": "drift_baseline_only",
+    "recordings": "post_login_debug_only"
+  },
+  "safe_mode": {
+    "manual_login_required": true,
+    "user_owned_sessions_only": true,
+    "automated_login": "forbidden",
+    "credential_scraping": "forbidden",
+    "credential_storage": "forbidden",
+    "captcha_solving": "forbidden",
+    "captcha_bypass": "forbidden"
+  },
+  "credential_policy": {
+    "collect_credentials": false,
+    "read_credentials_from_payload": false,
+    "scrape_credentials": false,
+    "store_credentials": false
+  },
+  "captcha_policy": {
+    "solve": false,
+    "bypass": false,
+    "delegate_to_solver": false,
+    "manual_only": true
+  },
+  "synthetic_test_prompts": [
+    "Reply with the word ready."
+  ],
+  "resource_policy": {
+    "network": "blocked_until_manual_session_runtime",
+    "browser": "manual_user_owned_session_required"
+  },
+  "not_implemented_reason": "Perplexity Web ships real Playwright manual-session automation behind the worker's live engine (run_live). The default registry dispatch stays fail-closed: it requires a user-owned manual browser session runtime, manual login, and a re-confirmed drift baseline before executing jobs."
+}

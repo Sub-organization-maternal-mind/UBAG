@@ -1,0 +1,25 @@
+{
+  "schema_version": "ubag.plugin.v0",
+  "id": "prompt-template",
+  "display_name": "Prompt Template",
+  "version": "0.2.0",
+  "description": "Renders {{variable}} placeholders in a prompt template and rejects empty prompts during the job pre-hook.",
+  "entrypoint": {
+    "type": "wasi-component",
+    "module": "build/prompt_template.wasm",
+    "exports": {
+      "transform": "transform",
+      "hook": "hook"
+    }
+  },
+  "capabilities": ["transform.prompt", "hook.job.pre"],
+  "permissions": {
+    "host_functions": ["log"],
+    "max_memory_bytes": 16777216,
+    "max_execution_ms": 250
+  },
+  "engine": {
+    "runtime": "wasi-preview2",
+    "min_host_version": "0.0.0"
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "schema_version": "ubag.adapters.v0",
+  "kind": "mock_registry",
+  "description": "Safe-mode adapter registry for UBAG worker development.",
+  "safe_mode": {
+    "user_owned_sessions_only": true,
+    "automated_login": "forbidden",
+    "credential_scraping": "forbidden",
+    "credential_storage": "forbidden",
+    "captcha_solving": "forbidden"
+  },
+  "adapters": [
+    {
+      "id": "mock",
+      "manifest": "mock/manifest.json"
+    },
+    {
+      "id": "generic_chat",
+      "manifest": "generic_chat/manifest.json"
+    },
+    {
+      "id": "generic_form",
+      "manifest": "generic_form/manifest.json"
+    },
+    {
+      "id": "deepseek_web",
+      "manifest": "deepseek_web/manifest.json"
+    },
+    {
+      "id": "chatgpt_web",
+      "manifest": "chatgpt_web/manifest.json"
+    },
+    {
+      "id": "claude_web",
+      "manifest": "claude_web/manifest.json"
+    },
+    {
+      "id": "gemini_web",
+      "manifest": "gemini_web/manifest.json"
+    },
+    {
+      "id": "mistral_lechat",
+      "manifest": "mistral_lechat/manifest.json"
+    },
+    {
+      "id": "perplexity_web",
+      "manifest": "perplexity_web/manifest.json"
+    }
+  ]
+}

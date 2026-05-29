@@ -1,0 +1,11 @@
+{
+  "api_version": "v0",
+  "idempotency_key": "small-profile-smoke",
+  "job": {
+    "target": "mock",
+    "command_type": "prompt",
+    "input": {
+      "prompt": "small profile smoke"
+    }
+  }
+}

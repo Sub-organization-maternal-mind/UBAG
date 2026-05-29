@@ -1,0 +1,16 @@
+# Build output
+dist/
+node_modules/
+
+# Tauri / Rust
+src-tauri/target/
+src-tauri/gen/
+
+# Generated native projects (created by `tauri android init` / `tauri ios init`)
+src-tauri/gen/android/
+src-tauri/gen/apple/
+
+# Local env
+.env
+.env.local
+*.log

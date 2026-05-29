@@ -1,0 +1,55 @@
+# Caddy edge with mTLS (client certificate required) for UBAG.
+#
+# Usage (small profile):
+#   1. Generate dev certs:  deploy/mtls/gen-certs.sh --cn ubag.example.com
+#   2. Mount deploy/mtls/out into the Caddy container at /etc/ubag/mtls (ro).
+#   3. Point UBAG_CADDYFILE at this file and bind the edge ports intentionally.
+#
+# This terminates mTLS at the edge. The gateway itself listens on plain HTTP on
+# the private network (UBAG_GATEWAY_ADDR=:8080); only the edge is internet-facing.
+
+{
+  # Admin API MUST stay bound to localhost.
+  admin localhost:2019
+}
+
+ubag.example.com {
+  encode zstd gzip
+
+  # Require a client certificate signed by the UBAG CA.
+  tls /etc/ubag/mtls/server.crt /etc/ubag/mtls/server.key {
+    client_auth {
+      mode require_and_verify
+      trust_pool file /etc/ubag/mtls/ca.crt
+    }
+  }
+
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer"
+    X-Frame-Options "DENY"
+  }
+
+  handle /healthz {
+    respond "ok" 200
+  }
+
+  # Keep internal endpoints off the public edge.
+  handle /v1/metrics* {
+    respond "not found" 404
+  }
+  handle /v1/ready* {
+    respond "not found" 404
+  }
+
+  handle /v1/* {
+    # Forward the verified client cert subject for app-level attribution.
+    reverse_proxy gateway:8080 {
+      header_up X-Client-Cert-Subject {http.request.tls.client.subject}
+      header_up X-Forwarded-Proto https
+    }
+  }
+
+  respond "UBAG mTLS edge. API routes under /v1/*." 200
+}

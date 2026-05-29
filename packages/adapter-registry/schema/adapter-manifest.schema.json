@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ubag.dev/schemas/adapter-manifest.v0.json",
+  "title": "UBAG Adapter Manifest",
+  "description": "Schema for adapters/<id>/manifest.json. Tolerant of additional provider-specific fields; the required set is what the registry loader and query layer depend on.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "id",
+    "display_name",
+    "version",
+    "status",
+    "supported_command_types",
+    "capabilities",
+    "selector_strategy",
+    "safe_mode"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "ubag.adapter.v0"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_]{1,63}$"
+    },
+    "display_name": { "type": "string", "minLength": 1 },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+].+)?$"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["mock", "stub", "experimental", "beta", "stable", "deprecated"]
+    },
+    "adapter_path": { "type": "string" },
+    "entrypoint": { "type": "string" },
+    "target_homepage": { "type": "string" },
+    "aliases": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "login_posture": {
+      "type": "string",
+      "enum": ["none", "manual_required", "session_required"]
+    },
+    "supported_command_types": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "selector_strategy": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string" },
+        "drift_baseline_required": { "type": "boolean" }
+      }
+    },
+    "safe_mode": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "user_owned_sessions_only": { "type": "boolean" },
+        "automated_login": { "type": "string" },
+        "credential_scraping": { "type": "string" },
+        "credential_storage": { "type": "string" },
+        "captcha_solving": { "type": "string" }
+      }
+    }
+  }
+}

@@ -1,0 +1,63 @@
+/* Hallmark - pre-emit critique: P5 H4 E4 S5 R5 V4 */
+:root {
+  --color-paper: oklch(96.5% 0.012 75);
+  --color-paper-soft: oklch(99% 0.006 75);
+  --color-paper-warm: oklch(93% 0.02 70);
+  --color-ink: oklch(20% 0.022 55);
+  --color-ink-soft: oklch(38% 0.018 55);
+  --color-ink-mute: oklch(56% 0.012 60);
+  --color-rule: oklch(86% 0.014 70);
+  --color-rule-soft: oklch(91% 0.01 70);
+  --color-accent: oklch(58% 0.18 35);
+  --color-accent-deep: oklch(48% 0.2 32);
+  --color-accent-soft: oklch(82% 0.08 45);
+  --color-saffron: oklch(78% 0.16 78);
+  --color-saffron-soft: oklch(91% 0.07 80);
+  --color-marine: oklch(34% 0.09 240);
+  --color-marine-soft: oklch(83% 0.045 240);
+  --color-success: oklch(50% 0.09 150);
+  --color-success-soft: oklch(90% 0.04 145);
+  --color-danger: oklch(52% 0.17 25);
+  --color-danger-soft: oklch(89% 0.055 32);
+  --color-focus-ring: oklch(48% 0.2 32);
+
+  --font-display: ui-rounded, "Aptos Display", "Segoe UI", -apple-system, system-ui, sans-serif;
+  --font-body: "Aptos", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, ui-monospace, monospace;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+  --space-9: 6rem;
+  --space-10: 8rem;
+  --space-11: 12rem;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.35rem;
+  --text-2xl: 1.75rem;
+  --text-display-s: 2.35rem;
+  --text-display: 3.5rem;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --dur-slow: 260ms;
+
+  --rule-thin: 1px;
+  --rule-strong: 2px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 8px;
+  --radius-pill: 999px;
+  --shadow-tight: 0 1px 0 color-mix(in oklch, var(--color-ink), transparent 88%);
+}

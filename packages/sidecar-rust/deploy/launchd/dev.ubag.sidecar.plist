@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>dev.ubag.sidecar</string>
+
+    <key>ProgramArguments</key>
+    <array>
+      <string>@PREFIX@/bin/ubag-sidecar</string>
+    </array>
+
+    <!-- Loopback-only config. The application secret is provided via the
+         environment and is never persisted to disk by the sidecar. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>UBAG_GATEWAY_URL</key>
+      <string>http://127.0.0.1:8080</string>
+      <key>UBAG_SIDECAR_HOST</key>
+      <string>127.0.0.1</string>
+      <key>UBAG_SIDECAR_PORT</key>
+      <string>7878</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/usr/local/var/log/ubag-sidecar.log</string>
+    <key>StandardErrorPath</key>
+    <string>/usr/local/var/log/ubag-sidecar.log</string>
+  </dict>
+</plist>

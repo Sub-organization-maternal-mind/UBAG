@@ -1,0 +1,33 @@
+// UBAG plugin component-model world (WASI Preview 2).
+//
+// Production guests target this world. The host (wazero in Go, @wasmer/wasi in
+// TS) instantiates the component and calls `transform` / `hook`. Host functions
+// are exposed through the `host` interface and are gated by the manifest
+// permission allowlist before the import is linked.
+package ubag:plugin@0.1.0;
+
+interface host {
+  enum log-level { debug, info, warn, error }
+
+  // Only the host functions listed in the manifest `permissions.host_functions`
+  // allowlist are linked. Unlisted imports are trapped at instantiation.
+  log: func(level: log-level, message: string);
+  clock: func() -> u64;
+  random: func() -> f64;
+  fetch: func(url: string, method: string, body: string) -> result<string, string>;
+  read-file: func(path: string) -> result<string, string>;
+  get-env: func(key: string) -> option<string>;
+}
+
+interface plugin {
+  // JSON-encoded payloads cross the boundary as UTF-8 strings.
+  variant hook-action { continue(string), reject(string) }
+
+  transform: func(input-json: string) -> result<string, string>;
+  hook: func(event: string, payload-json: string) -> result<hook-action, string>;
+}
+
+world ubag-plugin {
+  import host;
+  export plugin;
+}

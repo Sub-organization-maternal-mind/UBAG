@@ -1,0 +1,8 @@
+# mTLS dev output — NEVER commit private key material.
+out/
+*.key
+*.crt
+*.csr
+*.p12
+*.srl
+*.pem

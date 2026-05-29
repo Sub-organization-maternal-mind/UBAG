@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ubag.dev/v1/rest/error.schema.json",
+  "title": "UBAG Error Response",
+  "description": "Stable error envelope returned by REST and reused by generated SDKs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["error"],
+  "properties": {
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "category", "message", "retryable", "trace_id"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^UBAG-[A-Z0-9-]+-[0-9]{3}$",
+          "examples": ["UBAG-ADAPTER-DRIFT-014"]
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "auth",
+            "authz",
+            "validation",
+            "quota",
+            "rate",
+            "queue",
+            "worker",
+            "browser",
+            "adapter",
+            "target",
+            "template",
+            "cache",
+            "webhook",
+            "artifact",
+            "sidecar",
+            "internal"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "retry_after_ms": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "details": {
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        },
+        "field_errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["field", "message"],
+            "properties": {
+              "field": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              },
+              "code": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "default": []
+        },
+        "doc_url": {
+          "type": ["string", "null"],
+          "format": "uri"
+        },
+        "trace_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    }
+  }
+}

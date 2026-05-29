@@ -1,0 +1,47 @@
+# Global edge: active/active load balancing across both regional gateways.
+# Demo uses HTTP on :80. For production, enable TLS/mTLS (see deploy/mtls) and
+# front this with GeoDNS / a global load balancer that routes to the nearest
+# region, failing over to the other on health-check failure.
+
+{
+  auto_https off
+  admin localhost:2019
+}
+
+:80 {
+  encode zstd gzip
+
+  header {
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer"
+    X-Frame-Options "DENY"
+  }
+
+  handle /healthz {
+    respond "ok" 200
+  }
+
+  # Internal endpoints stay off the public edge.
+  handle /v1/metrics* {
+    respond "not found" 404
+  }
+  handle /v1/ready* {
+    respond "not found" 404
+  }
+
+  handle /v1/* {
+    reverse_proxy gateway-a:8080 gateway-b:8080 {
+      lb_policy least_conn
+      # Active health checks drive automatic regional failover.
+      health_uri /v1/ready
+      health_interval 5s
+      health_timeout 3s
+      health_status 2xx
+      # Retry the other region on a failed upstream.
+      lb_try_duration 5s
+      lb_try_interval 250ms
+    }
+  }
+
+  respond "UBAG multi-region edge. API routes under /v1/*." 200
+}

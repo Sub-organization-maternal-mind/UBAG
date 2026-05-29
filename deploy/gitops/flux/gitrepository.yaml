@@ -1,0 +1,12 @@
+# Flux GitRepository source for the UBAG repo.
+#   kubectl apply -f deploy/gitops/flux/gitrepository.yaml
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: ubag
+  namespace: flux-system
+spec:
+  interval: 5m
+  url: https://github.com/ubag/ubag.git
+  ref:
+    branch: main

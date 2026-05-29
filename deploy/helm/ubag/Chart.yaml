@@ -1,0 +1,55 @@
+apiVersion: v2
+name: ubag
+description: |
+  Universal Bridge / Agent Gateway (UBAG) — Helm chart for the standard
+  (Kubernetes) and enterprise (multi-region HA) deployment profiles.
+  Deploys the Go gateway with HPA, PodDisruptionBudget, NetworkPolicy, and an
+  optional Prometheus ServiceMonitor. Backing services (Postgres, Dragonfly,
+  NATS, MinIO) are consumed as external services by default; optional in-cluster
+  subcharts can be enabled (see README and the commented dependencies block).
+type: application
+
+# Chart version is independent of the application version.
+version: 0.1.0
+
+# Tracks the gateway application/image version line. Override image.tag per env.
+appVersion: "0.0.0-small"
+
+home: https://github.com/ubag/ubag
+sources:
+  - https://github.com/ubag/ubag
+keywords:
+  - ubag
+  - gateway
+  - api-gateway
+  - agent
+maintainers:
+  - name: UBAG Maintainers
+
+# ---------------------------------------------------------------------------
+# Optional in-cluster backing services.
+#
+# By default this chart targets EXTERNAL managed services (set the *.deploy
+# toggles to false in values.yaml and provide DSNs/endpoints via Secret).
+#
+# To run backing services in-cluster, uncomment the dependencies below, set the
+# matching <service>.deploy=true in values.yaml, then run:
+#
+#   helm dependency update deploy/helm/ubag
+#
+# These are intentionally left commented so `helm lint` and `helm template`
+# pass fully offline without first vendoring subcharts.
+# ---------------------------------------------------------------------------
+# dependencies:
+#   - name: postgresql
+#     version: "~16.0.0"
+#     repository: https://charts.bitnami.com/bitnami
+#     condition: postgres.deploy
+#   - name: nats
+#     version: "~1.2.0"
+#     repository: https://nats-io.github.io/k8s/helm/charts/
+#     condition: nats.deploy
+#   - name: minio
+#     version: "~14.0.0"
+#     repository: https://charts.bitnami.com/bitnami
+#     condition: minio.deploy

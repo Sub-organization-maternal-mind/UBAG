@@ -1,0 +1,45 @@
+# Example variables for the UBAG Terraform module.
+# Copy to terraform.tfvars and adjust. Do NOT commit real secrets.
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# Prefer supplying sensitive values via environment variables instead of a file:
+#   export TF_VAR_ubag_app_secret=...
+#   export TF_VAR_ubag_postgres_dsn=...
+
+kube_config_path    = "~/.kube/config"
+kube_config_context = ""
+
+namespace        = "ubag"
+create_namespace = true
+release_name     = "ubag"
+
+# Local chart (default) or a published repo:
+chart_path = "../../helm/ubag"
+# chart_repository = "https://charts.example.com"
+# chart_name       = "ubag"
+# chart_version    = "0.1.0"
+
+image_repository = "ubag/gateway"
+image_tag        = "1.0.0"
+
+autoscaling_enabled     = true
+ingress_enabled         = true
+ingress_host            = "ubag.example.com"
+ingress_class_name      = "nginx"
+service_monitor_enabled = true
+
+values_files = [
+  "../../helm/ubag/values-production.yaml",
+]
+
+# Secrets: prefer an externally-managed Secret (recommended).
+manage_secret        = false
+existing_secret_name = "ubag-gateway-secrets"
+
+# If manage_secret = true, supply these via TF_VAR_* env, never in committed files:
+# ubag_app_secret       = ""
+# ubag_postgres_dsn     = ""
+# ubag_minio_access_key = ""
+# ubag_minio_secret_key = ""
+# ubag_webhook_secret   = ""

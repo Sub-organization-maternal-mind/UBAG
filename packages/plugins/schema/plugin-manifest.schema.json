@@ -1,0 +1,167 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://ubag.dev/schemas/plugin-manifest.v0.json",
+  "title": "UBAG Plugin Manifest",
+  "description": "Manifest describing a sandboxed UBAG WASM plugin: metadata, capabilities, explicit permissions, and component-model entrypoints.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "display_name",
+    "version",
+    "entrypoint",
+    "capabilities",
+    "permissions",
+    "engine"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "ubag.plugin.v0"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+      "description": "Stable plugin identifier."
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+].+)?$",
+      "description": "Semantic version of the plugin."
+    },
+    "description": {
+      "type": "string"
+    },
+    "entrypoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "module", "exports"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["wasi-component", "wasi-command", "core-module"],
+          "description": "Binary shape loaded by the host runtime."
+        },
+        "module": {
+          "type": "string",
+          "description": "Relative path to the compiled .wasm artifact.",
+          "pattern": "\\.wasm$"
+        },
+        "exports": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Map of host-known guest function roles to exported guest symbol names.",
+          "properties": {
+            "transform": { "type": "string" },
+            "hook": { "type": "string" },
+            "init": { "type": "string" }
+          }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "transform.prompt",
+          "transform.response",
+          "hook.job.pre",
+          "hook.job.post"
+        ]
+      },
+      "description": "Extension points this plugin implements."
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host_functions"],
+      "description": "Default-deny capability grants. Anything not listed is denied at the host boundary.",
+      "properties": {
+        "host_functions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["log", "clock", "random", "fetch", "read_file", "get_env"]
+          },
+          "description": "Explicit allowlist of host functions exposed to the guest."
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowed"],
+          "properties": {
+            "allowed": { "type": "boolean", "default": false },
+            "allowed_hosts": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Egress hostname allowlist when network access is granted."
+            }
+          }
+        },
+        "filesystem": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowed"],
+          "properties": {
+            "allowed": { "type": "boolean", "default": false },
+            "allowed_paths": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Read-only path allowlist mapped into the WASI preopen set."
+            }
+          }
+        },
+        "env": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowed"],
+          "properties": {
+            "allowed": { "type": "boolean", "default": false },
+            "allowed_keys": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Environment variable key allowlist."
+            }
+          }
+        },
+        "max_memory_bytes": {
+          "type": "integer",
+          "minimum": 65536,
+          "default": 16777216,
+          "description": "Hard linear-memory ceiling enforced by the runtime."
+        },
+        "max_execution_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1000,
+          "description": "Wall-clock budget per invocation; the host aborts the instance on overrun."
+        }
+      }
+    },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime"],
+      "properties": {
+        "runtime": {
+          "type": "string",
+          "enum": ["wasi-preview1", "wasi-preview2", "core"],
+          "description": "WASI/component-model contract the binary targets."
+        },
+        "min_host_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+        }
+      }
+    }
+  }
+}

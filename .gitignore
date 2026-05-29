@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Astro / Starlight
+dist/
+.astro/
+
+# Logs and local state
+*.log
+.codex/logs/
+.codex/test-output/
+**/.codex/test-output/
+.codex/*.log
+.codex/check-run.log
+.codex/rebuild.log
+.codex/v0-run.log
+.env
+.env.*
+deploy/small/env.local
+deploy/small/secrets/
+
+# Python generated files
+__pycache__/
+*.py[cod]
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Generated binaries
+*.exe
+
+# Go toolchain helpers and gateway local state
+.gotools/
+apps/gateway/ubag-gateway.db
+apps/gateway/ubag-gateway.db-*
+*.db-shm
+*.db-wal
+
+# Rust build output (sidecar-rust, sdk-rust)
+packages/sidecar-rust/target/
+packages/sdk-rust/target/
+
+# .NET build output (sdk-csharp)
+packages/sdk-csharp/**/bin/
+packages/sdk-csharp/**/obj/
+
+# JVM build output (sdk-java, sdk-kotlin)
+packages/sdk-java/**/.gradle/
+packages/sdk-java/**/build/
+packages/sdk-kotlin/**/.gradle/
+packages/sdk-kotlin/**/build/
+
+# UBAG runtime output planned for later phases
+var/
+tmp/
+coverage/

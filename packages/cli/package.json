@@ -1,0 +1,33 @@
+{
+  "name": "@ubag/cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Minimal developer CLI for UBAG gateway jobs and mock worker runs.",
+  "type": "module",
+  "bin": {
+    "ubag": "./dist/index.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "pnpm --filter @ubag/sdk build && tsc -p tsconfig.json",
+    "test": "pnpm run build && node --test test/*.test.mjs",
+    "typecheck": "pnpm --filter @ubag/sdk build && tsc -p tsconfig.json --noEmit",
+    "cli": "node ./dist/index.js"
+  },
+  "dependencies": {
+    "@ubag/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=20.12.0"
+  }
+}

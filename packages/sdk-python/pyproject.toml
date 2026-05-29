@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ubag"
+version = "0.0.0"
+description = "Python client for the UBAG v0 REST gateway, stable errors, idempotency, and conformance fixtures."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "UNLICENSED" }
+authors = [{ name = "UBAG" }]
+
+[tool.setuptools.packages.find]
+where = ["src"]

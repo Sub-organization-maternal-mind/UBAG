@@ -1,0 +1,20 @@
+{
+  "name": "@ubag/adapter-registry",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Loader, validator, and query library for the UBAG adapter registry with versioning, capability flags, and checksum-based drift detection.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node.mjs",
+    "./schema/manifest": "./schema/adapter-manifest.schema.json",
+    "./schema/index": "./schema/registry-index.schema.json"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/json-schema.test.mjs test/checksum.test.mjs test/registry.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

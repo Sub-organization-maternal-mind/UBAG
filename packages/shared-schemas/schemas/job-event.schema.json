@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ubag.dev/v1/rest/job-event.schema.json",
+  "title": "UBAG Job Event",
+  "description": "Single event in a job lifecycle event stream or historical event log.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "job_id", "api_version", "type", "created_at", "sequence", "data", "trace_id"],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "pattern": "^evt_[A-Za-z0-9]+$",
+      "examples": ["evt_01HXY5ZS3KAFQ3PZ8NQ8C7H1AV"]
+    },
+    "job_id": {
+      "type": "string",
+      "pattern": "^job_[A-Za-z0-9]+$",
+      "examples": ["job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU"]
+    },
+    "api_version": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "examples": ["2026-05-22"]
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "created",
+        "queued",
+        "assigned",
+        "running",
+        "browser_opened",
+        "session.manual_action_required",
+        "prompt_submitted",
+        "token",
+        "token_streaming",
+        "completing",
+        "completed",
+        "completed_with_warnings",
+        "failed_retryable",
+        "failed_terminal",
+        "dead_letter",
+        "cancelled",
+        "timed_out",
+        "artifact_created",
+        "blocked",
+        "warning"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Monotonic sequence number within a job."
+    },
+    "data": {
+      "type": "object",
+      "description": "Event-specific payload. Token events carry token deltas; terminal events carry status, result, or error summaries.",
+      "additionalProperties": true
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    }
+  }
+}

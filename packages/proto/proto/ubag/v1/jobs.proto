@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package ubag.v1;
+
+option go_package = "github.com/ubag/ubag/packages/proto/gen/go/ubag/v1;ubagv1";
+
+service JobService {
+  rpc CreateJob(CreateJobRequest) returns (JobResponse);
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+  rpc GetJob(GetJobRequest) returns (JobResponse);
+  rpc CancelJob(JobMutationRequest) returns (JobResponse);
+  rpc RetryJob(JobMutationRequest) returns (JobResponse);
+  rpc ListJobEvents(ListJobEventsRequest) returns (ListJobEventsResponse);
+  rpc StreamJobEvents(ListJobEventsRequest) returns (stream JobEvent);
+}
+
+message CreateJobRequest {
+  string api_version = 1;
+  string idempotency_key = 2;
+  Client client = 3;
+  JobSpec job = 4;
+}
+
+message Client {
+  string app_id = 1;
+  string app_version = 2;
+  string device_id = 3;
+  string user_ref = 4;
+  string sdk_name = 5;
+  string sdk_version = 6;
+}
+
+message JobSpec {
+  string target = 1;
+  string command_type = 2;
+  string conversation_id = 3;
+  string template_id = 4;
+  string input_json = 5;
+  string options_json = 6;
+  string callbacks_json = 7;
+  string context_json = 8;
+}
+
+message GetJobRequest {
+  string job_id = 1;
+  string api_version = 2;
+}
+
+message ListJobsRequest {
+  string api_version = 1;
+  string cursor = 2;
+  int32 limit = 3;
+  string status = 4;
+  string target = 5;
+  string sort = 6;
+}
+
+message ListJobsResponse {
+  string api_version = 1;
+  repeated JobResponse jobs = 2;
+  string next_cursor = 3;
+  string trace_id = 4;
+}
+
+message JobMutationRequest {
+  string api_version = 1;
+  string idempotency_key = 2;
+  string job_id = 3;
+  string reason = 4;
+  string metadata_json = 5;
+}
+
+message ListJobEventsRequest {
+  string job_id = 1;
+  string api_version = 2;
+  int32 after_sequence = 3;
+  int32 limit = 4;
+}
+
+message ListJobEventsResponse {
+  string api_version = 1;
+  string job_id = 2;
+  repeated JobEvent events = 3;
+  string next_cursor = 4;
+  string trace_id = 5;
+}
+
+message JobResponse {
+  string api_version = 1;
+  string job_id = 2;
+  bool idempotent_replay = 3;
+  string status = 4;
+  string target = 5;
+  string result_json = 6;
+  string metadata_json = 7;
+  string trace_id = 8;
+  string events_url = 9;
+}
+
+message JobEvent {
+  string event_id = 1;
+  string job_id = 2;
+  string api_version = 3;
+  string type = 4;
+  string created_at = 5;
+  int32 sequence = 6;
+  string data_json = 7;
+  string trace_id = 8;
+}
+
+message ErrorResponse {
+  Error error = 1;
+}
+
+message Error {
+  string code = 1;
+  string category = 2;
+  string message = 3;
+  bool retryable = 4;
+  string doc_url = 5;
+  string trace_id = 6;
+  repeated FieldError field_errors = 7;
+}
+
+message FieldError {
+  string field = 1;
+  string reason = 2;
+}

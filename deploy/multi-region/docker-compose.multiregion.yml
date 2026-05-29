@@ -1,0 +1,261 @@
+# UBAG multi-region (enterprise profile) — 2-region active/active demonstration.
+#
+# This Compose file models TWO regions (a, b) on one host using separate
+# networks to illustrate the enterprise topology: per-region gateway + Postgres
+# + NATS + MinIO, a NATS supercluster across regions, and a global edge that
+# load-balances across both regional gateways.
+#
+# It is a TOPOLOGY DEMO. Production multi-region requires real infra:
+#   - geographically separate clusters/hosts
+#   - real DNS + GeoDNS / global load balancer
+#   - real TLS/mTLS certs (see deploy/mtls)
+#   - Postgres logical replication bootstrap (see README)
+#   - MinIO site replication bootstrap (see README)
+# Backing-service ports are NOT published; only the global edge is exposed,
+# bound to UBAG_EDGE_BIND_HOST (loopback by default).
+#
+# Validate:  docker compose -f deploy/multi-region/docker-compose.multiregion.yml --env-file deploy/multi-region/env.example config
+name: ubag-multiregion
+
+x-gateway-env: &gateway-env
+  UBAG_GATEWAY_ADDR: ":8080"
+  UBAG_APP_SECRET: ${UBAG_APP_SECRET:?Set UBAG_APP_SECRET in env.local}
+  UBAG_API_VERSION: ${UBAG_API_VERSION:-2026-05-22}
+  UBAG_GATEWAY_STORE: postgres
+  UBAG_EXECUTOR_MODE: nats
+  UBAG_ARTIFACT_STORE: minio
+  UBAG_NATS_STREAM: ${UBAG_NATS_STREAM:-UBAG_JOBS}
+  UBAG_NATS_SUBJECT: ${UBAG_NATS_SUBJECT:-ubag.jobs}
+  UBAG_MINIO_BUCKET: ${UBAG_MINIO_BUCKET:-ubag-artifacts}
+  UBAG_MINIO_USE_SSL: "false"
+
+services:
+  # ---------------- Global edge (active/active load balancer) ----------------
+  edge:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      gateway-a:
+        condition: service_healthy
+      gateway-b:
+        condition: service_healthy
+    ports:
+      - "${UBAG_EDGE_BIND_HOST:-127.0.0.1}:${UBAG_EDGE_HTTP_PORT:-8080}:80"
+      - "${UBAG_EDGE_BIND_HOST:-127.0.0.1}:${UBAG_EDGE_HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./caddy/Caddyfile.global:/etc/caddy/Caddyfile:ro
+      - edge_data:/data
+      - edge_config:/config
+    networks:
+      - public
+      - region-a
+      - region-b
+
+  # =============================== REGION A ===============================
+  gateway-a:
+    build:
+      context: ../..
+      dockerfile: deploy/small/gateway.Dockerfile
+    image: ${UBAG_GATEWAY_IMAGE:-ubag/gateway:multiregion-local}
+    restart: unless-stopped
+    environment:
+      <<: *gateway-env
+      UBAG_GATEWAY_VERSION: ${UBAG_GATEWAY_VERSION:-0.0.0-mr}-a
+      UBAG_POSTGRES_DSN: postgres://ubag:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres-a:5432/ubag?sslmode=disable
+      UBAG_NATS_URL: nats://nats-a:4222
+      UBAG_MINIO_ENDPOINT: minio-a:9000
+      UBAG_MINIO_ACCESS_KEY: ${UBAG_MINIO_ACCESS_KEY:?Set UBAG_MINIO_ACCESS_KEY}
+      UBAG_MINIO_SECRET_KEY: ${UBAG_MINIO_SECRET_KEY:?Set UBAG_MINIO_SECRET_KEY}
+      UBAG_REGION: region-a
+    depends_on:
+      postgres-a:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/v1/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - region-a
+
+  postgres-a:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_replication_slots=10"
+      - "-c"
+      - "max_wal_senders=10"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ubag}
+      POSTGRES_USER: ${POSTGRES_USER:-ubag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_a_data:/var/lib/postgresql/data
+      - ../../migrations/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - region-a
+
+  nats-a:
+    image: nats:2-alpine
+    restart: unless-stopped
+    command: ["-c", "/etc/nats/nats.conf"]
+    volumes:
+      - ./nats/nats-a.conf:/etc/nats/nats.conf:ro
+      - nats_a_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8222/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      region-a:
+      region-b:
+        aliases:
+          - nats-a
+
+  minio-a:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-ubag-root}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+      MINIO_SITE_NAME: region-a
+    volumes:
+      - minio_a_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      region-a:
+      region-b:
+        aliases:
+          - minio-a
+
+  # =============================== REGION B ===============================
+  gateway-b:
+    build:
+      context: ../..
+      dockerfile: deploy/small/gateway.Dockerfile
+    image: ${UBAG_GATEWAY_IMAGE:-ubag/gateway:multiregion-local}
+    restart: unless-stopped
+    environment:
+      <<: *gateway-env
+      UBAG_GATEWAY_VERSION: ${UBAG_GATEWAY_VERSION:-0.0.0-mr}-b
+      UBAG_POSTGRES_DSN: postgres://ubag:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres-b:5432/ubag?sslmode=disable
+      UBAG_NATS_URL: nats://nats-b:4222
+      UBAG_MINIO_ENDPOINT: minio-b:9000
+      UBAG_MINIO_ACCESS_KEY: ${UBAG_MINIO_ACCESS_KEY:?Set UBAG_MINIO_ACCESS_KEY}
+      UBAG_MINIO_SECRET_KEY: ${UBAG_MINIO_SECRET_KEY:?Set UBAG_MINIO_SECRET_KEY}
+      UBAG_REGION: region-b
+    depends_on:
+      postgres-b:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/v1/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - region-b
+
+  postgres-b:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=logical"
+      - "-c"
+      - "max_replication_slots=10"
+      - "-c"
+      - "max_wal_senders=10"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ubag}
+      POSTGRES_USER: ${POSTGRES_USER:-ubag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_b_data:/var/lib/postgresql/data
+      - ../../migrations/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - region-b
+
+  nats-b:
+    image: nats:2-alpine
+    restart: unless-stopped
+    command: ["-c", "/etc/nats/nats.conf"]
+    volumes:
+      - ./nats/nats-b.conf:/etc/nats/nats.conf:ro
+      - nats_b_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8222/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      region-b:
+      region-a:
+        aliases:
+          - nats-b
+
+  minio-b:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-ubag-root}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD}
+      MINIO_SITE_NAME: region-b
+    volumes:
+      - minio_b_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      region-b:
+      region-a:
+        aliases:
+          - minio-b
+
+networks:
+  public:
+  region-a:
+    internal: true
+  region-b:
+    internal: true
+
+volumes:
+  edge_data:
+  edge_config:
+  postgres_a_data:
+  postgres_b_data:
+  nats_a_data:
+  nats_b_data:
+  minio_a_data:
+  minio_b_data:

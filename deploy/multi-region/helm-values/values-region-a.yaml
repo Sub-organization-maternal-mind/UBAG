@@ -1,0 +1,31 @@
+# Helm values overlay for region A (enterprise multi-region).
+# Layer on top of values.yaml + values-production.yaml:
+#   helm upgrade --install ubag-a deploy/helm/ubag \
+#     -f deploy/helm/ubag/values-production.yaml \
+#     -f deploy/multi-region/helm-values/values-region-a.yaml \
+#     --kube-context region-a --namespace ubag --create-namespace
+
+podLabels:
+  region: region-a
+
+ingress:
+  enabled: true
+  hosts:
+    - host: a.ubag.example.com
+      paths:
+        - path: /v1/
+          pathType: Prefix
+  tls:
+    - secretName: ubag-tls-a
+      hosts:
+        - a.ubag.example.com
+
+config:
+  UBAG_REGION: "region-a"
+  # Point at region-local backing services (external managed endpoints).
+  UBAG_NATS_URL: "nats://nats.region-a.svc.cluster.local:4222"
+  UBAG_MINIO_ENDPOINT: "minio.region-a.svc.cluster.local:9000"
+
+secrets:
+  # Region-local Postgres DSN lives in this region's secret.
+  existingSecret: ubag-gateway-secrets-a

@@ -1,0 +1,118 @@
+# Production overrides for the UBAG Helm chart (standard / enterprise profile).
+#
+#   helm upgrade --install ubag deploy/helm/ubag \
+#     -f deploy/helm/ubag/values-production.yaml \
+#     --set secrets.existingSecret=ubag-gateway-secrets
+#
+# Secrets MUST come from an external Secret (secrets.existingSecret) or a
+# sealed-secrets / external-secrets operator. Do NOT inline real secrets here.
+
+replicaCount: 3
+
+image:
+  pullPolicy: IfNotPresent
+  # tag: "1.0.0"   # pin an immutable image tag per release
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 65
+  targetMemoryUtilizationPercentage: 75
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+
+pdb:
+  enabled: true
+  minAvailable: 2
+
+# Spread across zones for regional HA.
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels: {}
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels: {}
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "16m"
+  hosts:
+    - host: ubag.example.com
+      paths:
+        - path: /v1/
+          pathType: Prefix
+  tls:
+    - secretName: ubag-tls
+      hosts:
+        - ubag.example.com
+
+networkPolicy:
+  enabled: true
+  egressPorts:
+    - 5432
+    - 6379
+    - 4222
+    - 9000
+    - 443
+
+serviceMonitor:
+  enabled: true
+  interval: 15s
+  labels:
+    release: kube-prometheus-stack
+
+# All backing services are external managed services in production.
+postgres:
+  deploy: false
+dragonfly:
+  deploy: false
+nats:
+  deploy: false
+minio:
+  deploy: false
+
+config:
+  UBAG_GATEWAY_STORE: "postgres"
+  UBAG_ARTIFACT_STORE: "minio"
+  UBAG_EXECUTOR_MODE: "nats"
+  UBAG_WEBHOOK_OUTBOX: "postgres"
+  UBAG_WEBHOOK_WORKER_ENABLED: "true"
+  UBAG_MINIO_USE_SSL: "true"
+  UBAG_DATABASE_MAX_OPEN_CONNS: "25"
+  UBAG_DATABASE_MAX_IDLE_CONNS: "10"
+  # Restrict webhook egress to an explicit allowlist in production.
+  UBAG_WEBHOOK_ALLOWED_HOSTS: "hooks.example.com"
+  UBAG_WEBHOOK_ALLOW_ANY_PUBLIC_HOST: "false"
+
+secrets:
+  # Reference an externally-managed Secret holding the UBAG_* secret keys.
+  existingSecret: ubag-gateway-secrets

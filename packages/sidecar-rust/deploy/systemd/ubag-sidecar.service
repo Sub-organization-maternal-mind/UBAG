@@ -1,0 +1,35 @@
+[Unit]
+Description=UBAG Loopback Sidecar
+Documentation=https://github.com/ubag/ubag
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+# Environment file holds UBAG_* config (chmod 0600, root-owned).
+# The application secret (UBAG_APP_SECRET) is held in memory only and is
+# never written to disk by the sidecar itself.
+EnvironmentFile=@ENVFILE@
+ExecStart=@PREFIX@/bin/ubag-sidecar
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# Hardening — the sidecar only needs loopback networking.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

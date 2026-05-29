@@ -1,0 +1,38 @@
+{
+  admin localhost:2019
+}
+
+(ubag_security_headers) {
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer"
+    X-Frame-Options "DENY"
+  }
+}
+
+(ubag_api_routes) {
+  handle /healthz {
+    respond "ok" 200
+  }
+
+  handle /v1/metrics* {
+    respond "not found" 404
+  }
+
+  handle /v1/ready* {
+    respond "not found" 404
+  }
+
+  handle /v1/* {
+    reverse_proxy gateway:8080
+  }
+
+  respond "UBAG small ingress is running. API routes are available under /v1/*." 200
+}
+
+{$UBAG_PUBLIC_DOMAIN} {
+  encode zstd gzip
+  import ubag_security_headers
+  import ubag_api_routes
+}

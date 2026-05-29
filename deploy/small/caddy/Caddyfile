@@ -1,0 +1,42 @@
+{
+  auto_https off
+  admin localhost:2019
+}
+
+:80 {
+  encode zstd gzip
+
+  header {
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "no-referrer"
+    X-Frame-Options "DENY"
+  }
+
+  handle /healthz {
+    respond "ok" 200
+  }
+
+  handle /v1/metrics* {
+    respond "not found" 404
+  }
+
+  handle /v1/ready* {
+    respond "not found" 404
+  }
+
+  handle /v1/* {
+    reverse_proxy gateway:8080
+  }
+
+  handle /dashboard/* {
+    uri strip_prefix /dashboard
+    root * /srv/dashboard
+    file_server
+  }
+
+  handle / {
+    redir /dashboard/ permanent
+  }
+
+  respond "UBAG small ingress is running. API routes are available under /v1/*. Dashboard at /dashboard/." 200
+}

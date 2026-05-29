@@ -1,0 +1,31 @@
+UBAG gateway has been deployed.
+
+Release:   {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+Image:     {{ include "ubag.image" . }}
+API:       {{ .Values.config.UBAG_API_VERSION }}
+
+1. Check rollout status:
+   kubectl --namespace {{ .Release.Namespace }} rollout status deploy/{{ include "ubag.fullname" . }}
+
+2. Probe health (port-forward):
+   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "ubag.fullname" . }} 8080:{{ .Values.service.port }}
+   curl http://127.0.0.1:8080/v1/health
+   curl http://127.0.0.1:8080/v1/ready
+
+{{- if .Values.ingress.enabled }}
+
+3. Ingress hosts:
+{{- range .Values.ingress.hosts }}
+   https://{{ .host }}/v1/
+{{- end }}
+{{- end }}
+
+{{- if not .Values.secrets.existingSecret }}
+{{- if not .Values.secrets.UBAG_APP_SECRET }}
+
+WARNING: secrets.UBAG_APP_SECRET is empty and no existingSecret is set.
+The gateway will not start without UBAG_APP_SECRET. Provide secrets via
+secrets.existingSecret or --set, never commit real secrets.
+{{- end }}
+{{- end }}

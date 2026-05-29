@@ -1,0 +1,331 @@
+# UBAG Agent Handoff
+
+Last updated: 2026-05-29
+
+This is the resume point for any future agentic AI working in `D:\Projects\UBAG`.
+Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
+
+## Current Repository State
+
+- Working directory: `D:\Projects\UBAG`.
+- Git is initialized, but there is no first commit yet.
+- Current branch is `master`.
+- All implementation files are currently untracked until the first commit is made.
+- Preserve `AGENTS.md`, `design.md`, `.codex`, and all current workspace contents.
+- Do not run `git reset`, `git clean`, or destructive checkout commands unless the user explicitly asks.
+
+## Current Product Phase
+
+The repository has completed the docs-first Milestone 0 baseline and the v0 edge foundation slice.
+
+Current implemented or validateable scope:
+
+- Astro Starlight documentation site under `apps/docs`.
+- Root planning and tracking docs: `PRD.md`, `PROGRESS.md`, `IMPLEMENTATION_COVERAGE.md`, and this handoff.
+- OpenAPI, shared JSON Schemas, Protobuf seed contracts, SDK fixtures, and contract checks.
+- Conformance fixtures currently include 30 executable REST scenarios plus 12 named non-executable coverage scenarios.
+- Go gateway with `/v1` health, readiness, version, metrics, jobs, tenant/app-scoped cross-job events, SSE, WebSocket upgrade guard, workflows, built-in template catalog/application, targets/adapters, apps, devices, webhooks, cache status, audit, cancel, retry, stable errors, idempotency, idempotent artifact mutations, paginated operator collections, and app-secret auth.
+- Gateway-side executable payload safety checks, internal executor dispatch boundary, and optional embedded worker consumer/result ingestion for local file-spool and NATS JetStream leases.
+- Opt-in Postgres gateway stores for jobs, events, worker-event dedupe keys, and idempotency records via `UBAG_GATEWAY_STORE=postgres`.
+- Edge queue and SQLite/localfs-oriented storage contracts plus migrations and conformance checks; gateway runtime persistence is memory by default and Postgres/MinIO when configured.
+- Python worker, deterministic mock adapter, safe-mode provider manifests, manual-session events, artifact policies, and secret-material rejection.
+- Safe-mode adapter coverage for DeepSeek, ChatGPT, Claude, Gemini, Mistral, Perplexity, generic chat, generic form, and mock.
+- TypeScript, Python, and Go SDK wave with generated operation-level contract-manifest freshness checks for system, job, job-event, artifact list/upload/download/delete, operator collection, webhook replay, workflow/template list, cache, apps/devices/audit, metrics, and stream entrypoint endpoints.
+- TypeScript CLI with health/ready/version, diagnose, create/get/list/cancel/retry, event/artifact/operator/webhook/cache/metrics commands, SSE streaming, mock-run, and adapter-test coverage.
+- Loopback sidecar with `/health`, `/v1/*` proxy, mutating-route idempotency generation including artifact PUT/DELETE, and public-binding guard.
+- Static NAJM/Hallmark dashboard prototype under `apps/dashboard`; live gateway-wired full admin dashboard remains a contracted v1 surface.
+- Security/compliance contracts for app-secret auth, device tokens, RBAC/ABAC, audit redaction/chaining, webhook signing, and rate-limit decisions.
+- Observability package with metric, event, log, health-probe, and smoke-check registries.
+- Small deployment profile with Docker Compose, Caddy, Postgres, Dragonfly, MinIO, Prometheus/Grafana, and optional NATS.
+- NATS JetStream gateway dispatch and embedded durable worker consumption are implemented via `UBAG_EXECUTOR_MODE=nats`, `UBAG_NATS_URL`, `UBAG_NATS_STREAM`, `UBAG_NATS_SUBJECT`, and the `UBAG_NATS_WORKER_*` settings.
+- MinIO artifact storage is implemented via `UBAG_ARTIFACT_STORE=minio`, `UBAG_MINIO_ENDPOINT`, `UBAG_MINIO_ACCESS_KEY`, `UBAG_MINIO_SECRET_KEY`, `UBAG_MINIO_BUCKET`, and `UBAG_MINIO_USE_SSL`, with Postgres metadata in `migrations/postgres/0002_artifact_metadata.sql` when the gateway store is Postgres-backed.
+- Signed webhook outbox delivery is implemented via per-job callback config, `UBAG_WEBHOOK_OUTBOX`, Postgres migration `migrations/postgres/0003_webhook_outbox.sql`, HMAC signing secrets from environment, strict callback URL policy, and an opt-in retry worker controlled by `UBAG_WEBHOOK_WORKER_ENABLED`.
+- Built-in template catalog/runtime foundation is implemented in memory: `/v1/templates` lists built-ins, readiness verifies the template store, and job creation applies template defaults before payload policy validation, storage, idempotency hashing, and executor enqueue.
+- The latest gateway completion sweep hardened secret-like payload key detection, replaced the `/v1/events` placeholder with real scoped event listing, added collection pagination/AuthZ, required idempotency for artifact PUT/DELETE replay, aligned the Mistral adapter catalog key as `mistral_lechat`, and added proto/OpenAPI/schema lint command coverage.
+- The latest hardening pass closed repo-local audit gaps in template-default job creation, callback secret-reference handling, manual-session event data preservation, sidecar artifact idempotency, SDK/CLI endpoint parity, dashboard CSP/state coverage, small-profile public ingress guards, Postgres migration reruns, MinIO least-privilege bootstrap, optional TLS ingress, gateway graceful shutdown, observability readiness/smoke probes, contract drift, and docs claim accuracy.
+- The 2026-05-29 pass added a runtime SQLite/localfs persistence path and six enterprise leaf packages to the gateway, all code-complete and locally validated with green `go build`/`vet`/`test ./...` (gRPC + grpc-web were completed in a previous slice):
+  - Runtime stores: `UBAG_GATEWAY_STORE=sqlite` (WAL, `busy_timeout`, `foreign_keys`, single-writer), `UBAG_ARTIFACT_STORE=localfs` with `UBAG_ARTIFACT_DIR`, and a SQLite webhook outbox mode.
+  - `internal/ratelimit` (memory + SQLite + Postgres stores, policy resolver), `internal/responsecache` (memory + SQLite, never exposes cached payload values), `internal/workflow` (memory + SQLite multi-step runs with payload policy on every step input), `internal/sso` (stdlib OIDC RS256 + SAML verification, memory + SQLite config store), `internal/scim` (SCIM v2 Users/Groups CRUD+Patch, memory + SQLite, passwords never stored), and `internal/siem` (redacted audit/event export via File/HTTP/Syslog sinks with a non-blocking exporter).
+  - `internal/httpapi` wiring is nil-safe/optional so unconfigured subsystems leave existing behavior unchanged; new routes and RBAC actions are `GET /v1/cache` (`job:read`) and `DELETE /v1/cache` (`rate_limit:manage`), `GET /v1/rate-limits` (`rate_limit:manage`), `GET/POST /v1/workflows` + `POST /v1/workflows/{id}/runs` + `GET /v1/workflows/runs/{id}` (`job:read`/`job:create`), `GET/PUT /v1/sso/config` (`role:manage`) + `POST /v1/sso/oidc/callback` + `POST /v1/sso/saml/acs` (verification, no RBAC), `/v1/scim/v2/Users[/{id}]` and `/v1/scim/v2/Groups[/{id}]` (`role:manage`), `GET/PUT /v1/siem/config` (`role:manage`) + `POST /v1/audit/export` (`data:export`), `POST /v1/webhooks/secret:rotate` (`secret:rotate`), and a `withRateLimit` middleware that is pass-through when disabled.
+  - New env vars: `UBAG_RATE_LIMIT_ENABLED` (default false), `UBAG_CACHE_ENABLED` (default false), `UBAG_CACHE_TTL_MS`, `UBAG_SIEM_FILE_PATH`.
+  - Independent review PASSED with no Critical/High findings; two hardening fixes were applied (cache purge returns `501` when disabled; SSO config `PUT` rejects OIDC without an Issuer and SAML without an IdP certificate).
+  - Honest limitations: SSO callbacks verify a principal but do NOT yet mint gateway sessions; SAML verification is a pragmatic non-full-XML-C14N fails-closed check (adopt exclusive C14N before production IdP onboarding); only the rate limiter has a native Postgres store (cache/workflow/sso/scim/siem/webhook-secrets persist via SQLite or fall back to memory); `POST /v1/audit/export` returns exporter status/stats only because the audit record source is still a stub; non-TypeScript SDKs build/test in CI but are not all locally validated (C# validated 10/10, Swift Windows stdlib broken, cargo/mvn/ruby/php/gradle/mix absent locally).
+
+## Subagent Audit Closure
+
+The initial v0 baseline closed six parallel review workstreams. Later implementation slices added further parallel reviews for Postgres gateway stores, NATS/MinIO, NATS worker consumption, signed webhook outbox delivery, and the 2026-05-24 completion sweep. The detailed evidence chain and subagent counts are tracked in `PROGRESS.md`; this handoff records only the current resume state.
+
+## Latest Known Green Validation
+
+After the 2026-05-29 gateway runtime-stores and enterprise-surface pass, the following gateway validation was green on the Go 1.26 toolchain (all `apps/gateway` code-complete and locally validated):
+
+```powershell
+go build ./...
+go vet ./...
+go test ./...
+cmd /c pnpm test:plugins
+cmd /c pnpm test:adapter-registry
+cmd /c pnpm test:v0:local
+```
+
+`test:plugins` reports 20/20 and `test:adapter-registry` reports 16/16. The new SQLite/localfs runtime stores and the `ratelimit`/`responsecache`/`workflow`/`sso`/`scim`/`siem` packages each ship with passing Go package tests; live multi-process durability and Postgres-native stores for the non-rate-limiter subsystems remain follow-ups.
+
+After the 2026-05-25 continuation hardening pass, the following sequential validation passed:
+
+```powershell
+cmd /c pnpm install --frozen-lockfile
+cmd /c pnpm test:deployment
+cmd /c pnpm test:v0
+cmd /c pnpm check
+cmd /c pnpm --package=@redocly/cli dlx redocly lint packages/openapi/openapi.yaml
+git --no-pager diff --check
+```
+
+The following commands passed after the v0 implementation and subagent fix pass:
+
+```powershell
+cmd /c pnpm install --frozen-lockfile
+cmd /c pnpm test:v0
+cmd /c pnpm check
+cmd /c pnpm test:deployment
+cmd /c pnpm check:contracts
+cmd /c pnpm check:sdk-freshness
+cmd /c pnpm --package=@redocly/cli dlx redocly lint packages/openapi/openapi.yaml
+git diff --check
+```
+
+After the 2026-05-24 hardening pass, the following validation passed:
+
+```powershell
+cmd /c pnpm check:docs-responsive
+cmd /c pnpm test:dashboard
+cmd /c pnpm test:v0
+cmd /c pnpm check
+git diff --check
+```
+
+`cmd /c pnpm test:v0` passed after responsive verifiers were moved to OS-assigned local ports and page-readiness polling so concurrent or stale local preview servers no longer affect the checks.
+
+`cmd /c pnpm test:v0` includes schema, edge-store, security, worker, sidecar, SDK, conformance, observability, CLI, dashboard, deployment, docs, responsive docs, and gateway Go tests.
+
+SDK/conformance coverage currently validates 30 executable REST scenarios plus 12 named non-executable coverage scenarios, including executor dispatch, file-spool/NATS worker ingestion, and webhook outbox retry.
+
+After this handoff documentation was added, the following validation passed again:
+
+```powershell
+cmd /c pnpm test:v0
+cmd /c pnpm check
+cmd /c pnpm test:docs
+cmd /c pnpm --package=@redocly/cli dlx redocly lint packages/openapi/openapi.yaml
+git diff --check
+```
+
+After the gateway executor dispatch slice, the following validation passed:
+
+```powershell
+cmd /c pnpm check:contracts
+cmd /c pnpm test:observability
+cmd /c pnpm test:gateway
+cmd /c pnpm test:v0
+cmd /c pnpm check
+git diff --check
+```
+
+After the worker consumer/result-ingestion slice, the focused validation passed:
+
+```powershell
+cmd /c pnpm test:gateway
+cmd /c pnpm test:worker
+cmd /c pnpm test:observability
+```
+
+The full post-ingestion validation passed after rerunning `test:v0` and `check` sequentially so the docs responsive server had exclusive port ownership:
+
+```powershell
+cmd /c pnpm install --frozen-lockfile
+cmd /c pnpm check:contracts
+cmd /c pnpm test:conformance
+cmd /c pnpm test:deployment
+cmd /c pnpm test:docs
+cmd /c pnpm test:v0
+cmd /c pnpm check
+cmd /c pnpm --package=@redocly/cli dlx redocly lint packages/openapi/openapi.yaml
+git diff --check
+```
+
+After the Postgres gateway-store slice and review-blocker fix pass, the following validation passed:
+
+```powershell
+cmd /c pnpm install --frozen-lockfile
+cmd /c pnpm test:gateway
+cmd /c pnpm check:contracts
+cmd /c pnpm test:deployment
+cmd /c pnpm test:docs
+cmd /c pnpm test:v0
+cmd /c pnpm check
+cmd /c pnpm --package=@redocly/cli dlx redocly lint packages/openapi/openapi.yaml
+git diff --check
+```
+
+Postgres integration tests are env-gated by `UBAG_TEST_POSTGRES_DSN` and skip without a live disposable database.
+
+After the NATS JetStream executor and MinIO artifact-storage review-blocker fix pass, the following validation passed:
+
+```powershell
+cmd /c pnpm test:deployment
+cmd /c pnpm check:contracts
+cmd /c pnpm test:docs
+cmd /c pnpm check:docs-responsive
+cmd /c pnpm check:sdk-freshness
+cmd /c pnpm test:sdk
+cmd /c pnpm --package=@redocly/cli dlx redocly lint packages/openapi/openapi.yaml
+cmd /c pnpm test:v0
+cmd /c pnpm check
+git diff --check
+```
+
+NATS and MinIO live integration tests are env-gated by `UBAG_TEST_NATS_URL` and `UBAG_TEST_MINIO_ENDPOINT`.
+
+After the NATS worker-consumer slice, the following validation passed:
+
+```powershell
+cmd /c pnpm test:gateway
+cmd /c pnpm test:worker
+cmd /c pnpm test:deployment
+cmd /c pnpm test:conformance
+cmd /c pnpm check:contracts
+cmd /c pnpm check:sdk-freshness
+cmd /c pnpm test:docs
+cmd /c pnpm test:v0
+cmd /c pnpm check
+cmd /c pnpm --package=@redocly/cli dlx redocly lint packages/openapi/openapi.yaml
+git diff --check
+```
+
+`cmd /c pnpm test:v0` and `cmd /c pnpm check` were rerun sequentially after an intentional parallel validation attempt caused responsive-check server port contention.
+
+After the signed webhook outbox and retry-worker slice, the following validation passed:
+
+```powershell
+cmd /c pnpm test:gateway
+cmd /c pnpm test:deployment
+cmd /c pnpm test:conformance
+cmd /c pnpm test:observability
+cmd /c pnpm check:contracts
+cmd /c pnpm test:docs
+cmd /c pnpm test:v0
+cmd /c pnpm check
+cmd /c pnpm --package=@redocly/cli dlx redocly lint packages/openapi/openapi.yaml
+git diff --check
+```
+
+Runtime worker ingestion state after this slice:
+
+- Gateway executor mode defaults to `noop`.
+- Optional local dispatch is `UBAG_EXECUTOR_MODE=file` with `UBAG_EXECUTOR_SPOOL_DIR` pointing at ignored runtime storage such as `var/executor-spool`.
+- Optional durable dispatch is `UBAG_EXECUTOR_MODE=nats`; configure `UBAG_NATS_URL`, `UBAG_NATS_STREAM`, and `UBAG_NATS_SUBJECT`. When `UBAG_WORKER_CONSUMER_ENABLED=true`, the embedded worker consumer leases a durable JetStream pull consumer configured by `UBAG_NATS_WORKER_DURABLE`, `UBAG_NATS_WORKER_ACK_WAIT_MS`, `UBAG_NATS_WORKER_NAK_DELAY_MS`, `UBAG_NATS_WORKER_FETCH_WAIT_MS`, and `UBAG_NATS_WORKER_MAX_DELIVER`. Env-gated NATS integration tests use `UBAG_TEST_NATS_URL`.
+- Gateway rejects executable job payloads containing credentials, cookies, tokens, API keys, browser storage/session state, client-supplied noVNC URLs, private keys, MFA/TOTP material, or CAPTCHA-solving instructions before job storage or dispatch.
+- File-spool dispatch writes gateway-stamped envelopes under `pending/`; the embedded worker consumer can atomically lease them under `leased/`, invoke the Python worker, ingest gateway-sequenced worker events/results into job history, and finalize under `done/`, `failed/`, or `cancelled/`.
+- NATS dispatch publishes gateway-stamped envelopes to `<subject>.<jobID>` and cancellation notices to `<subject>.cancel.<jobID>`. The embedded NATS worker consumer filters `<subject>.*`, reconstructs execution envelopes from persisted jobs before invoking the Python worker, acknowledges only after durable terminal ingestion or synthetic retryable failure, nacks transient setup/store failures with delay, and terminates malformed or mismatched envelopes as poison messages.
+- Enable embedded ingestion with `UBAG_WORKER_CONSUMER_ENABLED=true`, `UBAG_WORKER_PYTHON`, `UBAG_WORKER_SCRIPT`, `UBAG_WORKER_POLL_INTERVAL_MS`, and `UBAG_WORKER_MAX_RUNTIME_MS`.
+- Gateway stores default to memory. Set `UBAG_GATEWAY_STORE=postgres` and `UBAG_POSTGRES_DSN` to persist gateway jobs, job events, worker-event dedupe keys, and idempotency records in Postgres. `migrations/postgres/0001_gateway_stores.sql` must be applied before `/v1/ready` can pass in Postgres mode. Readiness verifies `gateway_job_id_seq`, `gateway_jobs`, `gateway_job_events`, `gateway_job_worker_event_keys`, and `gateway_idempotency_records`. Set `UBAG_GATEWAY_STORE=sqlite` for a single-node SQLite runtime store (WAL, `busy_timeout`, `foreign_keys`, single-writer guard).
+- Artifact storage defaults to memory. Set `UBAG_ARTIFACT_STORE=minio` with `UBAG_MINIO_ENDPOINT`, `UBAG_MINIO_ACCESS_KEY`, `UBAG_MINIO_SECRET_KEY`, `UBAG_MINIO_BUCKET`, and `UBAG_MINIO_USE_SSL` to use MinIO/S3-compatible object storage. Set `UBAG_ARTIFACT_STORE=localfs` with `UBAG_ARTIFACT_DIR` for a local-filesystem artifact store. If Postgres gateway stores are active, apply `migrations/postgres/0002_artifact_metadata.sql`; readiness verifies `artifact_metadata`. Artifact list/get requires `job:read`, upload requires `artifact:write`, delete requires `artifact:delete`, and cross-tenant artifact access is hidden as not found through the owning job lookup. Env-gated MinIO tests use `UBAG_TEST_MINIO_ENDPOINT`, `UBAG_TEST_MINIO_ACCESS_KEY`, and `UBAG_TEST_MINIO_SECRET_KEY`.
+- Webhook delivery defaults to an in-memory outbox unless Postgres gateway stores are active. Set `UBAG_WEBHOOK_OUTBOX=postgres`, apply `migrations/postgres/0003_webhook_outbox.sql`, and enable `UBAG_WEBHOOK_WORKER_ENABLED=true` with `UBAG_WEBHOOK_SECRET` or per-secret environment variables for durable signed retries. A SQLite webhook outbox mode is also available for single-node deployments. Callback URLs require `callbacks.webhook_secret_id` when `callbacks.webhook_url` is set and are validated before job storage and before delivery; public hosts must match `UBAG_WEBHOOK_ALLOWED_HOSTS` unless `UBAG_WEBHOOK_ALLOW_ANY_PUBLIC_HOST=true` is explicitly enabled after outbound SSRF review, and unsafe private/local URLs, userinfo, fragments, and secret-looking query keys are rejected unless explicit operator policy allows them. Replay requires an existing tenant/app-scoped delivery ID, idempotency key, and audit reason.
+- API-facing job reads return `404` for out-of-scope tenant/app jobs to avoid cross-tenant job existence leaks.
+
+Runtime probe evidence from the latest full run:
+
+- Gateway health URL: `http://127.0.0.1:8080/v1/health`.
+- Docs site URL: `http://127.0.0.1:4321/`.
+- Dashboard URL: `http://127.0.0.1:4177/`.
+- Health status: `ok`.
+- API version: `2026-05-22`.
+- Readiness status: `ready`.
+- Created probe job: `job_000000000001`.
+- Event count: `1`.
+- SSE contained queued event: `true`.
+- Metrics included HTTP request and SSE current gauges: `true`.
+- Docs and dashboard returned HTTP 200 with expected titles.
+
+## Resume Procedure
+
+Start every continuation with this exact sequence:
+
+```powershell
+git status --short --branch
+cmd /c pnpm install --frozen-lockfile
+cmd /c pnpm test:v0
+cmd /c pnpm check
+git diff --check
+```
+
+Use `cmd /c pnpm ...` on Windows if PowerShell script policy blocks direct `pnpm` execution.
+
+If you need local manual inspection, use these services:
+
+```powershell
+cmd /c pnpm docs:dev
+cmd /c pnpm --filter @ubag/dashboard dev --host 127.0.0.1 --port 4177
+```
+
+For the gateway edge runtime:
+
+```powershell
+$env:UBAG_APP_SECRET="dev-secret"
+$env:UBAG_API_VERSION="2026-05-22"
+$env:UBAG_GATEWAY_ADDR="127.0.0.1:8080"
+make dev-edge
+```
+
+## Critical Invariants
+
+- API version is `2026-05-22`.
+- App-secret auth binds to the configured tenant/app/role principal; do not trust caller-supplied actor headers as identity.
+- Mutating routes require an `Idempotency-Key`; CLI/sidecar may auto-generate one when acting as local clients.
+- Artifact PUT/DELETE are mutating routes and require an `Idempotency-Key`; PUT replay returns stored artifact metadata and DELETE replay returns `204`.
+- Payloads must not include credentials, cookies, tokens, API keys, secrets, session/browser storage, or CAPTCHA-solving material, including compact key variants such as `apiKeyValue` and `client_secret_value`.
+- Gateway-side payload safety checks must run before job storage or executor dispatch.
+- Browser automation remains user-owned manual login through live browser/noVNC sessions.
+- noVNC URLs must be generated by the runtime and stay loopback/operator-scoped; do not accept arbitrary noVNC URLs from job payloads.
+- Safe mode is the default automation stance.
+- Standard privacy mode is the current default; HIPAA/GDPR modes require later activation evidence.
+- Caddy admin must remain localhost-bound.
+- `deploy/small/small.ps1 -Action config` must render from `env.example` unless `-AllowSecretConfigOutput` is explicitly provided.
+- Do not expose backing service ports publicly without an explicit firewall and deployment review.
+
+## External Activation Items
+
+These are not missing repository work; they require facts or services outside this checkout.
+
+| Item | Required External Input |
+| --- | --- |
+| Live AI provider execution | User-owned accounts, manual browser login, active sessions, and provider-specific consent. |
+| Small-profile runtime smoke | Docker Desktop Linux engine or an equivalent Docker host. |
+| Production deployment | Host, DNS, TLS, secrets, firewall policy, and explicit operator approval. |
+| Live webhook endpoint smoke | Real callback targets, outbound allowlist, shared signing secrets, and a disposable network path. |
+| HIPAA/GDPR modes | Legal/compliance review, BAAs/DPAs where needed, deployed evidence, and operator policy choices. |
+| Marketplace/app distribution | Publishing accounts, release credentials, and governance approval. |
+
+## Next Coding Queue
+
+Pick up from these implementation tracks after preserving the current green baseline:
+
+1. Commit the current green baseline when the user approves.
+2. Convert safe-mode provider stubs into live manual-session browser adapters after user-owned account/session requirements are available; acceptance requires manual-session consent, no credential/session/token storage, no CAPTCHA bypass, runtime-generated noVNC URLs only, adapter allowlisting, tenant/app scoping, audit events, and artifact redaction.
+3. Mint real gateway sessions from the verified SSO principal returned by `/v1/sso/oidc/callback` and `/v1/sso/saml/acs`; acceptance requires session binding to the configured tenant/app/role principal, idempotency, audit events, and no credential/session storage.
+4. Replace the pragmatic SAML check with exclusive XML-C14N signature verification before onboarding a production IdP; keep the current fails-closed behavior as the fallback.
+5. Add native Postgres stores for the cache, workflow, SSO, SCIM, SIEM, and webhook-secret subsystems (currently SQLite or in-memory) so Postgres deployments do not silently fall back.
+6. Wire `POST /v1/audit/export` to a real audit record source so it exports records rather than only exporter status/stats.
+7. Expand workflow/cache execution and the template runtime beyond the current built-in/single-step foundation; acceptance requires idempotency, tenant/app scope, payload policy reuse, secret rejection, audit events, retention controls, and privacy-mode cache bypasses.
+8. Locally validate the non-TypeScript SDKs (rust/java/ruby/php/csharp/swift/kotlin/elixir) once their toolchains are available; C# is validated 10/10 and the Swift Windows stdlib is currently broken.
+9. Broaden SDK conformance beyond REST fixtures where runtime services exist, including event streaming and live binary artifact smoke before new transports are claimed.
+10. Add CI after the repository has an initial commit and remote policy is known.
+
+## Documentation Update Rule
+
+Whenever implementation changes, update these files in the same slice:
+
+- `PROGRESS.md` for current status, validation evidence, and resume notes.
+- `IMPLEMENTATION_COVERAGE.md` for A-Z coverage state.
+- `apps/docs/src/content/docs/implementation-coverage.md` for rendered docs coverage.
+- This `AGENT_HANDOFF.md` when the resume procedure, validation evidence, runtime state, or remaining coding queue changes.

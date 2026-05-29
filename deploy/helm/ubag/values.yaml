@@ -1,0 +1,238 @@
+# Default values for the UBAG Helm chart.
+# This is a YAML-formatted file. Values map to the UBAG_* environment variables
+# documented in deploy/small/env.example. Secrets default to empty and MUST be
+# supplied per-environment (values-production.yaml, --set, or an existing
+# Secret). Backing service ports are never exposed publicly by this chart.
+
+# -- Number of gateway replicas (ignored when autoscaling.enabled=true).
+replicaCount: 2
+
+image:
+  # -- Gateway image repository.
+  repository: ubag/gateway
+  # -- Image tag. Empty string falls back to .Chart.appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # -- Create a dedicated ServiceAccount.
+  create: true
+  # -- Annotations (e.g. IRSA / Workload Identity role bindings).
+  annotations: {}
+  # -- Name override; generated from the release name when empty.
+  name: ""
+  automountServiceAccountToken: false
+
+podAnnotations:
+  # Scrape via annotations is optional; ServiceMonitor is preferred.
+  prometheus.io/scrape: "false"
+podLabels: {}
+
+# -- Pod-level security context (non-root, no privilege escalation).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+# -- Container-level security context (read-only rootfs, drop all caps).
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 80
+  # -- Container port the gateway listens on (matches UBAG_GATEWAY_ADDR).
+  targetPort: 8080
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    # nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+  hosts:
+    - host: ubag.example.com
+      paths:
+        - path: /v1/
+          pathType: Prefix
+  tls: []
+    # - secretName: ubag-tls
+    #   hosts:
+    #     - ubag.example.com
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  # Optional stabilization to avoid flapping; passed through verbatim.
+  behavior: {}
+
+pdb:
+  # -- PodDisruptionBudget for voluntary-disruption safety.
+  enabled: true
+  minAvailable: 1
+  # maxUnavailable: 1   # mutually exclusive with minAvailable
+
+# -- Liveness/readiness/startup probes (paths confirmed against the gateway).
+probes:
+  liveness:
+    path: /v1/health
+    initialDelaySeconds: 5
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    path: /v1/ready
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  startup:
+    path: /v1/health
+    periodSeconds: 5
+    failureThreshold: 30
+
+nodeSelector: {}
+tolerations: []
+# Spread replicas across nodes/zones for HA by default.
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels: {}   # filled in by the template with the selector labels
+affinity: {}
+priorityClassName: ""
+terminationGracePeriodSeconds: 30
+
+networkPolicy:
+  # -- Restrict ingress to the gateway port and egress to backing services + DNS.
+  enabled: true
+  # Extra ingress sources (e.g. ingress-controller namespace selector).
+  ingressNamespaceSelector: {}
+  # Allow gateway egress to these TCP ports (Postgres, Dragonfly, NATS, MinIO, HTTPS, DNS).
+  egressPorts:
+    - 5432
+    - 6379
+    - 4222
+    - 9000
+    - 443
+  # DNS egress (kube-dns) is always allowed when enabled.
+
+serviceMonitor:
+  # -- Create a Prometheus Operator ServiceMonitor scraping /v1/metrics.
+  enabled: false
+  # Namespace/labels must match the Prometheus Operator's serviceMonitorSelector.
+  namespace: ""
+  labels: {}
+  interval: 15s
+  scrapeTimeout: 10s
+  path: /v1/metrics
+  scheme: http
+  honorLabels: false
+
+# ---------------------------------------------------------------------------
+# Gateway configuration -> rendered into a ConfigMap (non-secret UBAG_* env).
+# Mirrors deploy/small/env.example. Adjust per environment.
+# ---------------------------------------------------------------------------
+config:
+  UBAG_GATEWAY_ADDR: ":8080"
+  UBAG_API_VERSION: "2026-05-22"
+  UBAG_GATEWAY_VERSION: "0.0.0-small"
+  UBAG_BUILD_COMMIT: "local"
+  UBAG_GATEWAY_STORE: "postgres"
+  UBAG_IDEMPOTENCY_TTL_HOURS: "24"
+  UBAG_DATABASE_MAX_OPEN_CONNS: "10"
+  UBAG_DATABASE_MAX_IDLE_CONNS: "5"
+  UBAG_DATABASE_CONN_MAX_LIFETIME_SECONDS: "300"
+  UBAG_EXECUTOR_MODE: "nats"
+  UBAG_EXECUTOR_SPOOL_DIR: "/var/lib/ubag/executor-spool"
+  UBAG_NATS_URL: "nats://ubag-nats:4222"
+  UBAG_NATS_STREAM: "UBAG_JOBS"
+  UBAG_NATS_SUBJECT: "ubag.jobs"
+  UBAG_NATS_WORKER_DURABLE: "ubag-worker"
+  UBAG_NATS_WORKER_ACK_WAIT_MS: "35000"
+  UBAG_NATS_WORKER_NAK_DELAY_MS: "1000"
+  UBAG_NATS_WORKER_FETCH_WAIT_MS: "500"
+  UBAG_NATS_WORKER_MAX_DELIVER: "5"
+  UBAG_ARTIFACT_STORE: "minio"
+  UBAG_MINIO_ENDPOINT: "ubag-minio:9000"
+  UBAG_MINIO_BUCKET: "ubag-artifacts"
+  UBAG_MINIO_USE_SSL: "false"
+  UBAG_WORKER_CONSUMER_ENABLED: "false"
+  UBAG_WORKER_PYTHON: "/usr/bin/python3"
+  UBAG_WORKER_SCRIPT: "/app/apps/worker/run_mock_worker.py"
+  UBAG_WORKER_POLL_INTERVAL_MS: "500"
+  UBAG_WORKER_MAX_RUNTIME_MS: "30000"
+  UBAG_WEBHOOK_OUTBOX: "postgres"
+  UBAG_WEBHOOK_WORKER_ENABLED: "false"
+  UBAG_WEBHOOK_SECRET_ENV_PREFIX: "UBAG_WEBHOOK_SECRET_"
+  UBAG_WEBHOOK_MAX_ATTEMPTS: "8"
+  UBAG_WEBHOOK_POLL_INTERVAL_MS: "1000"
+  UBAG_WEBHOOK_BATCH_SIZE: "10"
+  UBAG_WEBHOOK_LEASE_MS: "30000"
+  UBAG_WEBHOOK_REQUEST_TIMEOUT_MS: "10000"
+  UBAG_WEBHOOK_RETRY_BASE_MS: "1000"
+  UBAG_WEBHOOK_RETRY_MAX_MS: "300000"
+  UBAG_WEBHOOK_MAX_RESPONSE_BYTES: "8192"
+  UBAG_WEBHOOK_WORKER_ID: "gateway-webhook-worker"
+  UBAG_WEBHOOK_ALLOW_INSECURE_HTTP: "false"
+  UBAG_WEBHOOK_ALLOW_PRIVATE_HOSTS: "false"
+  UBAG_WEBHOOK_ALLOWED_HOSTS: ""
+  UBAG_WEBHOOK_ALLOW_ANY_PUBLIC_HOST: "false"
+
+# -- Extra non-secret env entries (list of {name,value} or {name,valueFrom}).
+extraEnv: []
+
+# ---------------------------------------------------------------------------
+# Secrets -> rendered into a Secret (UBAG_* secret env). Keep these EMPTY in
+# version control. Provide via values-production overrides, --set, a CI secret
+# store, or set secrets.existingSecret to consume an externally-managed Secret.
+# ---------------------------------------------------------------------------
+secrets:
+  # Name of a pre-existing Secret containing the UBAG_* secret keys. When set,
+  # the chart does NOT create/manage a Secret and the values below are ignored.
+  existingSecret: ""
+  # Created only when existingSecret is empty.
+  UBAG_APP_SECRET: ""
+  UBAG_POSTGRES_DSN: ""
+  UBAG_MINIO_ACCESS_KEY: ""
+  UBAG_MINIO_SECRET_KEY: ""
+  UBAG_WEBHOOK_SECRET: ""
+
+# ---------------------------------------------------------------------------
+# Backing services. Default: external (deploy=false). Connection details are
+# supplied through config.* (non-secret) and secrets.* (DSN/keys). The toggles
+# below are wired to the commented subchart dependencies in Chart.yaml.
+# ---------------------------------------------------------------------------
+postgres:
+  deploy: false   # set true + uncomment dependency to run bitnami/postgresql
+dragonfly:
+  deploy: false   # external Dragonfly/Redis-compatible endpoint by default
+nats:
+  deploy: false   # set true + uncomment dependency to run nats subchart
+minio:
+  deploy: false   # set true + uncomment dependency to run bitnami/minio
