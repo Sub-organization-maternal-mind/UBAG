@@ -28,6 +28,14 @@ const manualActionEventType = "session.manual_action_required"
 // into its read-only ConcurrencyRegistry so /v1/concurrency reflects live state.
 const concurrencyChangeEventType = "concurrency.cap_changed"
 
+// topologyReportEventType is the worker event that reports a live
+// browser→context→tab topology snapshot for a job. The worker owns the live
+// Fleet; the gateway projects the snapshot into an in-memory topology store
+// (when configured) so /v1/browser/* reflects live state for the default
+// embedded deployment. SQLite/Postgres topology stores are written by the
+// worker out-of-band and ignore this event.
+const topologyReportEventType = "browser.topology_reported"
+
 const (
 	defaultWorkerPollInterval = 500 * time.Millisecond
 	defaultWorkerMaxRuntime   = 30 * time.Second
@@ -44,6 +52,7 @@ type WorkerConsumer struct {
 	TerminalNotifier TerminalJobNotifier
 	Alerts           *alerts.Manager
 	Concurrency      *topology.ConcurrencyRegistry
+	Topology         topology.TopologyIngestor
 	PollInterval     time.Duration
 }
 
@@ -238,6 +247,13 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			c.recordConcurrencyChange(job, normalized)
 			continue
 		}
+		// browser.topology_reported is orchestration telemetry: project the
+		// snapshot into the in-memory topology store (when configured) and skip
+		// job-event application so the unknown type never poisons the job.
+		if normalized.Type == topologyReportEventType {
+			c.recordTopologyReport(job, normalized)
+			continue
+		}
 		if _, found, err := c.Jobs.ApplyWorkerEvent(ctx, normalized); err != nil {
 			if applyErr := c.applyFailure(ctx, lease, envelope, err); applyErr != nil {
 				_ = lease.Retry(ctx)
@@ -341,6 +357,71 @@ func (c *WorkerConsumer) recordConcurrencyChange(job jobstore.Job, event jobstor
 		LastChangeAt:     event.CreatedAt,
 	}
 	c.Concurrency.Report(job.TenantID, view)
+}
+
+// recordTopologyReport projects a worker-reported browser→context→tab snapshot
+// into the in-memory topology store so /v1/browser/* reflects live state for the
+// default embedded deployment. It is best-effort and nil-safe: a nil ingestor or
+// malformed payload never interrupts ingestion. Tenant identity is always taken
+// from the job (never the worker payload) to enforce tenant isolation, and
+// storage-state material is never present (only the HasStorageState boolean).
+func (c *WorkerConsumer) recordTopologyReport(job jobstore.Job, event jobstore.WorkerEvent) {
+	if c == nil || c.Topology == nil || event.Type != topologyReportEventType {
+		return
+	}
+	createdAt := event.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	}
+
+	var instances []topology.BrowserInstance
+	if decodeEventList(event.Data, "instances", &instances) {
+		for i := range instances {
+			instances[i].TenantID = job.TenantID
+			instances[i].CreatedAt = createdAt
+			c.Topology.AddInstance(instances[i])
+		}
+	}
+
+	var contexts []topology.ProviderContext
+	if decodeEventList(event.Data, "contexts", &contexts) {
+		for i := range contexts {
+			contexts[i].TenantID = job.TenantID
+			contexts[i].CreatedAt = createdAt
+			// Defensive: telemetry never carries storage-state material.
+			contexts[i].HasStorageState = false
+			c.Topology.AddContext(contexts[i])
+		}
+	}
+
+	var tabs []topology.BrowserTab
+	if decodeEventList(event.Data, "tabs", &tabs) {
+		for i := range tabs {
+			tabs[i].CreatedAt = createdAt
+			c.Topology.AddTab(tabs[i])
+		}
+	}
+}
+
+// decodeEventList re-marshals a nested worker-event list field and unmarshals it
+// into the typed topology slice (whose JSON tags match the worker payload keys).
+// Returns false on any error so a malformed field is silently skipped.
+func decodeEventList(data map[string]any, key string, out any) bool {
+	if data == nil {
+		return false
+	}
+	raw, ok := data[key]
+	if !ok {
+		return false
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return false
+	}
+	if err := json.Unmarshal(encoded, out); err != nil {
+		return false
+	}
+	return true
 }
 
 func manualActionKind(reason string) string {

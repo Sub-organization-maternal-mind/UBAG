@@ -535,3 +535,28 @@ git diff --check
 ```
 
 Next coding queue is documented in `AGENT_HANDOFF.md`. Update this ledger and the handoff file whenever implementation scope, validation evidence, runtime status, or remaining work changes.
+
+### 2026-06-01 — Worker runtime orchestration integration (Option A, full)
+
+The v2.1 multi-tab/concurrency/cross-engine orchestration algorithms (Fleet, ChannelPool, AIMD, WeightedScheduler, topology) were previously a unit-tested library not wired into the live runtime. This pass performs the full, backward-compatible integration so the live worker path can emit adaptive-concurrency and browser-topology telemetry, and the gateway projects topology snapshots into its in-memory topology store.
+
+Completed and locally validated (additive, opt-in, default path byte-identical):
+
+- **Engine selection wired into the driver (`apps/worker/ubag_worker/live/page_driver.py`).** `PlaywrightPageDriver(engine_spec=None)` plus a pure, unit-testable `_resolve_launch_plan(engine_spec, headless) -> _LaunchPlan(browser_type_name, remote_endpoint, headless)` helper. `create_default_driver` now resolves `engine_spec_from_env()`; default env (`chromium`/local/headless) yields unchanged behavior. Firefox/WebKit/BiDi/remote-endpoint/headed variants are honored. Playwright calls remain `pragma: no cover`.
+- **New `apps/worker/ubag_worker/live/orchestrator.py`.** `LiveOrchestrator` composes a `Fleet` and per-`(tenant, provider, identity)` `ChannelPool` with a **persistent** AIMD controller (survives leases within a process), thread-safe with an injectable clock. `lease(...) -> LiveLease(pool, tab, context, result)`; `record_outcome(lease, success, signal) -> Optional[CapChange]`; `concurrency_state(lease)`; `topology_snapshot(tenant_id=None) -> {"instances", "contexts", "tabs"}`. Snapshots never include a storage-state URI (boolean only).
+- **`LiveSessionEngine` routing (`apps/worker/ubag_worker/live/engine.py`).** `__init__` gains optional `orchestrator=None`. When set, a job leases a tab from the orchestrator and the engine emits `browser.topology_reported` (canonical position after `running`/before token events) and, on an AIMD `CapChange`, a `concurrency.cap_changed` trailer. The manual-login-blocked path returns before leasing (no topology/concurrency events). With `orchestrator=None`, output is byte-identical to the legacy path, so all pre-existing worker tests stay green.
+- **Gateway topology ingestion (`apps/gateway/internal/executor/workerconsumer.go`).** New const `browser.topology_reported`; optional nil-safe `Topology topology.TopologyIngestor` field (interface `AddInstance`/`AddContext`/`AddTab`, satisfied by `*topology.MemoryStore`). `RunOnce` intercepts the event and `continue`s before `ApplyWorkerEvent` (poison-safe). The consumer **forces** `TenantID = job.TenantID` on instances/contexts (tenant isolation) and `HasStorageState = false` on contexts, ignoring any worker-supplied values. Wired in `main.go` only when the default topology store is `*MemoryStore`; SQLite/Postgres topology stores yield a `nil` ingestor and are untouched (matches the "worker writes tables, gateway reads" doc contract — event ingestion is an in-memory-only convenience).
+
+Tests added (all green):
+
+- Worker `apps/worker/tests/test_live_orchestration.py` — 21 tests: launch-plan resolution (7), `LiveOrchestrator` lease/outcome/AIMD-persistence/tenant-isolation/storage-state-redaction/concurrency-state/injected-Fleet (8), and `LiveSessionEngine`-with-orchestrator event emission incl. drift cap-change trailer and manual-login no-lease (6).
+- Gateway `apps/gateway/internal/executor/workerconsumer_test.go` — `TestWorkerConsumerProjectsTopologyReport` (projects instance/context/tab, overrides spoofed tenant + `has_storage_state`, job still completes) and `TestWorkerConsumerTopologyRecordingIsNilSafe` (no ingestor configured → event dropped, job processes).
+
+Validation (all exit 0):
+
+- `node tools/run-go-tests.mjs apps/gateway` — all packages green (executor re-ran with new tests).
+- `node tools/run-python-worker-tests.mjs` — 143 tests (122 legacy + 21 new) + 5 + smoke, true `EXIT=0`.
+- `cmd /c pnpm check` — green.
+- `cmd /c pnpm test:v0` — green (includes the gateway Go suite).
+
+Honest limitations (unchanged, ToS-bound): the **live real-browser provider path cannot be CI-validated** — ToS forbids automated real-provider runs and the live path requires a real browser with manual human login. All new wiring is validated exclusively via offline/mock drivers, fakes, and unit/structure tests, **not** live provider runs. The gateway topology-event ingestion is in-memory-only by design; durable topology persistence remains the documented worker-writes-tables path.

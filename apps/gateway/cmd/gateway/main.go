@@ -138,7 +138,7 @@ func run(ctx context.Context) error {
 	})
 
 	if workerConsumerEnabled() {
-		consumer, err := newWorkerConsumerFromEnv(dispatcher, jobs, webhookOutbox, enterprise.alerts, enterprise.concurrency)
+		consumer, err := newWorkerConsumerFromEnv(dispatcher, jobs, webhookOutbox, enterprise.alerts, enterprise.concurrency, enterprise.topology)
 		if err != nil {
 			return fmt.Errorf("invalid worker consumer configuration: %w", err)
 		}
@@ -758,7 +758,7 @@ func workerConsumerEnabled() bool {
 	return value == "1" || value == "true" || value == "yes"
 }
 
-func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Store, notifier executor.TerminalJobNotifier, alertsMgr *alerts.Manager, concurrency *topology.ConcurrencyRegistry) (*executor.WorkerConsumer, error) {
+func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Store, notifier executor.TerminalJobNotifier, alertsMgr *alerts.Manager, concurrency *topology.ConcurrencyRegistry, topologyStore topology.Store) (*executor.WorkerConsumer, error) {
 	pollInterval, err := durationFromMillisEnv("UBAG_WORKER_POLL_INTERVAL_MS", 500*time.Millisecond)
 	if err != nil {
 		return nil, err
@@ -779,12 +779,17 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 	if err != nil {
 		return nil, err
 	}
+	// Only the in-memory topology store accepts worker-reported topology
+	// snapshots; SQLite/Postgres stores are populated by the worker out-of-band
+	// and the type assertion intentionally yields a nil ingestor for them.
+	topologyIngestor, _ := topologyStore.(topology.TopologyIngestor)
 	return &executor.WorkerConsumer{
 		Queue:            queue,
 		Jobs:             jobs,
 		TerminalNotifier: notifier,
 		Alerts:           alertsMgr,
 		Concurrency:      concurrency,
+		Topology:         topologyIngestor,
 		PollInterval:     pollInterval,
 		Runner: executor.ProcessWorkerRunner{
 			Python:     python,

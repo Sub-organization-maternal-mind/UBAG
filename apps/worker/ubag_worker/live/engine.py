@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any, Iterator, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Iterator, List, Mapping, Optional
 
 from .events import JsonObject, canonical_json, digest, worker_event
 from .page_driver import (
@@ -35,8 +35,17 @@ from .selectors import ProviderSelectors
 # same disallowed credential/cookie/token material as the registry & mock paths.
 from ..adapter_registry import _contains_disallowed_secret_material  # noqa: E402
 
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .orchestrator import LiveOrchestrator
+
 _DEFAULT_MANUAL_LOGIN_TIMEOUT_S = 300.0
 _DEFAULT_RESPONSE_TIMEOUT_S = 120.0
+
+# Telemetry event types appended additively when an orchestrator is wired in.
+# The gateway worker-consumer intercepts both BEFORE applying the canonical
+# event-stream state machine, so they never poison a job.
+_CONCURRENCY_CHANGE_EVENT_TYPE = "concurrency.cap_changed"
+_TOPOLOGY_REPORT_EVENT_TYPE = "browser.topology_reported"
 
 
 class LiveSessionError(ValueError):
@@ -52,10 +61,15 @@ class LiveSessionEngine:
         *,
         manual_login_timeout_s: float = _DEFAULT_MANUAL_LOGIN_TIMEOUT_S,
         response_timeout_s: float = _DEFAULT_RESPONSE_TIMEOUT_S,
+        orchestrator: "Optional[LiveOrchestrator]" = None,
     ) -> None:
         self._selectors = selectors
         self._manual_login_timeout_s = manual_login_timeout_s
         self._response_timeout_s = response_timeout_s
+        # Optional process-level orchestrator (Fleet + ChannelPool + AIMD). When
+        # ``None`` (the default) the engine behaves byte-for-byte as before and
+        # emits only the canonical event stream — every existing test stays green.
+        self._orchestrator = orchestrator
 
     # -- public API ------------------------------------------------------
     def run(self, payload: Mapping[str, Any], *, driver: Optional[PageDriver] = None) -> List[JsonObject]:
@@ -77,6 +91,13 @@ class LiveSessionEngine:
         owns_driver = driver is None
         if driver is None:
             driver = create_default_driver(job.options)
+
+        # Orchestration state (only used when an orchestrator was injected). The
+        # lease is acquired *after* authentication so a manual-login block never
+        # consumes a tab. ``orch_success``/``orch_signal`` drive the AIMD outcome.
+        orch_lease = None
+        orch_success = True
+        orch_signal = None
 
         sequence = 1
 
@@ -161,6 +182,17 @@ class LiveSessionEngine:
                 "message": "user-owned session is authenticated",
             })
 
+            # Acquire an orchestration lease (Fleet context + ChannelPool tab)
+            # for this job, then report the live browser→context→tab topology.
+            if self._orchestrator is not None:
+                orch_lease = self._orchestrator.lease(
+                    tenant_id=job.tenant_id,
+                    provider_id=self._selectors.provider_id,
+                    identity_ref=job.account_binding_id,
+                    job_id=job.job_id,
+                    conversation_id=job.conversation_id,
+                )
+
             yield emit("running", {
                 "status": "running",
                 "target": job.target,
@@ -168,6 +200,18 @@ class LiveSessionEngine:
                 "command_type": job.command_type,
                 "selector_version": self._selectors.selector_version,
             })
+
+            if self._orchestrator is not None and orch_lease is not None:
+                snapshot = self._orchestrator.topology_snapshot(job.tenant_id)
+                yield emit(_TOPOLOGY_REPORT_EVENT_TYPE, {
+                    "status": "topology_reported",
+                    "target": job.target,
+                    "adapter": self._selectors.provider_id,
+                    "tenant_id": job.tenant_id,
+                    "instances": snapshot["instances"],
+                    "contexts": snapshot["contexts"],
+                    "tabs": snapshot["tabs"],
+                })
 
             driver.submit_prompt(self._selectors, job.prompt)
 
@@ -199,6 +243,10 @@ class LiveSessionEngine:
             })
 
         except DriftDetectedError as exc:
+            # Selector drift is an adverse runtime signal — feed AIMD so the
+            # ceiling backs off for the next job of this provider+identity.
+            orch_success = False
+            orch_signal = _drift_negative_signal()
             screenshot = None
             try:
                 screenshot = driver.capture_screenshot(
@@ -222,6 +270,28 @@ class LiveSessionEngine:
                 ),
             })
         finally:
+            # Release the orchestration lease and surface any AIMD cap change as
+            # a trailing ``concurrency.cap_changed`` telemetry event. Computed
+            # before release so ``in_flight`` reflects this job's busy tab.
+            if self._orchestrator is not None and orch_lease is not None:
+                state = self._orchestrator.concurrency_state(orch_lease)
+                change = self._orchestrator.record_outcome(
+                    orch_lease, success=orch_success, signal=orch_signal
+                )
+                if change is not None:
+                    from ..orchestration.telemetry import concurrency_change_data
+
+                    yield emit(
+                        _CONCURRENCY_CHANGE_EVENT_TYPE,
+                        concurrency_change_data(
+                            target=job.target,
+                            identity_ref=job.account_binding_id,
+                            change=change,
+                            minimum=state.minimum,
+                            maximum=state.maximum,
+                            in_flight=state.in_flight,
+                        ),
+                    )
             if owns_driver:
                 try:
                     driver.close()
@@ -246,6 +316,8 @@ class _NormalizedJob:
         "automation_scope",
         "manual_login_timeout_s",
         "response_timeout_s",
+        "tenant_id",
+        "conversation_id",
     )
 
     def __init__(self, **kwargs: Any) -> None:
@@ -277,6 +349,19 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
     user_data_dir = _resolve_user_data_dir(options, context, target)
     headless = bool(options.get("headless", False))
 
+    account_binding_id = _clean_text(context.get("account_binding_id"), "unbound")
+    tenant_id = _string_or_default(
+        context.get("tenant_id")
+        or job_payload.get("tenant_id")
+        or payload.get("tenant_id"),
+        "default",
+    )
+    conversation_id = _optional_string(
+        input_payload.get("conversation_id")
+        or options.get("conversation_id")
+        or job_payload.get("conversation_id")
+    )
+
     return _NormalizedJob(
         api_version=api_version,
         job_id=job_id,
@@ -288,7 +373,7 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
         user_data_dir=user_data_dir,
         headless=headless,
         session_id=session_id,
-        account_binding_id=_clean_text(context.get("account_binding_id"), "unbound"),
+        account_binding_id=account_binding_id,
         consent_ref=_clean_text(context.get("consent_ref"), "unspecified"),
         automation_scope=_clean_scope(context.get("automation_scope")),
         manual_login_timeout_s=_float_or_default(
@@ -297,6 +382,8 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
         response_timeout_s=_float_or_default(
             options.get("response_timeout_s"), _DEFAULT_RESPONSE_TIMEOUT_S
         ),
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
     )
 
 
@@ -392,6 +479,20 @@ def _clean_text(value: Any, default: str) -> str:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return default
+
+
+def _optional_string(value: Any) -> Optional[str]:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _drift_negative_signal():
+    """Map selector drift to an AIMD negative signal (lazy import)."""
+
+    from ..orchestration.aimd import NegativeSignal
+
+    return NegativeSignal.ERROR_RATE_SPIKE
 
 
 def _clean_scope(value: Any) -> List[str]:

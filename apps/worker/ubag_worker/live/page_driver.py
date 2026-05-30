@@ -35,6 +35,15 @@ LOGIN_REQUIRED = "login_required"
 UNKNOWN = "unknown"
 
 
+@dataclass(frozen=True)
+class _LaunchPlan:
+    """Resolved, Playwright-agnostic browser launch parameters."""
+
+    browser_type_name: str
+    remote_endpoint: Optional[str]
+    headless: bool
+
+
 class ManualLoginTimeout(RuntimeError):
     """Raised when a user-owned session is not authenticated within the window."""
 
@@ -218,13 +227,54 @@ class PlaywrightPageDriver(PageDriver):
         *,
         login_poll_interval_s: float = 2.0,
         response_settle_s: float = 1.0,
+        engine_spec: Optional[object] = None,
     ) -> None:
         self._login_poll_interval_s = login_poll_interval_s
         self._response_settle_s = response_settle_s
+        # Optional config-driven engine selection (§13.10/§13.11). Duck-typed to
+        # avoid importing ``ubag_worker.live.engines`` here (engines imports this
+        # module). Only ``.kind.value``, ``.is_remote`` and ``.headed`` are read.
+        self._engine_spec = engine_spec
         self._playwright = None
         self._context = None
         self._page = None
         self._artifacts_dir: Optional[str] = None
+
+    @staticmethod
+    def _resolve_launch_plan(
+        engine_spec: Optional[object], headless: bool
+    ) -> "_LaunchPlan":
+        """Resolve the concrete launch parameters from an optional engine spec.
+
+        Pure (no Playwright, no I/O) so it is fully unit-testable offline. The
+        default (``engine_spec is None``) yields the historical behavior: a local
+        Chromium persistent context honoring the per-job ``headless`` flag. A
+        config-driven spec selects the Playwright browser-type name, forces a
+        headed launch when requested, and surfaces a remote-grid endpoint so the
+        driver attaches over CDP/BiDi instead of launching locally (§13.11).
+        """
+
+        browser_type_name = "chromium"
+        remote_endpoint: Optional[str] = None
+        effective_headless = headless
+
+        if engine_spec is not None:
+            kind = getattr(engine_spec, "kind", None)
+            kind_value = getattr(kind, "value", None)
+            # "bidi" (vendor-neutral) launches via chromium locally; remote BiDi
+            # targets are handled through the remote endpoint below.
+            if kind_value in ("firefox", "webkit", "chromium"):
+                browser_type_name = kind_value
+            if getattr(engine_spec, "is_remote", False):
+                remote_endpoint = getattr(engine_spec, "remote_endpoint", None) or None
+            if getattr(engine_spec, "headed", False):
+                effective_headless = False
+
+        return _LaunchPlan(
+            browser_type_name=browser_type_name,
+            remote_endpoint=remote_endpoint,
+            headless=effective_headless,
+        )
 
     # -- lifecycle -------------------------------------------------------
     def open(self, *, target_url: str, user_data_dir: str, headless: bool) -> None:
@@ -243,13 +293,22 @@ class PlaywrightPageDriver(PageDriver):
                 "UBAG never stores credentials or cookies"
             )
 
+        plan = self._resolve_launch_plan(self._engine_spec, headless)
         self._playwright = sync_playwright().start()
-        # User-owned persistent context. We do NOT inject storage_state, cookies,
-        # or credentials - authentication lives entirely in the user profile.
-        self._context = self._playwright.chromium.launch_persistent_context(
-            user_data_dir=user_data_dir,
-            headless=headless,
-        )
+        browser_type = getattr(self._playwright, plan.browser_type_name)
+        if plan.remote_endpoint:  # pragma: no cover - requires a remote grid
+            # Remote browser grid (§13.11): attach over CDP/BiDi. No credential,
+            # cookie, or storage-state material is ever sent to the endpoint.
+            browser = browser_type.connect(plan.remote_endpoint)
+            self._context = browser.new_context()
+        else:
+            # User-owned persistent context. We do NOT inject storage_state,
+            # cookies, or credentials - authentication lives entirely in the
+            # user profile.
+            self._context = browser_type.launch_persistent_context(
+                user_data_dir=user_data_dir,
+                headless=plan.headless,
+            )
         self._page = (
             self._context.pages[0]
             if self._context.pages
@@ -416,7 +475,12 @@ def create_default_driver(options: Optional[Mapping[str, object]] = None) -> Pag
                 else None
             ),
         )
-    return PlaywrightPageDriver()
+    # Config-driven engine selection (§13.10/§13.11). Imported lazily to avoid a
+    # circular import (``engines`` imports this module). With no engine env vars
+    # set this resolves to a local Chromium spec, preserving historical behavior.
+    from .engines import engine_spec_from_env
+
+    return PlaywrightPageDriver(engine_spec=engine_spec_from_env())
 
 
 __all__ = [

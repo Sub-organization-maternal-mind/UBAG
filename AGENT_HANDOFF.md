@@ -1,6 +1,6 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-05-30
+Last updated: 2026-06-01
 
 This is the resume point for any future agentic AI working in `D:\Projects\UBAG`.
 Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
@@ -56,6 +56,17 @@ Current implemented or validateable scope:
 The initial v0 baseline closed six parallel review workstreams. Later implementation slices added further parallel reviews for Postgres gateway stores, NATS/MinIO, NATS worker consumption, signed webhook outbox delivery, and the 2026-05-24 completion sweep. The detailed evidence chain and subagent counts are tracked in `PROGRESS.md`; this handoff records only the current resume state.
 
 ## Latest Known Green Validation
+
+After the 2026-06-01 worker runtime orchestration integration (Option A, full), the following validation was green (all exit 0):
+
+```powershell
+node tools/run-go-tests.mjs apps/gateway        # all packages ok (executor re-ran with new topology tests)
+node tools/run-python-worker-tests.mjs          # 143 tests (122 legacy + 21 new) + 5 + smoke, EXIT=0
+cmd /c pnpm check
+cmd /c pnpm test:v0
+```
+
+The live worker now optionally routes jobs through `LiveOrchestrator` (Fleet + per-(tenant,provider,identity) ChannelPool with persistent AIMD) and emits `browser.topology_reported` + `concurrency.cap_changed`; the gateway `WorkerConsumer` projects topology snapshots into its in-memory `topology.MemoryStore` (tenant-forced, storage-state redacted, poison-safe intercept). The integration is opt-in (`orchestrator=None` and a nil `Topology` ingestor keep the legacy path byte-identical), so all pre-existing tests stay green. The live real-browser provider path is still ToS-bound and cannot be CI-validated; all new wiring is validated via offline/mock drivers, fakes, and unit/structure tests only.
 
 After the 2026-05-29 gateway runtime-stores and enterprise-surface pass, the following gateway validation was green on the Go 1.26 toolchain (all `apps/gateway` code-complete and locally validated):
 
@@ -322,6 +333,7 @@ Pick up from these implementation tracks after preserving the current green base
 10. DONE (v2.1): Worker-side `ConcurrencyRegistry.Report` is wired to AIMD cap-change events. The worker emits `concurrency.cap_changed` telemetry (`orchestration/telemetry.py`); the gateway intercepts it in the `WorkerConsumer` ingest loop and routes it to `topology.ConcurrencyRegistry.Report`, so `/v1/concurrency` reflects live worker-reported lane concurrency. Covered by gateway and worker unit tests.
 11. Add CI after remote policy is known. The repository now has a baseline commit (`0364595`, v0 platform) and a v2.1 delta commit (`85d6eb0`); neither is pushed. Postgres round-trip tests can run in CI via `pnpm test:gateway:postgres` (needs `UBAG_TEST_POSTGRES_DSN`; see `docs/postgres-roundtrip-tests.md`).
 12. Onboard real live providers using `live_web_template(...)` / `generic_live_web` and `apps/worker/ubag_worker/live/ONBOARDING.md`; activation still requires user-owned provider accounts and manual login.
+13. DONE (2026-06-01): Worker runtime orchestration integration (Option A, full). `LiveSessionEngine` accepts an optional `LiveOrchestrator` (`apps/worker/ubag_worker/live/orchestrator.py`) that wires Fleet/ChannelPool/persistent-AIMD/topology into the live path and emits `browser.topology_reported` + `concurrency.cap_changed`; `create_default_driver` now honors `engine_spec_from_env()` via the pure `_resolve_launch_plan` helper. The gateway `WorkerConsumer` projects topology snapshots into its in-memory topology store (tenant-forced, storage-state redacted, nil-safe). Opt-in/backward-compatible. Covered by `apps/worker/tests/test_live_orchestration.py` (21) and gateway `workerconsumer_test.go` topology tests. Live real-browser runs remain externally-blocked (ToS).
 
 ## Documentation Update Rule
 

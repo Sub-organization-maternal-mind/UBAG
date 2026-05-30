@@ -3,11 +3,19 @@ title: A-Z Implementation Coverage
 description: Exact implementation coverage for the UBAG blueprint, with local evidence and external activation requirements.
 ---
 
-Last updated: 2026-05-29
+Last updated: 2026-06-01
 
 This ledger maps the UBAG A-Z plan to the current repository implementation. It is intentionally evidence-based: a row is marked **implemented** only when code, docs, configuration, and a validation command exist in this repo.
 
 For future agentic AI continuation, read the root `AGENT_HANDOFF.md` first, then `PROGRESS.md`, then this page. The rendered handoff is also available at `operations/agent-handoff`.
+
+## 2026-06-01 Worker Runtime Orchestration Integration
+
+The v2.1 orchestration algorithms (Fleet, ChannelPool, AIMD, WeightedScheduler, topology) are now wired into the live worker runtime in a fully backward-compatible, opt-in way. `LiveSessionEngine` accepts an optional `LiveOrchestrator` (`apps/worker/ubag_worker/live/orchestrator.py`) that leases tabs from a Fleet + per-`(tenant, provider, identity)` ChannelPool with a persistent AIMD controller, and emits `browser.topology_reported` (canonical position) plus `concurrency.cap_changed` (on an AIMD cap change). `create_default_driver` now honors `engine_spec_from_env()` through a pure, unit-tested `_resolve_launch_plan` helper (default `chromium`/local/headless unchanged; firefox/webkit/bidi/remote/headed honored). The gateway `WorkerConsumer` intercepts `browser.topology_reported` and projects instances/contexts/tabs into its in-memory `topology.MemoryStore`, forcing `TenantID = job.TenantID` and `HasStorageState = false` (poison-safe, nil-safe; SQLite/Postgres topology stores yield a nil ingestor and are untouched). With `orchestrator=None` and no `Topology` ingestor, the legacy path is byte-identical, so all pre-existing tests stay green.
+
+Validation (all exit 0): `node tools/run-go-tests.mjs apps/gateway`; `node tools/run-python-worker-tests.mjs` (143 tests = 122 legacy + 21 new, plus smoke); `cmd /c pnpm check`; `cmd /c pnpm test:v0`. New tests: `apps/worker/tests/test_live_orchestration.py` (21) and gateway `internal/executor/workerconsumer_test.go` topology projection + nil-safety tests.
+
+Honest limitation (ToS-bound, unchanged): the live real-browser provider path cannot be CI-validated — automated real-provider runs are prohibited and the live path requires a real browser with manual human login. All new wiring is validated via offline/mock drivers, fakes, and unit/structure tests only. Gateway topology-event ingestion is in-memory-only by design (the durable path remains worker-writes-tables).
 
 ## 2026-05-29 Gateway Runtime + Enterprise Surface Update
 
@@ -23,10 +31,10 @@ New, code-complete & locally validated:
 
 Honest limitations / externally-blocked:
 
-- SSO OIDC/SAML callbacks return a verified principal but do not yet mint real gateway sessions (follow-up).
-- SAML signature verification is a pragmatic non-full-XML-C14N fails-closed check; adopt exclusive C14N before production IdP onboarding.
-- Only the rate limiter has a native Postgres store; cache/workflow/sso/scim/siem/webhook-secrets persist via SQLite or fall back to in-memory.
-- `POST /v1/audit/export` returns exporter status/stats only; full record export is a follow-up (audit record source is still a stub).
+- SSO OIDC/SAML callbacks mint a revocable, server-side gateway session (memory/SQLite/Postgres `gateway_sessions`), validated per request and revoked on `POST /v1/sso/logout`.
+- SAML signature verification uses Exclusive XML Canonicalization (`http://www.w3.org/2001/10/xml-exc-c14n#`, `internal/sso/canonicalize.go`) and fails closed.
+- Native Postgres stores exist for rate-limiter, response cache, workflow, SSO config, SCIM, sessions, audit, alerts, and topology; in-memory remains an opt-in fallback.
+- `POST /v1/audit/export` streams the persisted Merkle-chained audit records (`records[]`, `head_hash`, `count`) with a `chain_valid` integrity proof.
 - Non-TypeScript SDKs (rust/java/ruby/php/csharp/swift/kotlin/elixir) build/test in CI but are not all locally validated (C# 10/10, Swift Windows stdlib broken, cargo/mvn/ruby/php/gradle/mix absent locally).
 - Live provider adapters remain externally-blocked.
 
@@ -57,7 +65,7 @@ Honest limitations / externally-blocked:
 | Small deployment profile | Implemented | `docker-compose.small.yml`, `deploy/small`, Caddy/Postgres/Dragonfly/MinIO/Grafana/Prometheus/NATS optional profiles, opt-in Postgres gateway store environment, NATS dispatcher env, MinIO artifact env with least-privilege `minio-init`, webhook worker env, rerunnable Postgres `migrate` action, optional Caddy TLS example, and Postgres migrations `0001`, `0002`, and `0003`. |
 | Release/governance/runbook docs | Implemented | Release governance, operator runbook, observability, testing, and compliance docs in `apps/docs`. |
 | v1 real provider runtime | Contracted | Provider adapter manifests and safe-mode packages exist. Live browser automation requires user-owned accounts and manual noVNC/browser session runtime activation. |
-| v2 enterprise/ecosystem | Contracted | Architecture, deployment, plugin, governance, security, and compliance docs exist; the gateway also ships code-complete & locally validated enterprise leaf packages for rate limiting, response cache, workflow runs, SSO (OIDC/SAML verification), SCIM v2, and SIEM export (see the 2026-05-29 update). Production enterprise integrations still require deployment environment and identity provider activation, and SSO session minting, native Postgres stores for non-rate-limiter subsystems, and a real audit-export source remain follow-ups. |
+| v2 enterprise/ecosystem | Contracted | Architecture, deployment, plugin, governance, security, and compliance docs exist; the gateway also ships code-complete & locally validated enterprise leaf packages for rate limiting, response cache, workflow runs, SSO (OIDC/SAML verification with revocable session minting), SCIM v2, and SIEM export (see the 2026-05-29 update). SSO session minting, native Postgres stores for non-rate-limiter subsystems, and the Merkle-chained audit-export source are now implemented; production enterprise integrations still require deployment environment and identity provider activation. |
 
 ## Detailed Blueprint Feature Map
 
@@ -75,7 +83,7 @@ Honest limitations / externally-blocked:
 | API versioning | Implemented | `contracts/api-protocols`, `UBAG_DEFAULT_API_VERSION`, OpenAPI headers. |
 | Edge/ingress | Implemented | Caddy small profile, gateway health/readiness routes. |
 | API gateway | Implemented | `apps/gateway`, OpenAPI `/v1` surface. |
-| AuthN/AuthZ | Implemented | App-secret gateway auth plus security package contracts; `internal/sso` adds stdlib OIDC (RS256) and SAML assertion verification with principal mapping via `/v1/sso/*` (code-complete & locally validated; gateway session minting is a follow-up). |
+| AuthN/AuthZ | Implemented | App-secret gateway auth plus security package contracts; `internal/sso` adds stdlib OIDC (RS256) and SAML assertion verification (Exclusive C14N) with principal mapping via `/v1/sso/*`, minting revocable server-side sessions (`gateway_sessions`) that are validated per request and revoked on `POST /v1/sso/logout`. |
 | Tenant registry | Contracted | Tenant headers and security model docs; live tenant DB requires deployment activation. |
 | Command validator | Implemented | Gateway create-job validation plus shared schemas. |
 | Job orchestrator | Implemented | In-memory v0 job lifecycle, opt-in Postgres job/event store, cancel, retry, scoped job and cross-job events, SSE, internal executor dispatch with no-op default plus optional file spool, atomic file-spool leases, terminal finalization, and worker result ingestion. |

@@ -328,6 +328,172 @@ func TestWorkerConsumerConcurrencyRecordingIsNilSafe(t *testing.T) {
 	}
 }
 
+func TestWorkerConsumerProjectsTopologyReport(t *testing.T) {
+	store := jobstore.NewMemoryStore()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	job, err := store.Create(context.Background(), jobstore.CreateRequest{
+		APIVersion:     "2026-05-22",
+		TenantID:       "tenant_a",
+		AppID:          "app_a",
+		IdempotencyKey: "idem_topology",
+		Target:         "chatgpt_web",
+		CommandType:    "submit",
+		Input:          map[string]any{"prompt": "hello"},
+		TraceID:        "trace_topology",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+		t.Fatalf("EnqueueJob returned error: %v", err)
+	}
+
+	topoStore := topology.NewMemoryStore()
+	consumer := WorkerConsumer{
+		Spool:    dispatcher,
+		Jobs:     store,
+		Topology: topoStore,
+		Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			return []jobstore.WorkerEvent{
+				{EventID: "worker_evt_topo", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "browser.topology_reported", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{
+					"tenant_id": "spoofed_tenant",
+					"instances": []any{map[string]any{
+						"instance_id":   "br_0001",
+						"worker_id":     "worker-1",
+						"engine":        "chromium",
+						"state":         "active",
+						"context_count": float64(1),
+						"tab_count":     float64(1),
+						// Worker-supplied tenant must be overridden by the job tenant.
+						"tenant_id": "spoofed_tenant",
+					}},
+					"contexts": []any{map[string]any{
+						"context_id":         "ctx_0001",
+						"instance_id":        "br_0001",
+						"target_id":          "chatgpt_web",
+						"identity_ref":       "acct-1",
+						"login_state":        "authenticated",
+						"conversation_model": "url",
+						"max_tabs":           float64(4),
+						// Even if a worker lied, storage-state must be forced false.
+						"has_storage_state": true,
+					}},
+					"tabs": []any{map[string]any{
+						"tab_id":         "tab_0001",
+						"context_id":     "ctx_0001",
+						"state":          "busy",
+						"conversation_id": "conv_1",
+						"current_job_id":  envelope.JobID,
+						"jobs_completed":  float64(0),
+					}},
+				}},
+				{EventID: "worker_evt_done", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 2, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}},
+			}, nil
+		}),
+	}
+
+	processed, err := consumer.RunOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+
+	instances, err := topoStore.ListInstances(context.Background(), topology.InstanceFilter{TenantID: "tenant_a"})
+	if err != nil {
+		t.Fatalf("ListInstances returned error: %v", err)
+	}
+	if len(instances) != 1 {
+		t.Fatalf("expected 1 instance, got %d", len(instances))
+	}
+	if instances[0].InstanceID != "br_0001" || instances[0].Engine != "chromium" {
+		t.Fatalf("instance not projected: %+v", instances[0])
+	}
+	if instances[0].TenantID != "tenant_a" {
+		t.Fatalf("instance tenant = %q, want tenant_a (job tenant wins)", instances[0].TenantID)
+	}
+
+	contexts, err := topoStore.ListContexts(context.Background(), topology.ContextFilter{TenantID: "tenant_a"})
+	if err != nil {
+		t.Fatalf("ListContexts returned error: %v", err)
+	}
+	if len(contexts) != 1 {
+		t.Fatalf("expected 1 context, got %d", len(contexts))
+	}
+	if contexts[0].HasStorageState {
+		t.Fatalf("storage-state material must never be projected: %+v", contexts[0])
+	}
+	if contexts[0].IdentityRef != "acct-1" || contexts[0].TargetID != "chatgpt_web" {
+		t.Fatalf("context not projected: %+v", contexts[0])
+	}
+
+	tabs, err := topoStore.ListTabs(context.Background(), topology.TabFilter{TenantID: "tenant_a"})
+	if err != nil {
+		t.Fatalf("ListTabs returned error: %v", err)
+	}
+	if len(tabs) != 1 {
+		t.Fatalf("expected 1 tab, got %d", len(tabs))
+	}
+	if tabs[0].TabID != "tab_0001" || tabs[0].State != "busy" {
+		t.Fatalf("tab not projected: %+v", tabs[0])
+	}
+
+	// Tenant isolation: a different tenant sees nothing.
+	other, _ := topoStore.ListInstances(context.Background(), topology.InstanceFilter{TenantID: "spoofed_tenant"})
+	if len(other) != 0 {
+		t.Fatalf("tenant isolation breached: %+v", other)
+	}
+
+	// The terminal job lease must still complete (topology event is intercepted,
+	// never forwarded to ApplyWorkerEvent).
+	finished, found, err := store.Get(context.Background(), job.ID)
+	if err != nil || !found {
+		t.Fatalf("Get found=%v err=%v", found, err)
+	}
+	if finished.Status != jobstore.StatusCompleted {
+		t.Fatalf("job status = %q, want %q", finished.Status, jobstore.StatusCompleted)
+	}
+}
+
+func TestWorkerConsumerTopologyRecordingIsNilSafe(t *testing.T) {
+	store := jobstore.NewMemoryStore()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	job, err := store.Create(context.Background(), jobstore.CreateRequest{
+		APIVersion:     "2026-05-22",
+		TenantID:       "tenant_a",
+		AppID:          "app_a",
+		IdempotencyKey: "idem_topology_nilsafe",
+		Target:         "chatgpt_web",
+		CommandType:    "submit",
+		Input:          map[string]any{"prompt": "hello"},
+		TraceID:        "trace_topology_nilsafe",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+		t.Fatalf("EnqueueJob returned error: %v", err)
+	}
+
+	// No Topology ingestor configured (SQLite/Postgres deployment): the event is
+	// silently dropped without interrupting ingestion or the job lease.
+	consumer := WorkerConsumer{
+		Spool: dispatcher,
+		Jobs:  store,
+		Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			return []jobstore.WorkerEvent{
+				{EventID: "worker_evt_topo", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "browser.topology_reported", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{
+					"instances": []any{map[string]any{"instance_id": "br_0001", "engine": "chromium", "state": "active"}},
+				}},
+				{EventID: "worker_evt_done", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 2, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}},
+			}, nil
+		}),
+	}
+
+	processed, err := consumer.RunOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+}
+
 func TestWorkerConsumerManualActionAlertIsNilSafe(t *testing.T) {
 	store := jobstore.NewMemoryStore()
 	dispatcher := NewFileSpoolDispatcher(t.TempDir())
