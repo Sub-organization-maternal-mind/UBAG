@@ -197,6 +197,57 @@ async function invokeScenario(client, scenario) {
   if (request.method === 'POST' && route === '/v1/webhooks/replay') {
     return client.replayWebhookDelivery(resolveSdkPlaceholders(request.body ?? {}), options);
   }
+  if (request.method === 'GET' && route === '/v1/alerts') {
+    return client.listAlerts({
+      limit: parsed.searchParams.get('limit') === null ? undefined : Number(parsed.searchParams.get('limit')),
+      status: parsed.searchParams.get('status') ?? undefined
+    }, options);
+  }
+  if (request.method === 'GET' && route === '/v1/alerts/config') {
+    return client.getAlertConfig(options);
+  }
+  if (request.method === 'POST' && route.startsWith('/v1/alerts/') && route.endsWith('/acknowledge')) {
+    const alertId = route.slice('/v1/alerts/'.length, -'/acknowledge'.length);
+    return client.acknowledgeAlert(alertId, resolveSdkPlaceholders(request.body ?? {}), options);
+  }
+  if (request.method === 'POST' && route.startsWith('/v1/alerts/') && route.endsWith('/resolve')) {
+    const alertId = route.slice('/v1/alerts/'.length, -'/resolve'.length);
+    return client.resolveAlert(alertId, resolveSdkPlaceholders(request.body ?? {}), options);
+  }
+  if (request.method === 'GET' && route === '/v1/browser/instances') {
+    return client.listBrowserInstances({
+      limit: parsed.searchParams.get('limit') === null ? undefined : Number(parsed.searchParams.get('limit')),
+      state: parsed.searchParams.get('state') ?? undefined
+    }, options);
+  }
+  if (request.method === 'GET' && route === '/v1/browser/contexts') {
+    return client.listProviderContexts({
+      limit: parsed.searchParams.get('limit') === null ? undefined : Number(parsed.searchParams.get('limit')),
+      instance_id: parsed.searchParams.get('instance_id') ?? undefined
+    }, options);
+  }
+  if (request.method === 'GET' && route === '/v1/browser/tabs') {
+    return client.listBrowserTabs({
+      limit: parsed.searchParams.get('limit') === null ? undefined : Number(parsed.searchParams.get('limit')),
+      context_id: parsed.searchParams.get('context_id') ?? undefined,
+      state: parsed.searchParams.get('state') ?? undefined
+    }, options);
+  }
+  if (request.method === 'GET' && route === '/v1/browser/summary') {
+    return client.getBrowserTopologySummary(options);
+  }
+  if (request.method === 'GET' && route === '/v1/concurrency') {
+    return client.getConcurrency({
+      cursor: parsed.searchParams.get('cursor') ?? undefined,
+      limit: parsed.searchParams.get('limit') === null ? undefined : Number(parsed.searchParams.get('limit'))
+    }, options);
+  }
+  if (request.method === 'POST' && route === '/v1/sso/logout') {
+    return client.ssoLogout(resolveSdkPlaceholders(request.body ?? {}), options);
+  }
+  if (request.method === 'POST' && route === '/v1/audit/export') {
+    return client.exportAudit(resolveSdkPlaceholders(request.body ?? {}), options);
+  }
 
   throw new Error(`No SDK mapping for ${request.method} ${request.path}`);
 }

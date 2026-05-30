@@ -3,8 +3,18 @@ import {
   UBAG_DEFAULT_API_VERSION,
   UBAG_SDK_NAME,
   UBAG_SDK_VERSION,
+  type UbagAlertConfig,
+  type UbagAlertActionRequest,
+  type UbagAlertListResponse,
+  type UbagAlertMutationResponse,
+  type UbagAuditExportRequest,
+  type UbagAuditExportResult,
+  type UbagBrowserInstanceListResponse,
+  type UbagBrowserTabListResponse,
+  type UbagBrowserTopologySummary,
   type UbagCacheStatusResponse,
   type UbagCollectionResponse,
+  type UbagConcurrencyListResponse,
   type UbagCreateJobRequest,
   type UbagArtifactDownloadResponse,
   type UbagArtifactListResponse,
@@ -14,11 +24,19 @@ import {
   type UbagJobMutationRequest,
   type UbagJobResponse,
   type UbagJsonObject,
+  type UbagListAlertsParams,
+  type UbagListBrowserInstancesParams,
+  type UbagListBrowserTabsParams,
+  type UbagListConcurrencyParams,
   type UbagListEventsParams,
   type UbagListJobEventsParams,
   type UbagListJobsParams,
   type UbagListJobsResponse,
+  type UbagListProviderContextsParams,
+  type UbagLogoutResult,
+  type UbagProviderContextListResponse,
   type UbagReadyResponse,
+  type UbagSsoLogoutRequest,
   type UbagVersionResponse,
   type UbagWebhookReplayRequest,
   type UbagWebhookReplayResponse
@@ -223,6 +241,135 @@ export class UbagClient {
 
   async cacheStatus(options: UbagRequestOptions = {}): Promise<UbagCacheStatusResponse> {
     return this.request("GET", "/v1/cache", options);
+  }
+
+  async listAlerts(params: UbagListAlertsParams = {}, options: UbagRequestOptions = {}): Promise<UbagAlertListResponse> {
+    const query = new URLSearchParams();
+    addOptionalQuery(query, "limit", params.limit);
+    addOptionalQuery(query, "status", params.status);
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request("GET", `/v1/alerts${suffix}`, options);
+  }
+
+  async getAlertConfig(options: UbagRequestOptions = {}): Promise<UbagAlertConfig> {
+    return this.request("GET", "/v1/alerts/config", options);
+  }
+
+  async acknowledgeAlert(
+    alertId: string,
+    request: UbagAlertActionRequest = {},
+    options: UbagRequestOptions = {}
+  ): Promise<UbagAlertMutationResponse> {
+    const apiVersion = request.api_version ?? options.apiVersion ?? this.apiVersion;
+    const idempotencyKey = request.idempotency_key ?? options.idempotencyKey ?? generateIdempotencyKey();
+    return this.request("POST", `/v1/alerts/${encodeURIComponent(alertId)}/acknowledge`, {
+      ...options,
+      apiVersion,
+      idempotencyKey,
+      body: {
+        ...request,
+        api_version: apiVersion,
+        idempotency_key: idempotencyKey
+      }
+    });
+  }
+
+  async resolveAlert(
+    alertId: string,
+    request: UbagAlertActionRequest = {},
+    options: UbagRequestOptions = {}
+  ): Promise<UbagAlertMutationResponse> {
+    const apiVersion = request.api_version ?? options.apiVersion ?? this.apiVersion;
+    const idempotencyKey = request.idempotency_key ?? options.idempotencyKey ?? generateIdempotencyKey();
+    return this.request("POST", `/v1/alerts/${encodeURIComponent(alertId)}/resolve`, {
+      ...options,
+      apiVersion,
+      idempotencyKey,
+      body: {
+        ...request,
+        api_version: apiVersion,
+        idempotency_key: idempotencyKey
+      }
+    });
+  }
+
+  async listBrowserInstances(
+    params: UbagListBrowserInstancesParams = {},
+    options: UbagRequestOptions = {}
+  ): Promise<UbagBrowserInstanceListResponse> {
+    const query = new URLSearchParams();
+    addOptionalQuery(query, "limit", params.limit);
+    addOptionalQuery(query, "state", params.state);
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request("GET", `/v1/browser/instances${suffix}`, options);
+  }
+
+  async listProviderContexts(
+    params: UbagListProviderContextsParams = {},
+    options: UbagRequestOptions = {}
+  ): Promise<UbagProviderContextListResponse> {
+    const query = new URLSearchParams();
+    addOptionalQuery(query, "limit", params.limit);
+    addOptionalQuery(query, "instance_id", params.instance_id);
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request("GET", `/v1/browser/contexts${suffix}`, options);
+  }
+
+  async listBrowserTabs(
+    params: UbagListBrowserTabsParams = {},
+    options: UbagRequestOptions = {}
+  ): Promise<UbagBrowserTabListResponse> {
+    const query = new URLSearchParams();
+    addOptionalQuery(query, "limit", params.limit);
+    addOptionalQuery(query, "context_id", params.context_id);
+    addOptionalQuery(query, "state", params.state);
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request("GET", `/v1/browser/tabs${suffix}`, options);
+  }
+
+  async getBrowserTopologySummary(options: UbagRequestOptions = {}): Promise<UbagBrowserTopologySummary> {
+    return this.request("GET", "/v1/browser/summary", options);
+  }
+
+  async getConcurrency(
+    params: UbagListConcurrencyParams = {},
+    options: UbagRequestOptions = {}
+  ): Promise<UbagConcurrencyListResponse> {
+    const query = new URLSearchParams();
+    addOptionalQuery(query, "cursor", params.cursor);
+    addOptionalQuery(query, "limit", params.limit);
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request("GET", `/v1/concurrency${suffix}`, options);
+  }
+
+  async ssoLogout(request: UbagSsoLogoutRequest = {}, options: UbagRequestOptions = {}): Promise<UbagLogoutResult> {
+    const apiVersion = request.api_version ?? options.apiVersion ?? this.apiVersion;
+    const idempotencyKey = request.idempotency_key ?? options.idempotencyKey ?? generateIdempotencyKey();
+    return this.request("POST", "/v1/sso/logout", {
+      ...options,
+      apiVersion,
+      idempotencyKey,
+      body: {
+        ...request,
+        api_version: apiVersion,
+        idempotency_key: idempotencyKey
+      }
+    });
+  }
+
+  async exportAudit(request: UbagAuditExportRequest = {}, options: UbagRequestOptions = {}): Promise<UbagAuditExportResult> {
+    const apiVersion = request.api_version ?? options.apiVersion ?? this.apiVersion;
+    const idempotencyKey = request.idempotency_key ?? options.idempotencyKey ?? generateIdempotencyKey();
+    return this.request("POST", "/v1/audit/export", {
+      ...options,
+      apiVersion,
+      idempotencyKey,
+      body: {
+        ...request,
+        api_version: apiVersion,
+        idempotency_key: idempotencyKey
+      }
+    });
   }
 
   async getMetrics(options: Omit<UbagRequestOptions, "idempotencyKey"> = {}): Promise<string> {

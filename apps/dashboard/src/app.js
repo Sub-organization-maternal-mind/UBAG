@@ -1,5 +1,5 @@
 import { dashboardData, dashboardTabs } from './mock-data.js';
-import { getConfig, saveConfig, fetchDashboardSnapshot, createJob, cancelJob } from './gateway-client.js';
+import { getConfig, saveConfig, fetchDashboardSnapshot, createJob, cancelJob, acknowledgeAlert, resolveAlert } from './gateway-client.js';
 
 const tabButtons = Array.from(document.querySelectorAll('[role="tab"]'));
 const panelStack = document.querySelector('#dashboard-panel');
@@ -44,7 +44,15 @@ const statusTone = (status) =>
     Implemented: 'ready',
     'External activation': 'review',
     'Not yet served': 'draft',
-    'Not connected': 'muted'
+    'Not connected': 'muted',
+    ready: 'ready',
+    busy: 'review',
+    warming: 'review',
+    draining: 'draft',
+    quarantined: 'blocked',
+    open: 'review',
+    acknowledged: 'draft',
+    resolved: 'ready'
   })[status] || 'muted';
 
 const badge = (status) =>
@@ -403,12 +411,204 @@ const renderActivation = () =>
     )
   );
 
+const renderBrowser = () => {
+  const summarySource =
+    liveSnapshot && liveSnapshot.browserSummary && !liveSnapshot.browserSummary.denied
+      ? liveSnapshot.browserSummary.counts || dashboardData.browserSummary
+      : dashboardData.browserSummary;
+
+  const metrics = (Array.isArray(summarySource) ? summarySource : dashboardData.browserSummary)
+    .map(
+      (item) => `
+        <article class="metric-card" data-tone="${item.tone || statusTone(item.state)}">
+          <div>
+            <p>${item.label}</p>
+            <strong>${item.value}</strong>
+          </div>
+          ${badge(item.state)}
+          <span>Source: ${item.source}</span>
+        </article>
+      `
+    )
+    .join('');
+
+  const liveInstances =
+    liveSnapshot && Array.isArray(liveSnapshot.browserInstances)
+      ? liveSnapshot.browserInstances.map((row) => ({
+          instance: row.instance_id || row.instance || '—',
+          context: row.context_id || row.context || '—',
+          provider: row.provider || row.provider_id || '—',
+          identity: row.identity || row.identity_id || '—',
+          tab: row.tab_id || row.tab || '—',
+          state: row.state || 'unknown',
+          job: row.job_id || row.job || '—',
+          // Redaction: only ever expose the boolean indicator, never a storage_state URI.
+          storage: row.has_storage_state ? 'Snapshot present' : 'No snapshot yet',
+          engine: row.engine || '—'
+        }))
+      : null;
+
+  return panelFrame(
+    'browser',
+    liveInstances ? 'Browser topology (Live)' : 'Browser topology',
+    'Browser → provider context → channel tab hierarchy with tab state badges. Storage state is shown as a boolean snapshot indicator only — never a URI.',
+    `
+      <div class="metric-grid">${metrics}</div>
+      ${table(
+        [
+          { key: 'instance', label: 'Browser instance' },
+          { key: 'context', label: 'Provider context' },
+          { key: 'provider', label: 'Provider' },
+          { key: 'identity', label: 'Identity' },
+          { key: 'tab', label: 'Channel tab' },
+          { key: 'state', label: 'State' },
+          { key: 'job', label: 'Job' },
+          { key: 'storage', label: 'Storage state' },
+          { key: 'engine', label: 'Engine' }
+        ],
+        liveInstances || dashboardData.browserInstances
+      )}
+    `
+  );
+};
+
+const renderConcurrency = () => {
+  const liveRows =
+    liveSnapshot && Array.isArray(liveSnapshot.concurrency)
+      ? liveSnapshot.concurrency.map((row) => ({
+          provider: row.provider || row.provider_id || '—',
+          identity: row.identity || row.identity_id || '—',
+          cap: row.current_cap != null ? String(row.current_cap) : '—',
+          bounds:
+            row.min_tabs != null && row.max_tabs != null
+              ? `${row.min_tabs} / ${row.max_tabs}`
+              : '—',
+          inflight: row.inflight != null ? String(row.inflight) : '—',
+          lastChange: row.last_change_reason || row.last_change || '—',
+          state: row.state || 'Ready'
+        }))
+      : null;
+
+  return panelFrame(
+    'concurrency',
+    liveRows ? 'Adaptive concurrency (Live)' : 'Adaptive concurrency',
+    'AIMD ceilings per provider and identity: current cap, min/max bounds, in-flight tabs, and the reason for the last cap change. Caps cut on CAPTCHA, slow-down banners, or 429s to stay ToS-safe.',
+    table(
+      [
+        { key: 'provider', label: 'Provider' },
+        { key: 'identity', label: 'Identity' },
+        { key: 'cap', label: 'Current cap' },
+        { key: 'bounds', label: 'Min / Max' },
+        { key: 'inflight', label: 'In-flight' },
+        { key: 'lastChange', label: 'Last change' },
+        { key: 'state', label: 'State' }
+      ],
+      liveRows || dashboardData.concurrency
+    )
+  );
+};
+
+const renderAlerts = () => {
+  const liveAlerts =
+    liveSnapshot && Array.isArray(liveSnapshot.alerts)
+      ? liveSnapshot.alerts.map((row) => ({
+          id: row.alert_id || row.id || '—',
+          kind: row.kind || 'manual_action',
+          job: row.job_id || row.job || '—',
+          target: row.target || '—',
+          age: row.age || row.age_human || '—',
+          status: row.status || 'open',
+          detail: row.detail || row.message || ''
+        }))
+      : null;
+
+  const alerts = liveAlerts || dashboardData.alerts;
+
+  const queue = alerts.length
+    ? `<ul class="work-list" aria-label="Open manual-action alerts">${alerts
+        .map(
+          (item) => `
+        <li class="work-item" data-alert-id="${item.id}">
+          <div>
+            <h3>${item.kind === 'captcha' ? 'CAPTCHA — human solve required' : 'Manual login required'}</h3>
+            <p>${item.target} · job ${item.job} · ${item.age} old</p>
+            <p>${item.detail}</p>
+          </div>
+          <div class="alert-actions">
+            ${badge(item.status)}
+            <button
+              class="control-button secondary"
+              type="button"
+              data-alert-action="acknowledge"
+              data-alert-id="${item.id}"
+              ${item.status !== 'open' ? 'disabled' : ''}
+            >Acknowledge</button>
+            <button
+              class="control-button"
+              type="button"
+              data-alert-action="resolve"
+              data-alert-id="${item.id}"
+              ${item.status === 'resolved' ? 'disabled' : ''}
+            >Resolve</button>
+          </div>
+        </li>
+      `
+        )
+        .join('')}</ul>`
+    : emptyState(
+        'No open manual-action alerts',
+        'CAPTCHA and manual-login prompts appear here for a human operator to resolve via noVNC. UBAG never solves CAPTCHAs automatically.'
+      );
+
+  const configRows =
+    liveSnapshot && liveSnapshot.alertConfig && !liveSnapshot.alertConfig.denied
+      ? [
+          { setting: 'Sink', value: liveSnapshot.alertConfig.sink || '—' },
+          {
+            setting: 'SMTP configured',
+            // Redaction: render a yes/no flag, never any password or SMTP credential.
+            value: liveSnapshot.alertConfig.smtp_configured ? 'yes' : 'no'
+          },
+          { setting: 'Default recipient', value: liveSnapshot.alertConfig.recipient || '—' },
+          {
+            setting: 'Resolution',
+            value: 'Human-solved (noVNC takeover) — no automated CAPTCHA bypass'
+          }
+        ]
+      : dashboardData.alertConfig;
+
+  return panelFrame(
+    'alerts',
+    'Manual-action alerts',
+    'Human-in-the-loop queue for CAPTCHA and manual-login prompts. Operators are emailed so a human solves the challenge in the live session — the machine never bypasses it.',
+    `
+      ${queue}
+      <section class="list-panel" aria-labelledby="alert-config-title">
+        <div class="list-heading">
+          <h3 id="alert-config-title">Alert routing</h3>
+          <span>SMTP status (no secrets shown)</span>
+        </div>
+        ${table(
+          [
+            { key: 'setting', label: 'Setting' },
+            { key: 'value', label: 'Value' }
+          ],
+          configRows
+        )}
+      </section>
+    `
+  );
+};
+
 const renderers = {
   overview: renderOverview,
   apps: renderApps,
   targets: renderTargets,
   jobs: renderJobs,
   sessions: renderSessions,
+  browser: renderBrowser,
+  concurrency: renderConcurrency,
+  alerts: renderAlerts,
   templates: renderTemplates,
   runtime: renderRuntime,
   activation: renderActivation
@@ -417,6 +617,37 @@ const renderers = {
 const renderPanels = () => {
   panelStack.innerHTML = dashboardTabs.map((tab) => renderers[tab]()).join('');
 };
+
+// Delegated handler for human-in-the-loop alert actions. The dashboard only
+// records that a human acted; it never solves CAPTCHAs or logs in for the user.
+panelStack.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-alert-action]');
+  if (!button) return;
+
+  const action = button.dataset.alertAction;
+  const alertId = button.dataset.alertId;
+  button.setAttribute('aria-busy', 'true');
+
+  if (config.isConfigured) {
+    const result =
+      action === 'acknowledge' ? await acknowledgeAlert(alertId) : await resolveAlert(alertId);
+    if (liveSnapshot && Array.isArray(liveSnapshot.alerts)) {
+      const target = liveSnapshot.alerts.find((item) => (item.alert_id || item.id) === alertId);
+      if (target) target.status = action === 'acknowledge' ? 'acknowledged' : 'resolved';
+    }
+    refreshStatus.textContent =
+      result.status >= 200 && result.status < 300
+        ? `Alert ${alertId} ${action === 'acknowledge' ? 'acknowledged' : 'resolved'} — a human is handling it.`
+        : `Alert ${action} request returned status ${result.status}.`;
+  } else {
+    const target = dashboardData.alerts.find((item) => item.id === alertId);
+    if (target) target.status = action === 'acknowledge' ? 'acknowledged' : 'resolved';
+    refreshStatus.textContent = `Mock alert ${alertId} ${action === 'acknowledge' ? 'acknowledged' : 'resolved'}.`;
+  }
+
+  renderPanels();
+  setActiveTab('alerts');
+});
 
 const setActiveTab = (nextTab, focusPanel = false) => {
   tabButtons.forEach((button) => {

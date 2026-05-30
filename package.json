@@ -39,6 +39,7 @@
     "ops:smoke-checklist": "pnpm --filter @ubag/observability print:smoke",
     "ops:health": "pnpm --filter @ubag/observability health",
     "test:gateway": "node tools/run-go-tests.mjs apps/gateway",
+    "test:gateway:postgres": "node tools/run-postgres-roundtrip-tests.mjs",
     "test:v0:local": "pnpm test:schema && pnpm test:edge-store && pnpm test:plugins && pnpm test:adapter-registry && pnpm test:security && pnpm test:worker && pnpm test:sidecar && pnpm test:sdk && pnpm test:conformance && pnpm test:observability && pnpm test:cli && pnpm test:dashboard && pnpm test:deployment && pnpm test:docs",
     "test:v0": "pnpm test:v0:local && pnpm test:gateway",
     "check": "pnpm check:blueprint && pnpm check:contracts && pnpm check:sdk-freshness && pnpm test:security && pnpm test:observability && pnpm test:dashboard && pnpm test:docs"

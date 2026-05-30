@@ -67,20 +67,22 @@ type xmlSignature struct {
 // ParseAndVerifyAssertion parses a SAML 2.0 <Assertion> and verifies it against
 // cfg, returning the extracted assertion data.
 //
-// Signature verification uses a pragmatic, clearly documented enveloped-signature
-// scheme (a full XML-DSig exclusive-canonicalization implementation is out of
-// scope for a stdlib-only package):
+// Signature verification follows the enveloped-signature scheme with Exclusive
+// XML Canonicalization (http://www.w3.org/2001/10/xml-exc-c14n#) applied before
+// both digest and signature checks:
 //
 //   - The signed element is the <Assertion> with its nested <Signature> element
-//     removed verbatim (enveloped-signature transform over raw bytes).
-//   - DigestValue MUST equal base64(SHA-256(signed-element raw bytes)).
+//     removed (enveloped-signature transform). It is canonicalized with
+//     exclusive c14n and DigestValue MUST equal base64(SHA-256(canonical form)).
 //   - SignatureValue MUST be a valid RSA-PKCS1v15/SHA-256 signature, made with
-//     the IdP private key, over the raw bytes of the <SignedInfo> element. It is
-//     verified here with the configured IdP PUBLIC certificate.
+//     the IdP private key, over the exclusive-c14n canonical form of the
+//     <SignedInfo> element. It is verified here with the configured IdP PUBLIC
+//     certificate.
 //
-// An assertion without a <Signature> is always rejected. After signature
-// verification the Conditions NotBefore / NotOnOrAfter window is enforced
-// against now.
+// Canonicalization is documented in canonicalize.go, including its scope and
+// limitations; any input it cannot canonicalize fails closed. An assertion
+// without a <Signature> is always rejected. After signature verification the
+// Conditions NotBefore / NotOnOrAfter window is enforced against now.
 func ParseAndVerifyAssertion(ctx context.Context, xmlBytes []byte, cfg SAMLConfig, now time.Time) (Assertion, error) {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
@@ -146,13 +148,16 @@ func verifyEnvelopedSignature(xmlBytes []byte, signature *xmlSignature, pub *rsa
 	if err != nil || !ok {
 		return fmt.Errorf("%w: SignedInfo element not found", ErrAssertionSignature)
 	}
-	signedInfoBytes := xmlBytes[signedInfoStart:signedInfoEnd]
+	canonicalSignedInfo, err := exclusiveCanonicalize(xmlBytes[signedInfoStart:signedInfoEnd])
+	if err != nil {
+		return fmt.Errorf("%w: SignedInfo canonicalization: %v", ErrAssertionSignature, err)
+	}
 
 	signatureValue, err := base64.StdEncoding.DecodeString(stripWhitespace(signature.SignatureValue))
 	if err != nil {
 		return fmt.Errorf("%w: bad SignatureValue base64: %v", ErrAssertionSignature, err)
 	}
-	signedInfoDigest := sha256.Sum256(signedInfoBytes)
+	signedInfoDigest := sha256.Sum256(canonicalSignedInfo)
 	if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, signedInfoDigest[:], signatureValue); err != nil {
 		return fmt.Errorf("%w: SignedInfo signature: %v", ErrAssertionSignature, err)
 	}
@@ -165,7 +170,11 @@ func verifyEnvelopedSignature(xmlBytes []byte, signature *xmlSignature, pub *rsa
 	if err != nil {
 		return err
 	}
-	actualDigest := sha256.Sum256(signedElement)
+	canonicalSignedElement, err := exclusiveCanonicalize(signedElement)
+	if err != nil {
+		return fmt.Errorf("%w: signed element canonicalization: %v", ErrAssertionSignature, err)
+	}
+	actualDigest := sha256.Sum256(canonicalSignedElement)
 	if !bytes.Equal(expectedDigest, actualDigest[:]) {
 		return fmt.Errorf("%w: digest mismatch over signed element", ErrAssertionSignature)
 	}

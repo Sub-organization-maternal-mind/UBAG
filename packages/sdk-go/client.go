@@ -135,6 +135,27 @@ type ListParams struct {
 	Limit  int
 }
 
+type ListAlertsParams struct {
+	Limit  int
+	Status string
+}
+
+type ListBrowserInstancesParams struct {
+	Limit int
+	State string
+}
+
+type ListProviderContextsParams struct {
+	Limit      int
+	InstanceID string
+}
+
+type ListBrowserTabsParams struct {
+	Limit     int
+	ContextID string
+	State     string
+}
+
 type ListJobEventsParams struct {
 	Cursor        string
 	AfterSequence int
@@ -292,6 +313,88 @@ func (client *Client) ReplayWebhookDelivery(ctx context.Context, request JSON, o
 
 func (client *Client) CacheStatus(ctx context.Context, options ...RequestOption) (JSON, error) {
 	return client.request(ctx, http.MethodGet, "/v1/cache", nil, client.resolveOptions(options...))
+}
+
+func (client *Client) ListAlerts(ctx context.Context, params ListAlertsParams, options ...RequestOption) (JSON, error) {
+	pairs := make([][2]string, 0, 2)
+	if params.Limit > 0 {
+		pairs = append(pairs, [2]string{"limit", strconv.Itoa(params.Limit)})
+	}
+	if params.Status != "" {
+		pairs = append(pairs, [2]string{"status", params.Status})
+	}
+	return client.request(ctx, http.MethodGet, "/v1/alerts"+encodeQueryPairs(pairs), nil, client.resolveOptions(options...))
+}
+
+func (client *Client) GetAlertConfig(ctx context.Context, options ...RequestOption) (JSON, error) {
+	return client.request(ctx, http.MethodGet, "/v1/alerts/config", nil, client.resolveOptions(options...))
+}
+
+func (client *Client) AcknowledgeAlert(ctx context.Context, alertID string, request JSON, options ...RequestOption) (JSON, error) {
+	return client.mutateGeneric(ctx, "/v1/alerts/"+url.PathEscape(alertID)+"/acknowledge", request, options...)
+}
+
+func (client *Client) ResolveAlert(ctx context.Context, alertID string, request JSON, options ...RequestOption) (JSON, error) {
+	return client.mutateGeneric(ctx, "/v1/alerts/"+url.PathEscape(alertID)+"/resolve", request, options...)
+}
+
+func (client *Client) ListBrowserInstances(ctx context.Context, params ListBrowserInstancesParams, options ...RequestOption) (JSON, error) {
+	pairs := make([][2]string, 0, 2)
+	if params.Limit > 0 {
+		pairs = append(pairs, [2]string{"limit", strconv.Itoa(params.Limit)})
+	}
+	if params.State != "" {
+		pairs = append(pairs, [2]string{"state", params.State})
+	}
+	return client.request(ctx, http.MethodGet, "/v1/browser/instances"+encodeQueryPairs(pairs), nil, client.resolveOptions(options...))
+}
+
+func (client *Client) ListProviderContexts(ctx context.Context, params ListProviderContextsParams, options ...RequestOption) (JSON, error) {
+	pairs := make([][2]string, 0, 2)
+	if params.Limit > 0 {
+		pairs = append(pairs, [2]string{"limit", strconv.Itoa(params.Limit)})
+	}
+	if params.InstanceID != "" {
+		pairs = append(pairs, [2]string{"instance_id", params.InstanceID})
+	}
+	return client.request(ctx, http.MethodGet, "/v1/browser/contexts"+encodeQueryPairs(pairs), nil, client.resolveOptions(options...))
+}
+
+func (client *Client) ListBrowserTabs(ctx context.Context, params ListBrowserTabsParams, options ...RequestOption) (JSON, error) {
+	pairs := make([][2]string, 0, 3)
+	if params.Limit > 0 {
+		pairs = append(pairs, [2]string{"limit", strconv.Itoa(params.Limit)})
+	}
+	if params.ContextID != "" {
+		pairs = append(pairs, [2]string{"context_id", params.ContextID})
+	}
+	if params.State != "" {
+		pairs = append(pairs, [2]string{"state", params.State})
+	}
+	return client.request(ctx, http.MethodGet, "/v1/browser/tabs"+encodeQueryPairs(pairs), nil, client.resolveOptions(options...))
+}
+
+func (client *Client) GetBrowserTopologySummary(ctx context.Context, options ...RequestOption) (JSON, error) {
+	return client.request(ctx, http.MethodGet, "/v1/browser/summary", nil, client.resolveOptions(options...))
+}
+
+func (client *Client) GetConcurrency(ctx context.Context, params ListParams, options ...RequestOption) (JSON, error) {
+	pairs := make([][2]string, 0, 2)
+	if params.Cursor != "" {
+		pairs = append(pairs, [2]string{"cursor", params.Cursor})
+	}
+	if params.Limit > 0 {
+		pairs = append(pairs, [2]string{"limit", strconv.Itoa(params.Limit)})
+	}
+	return client.request(ctx, http.MethodGet, "/v1/concurrency"+encodeQueryPairs(pairs), nil, client.resolveOptions(options...))
+}
+
+func (client *Client) SSOLogout(ctx context.Context, request JSON, options ...RequestOption) (JSON, error) {
+	return client.mutateGeneric(ctx, "/v1/sso/logout", request, options...)
+}
+
+func (client *Client) ExportAudit(ctx context.Context, request JSON, options ...RequestOption) (JSON, error) {
+	return client.mutateGeneric(ctx, "/v1/audit/export", request, options...)
 }
 
 func (client *Client) GetMetrics(ctx context.Context, options ...RequestOption) (string, error) {

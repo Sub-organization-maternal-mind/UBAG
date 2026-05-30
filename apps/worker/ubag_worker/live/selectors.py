@@ -15,7 +15,7 @@ all fallbacks fail.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Sequence
+from typing import List, Optional, Sequence
 
 
 @dataclass(frozen=True)
@@ -430,6 +430,119 @@ PERPLEXITY_WEB = ProviderSelectors(
 )
 
 
+def live_web_template(
+    provider_id: str,
+    display_name: str,
+    target_url: str,
+    *,
+    selector_version: str = "unverified-template",
+    prompt_input: Optional[Sequence[str]] = None,
+    submit_button: Optional[Sequence[str]] = None,
+    response_container: Optional[Sequence[str]] = None,
+    authenticated_signal: Optional[Sequence[str]] = None,
+    login_signal: Optional[Sequence[str]] = None,
+    streaming_indicator: Optional[Sequence[str]] = None,
+    drift_signature_nodes: Sequence[str] = ("main",),
+) -> ProviderSelectors:
+    """Scaffold a :class:`ProviderSelectors` for a new live web provider.
+
+    This is the supported entry point for onboarding a new ToS-safe live
+    manual-session target. Pass a canonical ``provider_id``, a human-readable
+    ``display_name``, and the chat UI ``target_url``; override only the selector
+    groups you have confirmed against the live DOM. Every group defaults to a
+    conservative, framework-agnostic placeholder so the engine can drive the
+    manual-login flow before the selectors are tuned.
+
+    The result is a pure configuration object: it carries NO automation logic,
+    NO credentials, and NO storage state. Login, CAPTCHA, 2FA, and consent are
+    always handled by the human in a user-owned browser session. Bump
+    ``selector_version`` once a baseline is confirmed against the live site.
+    """
+
+    if not provider_id or not provider_id.strip():
+        raise ValueError("provider_id is required")
+    if not target_url.startswith("https://"):
+        raise ValueError("target_url must be an https:// URL")
+
+    def group(name: str, candidates: Optional[Sequence[str]], fallback: Sequence[str]) -> SelectorGroup:
+        return SelectorGroup(name, tuple(candidates) if candidates else tuple(fallback))
+
+    return ProviderSelectors(
+        provider_id=provider_id,
+        display_name=display_name,
+        target_url=target_url,
+        selector_version=selector_version,
+        # TODO(drift): replace these generic placeholders with confirmed,
+        # provider-specific selectors and bump selector_version.
+        prompt_input=group(
+            "prompt_input",
+            prompt_input,
+            (
+                "textarea",
+                "div[contenteditable='true']",
+                "textarea[placeholder*='Message']",
+            ),
+        ),
+        submit_button=group(
+            "submit_button",
+            submit_button,
+            (
+                "button[type='submit']",
+                "button[aria-label*='Send']",
+                "button[aria-label*='Submit']",
+            ),
+        ),
+        response_container=group(
+            "response_container",
+            response_container,
+            (
+                "div[class*='assistant']",
+                "div.markdown",
+                "div.prose",
+            ),
+        ),
+        authenticated_signal=group(
+            "authenticated_signal",
+            authenticated_signal,
+            (
+                "textarea",
+                "div[contenteditable='true']",
+                "nav",
+            ),
+        ),
+        login_signal=group(
+            "login_signal",
+            login_signal,
+            (
+                "a[href*='login']",
+                "text=Sign in",
+                "input[type='password']",
+            ),
+        ),
+        streaming_indicator=group(
+            "streaming_indicator",
+            streaming_indicator,
+            (
+                "button[aria-label*='Stop']",
+                ".result-streaming",
+                "div[data-streaming='true']",
+            ),
+        ),
+        drift_signature_nodes=tuple(drift_signature_nodes),
+    )
+
+
+# Copy-and-tune starting point for a brand-new live provider. Registered so it
+# is discoverable end-to-end, but intentionally points at a neutral target with
+# placeholder selectors until a real provider is wired in.
+GENERIC_LIVE_WEB = live_web_template(
+    provider_id="generic_live_web",
+    display_name="Generic Live Web (template)",
+    target_url="https://example.com/",
+    selector_version="2026-05-22-template-unverified",
+)
+
+
 PROVIDER_SELECTORS = {
     selectors.provider_id: selectors
     for selectors in (
@@ -439,6 +552,7 @@ PROVIDER_SELECTORS = {
         GEMINI_WEB,
         MISTRAL_LECHAT,
         PERPLEXITY_WEB,
+        GENERIC_LIVE_WEB,
     )
 }
 
@@ -455,10 +569,12 @@ __all__ = [
     "CLAUDE_WEB",
     "DEEPSEEK_WEB",
     "GEMINI_WEB",
+    "GENERIC_LIVE_WEB",
     "MISTRAL_LECHAT",
     "PERPLEXITY_WEB",
     "PROVIDER_SELECTORS",
     "ProviderSelectors",
     "SelectorGroup",
     "get_provider_selectors",
+    "live_web_template",
 ]

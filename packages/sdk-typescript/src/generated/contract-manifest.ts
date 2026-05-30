@@ -5,7 +5,7 @@ export const UBAG_CONTRACT_MANIFEST = {
   "sources": [
     {
       "path": "packages/openapi/openapi.yaml",
-      "sha256": "fa16a5c2bf7e009fbe3cfb1e8ae71c50bc14cb23adbef08102368ce8823601ce"
+      "sha256": "c6c16af99b8e2070102102e535a470b34405c2cd8cf056824cbeb7149781c858"
     },
     {
       "path": "packages/proto/proto/ubag/v1/jobs.proto",
@@ -30,9 +30,19 @@ export const UBAG_CONTRACT_MANIFEST = {
   ],
   "rest_paths": [
     "/v1/adapters",
+    "/v1/alerts",
+    "/v1/alerts/config",
+    "/v1/alerts/{alert_id}/acknowledge",
+    "/v1/alerts/{alert_id}/resolve",
     "/v1/apps",
     "/v1/audit",
+    "/v1/audit/export",
+    "/v1/browser/contexts",
+    "/v1/browser/instances",
+    "/v1/browser/summary",
+    "/v1/browser/tabs",
     "/v1/cache",
+    "/v1/concurrency",
     "/v1/devices",
     "/v1/events",
     "/v1/health",
@@ -46,6 +56,10 @@ export const UBAG_CONTRACT_MANIFEST = {
     "/v1/metrics",
     "/v1/ready",
     "/v1/sse/jobs/{job_id}",
+    "/v1/sso/config",
+    "/v1/sso/logout",
+    "/v1/sso/oidc/callback",
+    "/v1/sso/saml/acs",
     "/v1/stream",
     "/v1/targets",
     "/v1/templates",
@@ -62,6 +76,26 @@ export const UBAG_CONTRACT_MANIFEST = {
     },
     {
       "method": "GET",
+      "path": "/v1/alerts",
+      "operation_id": "listAlerts"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/alerts/{alert_id}/acknowledge",
+      "operation_id": "acknowledgeAlert"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/alerts/{alert_id}/resolve",
+      "operation_id": "resolveAlert"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/alerts/config",
+      "operation_id": "getAlertConfig"
+    },
+    {
+      "method": "GET",
       "path": "/v1/apps",
       "operation_id": "listApps"
     },
@@ -71,9 +105,39 @@ export const UBAG_CONTRACT_MANIFEST = {
       "operation_id": "listAuditEvents"
     },
     {
+      "method": "POST",
+      "path": "/v1/audit/export",
+      "operation_id": "exportAudit"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/browser/contexts",
+      "operation_id": "listProviderContexts"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/browser/instances",
+      "operation_id": "listBrowserInstances"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/browser/summary",
+      "operation_id": "getBrowserTopologySummary"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/browser/tabs",
+      "operation_id": "listBrowserTabs"
+    },
+    {
       "method": "GET",
       "path": "/v1/cache",
       "operation_id": "getCacheStatus"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/concurrency",
+      "operation_id": "listConcurrencyCeilings"
     },
     {
       "method": "GET",
@@ -154,6 +218,31 @@ export const UBAG_CONTRACT_MANIFEST = {
       "method": "GET",
       "path": "/v1/sse/jobs/{job_id}",
       "operation_id": "streamJobEventsSse"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/sso/config",
+      "operation_id": "getSSOConfig"
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/sso/config",
+      "operation_id": "putSSOConfig"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sso/logout",
+      "operation_id": "ssoLogout"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sso/oidc/callback",
+      "operation_id": "ssoOIDCCallback"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/sso/saml/acs",
+      "operation_id": "ssoSAMLAssertion"
     },
     {
       "method": "GET",

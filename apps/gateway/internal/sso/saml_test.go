@@ -87,6 +87,29 @@ func TestParseAndVerifyAssertion_TamperedAttribute(t *testing.T) {
 	}
 }
 
+func TestParseAndVerifyAssertion_C14NAttributeReorderStillVerifies(t *testing.T) {
+	key, _, certPEM := testKeypair(t)
+	now := time.Now().UTC()
+	xmlBytes := buildSignedAssertion(t, key, now.Add(-time.Minute), now.Add(time.Hour), true)
+	// Reorder the ID and IssueInstant attributes on the Assertion element.
+	// The raw bytes change, but exclusive canonicalization sorts attributes,
+	// so the signed digest is unchanged and verification must still succeed.
+	reordered := replaceFirst(string(xmlBytes),
+		`ID="_a1" IssueInstant="2026-01-01T00:00:00Z"`,
+		`IssueInstant="2026-01-01T00:00:00Z" ID="_a1"`)
+	if reordered == string(xmlBytes) {
+		t.Fatalf("attribute reorder did not change the assertion bytes")
+	}
+
+	assertion, err := ParseAndVerifyAssertion(context.Background(), []byte(reordered), samlConfig(certPEM), now)
+	if err != nil {
+		t.Fatalf("expected reordered-but-equivalent assertion to verify, got %v", err)
+	}
+	if assertion.Subject != "operator@example.com" {
+		t.Errorf("subject = %q", assertion.Subject)
+	}
+}
+
 func replaceFirst(s, old, new string) string {
 	index := indexOf(s, old)
 	if index < 0 {

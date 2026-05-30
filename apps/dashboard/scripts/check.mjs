@@ -11,6 +11,9 @@ const expectedTabs = [
   'targets',
   'jobs',
   'sessions',
+  'browser',
+  'concurrency',
+  'alerts',
   'templates',
   'runtime',
   'activation'
@@ -54,6 +57,11 @@ for (const collection of [
   'targets',
   'jobs',
   'sessions',
+  'browserSummary',
+  'browserInstances',
+  'concurrency',
+  'alerts',
+  'alertConfig',
   'templates',
   'runtime',
   'activation',
@@ -108,6 +116,24 @@ for (const tab of ['runtime', 'activation']) {
 
 const forbiddenClaims = /trusted by|customer logos|conversion|revenue|\d+\s*x\s*faster/i;
 assert(!forbiddenClaims.test(JSON.stringify(dashboardData)), 'mock data has claim-like copy');
+
+// Redaction guard: browser/alert observability must never leak storage-state
+// URIs or SMTP secrets. Storage state is a boolean indicator only.
+const serializedData = JSON.stringify(dashboardData);
+assert(
+  !/storage_state_uri/i.test(serializedData),
+  'mock data must not expose a storage_state_uri'
+);
+assert(
+  !/password/i.test(JSON.stringify(dashboardData.alertConfig)),
+  'alert config must not contain a password'
+);
+for (const row of dashboardData.browserInstances) {
+  assert(
+    row.storage === 'Snapshot present' || row.storage === 'No snapshot yet',
+    'browser instance storage must be a boolean snapshot indicator, not a URI'
+  );
+}
 
 if (failures.length > 0) {
   console.error('Dashboard check failed:');

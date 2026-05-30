@@ -24,7 +24,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
+	"github.com/ubag/ubag/apps/gateway/internal/audit"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
 	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
@@ -32,9 +34,11 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/ratelimit"
 	"github.com/ubag/ubag/apps/gateway/internal/responsecache"
 	"github.com/ubag/ubag/apps/gateway/internal/scim"
+	"github.com/ubag/ubag/apps/gateway/internal/session"
 	"github.com/ubag/ubag/apps/gateway/internal/siem"
 	"github.com/ubag/ubag/apps/gateway/internal/sso"
 	"github.com/ubag/ubag/apps/gateway/internal/templates"
+	"github.com/ubag/ubag/apps/gateway/internal/topology"
 	"github.com/ubag/ubag/apps/gateway/internal/webhooks"
 	"github.com/ubag/ubag/apps/gateway/internal/workflow"
 )
@@ -109,6 +113,33 @@ type Config struct {
 	// installs an in-memory store so the rotation route remains functional.
 	WebhookSecrets WebhookSecretStore
 
+	// Audit persists Merkle-chained audit records emitted on authorization
+	// decisions and SSO session events, and backs POST /v1/audit/export. When
+	// nil, NewServer installs an in-memory store.
+	Audit audit.Store
+
+	// Sessions backs server-side SSO sessions (minting on login, resolution in
+	// withAuth, revocation on logout). When nil, NewServer installs an in-memory
+	// store. SessionTTL is the lifetime of a minted session (default 1h).
+	Sessions   session.Store
+	SessionTTL time.Duration
+
+	// Alerts backs the human-in-the-loop manual-action alerting subsystem and
+	// the /v1/alerts* routes. Unlike the stores above it is NOT defaulted by
+	// NewServer: when nil the alert routes return 501 so an unconfigured
+	// deployment degrades cleanly.
+	Alerts *alerts.Manager
+
+	// Topology backs the read-only v2.1 multi-tab browser topology routes
+	// (/v1/browser/*). Like Alerts it is NOT defaulted by NewServer: when nil the
+	// routes return 501 so an unconfigured deployment degrades cleanly.
+	Topology topology.Store
+
+	// Concurrency backs the read-only adaptive-concurrency (AIMD) view route
+	// (/v1/concurrency). When nil the route returns 501. The registry is updated
+	// by the worker-event ingestion path; the gateway never mutates it via HTTP.
+	Concurrency *topology.ConcurrencyRegistry
+
 	MaxBodyBytes int64
 }
 
@@ -140,6 +171,12 @@ type Server struct {
 	siemConfig       siem.ConfigStore
 	siemExporter     *siem.Exporter
 	webhookSecrets   WebhookSecretStore
+	audit            audit.Store
+	sessions         session.Store
+	sessionTTL       time.Duration
+	alerts           *alerts.Manager
+	topology         topology.Store
+	concurrency      *topology.ConcurrencyRegistry
 
 	metrics *metricState
 	mux     *http.ServeMux
@@ -227,6 +264,15 @@ func NewServer(config Config) *Server {
 	if config.WebhookSecrets == nil {
 		config.WebhookSecrets = NewMemoryWebhookSecretStore()
 	}
+	if config.Audit == nil {
+		config.Audit = audit.NewMemoryStore()
+	}
+	if config.Sessions == nil {
+		config.Sessions = session.NewMemoryStore()
+	}
+	if config.SessionTTL <= 0 {
+		config.SessionTTL = time.Hour
+	}
 
 	server := &Server{
 		apiVersion:  config.APIVersion,
@@ -256,6 +302,12 @@ func NewServer(config Config) *Server {
 		siemConfig:       config.SIEMConfig,
 		siemExporter:     config.SIEMExporter,
 		webhookSecrets:   config.WebhookSecrets,
+		audit:            config.Audit,
+		sessions:         config.Sessions,
+		sessionTTL:       config.SessionTTL,
+		alerts:           config.Alerts,
+		topology:         config.Topology,
+		concurrency:      config.Concurrency,
 
 		metrics: &metricState{
 			requests:    make(map[string]int),
@@ -299,11 +351,20 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/sso/config", s.handleSSOConfig)
 	s.mux.HandleFunc("/v1/sso/oidc/callback", s.handleSSOOIDCCallback)
 	s.mux.HandleFunc("/v1/sso/saml/acs", s.handleSSOSAMLACS)
+	s.mux.HandleFunc("/v1/sso/logout", s.handleSSOLogout)
 	s.mux.HandleFunc("/v1/scim/v2/Users", s.handleSCIMUsers)
 	s.mux.HandleFunc("/v1/scim/v2/Users/", s.handleSCIMUserByID)
 	s.mux.HandleFunc("/v1/scim/v2/Groups", s.handleSCIMGroups)
 	s.mux.HandleFunc("/v1/scim/v2/Groups/", s.handleSCIMGroupByID)
 	s.mux.HandleFunc("/v1/siem/config", s.handleSIEMConfig)
+	s.mux.HandleFunc("/v1/alerts", s.handleAlerts)
+	s.mux.HandleFunc("/v1/alerts/config", s.handleAlertsConfig)
+	s.mux.HandleFunc("/v1/alerts/", s.handleAlertsSubtree)
+	s.mux.HandleFunc("/v1/browser/instances", s.handleBrowserInstances)
+	s.mux.HandleFunc("/v1/browser/contexts", s.handleBrowserContexts)
+	s.mux.HandleFunc("/v1/browser/tabs", s.handleBrowserTabs)
+	s.mux.HandleFunc("/v1/browser/summary", s.handleBrowserSummary)
+	s.mux.HandleFunc("/v1/concurrency", s.handleConcurrency)
 	s.mux.HandleFunc("/v1/jobs", s.handleJobs)
 	s.mux.HandleFunc("/v1/jobs/", s.handleJobByID)
 	s.mux.HandleFunc("/v1/sse/jobs/", s.handleJobSSE)
@@ -357,6 +418,18 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	if err := s.webhooks.Ready(r.Context()); err != nil {
 		s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-WEBHOOK-READY-001", "webhook outbox is not ready", true))
 		return
+	}
+	if s.alerts != nil {
+		if err := s.alerts.Ready(r.Context()); err != nil {
+			s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-ALERTS-READY-001", "alert store is not ready", true))
+			return
+		}
+	}
+	if s.topology != nil {
+		if err := s.topology.Ready(r.Context()); err != nil {
+			s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-BROWSER-TOPOLOGY-READY-001", "browser topology store is not ready", true))
+			return
+		}
 	}
 
 	s.writeJSON(w, http.StatusOK, healthResponse{
@@ -2053,11 +2126,11 @@ func (s *Server) authorizeGatewayAction(w http.ResponseWriter, r *http.Request, 
 	allowed := false
 	switch role {
 	case "developer":
-		allowed = action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry" || action == "artifact:write" || action == "artifact:delete" || action == "webhook:configure"
+		allowed = action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry" || action == "artifact:write" || action == "artifact:delete" || action == "webhook:configure" || action == "browser:read" || action == "concurrency:read"
 	case "operator":
-		allowed = action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry" || action == "artifact:write" || action == "artifact:delete" || action == "device:enroll" || action == "device:revoke" || action == "webhook:configure" || action == "webhook:replay" || action == "audit:read"
+		allowed = action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry" || action == "artifact:write" || action == "artifact:delete" || action == "device:enroll" || action == "device:revoke" || action == "webhook:configure" || action == "webhook:replay" || action == "audit:read" || action == "alerts:read" || action == "alerts:manage" || action == "browser:read" || action == "concurrency:read"
 	case "admin":
-		allowed = action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry" || action == "artifact:write" || action == "artifact:delete" || action == "device:enroll" || action == "device:revoke" || action == "secret:rotate" || action == "webhook:configure" || action == "webhook:replay" || action == "audit:read" || action == "rate_limit:manage" || action == "role:manage" || action == "data:export"
+		allowed = action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry" || action == "artifact:write" || action == "artifact:delete" || action == "device:enroll" || action == "device:revoke" || action == "secret:rotate" || action == "webhook:configure" || action == "webhook:replay" || action == "audit:read" || action == "rate_limit:manage" || action == "role:manage" || action == "data:export" || action == "alerts:read" || action == "alerts:manage" || action == "browser:read" || action == "concurrency:read"
 	case "superadmin":
 		allowed = true
 	case "service":
@@ -2068,11 +2141,36 @@ func (s *Server) authorizeGatewayAction(w http.ResponseWriter, r *http.Request, 
 		allowed = false
 	}
 	if !allowed {
+		s.emitAuthorizationAudit(r, principal, action, "deny")
 		s.writeError(w, r, http.StatusForbidden, authzError("UBAG-AUTHZ-ROLE-DENIED-001", "actor role is not allowed to perform this action"))
 		return false
 	}
 
+	s.emitAuthorizationAudit(r, principal, action, "allow")
 	return true
+}
+
+// emitAuthorizationAudit appends a best-effort, Merkle-chained audit record for
+// an authorization decision. It is nil-safe and never blocks the request: any
+// store error is intentionally ignored so auditing cannot fail the gateway.
+func (s *Server) emitAuthorizationAudit(r *http.Request, principal authenticatedPrincipal, action, outcome string) {
+	if s == nil || s.audit == nil {
+		return
+	}
+	actor := principal.Subject
+	if actor == "" {
+		actor = principal.Role
+	}
+	_, _ = s.audit.Append(r.Context(), audit.Record{
+		TenantID:   principal.TenantID,
+		AppID:      principal.AppID,
+		Actor:      actor,
+		Action:     "authorize:" + action,
+		Resource:   r.URL.Path,
+		Outcome:    outcome,
+		OccurredAt: time.Now(),
+		Attributes: map[string]any{"role": principal.Role, "method": r.Method},
+	})
 }
 
 func targetCatalog() []map[string]any {
@@ -2162,6 +2260,7 @@ type authenticatedPrincipal struct {
 	Role     string
 	TenantID string
 	AppID    string
+	Subject  string
 }
 
 func (s *Server) withMetrics(next http.Handler) http.Handler {
@@ -2300,18 +2399,54 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		if !validBearerToken(r.Header.Get("Authorization"), s.appSecret) {
-			s.writeError(w, r, http.StatusUnauthorized, authError("UBAG-AUTH-MISSING-001", "missing or invalid app-secret bearer token"))
+		if validBearerToken(r.Header.Get("Authorization"), s.appSecret) {
+			principal := authenticatedPrincipal{
+				Role:     s.actorRole,
+				TenantID: s.tenantID,
+				AppID:    s.appID,
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
 			return
 		}
 
-		principal := authenticatedPrincipal{
-			Role:     s.actorRole,
-			TenantID: s.tenantID,
-			AppID:    s.appID,
+		// Additive: resolve a server-side SSO session from a cookie or bearer
+		// token when the static app-secret did not match. Sessions never replace
+		// the app-secret path; they extend it.
+		if s.sessions != nil {
+			if token := sessionTokenFromRequest(r); token != "" {
+				sess, ok, err := s.sessions.Resolve(r.Context(), token, time.Now())
+				if err == nil && ok {
+					principal := authenticatedPrincipal{
+						Role:     sess.Role,
+						TenantID: sess.TenantID,
+						AppID:    sess.AppID,
+						Subject:  sess.Subject,
+					}
+					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
+					return
+				}
+			}
 		}
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
+
+		s.writeError(w, r, http.StatusUnauthorized, authError("UBAG-AUTH-MISSING-001", "missing or invalid credentials"))
 	})
+}
+
+// sessionCookieName is the cookie that carries an opaque SSO session token.
+const sessionCookieName = "ubag_session"
+
+// sessionTokenFromRequest extracts a session token from the session cookie or,
+// failing that, the bearer Authorization header (used when the bearer value is
+// not the app secret).
+func sessionTokenFromRequest(r *http.Request) string {
+	if cookie, err := r.Cookie(sessionCookieName); err == nil && cookie.Value != "" {
+		return cookie.Value
+	}
+	parts := strings.Fields(r.Header.Get("Authorization"))
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		return parts[1]
+	}
+	return ""
 }
 
 func (s *Server) withAPIVersionHeader(next http.Handler) http.Handler {

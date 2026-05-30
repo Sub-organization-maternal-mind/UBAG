@@ -273,6 +273,30 @@ func invokeScenario(t *testing.T, client *Client, scenario fixtureScenario) (JSO
 		return client.RetryJob(ctx, jobID, request.Body, options...)
 	case request.Method == http.MethodPost && parsed.Path == "/v1/webhooks/replay":
 		return client.ReplayWebhookDelivery(ctx, request.Body, options...)
+	case request.Method == http.MethodGet && parsed.Path == "/v1/alerts":
+		return client.ListAlerts(ctx, listAlertsParamsFromQuery(parsed.Query()), options...)
+	case request.Method == http.MethodGet && parsed.Path == "/v1/alerts/config":
+		return client.GetAlertConfig(ctx, options...)
+	case request.Method == http.MethodPost && strings.HasPrefix(parsed.Path, "/v1/alerts/") && strings.HasSuffix(parsed.Path, "/acknowledge"):
+		alertID := strings.TrimSuffix(strings.TrimPrefix(parsed.Path, "/v1/alerts/"), "/acknowledge")
+		return client.AcknowledgeAlert(ctx, alertID, request.Body, options...)
+	case request.Method == http.MethodPost && strings.HasPrefix(parsed.Path, "/v1/alerts/") && strings.HasSuffix(parsed.Path, "/resolve"):
+		alertID := strings.TrimSuffix(strings.TrimPrefix(parsed.Path, "/v1/alerts/"), "/resolve")
+		return client.ResolveAlert(ctx, alertID, request.Body, options...)
+	case request.Method == http.MethodGet && parsed.Path == "/v1/browser/instances":
+		return client.ListBrowserInstances(ctx, listBrowserInstancesParamsFromQuery(parsed.Query()), options...)
+	case request.Method == http.MethodGet && parsed.Path == "/v1/browser/contexts":
+		return client.ListProviderContexts(ctx, listProviderContextsParamsFromQuery(parsed.Query()), options...)
+	case request.Method == http.MethodGet && parsed.Path == "/v1/browser/tabs":
+		return client.ListBrowserTabs(ctx, listBrowserTabsParamsFromQuery(parsed.Query()), options...)
+	case request.Method == http.MethodGet && parsed.Path == "/v1/browser/summary":
+		return client.GetBrowserTopologySummary(ctx, options...)
+	case request.Method == http.MethodGet && parsed.Path == "/v1/concurrency":
+		return client.GetConcurrency(ctx, listParamsFromQuery(parsed.Query()), options...)
+	case request.Method == http.MethodPost && parsed.Path == "/v1/sso/logout":
+		return client.SSOLogout(ctx, request.Body, options...)
+	case request.Method == http.MethodPost && parsed.Path == "/v1/audit/export":
+		return client.ExportAudit(ctx, request.Body, options...)
 	default:
 		t.Fatalf("no SDK mapping for %s %s", request.Method, request.Path)
 	}
@@ -325,6 +349,39 @@ func listParamsFromQuery(query url.Values) ListParams {
 	return ListParams{
 		Cursor: query.Get("cursor"),
 		Limit:  limit,
+	}
+}
+
+func listAlertsParamsFromQuery(query url.Values) ListAlertsParams {
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	return ListAlertsParams{
+		Limit:  limit,
+		Status: query.Get("status"),
+	}
+}
+
+func listBrowserInstancesParamsFromQuery(query url.Values) ListBrowserInstancesParams {
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	return ListBrowserInstancesParams{
+		Limit: limit,
+		State: query.Get("state"),
+	}
+}
+
+func listProviderContextsParamsFromQuery(query url.Values) ListProviderContextsParams {
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	return ListProviderContextsParams{
+		Limit:      limit,
+		InstanceID: query.Get("instance_id"),
+	}
+}
+
+func listBrowserTabsParamsFromQuery(query url.Values) ListBrowserTabsParams {
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	return ListBrowserTabsParams{
+		Limit:     limit,
+		ContextID: query.Get("context_id"),
+		State:     query.Get("state"),
 	}
 }
 

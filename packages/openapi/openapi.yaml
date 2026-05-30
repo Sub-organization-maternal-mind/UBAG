@@ -39,6 +39,12 @@ tags:
     description: Immutable operator and automation audit entries.
   - name: Observability
     description: Metrics and runtime telemetry.
+  - name: Browser Topology
+    description: Read-only multi-tab browser topology and adaptive concurrency observability.
+  - name: Alerts
+    description: Human-in-the-loop manual-action alerts and notification configuration.
+  - name: SSO
+    description: Enterprise single sign-on (OIDC/SAML) configuration, callbacks, and session logout.
 security:
   - bearerAuth: []
 paths:
@@ -421,6 +427,521 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/audit/export:
+    post:
+      tags: [Audit]
+      operationId: exportAudit
+      summary: Export the tenant audit chain and forward to configured SIEM sinks.
+      description: >-
+        Reads the tenant's tamper-evident audit chain (optionally bounded by
+        since, until, and limit), verifies hash-chain integrity, and forwards
+        records to any configured SIEM sinks. Returns 200 for a persistence-only
+        read or 202 when an asynchronous SIEM exporter accepts the batch.
+        Requires the data:export action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AuditExportRequest"
+      responses:
+        "200":
+          description: Audit chain exported (persistence-only read).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditExportResult"
+        "202":
+          description: Audit export accepted for asynchronous SIEM forwarding.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditExportResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/alerts:
+    get:
+      tags: [Alerts]
+      operationId: listAlerts
+      summary: List human-in-the-loop manual-action alerts.
+      description: >-
+        Returns manual-action alerts (CAPTCHA, manual login, or verification
+        challenges) raised when a worker reports a job needs a human to act in
+        the live browser session. Requires the alerts:read action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          description: Filter by alert lifecycle status.
+          schema:
+            type: string
+            enum: [open, notified, acknowledged, resolved, expired]
+      responses:
+        "200":
+          description: Alert records returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/alerts/config:
+    get:
+      tags: [Alerts]
+      operationId: getAlertConfig
+      summary: Return the alert notification configuration (secret-free).
+      description: >-
+        Returns the sink type, SMTP host (never credentials), store kind, and
+        recipient summary used for manual-action notifications.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "200":
+          description: Alert configuration summary (secret-free).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/alerts/{alert_id}/acknowledge:
+    post:
+      tags: [Alerts]
+      operationId: acknowledgeAlert
+      summary: Acknowledge a manual-action alert.
+      description: >-
+        Marks an alert as acknowledged by an operator picking it up. Requires
+        the alerts:manage action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: alert_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Alert acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertMutationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/alerts/{alert_id}/resolve:
+    post:
+      tags: [Alerts]
+      operationId: resolveAlert
+      summary: Resolve a manual-action alert.
+      description: >-
+        Marks an alert as resolved once the human has solved the challenge in
+        the live browser session and the flow can resume. Requires the
+        alerts:manage action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: alert_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Alert resolved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertMutationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/browser/instances:
+    get:
+      tags: [Browser Topology]
+      operationId: listBrowserInstances
+      summary: List browser engine instances.
+      description: >-
+        Returns the browser engine instances registered by the worker fleet for
+        the authenticated tenant. Read-only observability. Requires the
+        browser:read action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Limit"
+        - name: state
+          in: query
+          required: false
+          description: Filter by instance lifecycle state.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Browser instances returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserInstanceListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/browser/contexts:
+    get:
+      tags: [Browser Topology]
+      operationId: listProviderContexts
+      summary: List provider browser contexts.
+      description: >-
+        Returns the provider contexts (per target+identity isolated browser
+        contexts) for the tenant. The storage-state URI is never exposed; only
+        the has_storage_state boolean is returned. Requires the browser:read
+        action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Limit"
+        - name: instance_id
+          in: query
+          required: false
+          description: Filter by parent browser instance.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Provider contexts returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderContextListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/browser/tabs:
+    get:
+      tags: [Browser Topology]
+      operationId: listBrowserTabs
+      summary: List browser tabs.
+      description: >-
+        Returns the browser tabs for the tenant. Tabs are tenant-scoped via
+        their parent provider context. Requires the browser:read action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Limit"
+        - name: context_id
+          in: query
+          required: false
+          description: Filter by parent provider context.
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          description: Filter by tab lifecycle state.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Browser tabs returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserTabListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/browser/summary:
+    get:
+      tags: [Browser Topology]
+      operationId: getBrowserTopologySummary
+      summary: Aggregate browser topology counts.
+      description: >-
+        Returns aggregate counts of the tenant's browser topology grouped by
+        lifecycle state. Requires the browser:read action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "200":
+          description: Browser topology summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserTopologySummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/concurrency:
+    get:
+      tags: [Browser Topology]
+      operationId: listConcurrencyCeilings
+      summary: List adaptive concurrency ceilings.
+      description: >-
+        Returns the latest adaptive (AIMD) concurrency ceilings reported by the
+        worker fleet for the tenant. The gateway is read-only here and never
+        computes or mutates AIMD state. Requires the concurrency:read action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "200":
+          description: Concurrency ceilings returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConcurrencyListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/sso/config:
+    get:
+      tags: [SSO]
+      operationId: getSSOConfig
+      summary: Get the tenant SSO configuration (secret-free).
+      description: >-
+        Returns the OIDC and SAML configurations registered for the tenant. Only
+        secret references and public IdP certificates are returned; plaintext
+        client secrets are never exposed. Requires the role:manage action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "200":
+          description: SSO configuration returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SSOConfigResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    put:
+      tags: [SSO]
+      operationId: putSSOConfig
+      summary: Upsert the tenant OIDC or SAML configuration.
+      description: >-
+        Registers or replaces the tenant's OIDC or SAML configuration. Secret
+        material is supplied by reference only. Requires the role:manage action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SSOConfigRequest"
+      responses:
+        "200":
+          description: SSO configuration upserted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SSOConfigResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/sso/oidc/callback:
+    post:
+      tags: [SSO]
+      operationId: ssoOIDCCallback
+      summary: Verify an OIDC id_token and resolve a principal.
+      description: >-
+        Verifies the supplied OIDC id_token against the tenant IdP and maps a
+        principal. When session management is enabled, mints a server-side
+        session, returns session_token and session_expires_at, and sets an
+        HttpOnly, Secure session cookie.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SSOCallbackRequest"
+      responses:
+        "200":
+          description: Principal resolved.
+          headers:
+            Set-Cookie:
+              description: HttpOnly, Secure session cookie set when session management is enabled.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SSOSession"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/sso/saml/acs:
+    post:
+      tags: [SSO]
+      operationId: ssoSAMLAssertion
+      summary: Verify a SAML assertion and resolve a principal.
+      description: >-
+        Parses and verifies the supplied SAML assertion against the tenant IdP
+        signing certificate and maps a principal. When session management is
+        enabled, mints a server-side session, returns session_token and
+        session_expires_at, and sets an HttpOnly, Secure session cookie.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SSOCallbackRequest"
+      responses:
+        "200":
+          description: Principal resolved.
+          headers:
+            Set-Cookie:
+              description: HttpOnly, Secure session cookie set when session management is enabled.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SSOSession"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/sso/logout:
+    post:
+      tags: [SSO]
+      operationId: ssoLogout
+      summary: Revoke the current session and clear the session cookie.
+      description: >-
+        Idempotently revokes the session presented via the session cookie or
+        bearer token and clears the session cookie. Revoking an unknown or
+        already-revoked session returns revoked=false with HTTP 200.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "200":
+          description: Logout processed (idempotent).
+          headers:
+            Set-Cookie:
+              description: Expired session cookie that clears the client session.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogoutResult"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
   /v1/jobs:
     get:
       tags: [Jobs]
@@ -1041,6 +1562,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    NotImplemented:
+      description: The route exists but its backing subsystem is not configured on this deployment.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
   schemas:
     JobRequest:
       $ref: ../shared-schemas/schemas/job-request.schema.json
@@ -1077,6 +1604,578 @@ components:
             additionalProperties: true
         next_cursor:
           type: ["string", "null"]
+        trace_id:
+          type: string
+          minLength: 1
+    Alert:
+      type: object
+      additionalProperties: true
+      required: [alert_id, tenant_id, app_id, job_id, kind, status, created_at]
+      properties:
+        alert_id:
+          type: string
+        tenant_id:
+          type: string
+        app_id:
+          type: string
+        job_id:
+          type: string
+        session_id:
+          type: string
+        target_id:
+          type: string
+        kind:
+          type: string
+          description: Manual-action kind, e.g. captcha, manual_login, or verification.
+        message:
+          type: string
+        status:
+          type: string
+          enum: [open, notified, acknowledged, resolved, expired]
+        created_at:
+          type: string
+          format: date-time
+        notified_at:
+          type: string
+          format: date-time
+        acknowledged_at:
+          type: string
+          format: date-time
+        resolved_at:
+          type: string
+          format: date-time
+        attributes:
+          type: object
+          additionalProperties: true
+    AlertListResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, data, next_cursor, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        kind:
+          type: string
+          const: alerts
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Alert"
+        next_cursor:
+          type: ["string", "null"]
+        trace_id:
+          type: string
+          minLength: 1
+    AlertMutationResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, data, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        kind:
+          type: string
+          const: alert
+        data:
+          $ref: "#/components/schemas/Alert"
+        trace_id:
+          type: string
+          minLength: 1
+    AlertConfig:
+      type: object
+      additionalProperties: false
+      description: >-
+        Secret-free description of the alerting configuration. SMTP credentials
+        and any password field are intentionally absent.
+      required: [api_version, kind, sink_type, smtp_configured, recipient_count, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        kind:
+          type: string
+          const: alert_config
+        sink_type:
+          type: string
+        smtp_configured:
+          type: boolean
+        smtp_host:
+          type: string
+          description: SMTP host only; credentials are never included.
+        store_kind:
+          type: string
+        recipient_count:
+          type: integer
+          minimum: 0
+        recipients:
+          type: array
+          items:
+            type: string
+        trace_id:
+          type: string
+          minLength: 1
+    BrowserInstance:
+      type: object
+      additionalProperties: false
+      required: [instance_id, worker_id, tenant_id, engine, state, context_count, tab_count, created_at]
+      properties:
+        instance_id:
+          type: string
+        worker_id:
+          type: string
+        tenant_id:
+          type: string
+        engine:
+          type: string
+        remote_endpoint:
+          type: string
+        state:
+          type: string
+        context_count:
+          type: integer
+          minimum: 0
+        tab_count:
+          type: integer
+          minimum: 0
+        rss_bytes:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        recycle_at:
+          type: string
+          format: date-time
+    ProviderContext:
+      type: object
+      additionalProperties: false
+      description: >-
+        Isolated browser context bound to a provider target and identity. The
+        storage-state URI is redacted: only the has_storage_state boolean is
+        exposed (INV-5 redaction). storage_state_uri is never present.
+      required: [context_id, instance_id, tenant_id, target_id, identity_ref, login_state, conversation_model, has_storage_state, max_tabs, created_at]
+      properties:
+        context_id:
+          type: string
+        instance_id:
+          type: string
+        tenant_id:
+          type: string
+        target_id:
+          type: string
+        identity_ref:
+          type: string
+        login_state:
+          type: string
+        conversation_model:
+          type: string
+        fingerprint_id:
+          type: string
+        proxy_id:
+          type: string
+        has_storage_state:
+          type: boolean
+          description: Whether a persisted storage state exists. The URI itself is never exposed.
+        max_tabs:
+          type: integer
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        last_health_at:
+          type: string
+          format: date-time
+        recycle_at:
+          type: string
+          format: date-time
+    BrowserTab:
+      type: object
+      additionalProperties: false
+      required: [tab_id, context_id, state, jobs_completed, created_at]
+      properties:
+        tab_id:
+          type: string
+        context_id:
+          type: string
+        state:
+          type: string
+        conversation_id:
+          type: string
+        current_job_id:
+          type: string
+        jobs_completed:
+          type: integer
+          minimum: 0
+        rss_bytes:
+          type: integer
+          minimum: 0
+        last_health_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        recycle_at:
+          type: string
+          format: date-time
+    ConcurrencyView:
+      type: object
+      additionalProperties: false
+      required: [target, identity_ref, current_cap, min, max, in_flight, last_change_at]
+      properties:
+        target:
+          type: string
+        identity_ref:
+          type: string
+        current_cap:
+          type: integer
+          minimum: 0
+        min:
+          type: integer
+          minimum: 0
+        max:
+          type: integer
+          minimum: 0
+        in_flight:
+          type: integer
+          minimum: 0
+        last_change_reason:
+          type: string
+        last_change_at:
+          type: string
+          format: date-time
+    BrowserInstanceListResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, data, next_cursor, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        kind:
+          type: string
+          const: browser_instances
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/BrowserInstance"
+        next_cursor:
+          type: ["string", "null"]
+        trace_id:
+          type: string
+          minLength: 1
+    ProviderContextListResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, data, next_cursor, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        kind:
+          type: string
+          const: provider_contexts
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProviderContext"
+        next_cursor:
+          type: ["string", "null"]
+        trace_id:
+          type: string
+          minLength: 1
+    BrowserTabListResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, data, next_cursor, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        kind:
+          type: string
+          const: browser_tabs
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/BrowserTab"
+        next_cursor:
+          type: ["string", "null"]
+        trace_id:
+          type: string
+          minLength: 1
+    ConcurrencyListResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, data, next_cursor, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        kind:
+          type: string
+          const: concurrency_ceilings
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConcurrencyView"
+        next_cursor:
+          type: ["string", "null"]
+        trace_id:
+          type: string
+          minLength: 1
+    BrowserTopologySummary:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, tenant_id, total_instances, total_contexts, total_tabs, instances_by_state, contexts_by_login_state, tabs_by_state, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        kind:
+          type: string
+          const: browser_topology_summary
+        tenant_id:
+          type: string
+        total_instances:
+          type: integer
+          minimum: 0
+        total_contexts:
+          type: integer
+          minimum: 0
+        total_tabs:
+          type: integer
+          minimum: 0
+        instances_by_state:
+          type: object
+          additionalProperties:
+            type: integer
+        contexts_by_login_state:
+          type: object
+          additionalProperties:
+            type: integer
+        tabs_by_state:
+          type: object
+          additionalProperties:
+            type: integer
+        trace_id:
+          type: string
+          minLength: 1
+    SSOConfigRequest:
+      type: object
+      additionalProperties: false
+      required: [type]
+      description: >-
+        OIDC or SAML configuration upsert. Secret material is referenced by
+        ClientSecretRef or supplied as public IdP certificates; plaintext
+        client secrets are not accepted.
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        type:
+          type: string
+          enum: [oidc, saml]
+        oidc:
+          type: object
+          additionalProperties: true
+          description: OIDC configuration; required when type=oidc. Must include a non-empty issuer.
+        saml:
+          type: object
+          additionalProperties: true
+          description: SAML configuration; required when type=saml. Must include an IdP signing certificate (PEM).
+    SSOConfigResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, tenant_id, oidc, saml, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        tenant_id:
+          type: string
+        oidc:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        saml:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        trace_id:
+          type: string
+          minLength: 1
+    SSOCallbackRequest:
+      type: object
+      additionalProperties: false
+      description: >-
+        OIDC id_token or SAML assertion verification input. Exactly one of
+        id_token (OIDC) or assertion (SAML) is supplied for the matching route.
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        id_token:
+          type: string
+          description: OIDC id_token to verify (for /v1/sso/oidc/callback).
+        assertion:
+          type: string
+          description: SAML assertion XML to verify (for /v1/sso/saml/acs).
+    SSOSession:
+      type: object
+      additionalProperties: false
+      required: [api_version, tenant_id, app_id, role, subject, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        tenant_id:
+          type: string
+        app_id:
+          type: string
+        role:
+          type: string
+        subject:
+          type: string
+        email:
+          type: string
+        session_token:
+          type: string
+          description: Opaque server-side session token, present when session management is enabled.
+        session_expires_at:
+          type: string
+          format: date-time
+          description: Session expiry, present when session management is enabled.
+        trace_id:
+          type: string
+          minLength: 1
+    LogoutResult:
+      type: object
+      additionalProperties: false
+      required: [api_version, revoked, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        revoked:
+          type: boolean
+          description: True when an active session was revoked; false when no matching session existed (idempotent).
+        trace_id:
+          type: string
+          minLength: 1
+    AuditExportRequest:
+      type: object
+      additionalProperties: false
+      description: Optional filter for the audit export. An empty body exports the full tenant chain.
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        idempotency_key:
+          type: string
+          description: Accepted for parity with the idempotent-mutation convention. Audit export is a read; the key is ignored.
+        since:
+          type: string
+          format: date-time
+          description: Inclusive lower bound (RFC3339). Unparseable or empty means unbounded.
+        until:
+          type: string
+          format: date-time
+          description: Inclusive upper bound (RFC3339). Unparseable or empty means unbounded.
+        limit:
+          type: integer
+          minimum: 0
+          description: Maximum records to export. 0 means no limit.
+        range:
+          type: object
+          additionalProperties: false
+          description: Optional sequence window applied after the time-range query.
+          properties:
+            from_sequence:
+              type: integer
+              format: int64
+              description: Inclusive lower bound on record sequence.
+            to_sequence:
+              type: integer
+              format: int64
+              description: Inclusive upper bound on record sequence.
+    AuditRecord:
+      type: object
+      additionalProperties: false
+      required: [id, seq, tenant_id, app_id, actor, action, resource, outcome, occurred_at, prev_hash, record_hash]
+      properties:
+        id:
+          type: string
+        seq:
+          type: integer
+          format: int64
+        tenant_id:
+          type: string
+        app_id:
+          type: string
+        actor:
+          type: string
+        action:
+          type: string
+        resource:
+          type: string
+        outcome:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        attributes:
+          type: object
+          additionalProperties: true
+        prev_hash:
+          type: string
+        record_hash:
+          type: string
+    AuditExportResult:
+      type: object
+      additionalProperties: false
+      required: [api_version, status, stats, chain_valid, head_hash, count, records, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        status:
+          type: string
+          enum: [accepted]
+        stats:
+          type: object
+          additionalProperties: false
+          required: [enqueued, exported, dropped, failed]
+          properties:
+            enqueued:
+              type: integer
+              minimum: 0
+            exported:
+              type: integer
+              minimum: 0
+            dropped:
+              type: integer
+              minimum: 0
+            failed:
+              type: integer
+              minimum: 0
+        chain_valid:
+          type: boolean
+          description: Whether the exported records form a verified tamper-evident hash chain.
+        head_hash:
+          type: string
+          description: Current head record hash of the tenant audit chain.
+        count:
+          type: integer
+          minimum: 0
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditRecord"
         trace_id:
           type: string
           minLength: 1

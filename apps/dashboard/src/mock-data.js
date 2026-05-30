@@ -258,6 +258,169 @@ export const dashboardData = {
       status: 'Blocked'
     }
   ],
+  browserSummary: [
+    {
+      label: 'Browser instances',
+      value: '3',
+      state: 'Ready',
+      source: 'Mock /v1/browser/summary',
+      tone: 'ready'
+    },
+    {
+      label: 'Provider contexts',
+      value: '5',
+      state: 'Ready',
+      source: 'Mock /v1/browser/summary',
+      tone: 'ready'
+    },
+    {
+      label: 'Channel tabs',
+      value: '11',
+      state: 'Needs review',
+      source: 'Mock /v1/browser/summary',
+      tone: 'review'
+    },
+    {
+      label: 'Quarantined tabs',
+      value: '1',
+      state: 'Blocked',
+      source: 'Mock /v1/browser/summary',
+      tone: 'blocked'
+    }
+  ],
+  browserInstances: [
+    {
+      instance: 'browser_inst_01',
+      context: 'ctx_openai_primary',
+      provider: 'chatgpt_web',
+      identity: 'acct-alpha',
+      tab: 'tab_openai_a1',
+      state: 'ready',
+      job: 'job_mock_014',
+      storage: 'Snapshot present',
+      engine: 'Chromium (CDP)'
+    },
+    {
+      instance: 'browser_inst_01',
+      context: 'ctx_openai_primary',
+      provider: 'chatgpt_web',
+      identity: 'acct-alpha',
+      tab: 'tab_openai_a2',
+      state: 'busy',
+      job: 'job_mock_018',
+      storage: 'Snapshot present',
+      engine: 'Chromium (CDP)'
+    },
+    {
+      instance: 'browser_inst_01',
+      context: 'ctx_claude_primary',
+      provider: 'claude_web',
+      identity: 'acct-alpha',
+      tab: 'tab_claude_b1',
+      state: 'warming',
+      job: '—',
+      storage: 'Snapshot present',
+      engine: 'Chromium (CDP)'
+    },
+    {
+      instance: 'browser_inst_02',
+      context: 'ctx_gemini_primary',
+      provider: 'gemini_web',
+      identity: 'acct-beta',
+      tab: 'tab_gemini_c1',
+      state: 'draining',
+      job: '—',
+      storage: 'No snapshot yet',
+      engine: 'Firefox (BiDi)'
+    },
+    {
+      instance: 'browser_inst_03',
+      context: 'ctx_perplexity_primary',
+      provider: 'perplexity_web',
+      identity: 'acct-beta',
+      tab: 'tab_ppx_d1',
+      state: 'quarantined',
+      job: '—',
+      storage: 'Snapshot present',
+      engine: 'WebKit (BiDi)'
+    }
+  ],
+  concurrency: [
+    {
+      provider: 'chatgpt_web',
+      identity: 'acct-alpha',
+      cap: '4',
+      bounds: '1 / 6',
+      inflight: '3',
+      lastChange: 'Increase · success streak',
+      state: 'Ready'
+    },
+    {
+      provider: 'claude_web',
+      identity: 'acct-alpha',
+      cap: '2',
+      bounds: '1 / 5',
+      inflight: '1',
+      lastChange: 'Hold · warming pool',
+      state: 'Needs review'
+    },
+    {
+      provider: 'gemini_web',
+      identity: 'acct-beta',
+      cap: '2',
+      bounds: '1 / 6',
+      inflight: '0',
+      lastChange: 'Decrease · soft slow-down banner',
+      state: 'Needs review'
+    },
+    {
+      provider: 'perplexity_web',
+      identity: 'acct-beta',
+      cap: '1',
+      bounds: '1 / 4',
+      inflight: '0',
+      lastChange: 'Cut · CAPTCHA signal, cooldown',
+      state: 'Blocked'
+    }
+  ],
+  alerts: [
+    {
+      id: 'alert_captcha_01',
+      kind: 'captcha',
+      job: 'job_mock_018',
+      target: 'chatgpt_web · acct-alpha',
+      age: '2m',
+      status: 'open',
+      detail: 'CAPTCHA wall detected mid-job. A human operator must solve it via noVNC; UBAG never auto-solves.'
+    },
+    {
+      id: 'alert_login_02',
+      kind: 'manual_login',
+      job: 'job_mock_021',
+      target: 'gemini_web · acct-beta',
+      age: '6m',
+      status: 'acknowledged',
+      detail: 'Manual login / 2FA required. Operator completes the user-owned login in the live session.'
+    }
+  ],
+  alertConfig: [
+    {
+      setting: 'Sink',
+      value: 'SMTP email + dashboard queue'
+    },
+    {
+      setting: 'SMTP configured',
+      value: 'yes'
+    },
+    {
+      setting: 'Default recipient',
+      value: 'mindreader420123@gmail.com'
+    },
+    {
+      setting: 'Resolution',
+      value: 'Human-solved (noVNC takeover) — no automated CAPTCHA bypass'
+    }
+  ],
   stateFixtures: [
     {
       state: 'loading',
@@ -304,6 +467,9 @@ export const dashboardTabs = [
   'targets',
   'jobs',
   'sessions',
+  'browser',
+  'concurrency',
+  'alerts',
   'templates',
   'runtime',
   'activation'

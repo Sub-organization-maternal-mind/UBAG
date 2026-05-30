@@ -138,6 +138,81 @@ export async function fetchSSOConfig() {
   } catch { return null; }
 }
 
+export async function fetchBrowserSummary() {
+  try {
+    const { status, data } = await gw('GET', '/v1/browser/summary');
+    if (status === 200) return data;
+    return status === 403 ? { denied: true } : null;
+  } catch { return null; }
+}
+
+export async function fetchBrowserInstances() {
+  try {
+    const { status, data } = await gw('GET', '/v1/browser/instances');
+    if (status === 200 && data) return data.data || data.items || null;
+    return null;
+  } catch { return null; }
+}
+
+export async function fetchBrowserContexts() {
+  try {
+    const { status, data } = await gw('GET', '/v1/browser/contexts');
+    if (status === 200 && data) return data.data || data.items || null;
+    return null;
+  } catch { return null; }
+}
+
+export async function fetchBrowserTabs() {
+  try {
+    const { status, data } = await gw('GET', '/v1/browser/tabs');
+    if (status === 200 && data) return data.data || data.items || null;
+    return null;
+  } catch { return null; }
+}
+
+export async function fetchConcurrency() {
+  try {
+    const { status, data } = await gw('GET', '/v1/concurrency');
+    if (status === 200 && data) return data.data || data.items || null;
+    return status === 403 ? { denied: true } : null;
+  } catch { return null; }
+}
+
+export async function fetchAlerts() {
+  try {
+    const { status, data } = await gw('GET', '/v1/alerts');
+    if (status === 200 && data) return data.data || data.items || null;
+    return status === 403 ? { denied: true } : null;
+  } catch { return null; }
+}
+
+export async function fetchAlertConfig() {
+  try {
+    const { status, data } = await gw('GET', '/v1/alerts/config');
+    if (status === 200) return data;
+    return status === 403 ? { denied: true } : null;
+  } catch { return null; }
+}
+
+export async function acknowledgeAlert(alertId) {
+  try {
+    const { status, data } = await gw('POST', `/v1/alerts/${alertId}/acknowledge`, {
+      actor: 'dashboard operator'
+    });
+    return { status, data };
+  } catch (err) { return { status: -1, data: { error: { message: err.message } } }; }
+}
+
+export async function resolveAlert(alertId) {
+  try {
+    const { status, data } = await gw('POST', `/v1/alerts/${alertId}/resolve`, {
+      actor: 'dashboard operator',
+      resolution: 'human-solved'
+    });
+    return { status, data };
+  } catch (err) { return { status: -1, data: { error: { message: err.message } } }; }
+}
+
 export async function createJob(target, commandType, input) {
   try {
     const body = {
@@ -164,7 +239,7 @@ export async function cancelJob(jobId) {
  * Fetch all live data in parallel and return a structured snapshot.
  */
 export async function fetchDashboardSnapshot() {
-  const [health, jobs, targets, adapters, templates, workflows, cache, rateLimits, audit, sso] =
+  const [health, jobs, targets, adapters, templates, workflows, cache, rateLimits, audit, sso, browserSummary, browserInstances, concurrency, alerts, alertConfig] =
     await Promise.allSettled([
       fetchHealth(),
       fetchJobs(),
@@ -175,7 +250,12 @@ export async function fetchDashboardSnapshot() {
       fetchCache(),
       fetchRateLimits(),
       fetchAudit(),
-      fetchSSOConfig()
+      fetchSSOConfig(),
+      fetchBrowserSummary(),
+      fetchBrowserInstances(),
+      fetchConcurrency(),
+      fetchAlerts(),
+      fetchAlertConfig()
     ]);
 
   return {
@@ -189,6 +269,11 @@ export async function fetchDashboardSnapshot() {
     rateLimits: rateLimits.status === 'fulfilled' ? rateLimits.value : null,
     audit: audit.status === 'fulfilled' ? audit.value : null,
     sso: sso.status === 'fulfilled' ? sso.value : null,
+    browserSummary: browserSummary.status === 'fulfilled' ? browserSummary.value : null,
+    browserInstances: browserInstances.status === 'fulfilled' ? browserInstances.value : null,
+    concurrency: concurrency.status === 'fulfilled' ? concurrency.value : null,
+    alerts: alerts.status === 'fulfilled' ? alerts.value : null,
+    alertConfig: alertConfig.status === 'fulfilled' ? alertConfig.value : null,
     fetchedAt: new Date().toLocaleString()
   };
 }

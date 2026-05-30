@@ -10,6 +10,9 @@ import {
   UbagTransportError,
   createUbagClient,
   generateIdempotencyKey,
+  type UbagAlertActionRequest,
+  type UbagAuditExportRange,
+  type UbagAuditExportRequest,
   type UbagClientOptions,
   type UbagCreateJobRequest,
   type UbagJobCommand,
@@ -17,7 +20,8 @@ import {
   type UbagJobOptions,
   type UbagJsonObject,
   type UbagListEventsParams,
-  type UbagListJobsParams
+  type UbagListJobsParams,
+  type UbagSsoLogoutRequest
 } from "@ubag/sdk";
 
 const CLI_VERSION = "0.0.0";
@@ -56,6 +60,17 @@ const COMMANDS = new Set([
   "metrics",
   "cancel-job",
   "retry-job",
+  "list-alerts",
+  "alert-config",
+  "acknowledge-alert",
+  "resolve-alert",
+  "list-browser-instances",
+  "list-browser-contexts",
+  "list-browser-tabs",
+  "browser-summary",
+  "list-concurrency",
+  "sso-logout",
+  "export-audit",
   "stream",
   "stream-sse",
   "mock-run",
@@ -72,12 +87,15 @@ const VALUE_OPTIONS = new Set([
   "content-type",
   "cursor",
   "delivery-id",
+  "context-id",
   "fields",
   "file",
+  "from-sequence",
   "idempotency-key",
   "include",
   "input",
   "input-json",
+  "instance-id",
   "limit",
   "max-events",
   "options-json",
@@ -87,11 +105,15 @@ const VALUE_OPTIONS = new Set([
   "python",
   "reason",
   "scope-app-id",
+  "since",
   "sort",
+  "state",
   "status",
   "target",
   "tenant-id",
-  "timeout-ms"
+  "timeout-ms",
+  "to-sequence",
+  "until"
 ]);
 
 const OPTION_ALIASES = new Map([
@@ -215,6 +237,39 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     case "retry-job":
       await runRetryJob(args);
+      return 0;
+    case "list-alerts":
+      await runListAlerts(args);
+      return 0;
+    case "alert-config":
+      await runAlertConfig(args);
+      return 0;
+    case "acknowledge-alert":
+      await runAcknowledgeAlert(args);
+      return 0;
+    case "resolve-alert":
+      await runResolveAlert(args);
+      return 0;
+    case "list-browser-instances":
+      await runListBrowserInstances(args);
+      return 0;
+    case "list-browser-contexts":
+      await runListBrowserContexts(args);
+      return 0;
+    case "list-browser-tabs":
+      await runListBrowserTabs(args);
+      return 0;
+    case "browser-summary":
+      await runBrowserSummary(args);
+      return 0;
+    case "list-concurrency":
+      await runListConcurrency(args);
+      return 0;
+    case "sso-logout":
+      await runSsoLogout(args);
+      return 0;
+    case "export-audit":
+      await runExportAudit(args);
       return 0;
     case "stream":
     case "stream-sse":
@@ -448,6 +503,135 @@ async function runRetryJob(args: ParsedArgs): Promise<void> {
   const { client, config } = buildClient(args);
   const idempotencyKey = getOption(args, "idempotency-key") ?? generateIdempotencyKey();
   const response = await client.retryJob(jobId, buildMutationRequest(args, config, idempotencyKey), {
+    idempotencyKey
+  });
+  printJson(response, args);
+}
+
+async function runListAlerts(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const params: Parameters<typeof client.listAlerts>[0] = {};
+  const limit = getOption(args, "limit");
+  const status = getOption(args, "status");
+  if (limit !== undefined) {
+    params.limit = parsePositiveInt(limit, "limit");
+  }
+  if (status !== undefined) {
+    params.status = status;
+  }
+  const response = await client.listAlerts(params);
+  printJson(response, args);
+}
+
+async function runAlertConfig(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const response = await client.getAlertConfig();
+  printJson(response, args);
+}
+
+async function runAcknowledgeAlert(args: ParsedArgs): Promise<void> {
+  const alertId = requirePositional(args, 0, "alert_id");
+  const { client, config } = buildClient(args);
+  const idempotencyKey = getOption(args, "idempotency-key") ?? generateIdempotencyKey();
+  const response = await client.acknowledgeAlert(alertId, buildAlertActionRequest(args, config, idempotencyKey), {
+    idempotencyKey
+  });
+  printJson(response, args);
+}
+
+async function runResolveAlert(args: ParsedArgs): Promise<void> {
+  const alertId = requirePositional(args, 0, "alert_id");
+  const { client, config } = buildClient(args);
+  const idempotencyKey = getOption(args, "idempotency-key") ?? generateIdempotencyKey();
+  const response = await client.resolveAlert(alertId, buildAlertActionRequest(args, config, idempotencyKey), {
+    idempotencyKey
+  });
+  printJson(response, args);
+}
+
+async function runListBrowserInstances(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const params: Parameters<typeof client.listBrowserInstances>[0] = {};
+  const limit = getOption(args, "limit");
+  const state = getOption(args, "state");
+  if (limit !== undefined) {
+    params.limit = parsePositiveInt(limit, "limit");
+  }
+  if (state !== undefined) {
+    params.state = state;
+  }
+  const response = await client.listBrowserInstances(params);
+  printJson(response, args);
+}
+
+async function runListBrowserContexts(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const params: Parameters<typeof client.listProviderContexts>[0] = {};
+  const limit = getOption(args, "limit");
+  const instanceId = getOption(args, "instance-id");
+  if (limit !== undefined) {
+    params.limit = parsePositiveInt(limit, "limit");
+  }
+  if (instanceId !== undefined) {
+    params.instance_id = instanceId;
+  }
+  const response = await client.listProviderContexts(params);
+  printJson(response, args);
+}
+
+async function runListBrowserTabs(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const params: Parameters<typeof client.listBrowserTabs>[0] = {};
+  const limit = getOption(args, "limit");
+  const contextId = getOption(args, "context-id");
+  const state = getOption(args, "state");
+  if (limit !== undefined) {
+    params.limit = parsePositiveInt(limit, "limit");
+  }
+  if (contextId !== undefined) {
+    params.context_id = contextId;
+  }
+  if (state !== undefined) {
+    params.state = state;
+  }
+  const response = await client.listBrowserTabs(params);
+  printJson(response, args);
+}
+
+async function runBrowserSummary(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const response = await client.getBrowserTopologySummary();
+  printJson(response, args);
+}
+
+async function runListConcurrency(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const params: Parameters<typeof client.getConcurrency>[0] = {};
+  const cursor = getOption(args, "cursor");
+  const limit = getOption(args, "limit");
+  if (cursor !== undefined) {
+    params.cursor = cursor;
+  }
+  if (limit !== undefined) {
+    params.limit = parsePositiveInt(limit, "limit");
+  }
+  const response = await client.getConcurrency(params);
+  printJson(response, args);
+}
+
+async function runSsoLogout(args: ParsedArgs): Promise<void> {
+  const { client, config } = buildClient(args);
+  const idempotencyKey = getOption(args, "idempotency-key") ?? generateIdempotencyKey();
+  const response = await client.ssoLogout(buildSsoLogoutRequest(args, config, idempotencyKey), {
+    idempotencyKey
+  });
+  printJson(response, args);
+}
+
+async function runExportAudit(args: ParsedArgs): Promise<void> {
+  const { client, config } = buildClient(args);
+  const idempotencyKey = getOption(args, "idempotency-key") ?? generateIdempotencyKey();
+  const response = await client.exportAudit(buildAuditExportRequest(args, config, idempotencyKey), {
     idempotencyKey
   });
   printJson(response, args);
@@ -741,6 +925,105 @@ function buildWebhookReplayRequest(args: ParsedArgs, config: RuntimeConfig, idem
   const deliveryId = getOption(args, "delivery-id");
   if (deliveryId !== undefined) {
     request.delivery_id = deliveryId;
+  }
+  return request;
+}
+
+function buildAlertActionRequest(
+  args: ParsedArgs,
+  config: RuntimeConfig,
+  idempotencyKey: string
+): UbagAlertActionRequest {
+  const payload = getOption(args, "payload");
+  const file = getOption(args, "file");
+
+  if (payload !== undefined && file !== undefined) {
+    throw new CliUsageError("alert action accepts either --payload or --file, not both");
+  }
+
+  if (payload !== undefined || file !== undefined) {
+    const text = payload ?? readTextSource(requireString(file, "file"), "file");
+    return parseJsonObject(text, "alert action payload") as unknown as UbagAlertActionRequest;
+  }
+
+  const request: UbagAlertActionRequest = {
+    api_version: config.apiVersion,
+    idempotency_key: idempotencyKey
+  };
+  const reason = getOption(args, "reason");
+  if (reason !== undefined) {
+    request.reason = reason;
+  }
+  return request;
+}
+
+function buildSsoLogoutRequest(
+  args: ParsedArgs,
+  config: RuntimeConfig,
+  idempotencyKey: string
+): UbagSsoLogoutRequest {
+  const payload = getOption(args, "payload");
+  const file = getOption(args, "file");
+
+  if (payload !== undefined && file !== undefined) {
+    throw new CliUsageError("sso-logout accepts either --payload or --file, not both");
+  }
+
+  if (payload !== undefined || file !== undefined) {
+    const text = payload ?? readTextSource(requireString(file, "file"), "file");
+    return parseJsonObject(text, "sso-logout payload") as unknown as UbagSsoLogoutRequest;
+  }
+
+  return {
+    api_version: config.apiVersion,
+    idempotency_key: idempotencyKey
+  };
+}
+
+function buildAuditExportRequest(
+  args: ParsedArgs,
+  config: RuntimeConfig,
+  idempotencyKey: string
+): UbagAuditExportRequest {
+  const payload = getOption(args, "payload");
+  const file = getOption(args, "file");
+
+  if (payload !== undefined && file !== undefined) {
+    throw new CliUsageError("export-audit accepts either --payload or --file, not both");
+  }
+
+  if (payload !== undefined || file !== undefined) {
+    const text = payload ?? readTextSource(requireString(file, "file"), "file");
+    return parseJsonObject(text, "export-audit payload") as unknown as UbagAuditExportRequest;
+  }
+
+  const request: UbagAuditExportRequest = {
+    api_version: config.apiVersion,
+    idempotency_key: idempotencyKey
+  };
+  const since = getOption(args, "since");
+  const until = getOption(args, "until");
+  const limit = getOption(args, "limit");
+  if (since !== undefined) {
+    request.since = since;
+  }
+  if (until !== undefined) {
+    request.until = until;
+  }
+  if (limit !== undefined) {
+    request.limit = parsePositiveInt(limit, "limit");
+  }
+  const fromSequence = getOption(args, "from-sequence");
+  const toSequence = getOption(args, "to-sequence");
+  if (fromSequence !== undefined || toSequence !== undefined) {
+    const range: UbagAuditExportRange = {};
+    if (fromSequence !== undefined) {
+      range.from_sequence = parseNonNegativeInt(fromSequence, "from-sequence");
+    }
+    if (toSequence !== undefined) {
+      range.to_sequence = parseNonNegativeInt(toSequence, "to-sequence");
+    }
+    request.range = range;
   }
   return request;
 }
@@ -1239,6 +1522,118 @@ Options:
     return;
   }
 
+  if (topic === "list-alerts") {
+    console.log(`Usage: ubag list-alerts [options]
+
+List operational alerts.
+
+Options:
+  --status <status>             Filter by alert status.
+  --limit <count>               Optional page size.`);
+    return;
+  }
+
+  if (topic === "alert-config") {
+    console.log(`Usage: ubag alert-config
+
+Show the alert sink configuration (no secrets are returned).`);
+    return;
+  }
+
+  if (topic === "acknowledge-alert" || topic === "resolve-alert") {
+    console.log(`Usage: ubag ${topic} <alert_id> [options]
+
+Idempotently ${topic === "acknowledge-alert" ? "acknowledge" : "resolve"} an alert.
+
+Options:
+  --idempotency-key <key>       Optional idempotency key. Generated when omitted.
+  --reason <text>               Optional operator reason.
+  --payload <json>              Full action request envelope.
+  --file <path|->               Full action request envelope from file or stdin.`);
+    return;
+  }
+
+  if (topic === "list-browser-instances") {
+    console.log(`Usage: ubag list-browser-instances [options]
+
+List browser instances in the topology.
+
+Options:
+  --state <state>               Filter by instance state.
+  --limit <count>               Optional page size.`);
+    return;
+  }
+
+  if (topic === "list-browser-contexts") {
+    console.log(`Usage: ubag list-browser-contexts [options]
+
+List provider browser contexts.
+
+Options:
+  --instance-id <id>            Filter by browser instance id.
+  --limit <count>               Optional page size.`);
+    return;
+  }
+
+  if (topic === "list-browser-tabs") {
+    console.log(`Usage: ubag list-browser-tabs [options]
+
+List browser tabs.
+
+Options:
+  --context-id <id>             Filter by provider context id.
+  --state <state>               Filter by tab state.
+  --limit <count>               Optional page size.`);
+    return;
+  }
+
+  if (topic === "browser-summary") {
+    console.log(`Usage: ubag browser-summary
+
+Show the browser topology summary.`);
+    return;
+  }
+
+  if (topic === "list-concurrency") {
+    console.log(`Usage: ubag list-concurrency [options]
+
+List concurrency ceilings.
+
+Options:
+  --cursor <cursor>             Optional pagination cursor.
+  --limit <count>               Optional page size.`);
+    return;
+  }
+
+  if (topic === "sso-logout") {
+    console.log(`Usage: ubag sso-logout [options]
+
+Idempotently revoke the current SSO session.
+
+Options:
+  --idempotency-key <key>       Optional idempotency key. Generated when omitted.
+  --payload <json>              Full request envelope.
+  --file <path|->               Full request envelope from file or stdin.`);
+    return;
+  }
+
+  if (topic === "export-audit") {
+    console.log(`Usage: ubag export-audit [options]
+
+Idempotently export a verifiable audit chain segment.
+
+Options:
+  --since <value>               Lower bound filter.
+  --until <value>               Upper bound filter.
+  --limit <count>               Maximum records.
+  --from-sequence <seq>         Range lower bound sequence.
+  --to-sequence <seq>           Range upper bound sequence.
+  --idempotency-key <key>       Optional idempotency key. Generated when omitted.
+  --payload <json>              Full export request envelope.
+  --file <path|->               Full export request envelope from file or stdin.`);
+    return;
+  }
+
   console.log(`Usage: ubag [global options] <command> [command options]
 
 Commands:
@@ -1268,6 +1663,17 @@ Commands:
   metrics                       GET /v1/metrics.
   cancel-job <job_id>           POST /v1/jobs/{job_id}/cancel.
   retry-job <job_id>            POST /v1/jobs/{job_id}/retry.
+  list-alerts                   GET /v1/alerts.
+  alert-config                  GET /v1/alerts/config.
+  acknowledge-alert <alert_id>  POST /v1/alerts/{alert_id}/acknowledge.
+  resolve-alert <alert_id>      POST /v1/alerts/{alert_id}/resolve.
+  list-browser-instances        GET /v1/browser/instances.
+  list-browser-contexts         GET /v1/browser/contexts.
+  list-browser-tabs             GET /v1/browser/tabs.
+  browser-summary               GET /v1/browser/summary.
+  list-concurrency              GET /v1/concurrency.
+  sso-logout                    POST /v1/sso/logout.
+  export-audit                  POST /v1/audit/export.
   stream <job_id>               Alias for stream-sse.
   stream-sse <job_id>           Safe bounded SSE snapshot reader.
   mock-run                      Invoke apps/worker/run_mock_worker.py.

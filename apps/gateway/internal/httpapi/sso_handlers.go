@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ubag/ubag/apps/gateway/internal/audit"
+	"github.com/ubag/ubag/apps/gateway/internal/session"
 	"github.com/ubag/ubag/apps/gateway/internal/sso"
 )
 
@@ -30,12 +32,20 @@ type ssoCallbackRequest struct {
 }
 
 type ssoPrincipalResponse struct {
+	APIVersion       string `json:"api_version"`
+	TenantID         string `json:"tenant_id"`
+	AppID            string `json:"app_id"`
+	Role             string `json:"role"`
+	Subject          string `json:"subject"`
+	Email            string `json:"email,omitempty"`
+	SessionToken     string `json:"session_token,omitempty"`
+	SessionExpiresAt string `json:"session_expires_at,omitempty"`
+	TraceID          string `json:"trace_id"`
+}
+
+type ssoLogoutResponse struct {
 	APIVersion string `json:"api_version"`
-	TenantID   string `json:"tenant_id"`
-	AppID      string `json:"app_id"`
-	Role       string `json:"role"`
-	Subject    string `json:"subject"`
-	Email      string `json:"email,omitempty"`
+	Revoked    bool   `json:"revoked"`
 	TraceID    string `json:"trace_id"`
 }
 
@@ -213,8 +223,6 @@ func (s *Server) handleSSOOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-PRINCIPAL-001", err.Error()))
 		return
 	}
-	// NOTE: session/token minting from the verified principal is a documented
-	// follow-up; this endpoint currently returns the resolved principal only.
 	s.writeSSOPrincipal(w, r, apiVersion, tenantID, appID, principal)
 }
 
@@ -269,7 +277,8 @@ func (s *Server) handleSSOSAMLACS(w http.ResponseWriter, r *http.Request) {
 func (s *Server) writeSSOPrincipal(w http.ResponseWriter, r *http.Request, apiVersion, tenantID, appID string, principal sso.Principal) {
 	resolvedTenant := firstNonEmpty(principal.TenantID, tenantID)
 	resolvedApp := firstNonEmpty(principal.AppID, appID)
-	s.writeJSON(w, http.StatusOK, ssoPrincipalResponse{
+
+	response := ssoPrincipalResponse{
 		APIVersion: apiVersion,
 		TenantID:   resolvedTenant,
 		AppID:      resolvedApp,
@@ -277,5 +286,115 @@ func (s *Server) writeSSOPrincipal(w http.ResponseWriter, r *http.Request, apiVe
 		Subject:    principal.Subject,
 		Email:      principal.Email,
 		TraceID:    traceIDFromContext(r.Context()),
+	}
+
+	// Mint a server-side session for the verified principal when sessions are
+	// enabled. This is additive: it does not affect the static app-secret path.
+	if s.sessions != nil {
+		now := time.Now().UTC()
+		ttl := s.sessionTTL
+		if ttl <= 0 {
+			ttl = time.Hour
+		}
+		sess, token, err := s.sessions.Create(r.Context(), session.Session{
+			TenantID:  resolvedTenant,
+			AppID:     resolvedApp,
+			Role:      principal.Role,
+			Subject:   principal.Subject,
+			Email:     principal.Email,
+			IssuedAt:  now,
+			ExpiresAt: now.Add(ttl),
+		})
+		if err != nil {
+			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to mint session"))
+			return
+		}
+		http.SetCookie(w, &http.Cookie{
+			Name:     sessionCookieName,
+			Value:    token,
+			Path:     "/",
+			Expires:  sess.ExpiresAt,
+			HttpOnly: true,
+			Secure:   true,
+			SameSite: http.SameSiteLaxMode,
+		})
+		response.SessionToken = token
+		response.SessionExpiresAt = sess.ExpiresAt.Format(time.RFC3339)
+		s.emitSessionAudit(r, resolvedTenant, resolvedApp, principal.Role, principal.Subject, "session:mint", "allow", sess.ID)
+	}
+
+	s.writeJSON(w, http.StatusOK, response)
+}
+
+// handleSSOLogout revokes the session presented via the session cookie or
+// bearer token and clears the session cookie. It is idempotent: revoking an
+// unknown or already-revoked session returns revoked=false with HTTP 200.
+func (s *Server) handleSSOLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeMethodNotAllowed(w, r, http.MethodPost)
+		return
+	}
+	if s.sessions == nil {
+		s.writeNotImplemented(w, r, "session management is not configured")
+		return
+	}
+
+	revoked := false
+	if token := sessionTokenFromRequest(r); token != "" {
+		ok, err := s.sessions.Revoke(r.Context(), token, time.Now())
+		if err != nil {
+			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to revoke session"))
+			return
+		}
+		revoked = ok
+	}
+
+	// Clear the cookie regardless of whether a session was found.
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	if revoked {
+		if principal, ok := principalFromContext(r.Context()); ok {
+			s.emitSessionAudit(r, principal.TenantID, principal.AppID, principal.Role, principal.Subject, "session:logout", "allow", "")
+		}
+	}
+
+	s.writeJSON(w, http.StatusOK, ssoLogoutResponse{
+		APIVersion: s.apiVersion,
+		Revoked:    revoked,
+		TraceID:    traceIDFromContext(r.Context()),
+	})
+}
+
+// emitSessionAudit appends a best-effort, nil-safe audit record for a session
+// lifecycle event (mint or logout). Store errors are intentionally ignored.
+func (s *Server) emitSessionAudit(r *http.Request, tenantID, appID, role, subject, action, outcome, sessionID string) {
+	if s == nil || s.audit == nil {
+		return
+	}
+	actor := subject
+	if actor == "" {
+		actor = role
+	}
+	attributes := map[string]any{"role": role}
+	if sessionID != "" {
+		attributes["session_id"] = sessionID
+	}
+	_, _ = s.audit.Append(r.Context(), audit.Record{
+		TenantID:   tenantID,
+		AppID:      appID,
+		Actor:      actor,
+		Action:     action,
+		Resource:   r.URL.Path,
+		Outcome:    outcome,
+		OccurredAt: time.Now(),
+		Attributes: attributes,
 	})
 }

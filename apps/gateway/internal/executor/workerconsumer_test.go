@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	"github.com/ubag/ubag/apps/gateway/internal/topology"
 )
 
 func TestWorkerConsumerRunOnceIngestsWorkerEventsAndCompletesLease(t *testing.T) {
@@ -153,6 +155,221 @@ func TestWorkerConsumerRunOnceFailsLeaseOnRunnerError(t *testing.T) {
 	}
 	if len(failedEntries) != 1 {
 		t.Fatalf("failed entries = %d, want 1", len(failedEntries))
+	}
+}
+
+func TestWorkerConsumerRaisesAlertOnManualActionRequired(t *testing.T) {
+	store := jobstore.NewMemoryStore()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	job, err := store.Create(context.Background(), jobstore.CreateRequest{
+		APIVersion:     "2026-05-22",
+		TenantID:       "tenant_a",
+		AppID:          "app_a",
+		IdempotencyKey: "idem_manual_action",
+		Target:         "mock",
+		CommandType:    "submit",
+		Input:          map[string]any{"prompt": "hello"},
+		TraceID:        "trace_manual_action",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+		t.Fatalf("EnqueueJob returned error: %v", err)
+	}
+
+	alertStore := alerts.NewMemoryStore()
+	manager := alerts.NewManager(alertStore, nil, nil, alerts.ConfigSummary{})
+	consumer := WorkerConsumer{
+		Spool:  dispatcher,
+		Jobs:   store,
+		Alerts: manager,
+		Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			return []jobstore.WorkerEvent{
+				{EventID: "worker_evt_manual", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "session.manual_action_required", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{
+					"status":     "manual_action_required",
+					"target":     "mock",
+					"session_id": "sess-1",
+					"reason":     "manual_login_required",
+					"message":    "open the live browser session",
+					"adapter":    "mock",
+				}},
+				{EventID: "worker_evt_done", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 2, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}},
+			}, nil
+		}),
+	}
+
+	processed, err := consumer.RunOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+
+	raised, err := manager.List(context.Background(), alerts.Filter{TenantID: "tenant_a"})
+	if err != nil {
+		t.Fatalf("list alerts: %v", err)
+	}
+	if len(raised) != 1 {
+		t.Fatalf("expected exactly 1 alert, got %d", len(raised))
+	}
+	alert := raised[0]
+	if alert.JobID != job.ID {
+		t.Fatalf("alert job id = %q, want %q", alert.JobID, job.ID)
+	}
+	if alert.Kind != alerts.KindManualLogin {
+		t.Fatalf("alert kind = %q, want %q", alert.Kind, alerts.KindManualLogin)
+	}
+	if alert.SessionID != "sess-1" || alert.TargetID != "mock" {
+		t.Fatalf("alert context not captured: %+v", alert)
+	}
+}
+
+func TestWorkerConsumerRecordsConcurrencyCapChange(t *testing.T) {
+	store := jobstore.NewMemoryStore()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	job, err := store.Create(context.Background(), jobstore.CreateRequest{
+		APIVersion:     "2026-05-22",
+		TenantID:       "tenant_a",
+		AppID:          "app_a",
+		IdempotencyKey: "idem_concurrency",
+		Target:         "mock",
+		CommandType:    "submit",
+		Input:          map[string]any{"prompt": "hello"},
+		TraceID:        "trace_concurrency",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+		t.Fatalf("EnqueueJob returned error: %v", err)
+	}
+
+	registry := topology.NewConcurrencyRegistry()
+	consumer := WorkerConsumer{
+		Spool:       dispatcher,
+		Jobs:        store,
+		Concurrency: registry,
+		Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			return []jobstore.WorkerEvent{
+				{EventID: "worker_evt_cap", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "concurrency.cap_changed", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{
+					"target":       "mock",
+					"identity_ref": "acct-1",
+					"current_cap":  float64(3),
+					"min":          float64(1),
+					"max":          float64(8),
+					"in_flight":    float64(2),
+					"reason":       "additive_increase",
+				}},
+				{EventID: "worker_evt_done", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 2, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}},
+			}, nil
+		}),
+	}
+
+	processed, err := consumer.RunOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+
+	views := registry.List("tenant_a")
+	if len(views) != 1 {
+		t.Fatalf("expected exactly 1 concurrency view, got %d", len(views))
+	}
+	view := views[0]
+	if view.Target != "mock" || view.IdentityRef != "acct-1" {
+		t.Fatalf("view identity not captured: %+v", view)
+	}
+	if view.CurrentCap != 3 || view.Min != 1 || view.Max != 8 || view.InFlight != 2 {
+		t.Fatalf("view counters not captured: %+v", view)
+	}
+	if view.LastChangeReason != "additive_increase" {
+		t.Fatalf("view reason = %q, want additive_increase", view.LastChangeReason)
+	}
+	// A different tenant must not see another tenant's reported ceiling.
+	if other := registry.List("tenant_b"); len(other) != 0 {
+		t.Fatalf("tenant isolation breached: %+v", other)
+	}
+}
+
+func TestWorkerConsumerConcurrencyRecordingIsNilSafe(t *testing.T) {
+	store := jobstore.NewMemoryStore()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	job, err := store.Create(context.Background(), jobstore.CreateRequest{
+		APIVersion:     "2026-05-22",
+		TenantID:       "tenant_a",
+		AppID:          "app_a",
+		IdempotencyKey: "idem_concurrency_nilsafe",
+		Target:         "mock",
+		CommandType:    "submit",
+		Input:          map[string]any{"prompt": "hello"},
+		TraceID:        "trace_concurrency_nilsafe",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+		t.Fatalf("EnqueueJob returned error: %v", err)
+	}
+
+	// No Concurrency registry configured: cap-change events must be ignored
+	// without interrupting ingestion.
+	consumer := WorkerConsumer{
+		Spool: dispatcher,
+		Jobs:  store,
+		Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			return []jobstore.WorkerEvent{
+				{EventID: "worker_evt_cap", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "concurrency.cap_changed", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{"target": "mock", "current_cap": float64(2)}},
+				{EventID: "worker_evt_done", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 2, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}},
+			}, nil
+		}),
+	}
+
+	processed, err := consumer.RunOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+}
+
+func TestWorkerConsumerManualActionAlertIsNilSafe(t *testing.T) {
+	store := jobstore.NewMemoryStore()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	job, err := store.Create(context.Background(), jobstore.CreateRequest{
+		APIVersion:     "2026-05-22",
+		TenantID:       "tenant_a",
+		AppID:          "app_a",
+		IdempotencyKey: "idem_manual_nilsafe",
+		Target:         "mock",
+		CommandType:    "submit",
+		Input:          map[string]any{"prompt": "hello"},
+		TraceID:        "trace_manual_nilsafe",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+		t.Fatalf("EnqueueJob returned error: %v", err)
+	}
+
+	// No Alerts manager configured: ingestion must still succeed.
+	consumer := WorkerConsumer{
+		Spool: dispatcher,
+		Jobs:  store,
+		Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			return []jobstore.WorkerEvent{
+				{EventID: "worker_evt_manual", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "session.manual_action_required", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{"status": "manual_action_required", "reason": "manual_login_required"}},
+				{EventID: "worker_evt_done", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 2, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}},
+			}, nil
+		}),
+	}
+
+	processed, err := consumer.RunOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+	loaded, found, err := store.Get(context.Background(), job.ID)
+	if err != nil || !found {
+		t.Fatalf("Get found=%v err=%v", found, err)
+	}
+	if loaded.Status != jobstore.StatusCompleted {
+		t.Fatalf("status = %s, want %s", loaded.Status, jobstore.StatusCompleted)
 	}
 }
 

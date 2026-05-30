@@ -19,7 +19,9 @@ import (
 
 	"github.com/improbable-eng/grpc-web/go/grpcweb"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
+	"github.com/ubag/ubag/apps/gateway/internal/audit"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
 	"github.com/ubag/ubag/apps/gateway/internal/grpcapi"
 	"github.com/ubag/ubag/apps/gateway/internal/httpapi"
@@ -28,9 +30,11 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/ratelimit"
 	"github.com/ubag/ubag/apps/gateway/internal/responsecache"
 	"github.com/ubag/ubag/apps/gateway/internal/scim"
+	"github.com/ubag/ubag/apps/gateway/internal/session"
 	"github.com/ubag/ubag/apps/gateway/internal/siem"
 	"github.com/ubag/ubag/apps/gateway/internal/sqlitestore"
 	"github.com/ubag/ubag/apps/gateway/internal/sso"
+	"github.com/ubag/ubag/apps/gateway/internal/topology"
 	"github.com/ubag/ubag/apps/gateway/internal/webhooks"
 	"github.com/ubag/ubag/apps/gateway/internal/workflow"
 	ubagv1 "github.com/ubag/ubag/packages/proto/gen/go/ubag/v1"
@@ -125,10 +129,16 @@ func run(ctx context.Context) error {
 		SIEMConfig:        enterprise.siemConfig,
 		SIEMExporter:      enterprise.siemExporter,
 		WebhookSecrets:    enterprise.webhookSecrets,
+		Audit:             enterprise.audit,
+		Sessions:          enterprise.sessions,
+		SessionTTL:        enterprise.sessionTTL,
+		Alerts:            enterprise.alerts,
+		Topology:          enterprise.topology,
+		Concurrency:       enterprise.concurrency,
 	})
 
 	if workerConsumerEnabled() {
-		consumer, err := newWorkerConsumerFromEnv(dispatcher, jobs, webhookOutbox)
+		consumer, err := newWorkerConsumerFromEnv(dispatcher, jobs, webhookOutbox, enterprise.alerts, enterprise.concurrency)
 		if err != nil {
 			return fmt.Errorf("invalid worker consumer configuration: %w", err)
 		}
@@ -446,6 +456,12 @@ type enterpriseStores struct {
 	siemConfig       siem.ConfigStore
 	siemExporter     *siem.Exporter
 	webhookSecrets   httpapi.WebhookSecretStore
+	audit            audit.Store
+	sessions         session.Store
+	sessionTTL       time.Duration
+	alerts           *alerts.Manager
+	topology         topology.Store
+	concurrency      *topology.ConcurrencyRegistry
 }
 
 // newEnterpriseStoresFromEnv constructs the optional enterprise components.
@@ -484,58 +500,96 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 		return enterpriseStores{}, fmt.Errorf("invalid UBAG_CACHE_TTL_MS: %w", err)
 	}
 	var cacheStore responsecache.Store
-	if storeKind == "sqlite" && db != nil {
+	switch {
+	case storeKind == "sqlite" && db != nil:
 		sqliteCache := responsecache.NewSQLiteStore(db)
 		if err := sqliteCache.EnsureSchema(ctx); err != nil {
 			return enterpriseStores{}, fmt.Errorf("response cache sqlite schema: %w", err)
 		}
 		cacheStore = sqliteCache
-	} else {
+	case storeKind == "postgres" && db != nil:
+		pgCache := responsecache.NewPostgresStore(db)
+		if err := pgCache.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("response cache postgres store: %w", err)
+		}
+		cacheStore = pgCache
+	default:
 		cacheStore = responsecache.NewMemoryStore()
 	}
 	out.responseCache = responsecache.New(cacheStore, responsecache.Options{TTL: cacheTTL, Enabled: cacheEnabled})
 
 	// Workflow orchestration store.
-	if storeKind == "sqlite" && db != nil {
+	switch {
+	case storeKind == "sqlite" && db != nil:
 		wfStore := workflow.NewSQLiteStore(db)
 		if err := wfStore.Migrate(ctx); err != nil {
 			return enterpriseStores{}, fmt.Errorf("workflow sqlite migrate: %w", err)
 		}
 		out.workflows = wfStore
-	} else {
+	case storeKind == "postgres" && db != nil:
+		wfStore := workflow.NewPostgresStore(db)
+		if err := wfStore.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("workflow postgres store: %w", err)
+		}
+		out.workflows = wfStore
+	default:
 		out.workflows = workflow.NewMemoryStore()
 	}
 
 	// SSO configuration store.
-	if storeKind == "sqlite" && db != nil {
+	switch {
+	case storeKind == "sqlite" && db != nil:
 		ssoStore := sso.NewSQLiteStore(db)
 		if err := ssoStore.Migrate(ctx); err != nil {
 			return enterpriseStores{}, fmt.Errorf("sso sqlite migrate: %w", err)
 		}
 		out.sso = ssoStore
-	} else {
+	case storeKind == "postgres" && db != nil:
+		ssoStore := sso.NewPostgresStore(db)
+		if err := ssoStore.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("sso postgres store: %w", err)
+		}
+		out.sso = ssoStore
+	default:
 		out.sso = sso.NewMemoryStore()
 	}
 
 	// SCIM provisioning store.
-	if storeKind == "sqlite" && db != nil {
+	switch {
+	case storeKind == "sqlite" && db != nil:
 		scimStore, err := scim.NewSQLiteStore(db)
 		if err != nil {
 			return enterpriseStores{}, fmt.Errorf("scim sqlite store: %w", err)
 		}
 		out.scim = scimStore
-	} else {
+	case storeKind == "postgres" && db != nil:
+		scimStore, err := scim.NewPostgresStore(db)
+		if err != nil {
+			return enterpriseStores{}, fmt.Errorf("scim postgres store: %w", err)
+		}
+		if err := scimStore.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("scim postgres store: %w", err)
+		}
+		out.scim = scimStore
+	default:
 		out.scim = scim.NewMemoryStore()
 	}
 
 	// SIEM sink configuration store.
-	if storeKind == "sqlite" && db != nil {
+	switch {
+	case storeKind == "sqlite" && db != nil:
 		siemStore := siem.NewSQLiteStore(db)
 		if err := siemStore.Ready(ctx); err != nil {
 			return enterpriseStores{}, fmt.Errorf("siem sqlite schema: %w", err)
 		}
 		out.siemConfig = siemStore
-	} else {
+	case storeKind == "postgres" && db != nil:
+		siemStore := siem.NewPostgresStore(db)
+		if err := siemStore.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("siem postgres schema: %w", err)
+		}
+		out.siemConfig = siemStore
+	default:
 		out.siemConfig = siem.NewMemoryStore()
 	}
 
@@ -551,15 +605,105 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 	}
 
 	// Webhook secret rotation store.
-	if storeKind == "sqlite" && db != nil {
+	switch {
+	case storeKind == "sqlite" && db != nil:
 		secretStore := httpapi.NewSQLiteWebhookSecretStore(db)
 		if err := secretStore.Ready(ctx); err != nil {
 			return enterpriseStores{}, fmt.Errorf("webhook secret sqlite schema: %w", err)
 		}
 		out.webhookSecrets = secretStore
-	} else {
+	case storeKind == "postgres" && db != nil:
+		secretStore := httpapi.NewPostgresWebhookSecretStore(db)
+		if err := secretStore.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("webhook secret postgres schema: %w", err)
+		}
+		out.webhookSecrets = secretStore
+	default:
 		out.webhookSecrets = httpapi.NewMemoryWebhookSecretStore()
 	}
+
+	// Audit log store (Merkle-chained, per-tenant).
+	switch {
+	case storeKind == "sqlite" && db != nil:
+		auditStore := audit.NewSQLiteStore(db)
+		if err := auditStore.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("audit sqlite schema: %w", err)
+		}
+		out.audit = auditStore
+	case storeKind == "postgres" && db != nil:
+		auditStore := audit.NewPostgresStore(db)
+		if err := auditStore.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("audit postgres schema: %w", err)
+		}
+		out.audit = auditStore
+	default:
+		out.audit = audit.NewMemoryStore()
+	}
+
+	// Server-side SSO session store.
+	sessionTTL, err := durationFromMillisEnv("UBAG_SESSION_TTL_MS", time.Hour)
+	if err != nil {
+		return enterpriseStores{}, err
+	}
+	out.sessionTTL = sessionTTL
+	switch {
+	case storeKind == "sqlite" && db != nil:
+		sessionStore := session.NewSQLiteStore(db)
+		if err := sessionStore.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("session sqlite schema: %w", err)
+		}
+		out.sessions = sessionStore
+	case storeKind == "postgres" && db != nil:
+		sessionStore := session.NewPostgresStore(db)
+		if err := sessionStore.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("session postgres schema: %w", err)
+		}
+		out.sessions = sessionStore
+	default:
+		out.sessions = session.NewMemoryStore()
+	}
+
+	// Human-in-the-loop manual-action alert store + notification sink.
+	sink, summary := alerts.SinkFromEnv(slog.Default(), storeKind)
+	var alertStore alerts.Store
+	switch {
+	case storeKind == "sqlite" && db != nil:
+		sqliteAlerts := alerts.NewSQLiteStore(db)
+		if err := sqliteAlerts.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("alerts sqlite schema: %w", err)
+		}
+		alertStore = sqliteAlerts
+	case storeKind == "postgres" && db != nil:
+		postgresAlerts := alerts.NewPostgresStore(db)
+		if err := postgresAlerts.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("alerts postgres schema: %w", err)
+		}
+		alertStore = postgresAlerts
+	default:
+		alertStore = alerts.NewMemoryStore()
+	}
+	out.alerts = alerts.NewManager(alertStore, sink, slog.Default(), summary)
+
+	// Read-only v2.1 browser topology store + adaptive-concurrency view.
+	switch {
+	case storeKind == "sqlite" && db != nil:
+		topologyStore := topology.NewSQLiteStore(db)
+		if err := topologyStore.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("browser topology sqlite schema: %w", err)
+		}
+		out.topology = topologyStore
+	case storeKind == "postgres" && db != nil:
+		topologyStore := topology.NewPostgresStore(db)
+		if err := topologyStore.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("browser topology postgres schema: %w", err)
+		}
+		out.topology = topologyStore
+	default:
+		out.topology = topology.NewMemoryStore()
+	}
+	// The concurrency registry is always available; it is populated by the
+	// worker-event ingestion path and never mutated via HTTP.
+	out.concurrency = topology.NewConcurrencyRegistry()
 
 	return out, nil
 }
@@ -614,7 +758,7 @@ func workerConsumerEnabled() bool {
 	return value == "1" || value == "true" || value == "yes"
 }
 
-func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Store, notifier executor.TerminalJobNotifier) (*executor.WorkerConsumer, error) {
+func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Store, notifier executor.TerminalJobNotifier, alertsMgr *alerts.Manager, concurrency *topology.ConcurrencyRegistry) (*executor.WorkerConsumer, error) {
 	pollInterval, err := durationFromMillisEnv("UBAG_WORKER_POLL_INTERVAL_MS", 500*time.Millisecond)
 	if err != nil {
 		return nil, err
@@ -639,6 +783,8 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 		Queue:            queue,
 		Jobs:             jobs,
 		TerminalNotifier: notifier,
+		Alerts:           alertsMgr,
+		Concurrency:      concurrency,
 		PollInterval:     pollInterval,
 		Runner: executor.ProcessWorkerRunner{
 			Python:     python,

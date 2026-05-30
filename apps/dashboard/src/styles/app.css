@@ -503,6 +503,23 @@ h1 {
   border-block-start: var(--rule-thin) solid var(--color-rule-soft);
 }
 
+.work-item[data-alert-id] {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.alert-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  margin-block-start: var(--space-3);
+}
+
+.alert-actions .control-button {
+  flex: 0 0 auto;
+}
+
 .activity-item {
   grid-template-columns: 4rem minmax(0, 1fr) auto;
 }

@@ -13,8 +13,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	"github.com/ubag/ubag/apps/gateway/internal/topology"
 )
+
+// manualActionEventType is the worker event that signals a human must solve a
+// CAPTCHA, manual login, or verification challenge in the live browser session.
+const manualActionEventType = "session.manual_action_required"
+
+// concurrencyChangeEventType is the worker event that reports an AIMD
+// tab-ceiling change for a provider/target + identity pair. The worker owns the
+// live AIMD controller; the gateway only records the latest reported ceiling
+// into its read-only ConcurrencyRegistry so /v1/concurrency reflects live state.
+const concurrencyChangeEventType = "concurrency.cap_changed"
 
 const (
 	defaultWorkerPollInterval = 500 * time.Millisecond
@@ -30,6 +42,8 @@ type WorkerConsumer struct {
 	Jobs             jobstore.Store
 	Runner           WorkerRunner
 	TerminalNotifier TerminalJobNotifier
+	Alerts           *alerts.Manager
+	Concurrency      *topology.ConcurrencyRegistry
 	PollInterval     time.Duration
 }
 
@@ -217,6 +231,13 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			}
 			return true, lease.Fail(ctx)
 		}
+		// concurrency.cap_changed is orchestration telemetry, not a job-lifecycle
+		// event: record the reported ceiling and skip job-event application so the
+		// unknown type never poisons the job.
+		if normalized.Type == concurrencyChangeEventType {
+			c.recordConcurrencyChange(job, normalized)
+			continue
+		}
 		if _, found, err := c.Jobs.ApplyWorkerEvent(ctx, normalized); err != nil {
 			if applyErr := c.applyFailure(ctx, lease, envelope, err); applyErr != nil {
 				_ = lease.Retry(ctx)
@@ -230,6 +251,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			_ = lease.Poison(ctx, "worker event referenced missing job")
 			return true, fmt.Errorf("worker event referenced missing job %s", normalized.JobID)
 		}
+		c.raiseManualActionAlert(ctx, job, normalized)
 	}
 
 	finalJob, found, err := c.Jobs.Get(ctx, lease.JobID())
@@ -268,6 +290,128 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return true, notifyErr
 	}
 	return true, lease.Fail(ctx)
+}
+
+// raiseManualActionAlert raises a human-in-the-loop alert when a worker reports
+// that a job needs a manual human action (CAPTCHA, manual login, or
+// verification challenge). It is best-effort and nil-safe: a nil alert manager,
+// a non-matching event, or a raise failure never interrupts ingestion.
+func (c *WorkerConsumer) raiseManualActionAlert(ctx context.Context, job jobstore.Job, event jobstore.WorkerEvent) {
+	if c == nil || c.Alerts == nil || event.Type != manualActionEventType {
+		return
+	}
+	data := event.Data
+	alert := alerts.Alert{
+		TenantID:   job.TenantID,
+		AppID:      job.AppID,
+		JobID:      job.ID,
+		SessionID:  stringFromEventData(data, "session_id"),
+		TargetID:   firstNonEmpty(stringFromEventData(data, "target"), job.Target),
+		Kind:       manualActionKind(stringFromEventData(data, "reason")),
+		Message:    stringFromEventData(data, "message"),
+		Attributes: manualActionAttributes(data),
+	}
+	if _, err := c.Alerts.RaiseManualAction(ctx, alert); err != nil {
+		fmt.Fprintf(os.Stderr, "alerts: raise manual action for job %s failed: %v\n", job.ID, err)
+	}
+}
+
+// recordConcurrencyChange pushes an AIMD cap-change reported by the worker into
+// the gateway's read-only ConcurrencyRegistry so /v1/concurrency reflects live,
+// worker-reported lane ceilings. It is best-effort and nil-safe: a nil registry,
+// a non-matching event, or a missing target never interrupts ingestion. The
+// gateway never computes AIMD state; it only records what the worker reports.
+func (c *WorkerConsumer) recordConcurrencyChange(job jobstore.Job, event jobstore.WorkerEvent) {
+	if c == nil || c.Concurrency == nil || event.Type != concurrencyChangeEventType {
+		return
+	}
+	data := event.Data
+	target := firstNonEmpty(stringFromEventData(data, "target"), job.Target)
+	if target == "" {
+		return
+	}
+	view := topology.ConcurrencyView{
+		Target:           target,
+		IdentityRef:      stringFromEventData(data, "identity_ref"),
+		CurrentCap:       intFromEventData(data, "current_cap"),
+		Min:              intFromEventData(data, "min"),
+		Max:              intFromEventData(data, "max"),
+		InFlight:         intFromEventData(data, "in_flight"),
+		LastChangeReason: stringFromEventData(data, "reason"),
+		LastChangeAt:     event.CreatedAt,
+	}
+	c.Concurrency.Report(job.TenantID, view)
+}
+
+func manualActionKind(reason string) string {
+	reason = strings.ToLower(reason)
+	switch {
+	case strings.Contains(reason, "captcha"):
+		return alerts.KindCaptcha
+	case strings.Contains(reason, "login"):
+		return alerts.KindManualLogin
+	case strings.Contains(reason, "verification"), strings.Contains(reason, "2fa"), strings.Contains(reason, "challenge"):
+		return alerts.KindVerification
+	case reason == "":
+		return alerts.KindManualLogin
+	default:
+		return alerts.KindOther
+	}
+}
+
+func manualActionAttributes(data map[string]any) map[string]any {
+	keys := []string{"adapter", "reason", "novnc_url", "account_binding_id", "consent_ref", "automation_scope"}
+	attrs := make(map[string]any, len(keys))
+	for _, key := range keys {
+		if value := stringFromEventData(data, key); value != "" {
+			attrs[key] = value
+		}
+	}
+	if len(attrs) == 0 {
+		return nil
+	}
+	return attrs
+}
+
+func stringFromEventData(data map[string]any, key string) string {
+	if data == nil {
+		return ""
+	}
+	if value, ok := data[key].(string); ok {
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
+// intFromEventData extracts an integer from worker event data. JSON numbers
+// decode as float64, so both float64 and int forms are accepted. Non-numeric or
+// missing values yield 0.
+func intFromEventData(data map[string]any, key string) int {
+	if data == nil {
+		return 0
+	}
+	switch value := data[key].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case int64:
+		return int(value)
+	case json.Number:
+		if parsed, err := value.Int64(); err == nil {
+			return int(parsed)
+		}
+	}
+	return 0
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (c *WorkerConsumer) workerQueue() (WorkerQueue, error) {

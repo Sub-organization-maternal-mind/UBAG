@@ -88,7 +88,13 @@ func buildSignedAssertion(t *testing.T, key *rsa.PrivateKey, notBefore, notOnOrA
 		return []byte(assertionNoSig)
 	}
 
-	digest := sha256.Sum256([]byte(assertionNoSig))
+	// Mirror ParseAndVerifyAssertion: digest the exclusive-c14n canonical form
+	// of the signed element, not the raw bytes.
+	canonicalAssertion, err := exclusiveCanonicalize([]byte(assertionNoSig))
+	if err != nil {
+		t.Fatalf("canonicalize assertion: %v", err)
+	}
+	digest := sha256.Sum256(canonicalAssertion)
 	digestB64 := base64.StdEncoding.EncodeToString(digest[:])
 
 	signedInfo := `<ds:SignedInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">` +
@@ -100,7 +106,11 @@ func buildSignedAssertion(t *testing.T, key *rsa.PrivateKey, notBefore, notOnOrA
 		`</ds:Reference>` +
 		`</ds:SignedInfo>`
 
-	signedInfoDigest := sha256.Sum256([]byte(signedInfo))
+	canonicalSignedInfo, err := exclusiveCanonicalize([]byte(signedInfo))
+	if err != nil {
+		t.Fatalf("canonicalize SignedInfo: %v", err)
+	}
+	signedInfoDigest := sha256.Sum256(canonicalSignedInfo)
 	signature, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, signedInfoDigest[:])
 	if err != nil {
 		t.Fatalf("sign SignedInfo: %v", err)

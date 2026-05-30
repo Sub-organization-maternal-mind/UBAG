@@ -1,6 +1,6 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-05-29
+Last updated: 2026-05-30
 
 This is the resume point for any future agentic AI working in `D:\Projects\UBAG`.
 Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
@@ -311,15 +311,16 @@ These are not missing repository work; they require facts or services outside th
 Pick up from these implementation tracks after preserving the current green baseline:
 
 1. Commit the current green baseline when the user approves.
-2. Convert safe-mode provider stubs into live manual-session browser adapters after user-owned account/session requirements are available; acceptance requires manual-session consent, no credential/session/token storage, no CAPTCHA bypass, runtime-generated noVNC URLs only, adapter allowlisting, tenant/app scoping, audit events, and artifact redaction.
-3. Mint real gateway sessions from the verified SSO principal returned by `/v1/sso/oidc/callback` and `/v1/sso/saml/acs`; acceptance requires session binding to the configured tenant/app/role principal, idempotency, audit events, and no credential/session storage.
-4. Replace the pragmatic SAML check with exclusive XML-C14N signature verification before onboarding a production IdP; keep the current fails-closed behavior as the fallback.
-5. Add native Postgres stores for the cache, workflow, SSO, SCIM, SIEM, and webhook-secret subsystems (currently SQLite or in-memory) so Postgres deployments do not silently fall back.
-6. Wire `POST /v1/audit/export` to a real audit record source so it exports records rather than only exporter status/stats.
+2. Convert safe-mode provider stubs into live manual-session browser adapters after user-owned account/session requirements are available; acceptance requires manual-session consent, no credential/session/token storage, no CAPTCHA bypass, runtime-generated noVNC URLs only, adapter allowlisting, tenant/app scoping, audit events, and artifact redaction. The orchestration layer (`apps/worker/ubag_worker/orchestration`: topology/AIMD/pacer/channel-pool/bulkhead/scheduler) and cross-engine grid abstractions (`apps/worker/ubag_worker/live/engines.py`, `live/remote.py`) are now implemented and unit-tested as the ToS-safe substrate for this; the live adapter wiring remains the external-account-gated step.
+3. DONE (v2.1): Gateway sessions are now minted from the verified SSO principal on `/v1/sso/oidc/callback` and `/v1/sso/saml/acs` (opaque crypto/rand token, SHA-256 at rest, HttpOnly cookie + JSON token, `POST /v1/sso/logout` revokes), bound to tenant/app/role, audited, with no credential/session storage.
+4. Replace the pragmatic SAML check with exclusive XML-C14N signature verification before onboarding a production IdP. PARTIAL (v2.1): `internal/sso/canonicalize.go` applies exclusive XML-C14N (`xml-exc-c14n#`) before digest/signature verification and fails closed; harden against a real production IdP before claiming full conformance.
+5. DONE (v2.1): Native Postgres stores added for response-cache, workflow, SSO, SCIM, SIEM, and webhook-secret subsystems (migrations `0005_enterprise_stores.sql`, `0006_audit_sessions.sql`); each fails fast via `Ready()`/`to_regclass` so Postgres deployments no longer silently fall back. Round-trip tests are env-gated on `UBAG_TEST_POSTGRES_DSN`.
+6. DONE (v2.1): `POST /v1/audit/export` exports real Merkle-chained audit records from `internal/audit` (memory + SQLite + Postgres), accepts the SDK request body (`idempotency_key` ignored read field, optional `range.{from_sequence,to_sequence}` post-filter), and verifies the chain over the full result before windowing.
 7. Expand workflow/cache execution and the template runtime beyond the current built-in/single-step foundation; acceptance requires idempotency, tenant/app scope, payload policy reuse, secret rejection, audit events, retention controls, and privacy-mode cache bypasses.
 8. Locally validate the non-TypeScript SDKs (rust/java/ruby/php/csharp/swift/kotlin/elixir) once their toolchains are available; C# is validated 10/10 and the Swift Windows stdlib is currently broken.
 9. Broaden SDK conformance beyond REST fixtures where runtime services exist, including event streaming and live binary artifact smoke before new transports are claimed.
-10. Add CI after the repository has an initial commit and remote policy is known.
+10. Wire worker-side `ConcurrencyRegistry.Report` to AIMD cap-change events so `/v1/concurrency` reflects live worker-reported lane concurrency (currently in-memory, worker-reported scaffold).
+11. Add CI after the repository has an initial commit and remote policy is known.
 
 ## Documentation Update Rule
 

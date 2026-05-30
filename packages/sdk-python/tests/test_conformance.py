@@ -236,6 +236,60 @@ class PythonSdkConformanceTests(unittest.TestCase):
         if method == "POST" and route == "/v1/webhooks/replay":
             body = _resolve_sdk_placeholders(request.get("body") or {}, UBAG_SDK_NAME, UBAG_SDK_VERSION)
             return client.replay_webhook_delivery(body, **options)
+        if method == "GET" and route == "/v1/alerts":
+            params = parse_qs(split.query)
+            return client.list_alerts(
+                limit=_int_or_none(_single(params, "limit")),
+                status=_single(params, "status"),
+                **options,
+            )
+        if method == "GET" and route == "/v1/alerts/config":
+            return client.get_alert_config(**options)
+        if method == "POST" and route.startswith("/v1/alerts/") and route.endswith("/acknowledge"):
+            alert_id = route.removeprefix("/v1/alerts/").removesuffix("/acknowledge")
+            body = _resolve_sdk_placeholders(request.get("body") or {}, UBAG_SDK_NAME, UBAG_SDK_VERSION)
+            return client.acknowledge_alert(alert_id, body, **options)
+        if method == "POST" and route.startswith("/v1/alerts/") and route.endswith("/resolve"):
+            alert_id = route.removeprefix("/v1/alerts/").removesuffix("/resolve")
+            body = _resolve_sdk_placeholders(request.get("body") or {}, UBAG_SDK_NAME, UBAG_SDK_VERSION)
+            return client.resolve_alert(alert_id, body, **options)
+        if method == "GET" and route == "/v1/browser/instances":
+            params = parse_qs(split.query)
+            return client.list_browser_instances(
+                limit=_int_or_none(_single(params, "limit")),
+                state=_single(params, "state"),
+                **options,
+            )
+        if method == "GET" and route == "/v1/browser/contexts":
+            params = parse_qs(split.query)
+            return client.list_provider_contexts(
+                limit=_int_or_none(_single(params, "limit")),
+                instance_id=_single(params, "instance_id"),
+                **options,
+            )
+        if method == "GET" and route == "/v1/browser/tabs":
+            params = parse_qs(split.query)
+            return client.list_browser_tabs(
+                limit=_int_or_none(_single(params, "limit")),
+                context_id=_single(params, "context_id"),
+                state=_single(params, "state"),
+                **options,
+            )
+        if method == "GET" and route == "/v1/browser/summary":
+            return client.get_browser_topology_summary(**options)
+        if method == "GET" and route == "/v1/concurrency":
+            params = parse_qs(split.query)
+            return client.get_concurrency(
+                cursor=_single(params, "cursor"),
+                limit=_int_or_none(_single(params, "limit")),
+                **options,
+            )
+        if method == "POST" and route == "/v1/sso/logout":
+            body = _resolve_sdk_placeholders(request.get("body") or {}, UBAG_SDK_NAME, UBAG_SDK_VERSION)
+            return client.sso_logout(body, **options)
+        if method == "POST" and route == "/v1/audit/export":
+            body = _resolve_sdk_placeholders(request.get("body") or {}, UBAG_SDK_NAME, UBAG_SDK_VERSION)
+            return client.export_audit(body, **options)
 
         self.fail("No SDK call mapping for {} {}".format(method, path))
 

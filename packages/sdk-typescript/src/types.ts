@@ -270,6 +270,259 @@ export interface UbagVersionResponse {
   trace_id?: string;
 }
 
+export type UbagAlertStatus =
+  | "open"
+  | "notified"
+  | "acknowledged"
+  | "resolved"
+  | "expired"
+  | (string & {});
+
+export interface UbagAlert {
+  alert_id: string;
+  tenant_id: string;
+  app_id: string;
+  job_id: string;
+  session_id?: string;
+  target_id?: string;
+  kind: string;
+  message?: string;
+  status: UbagAlertStatus;
+  created_at: string;
+  notified_at?: string;
+  acknowledged_at?: string;
+  resolved_at?: string;
+  attributes?: UbagJsonObject;
+  [key: string]: UbagJsonValue | undefined;
+}
+
+export interface UbagListAlertsParams {
+  limit?: number;
+  status?: UbagAlertStatus;
+}
+
+export interface UbagAlertActionRequest {
+  api_version?: string;
+  idempotency_key?: string;
+  reason?: string;
+  metadata?: UbagJsonObject;
+}
+
+export interface UbagAlertListResponse {
+  api_version: string;
+  kind: "alerts" | (string & {});
+  data: UbagAlert[];
+  next_cursor: string | null;
+  trace_id: string;
+}
+
+export interface UbagAlertMutationResponse {
+  api_version: string;
+  kind: "alert" | (string & {});
+  data: UbagAlert;
+  trace_id: string;
+}
+
+/**
+ * Secret-free alert configuration. SMTP credentials and any password field are
+ * intentionally absent; only the SMTP host (never credentials) is exposed.
+ */
+export interface UbagAlertConfig {
+  api_version: string;
+  kind: "alert_config" | (string & {});
+  sink_type: string;
+  smtp_configured: boolean;
+  smtp_host?: string;
+  store_kind?: string;
+  recipient_count: number;
+  recipients?: string[];
+  trace_id: string;
+}
+
+export interface UbagBrowserInstance {
+  instance_id: string;
+  worker_id: string;
+  tenant_id: string;
+  engine: string;
+  remote_endpoint?: string;
+  state: string;
+  context_count: number;
+  tab_count: number;
+  rss_bytes?: number;
+  created_at: string;
+  recycle_at?: string;
+}
+
+/**
+ * Provider browser context. The storage-state URI is redacted server-side
+ * (INV-5): only the has_storage_state boolean is exposed and storage_state_uri
+ * is never present.
+ */
+export interface UbagProviderContext {
+  context_id: string;
+  instance_id: string;
+  tenant_id: string;
+  target_id: string;
+  identity_ref: string;
+  login_state: string;
+  conversation_model: string;
+  fingerprint_id?: string;
+  proxy_id?: string;
+  has_storage_state: boolean;
+  max_tabs: number;
+  created_at: string;
+  last_health_at?: string;
+  recycle_at?: string;
+}
+
+export interface UbagBrowserTab {
+  tab_id: string;
+  context_id: string;
+  state: string;
+  conversation_id?: string;
+  current_job_id?: string;
+  jobs_completed: number;
+  rss_bytes?: number;
+  last_health_at?: string;
+  created_at: string;
+  recycle_at?: string;
+}
+
+export interface UbagConcurrencyView {
+  target: string;
+  identity_ref: string;
+  current_cap: number;
+  min: number;
+  max: number;
+  in_flight: number;
+  last_change_reason?: string;
+  last_change_at: string;
+}
+
+export interface UbagListBrowserInstancesParams {
+  limit?: number;
+  state?: string;
+}
+
+export interface UbagListProviderContextsParams {
+  limit?: number;
+  instance_id?: string;
+}
+
+export interface UbagListBrowserTabsParams {
+  limit?: number;
+  context_id?: string;
+  state?: string;
+}
+
+export interface UbagBrowserInstanceListResponse {
+  api_version: string;
+  kind: "browser_instances" | (string & {});
+  data: UbagBrowserInstance[];
+  next_cursor: string | null;
+  trace_id: string;
+}
+
+export interface UbagProviderContextListResponse {
+  api_version: string;
+  kind: "provider_contexts" | (string & {});
+  data: UbagProviderContext[];
+  next_cursor: string | null;
+  trace_id: string;
+}
+
+export interface UbagBrowserTabListResponse {
+  api_version: string;
+  kind: "browser_tabs" | (string & {});
+  data: UbagBrowserTab[];
+  next_cursor: string | null;
+  trace_id: string;
+}
+
+export interface UbagListConcurrencyParams {
+  limit?: number;
+  cursor?: string;
+}
+
+export interface UbagConcurrencyListResponse {
+  api_version: string;
+  kind: "concurrency_ceilings" | (string & {});
+  data: UbagConcurrencyView[];
+  next_cursor: string | null;
+  trace_id: string;
+}
+
+export interface UbagBrowserTopologySummary {
+  api_version: string;
+  kind: "browser_topology_summary" | (string & {});
+  tenant_id: string;
+  total_instances: number;
+  total_contexts: number;
+  total_tabs: number;
+  instances_by_state: Record<string, number>;
+  contexts_by_login_state: Record<string, number>;
+  tabs_by_state: Record<string, number>;
+  trace_id: string;
+}
+
+export interface UbagLogoutResult {
+  api_version: string;
+  revoked: boolean;
+  trace_id: string;
+}
+
+export interface UbagSsoLogoutRequest {
+  api_version?: string;
+  idempotency_key?: string;
+}
+
+export interface UbagAuditExportRange {
+  from_sequence?: number;
+  to_sequence?: number;
+}
+
+export interface UbagAuditExportRequest {
+  api_version?: string;
+  idempotency_key?: string;
+  since?: string;
+  until?: string;
+  limit?: number;
+  range?: UbagAuditExportRange;
+}
+
+export interface UbagAuditRecord {
+  id: string;
+  seq: number;
+  tenant_id: string;
+  app_id: string;
+  actor: string;
+  action: string;
+  resource: string;
+  outcome: string;
+  occurred_at: string;
+  attributes?: UbagJsonObject;
+  prev_hash: string;
+  record_hash: string;
+}
+
+export interface UbagAuditExportStats {
+  enqueued: number;
+  exported: number;
+  dropped: number;
+  failed: number;
+}
+
+export interface UbagAuditExportResult {
+  api_version: string;
+  status: "accepted" | (string & {});
+  stats: UbagAuditExportStats;
+  chain_valid: boolean;
+  head_hash: string;
+  count: number;
+  records: UbagAuditRecord[];
+  trace_id: string;
+}
+
 export type UbagErrorCategory =
   | "auth"
   | "validation"

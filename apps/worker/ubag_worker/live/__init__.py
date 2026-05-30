@@ -28,7 +28,7 @@ from .page_driver import (
     create_default_driver,
     offline_mode_enabled,
 )
-from .selectors import ProviderSelectors, SelectorGroup
+from .selectors import ProviderSelectors, SelectorGroup, get_provider_selectors, live_web_template, GENERIC_LIVE_WEB
 
 __all__ = [
     "DriftDetectedError",
@@ -40,6 +40,9 @@ __all__ = [
     "PlaywrightPageDriver",
     "ProviderSelectors",
     "SelectorGroup",
+    "GENERIC_LIVE_WEB",
     "create_default_driver",
+    "get_provider_selectors",
+    "live_web_template",
     "offline_mode_enabled",
 ]

@@ -26,4 +26,17 @@ Every major blueprint section is represented in the docs site and mapped to impl
 | Plugins and marketplace | M0 | v2 | WASM capability model. |
 | Enterprise and multi-region | M0 | v2 | SSO/SCIM, mTLS, HA, SIEM, DR. |
 
+## v2.1 observability and concurrency surfaces
+
+| Blueprint section | Documentation | Conformance | Notes |
+| --- | --- | --- | --- |
+| §12.6–§12.13 Multi-tab orchestration and concurrency | `worker/multi-tab-orchestration` | `multi_tab_topology`, `adaptive_concurrency` coverage; `browser.*`, `concurrency.list.ok` scenarios | Browser → context → tab hierarchy, tab lifecycle, tab-parallel concurrency, AIMD ceilings, race safety, failure isolation, fair scheduling. |
+| §13.10–§13.12 Cross-engine and remote grids | `worker/cross-engine-grids` | `cross_engine` coverage | Pluggable Chromium (CDP) / Firefox & WebKit (BiDi), remote browser grids, engine-portable selectors. |
+| Manual-action alerts | `operations/manual-action-alerts` | `manual_action_alerts` coverage; `alerts.list.ok`, `alerts.config.ok`, `alerts.acknowledge.ok`, `alerts.resolve.ok` | Human-solved CAPTCHA/login via noVNC, SMTP routing (no password exposed), acknowledge/resolve lifecycle. |
+| §11.6 Audit export and Merkle chain | `security/audit-export-merkle` | `audit_export_chain` coverage; `audit.export.chain-valid` | Hash-chained, tamper-evident audit export with `chain_valid`. |
+| SSO sessions and logout | `security/sso-sessions` | `sso_session` coverage; `sso.logout.ok` | SSO-minted revocable sessions; immediate logout/revocation. |
+| §22 Enterprise Postgres persistence | `data/postgres-persistence` | `postgres_persistence` coverage | Revised schema on PostgreSQL with edge SQLite parity and storage-state redaction. |
+
+These surfaces are exposed read-only in the Operator Dashboard (Browser, Concurrency, and Alerts panels) and never expose credentials, cookies, storage-state URIs, or SMTP secrets.
+
 See `PROGRESS.md` for the detailed feature-by-feature mapping.

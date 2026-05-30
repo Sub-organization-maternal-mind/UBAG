@@ -1,15 +1,18 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/ubag/ubag/apps/gateway/internal/audit"
 	"github.com/ubag/ubag/apps/gateway/internal/ratelimit"
 	"github.com/ubag/ubag/apps/gateway/internal/responsecache"
 	"github.com/ubag/ubag/apps/gateway/internal/scim"
+	"github.com/ubag/ubag/apps/gateway/internal/session"
 	"github.com/ubag/ubag/apps/gateway/internal/siem"
 	"github.com/ubag/ubag/apps/gateway/internal/sso"
 	"github.com/ubag/ubag/apps/gateway/internal/workflow"
@@ -277,5 +280,108 @@ func TestRateLimitsListRequiresManage(t *testing.T) {
 	}
 	if len(status.Policies) == 0 {
 		t.Fatalf("expected at least one policy")
+	}
+}
+
+func TestAuditExportStreamsPersistedChain(t *testing.T) {
+	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "admin", Audit: audit.NewMemoryStore()}).Handler()
+
+	// The first export persists its own authorization audit record, which the
+	// second export then reads back as part of the verified chain.
+	if first := doJSON(server, http.MethodPost, "/v1/audit/export", `{}`, authHeaders("")); first.Code != http.StatusOK {
+		t.Fatalf("first export = %d; body=%s", first.Code, first.Body.String())
+	}
+	second := doJSON(server, http.MethodPost, "/v1/audit/export", `{}`, authHeaders(""))
+	if second.Code != http.StatusOK {
+		t.Fatalf("second export = %d; body=%s", second.Code, second.Body.String())
+	}
+	var resp auditExportResponse
+	if err := json.Unmarshal(second.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+	if !resp.ChainValid {
+		t.Fatalf("expected chain_valid true; got %+v", resp)
+	}
+	if resp.HeadHash == "" || resp.Count < 1 || len(resp.Records) < 1 {
+		t.Fatalf("expected persisted records with head hash; got %+v", resp)
+	}
+}
+
+func TestAuditExportAcceptsSDKBodyAndSequenceWindow(t *testing.T) {
+	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "admin", Audit: audit.NewMemoryStore()}).Handler()
+
+	// Warm the chain with a few authorization records.
+	for i := 0; i < 3; i++ {
+		if r := doJSON(server, http.MethodPost, "/v1/audit/export", `{}`, authHeaders("")); r.Code != http.StatusOK {
+			t.Fatalf("warm export %d = %d; body=%s", i, r.Code, r.Body.String())
+		}
+	}
+
+	// The SDKs always send idempotency_key (and may send a sequence range);
+	// the handler must accept both despite DisallowUnknownFields, and the
+	// sequence window must not break chain verification.
+	body := `{"idempotency_key":"idem-123","range":{"from_sequence":2,"to_sequence":2}}`
+	resp := doJSON(server, http.MethodPost, "/v1/audit/export", body, authHeaders(""))
+	if resp.Code != http.StatusOK {
+		t.Fatalf("export = %d; body=%s", resp.Code, resp.Body.String())
+	}
+	var decoded auditExportResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode export: %v", err)
+	}
+	if !decoded.ChainValid {
+		t.Fatalf("expected chain_valid true over full chain; got %+v", decoded)
+	}
+	for _, rec := range decoded.Records {
+		if rec.Seq != 2 {
+			t.Fatalf("sequence window not applied; got seq %d", rec.Seq)
+		}
+	}
+}
+
+func TestSSOLogoutRevokesSession(t *testing.T) {
+	sessions := session.NewMemoryStore()
+	now := time.Now().UTC()
+	_, token, err := sessions.Create(context.Background(), session.Session{
+		TenantID:  "tenant-default",
+		Role:      "admin",
+		Subject:   "user-1",
+		IssuedAt:  now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "admin", Sessions: sessions}).Handler()
+
+	logout := doJSON(server, http.MethodPost, "/v1/sso/logout", "", map[string]string{
+		"Authorization":    "Bearer " + token,
+		"Ubag-Api-Version": DefaultAPIVersion,
+	})
+	if logout.Code != http.StatusOK {
+		t.Fatalf("logout = %d; body=%s", logout.Code, logout.Body.String())
+	}
+	var resp ssoLogoutResponse
+	if err := json.Unmarshal(logout.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode logout: %v", err)
+	}
+	if !resp.Revoked {
+		t.Fatalf("expected revoked true; got %+v", resp)
+	}
+	if _, ok, _ := sessions.Resolve(context.Background(), token, time.Now()); ok {
+		t.Fatalf("session should no longer resolve after logout")
+	}
+
+	// Logging out again (via the static app-secret principal) is idempotent.
+	again := doJSON(server, http.MethodPost, "/v1/sso/logout", "", authHeaders(""))
+	if again.Code != http.StatusOK {
+		t.Fatalf("idempotent logout = %d; body=%s", again.Code, again.Body.String())
+	}
+	var againResp ssoLogoutResponse
+	if err := json.Unmarshal(again.Body.Bytes(), &againResp); err != nil {
+		t.Fatalf("decode idempotent logout: %v", err)
+	}
+	if againResp.Revoked {
+		t.Fatalf("expected revoked false for app-secret logout; got %+v", againResp)
 	}
 }

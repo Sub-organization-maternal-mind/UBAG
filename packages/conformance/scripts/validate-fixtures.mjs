@@ -145,6 +145,37 @@ for (const category of requiredCoverageCategories) {
   }
 }
 
+// Redaction guards for the v2.1 observability scenarios. Browser/alert reads
+// must never leak storage-state URIs or SMTP secrets.
+const serializedFixture = JSON.stringify(fixture);
+if (/"storage_state_uri"/i.test(serializedFixture)) {
+  errors.push("fixtures must not expose a storage_state_uri");
+}
+
+for (const scenario of fixture.scenarios ?? []) {
+  const body = scenario.response?.body;
+  if (!body || typeof body !== "object") continue;
+
+  if (scenario.id === "alerts.config.ok") {
+    if (/password/i.test(JSON.stringify(body))) {
+      errors.push("alerts.config.ok response must not contain a password");
+    }
+    if (body.smtp_configured === undefined) {
+      errors.push("alerts.config.ok must expose an smtp_configured flag");
+    }
+  }
+
+  if (scenario.id === "browser.contexts.ok" || scenario.id === "browser.tabs.ok") {
+    const rows = Array.isArray(body.data) ? body.data : [];
+    if (!rows.every((row) => typeof row.has_storage_state === "boolean")) {
+      errors.push(`${scenario.id} rows must include a boolean has_storage_state`);
+    }
+    if (/"storage_state_uri"/i.test(JSON.stringify(rows))) {
+      errors.push(`${scenario.id} must not expose a storage_state_uri`);
+    }
+  }
+}
+
 if (errors.length > 0) {
   console.error(errors.join("\n"));
   process.exit(1);

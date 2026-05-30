@@ -119,6 +119,20 @@ Honest limitations / externally-blocked:
 | Cost and operations | Contracted | Ops docs and metrics; live cost telemetry requires deployed usage data. |
 | World-class checklist | Implemented | Blueprint and implementation coverage gates. |
 
+## v2.1 Observability And Concurrency Surfaces
+
+| Capability | Blueprint | State | Repo Evidence |
+| --- | --- | --- | --- |
+| Browser topology (instance → context → tab) | §12.6–§12.13 | Documented + dashboard + conformance | `worker/multi-tab-orchestration`, dashboard Browser panel, `browser.summary.ok`/`browser.instances.ok`/`browser.contexts.ok`/`browser.tabs.ok`. |
+| Adaptive concurrency (AIMD ceilings) | §12.9 | Documented + dashboard + conformance | `worker/multi-tab-orchestration`, dashboard Concurrency panel, `concurrency.list.ok`. |
+| Cross-engine and remote grids | §13.10–§13.12 | Documented + conformance coverage | `worker/cross-engine-grids`, `cross_engine` coverage scenario. |
+| Manual-action alerts (CAPTCHA/login) | Manual-action policy | Documented + dashboard + conformance | `operations/manual-action-alerts`, dashboard Alerts panel, `alerts.list.ok`/`alerts.config.ok`/`alerts.acknowledge.ok`/`alerts.resolve.ok`. |
+| Audit export + Merkle chain | §11.6 | Documented + conformance | `security/audit-export-merkle`, `audit.export.chain-valid`. |
+| SSO sessions and logout | SSO/enterprise | Documented + conformance | `security/sso-sessions`, `sso.logout.ok`. |
+| Enterprise Postgres persistence | §22 | Documented + conformance coverage | `data/postgres-persistence`, `postgres_persistence` coverage scenario. |
+
+All v2.1 surfaces are presentation-only reads. They never expose credentials, cookies, storage-state URIs (only a boolean `has_storage_state`), or SMTP secrets (only an `smtp_configured` flag).
+
 ## External Activation Items
 
 These are not unplanned work items in this checkout; they are the external facts needed to run live environments safely.

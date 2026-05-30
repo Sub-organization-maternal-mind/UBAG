@@ -276,6 +276,139 @@ class UbagClient:
     def cache_status(self, **options: Any) -> Dict[str, Any]:
         return self._request("GET", "/v1/cache", **options)
 
+    def list_alerts(
+        self,
+        *,
+        limit: Optional[int] = None,
+        status: Optional[str] = None,
+        **options: Any,
+    ) -> Dict[str, Any]:
+        query_items: list[Tuple[str, Any]] = []
+        _add_optional_query(query_items, "limit", limit)
+        _add_optional_query(query_items, "status", status)
+        suffix = "?" + urllib.parse.urlencode(query_items) if query_items else ""
+        return self._request("GET", "/v1/alerts" + suffix, **options)
+
+    def get_alert_config(self, **options: Any) -> Dict[str, Any]:
+        return self._request("GET", "/v1/alerts/config", **options)
+
+    def acknowledge_alert(
+        self,
+        alert_id: str,
+        request: Optional[Mapping[str, Any]] = None,
+        **options: Any,
+    ) -> Dict[str, Any]:
+        return self._mutate(
+            "/v1/alerts/{}/acknowledge".format(urllib.parse.quote(alert_id, safe="")),
+            request,
+            options,
+        )
+
+    def resolve_alert(
+        self,
+        alert_id: str,
+        request: Optional[Mapping[str, Any]] = None,
+        **options: Any,
+    ) -> Dict[str, Any]:
+        return self._mutate(
+            "/v1/alerts/{}/resolve".format(urllib.parse.quote(alert_id, safe="")),
+            request,
+            options,
+        )
+
+    def list_browser_instances(
+        self,
+        *,
+        limit: Optional[int] = None,
+        state: Optional[str] = None,
+        **options: Any,
+    ) -> Dict[str, Any]:
+        query_items: list[Tuple[str, Any]] = []
+        _add_optional_query(query_items, "limit", limit)
+        _add_optional_query(query_items, "state", state)
+        suffix = "?" + urllib.parse.urlencode(query_items) if query_items else ""
+        return self._request("GET", "/v1/browser/instances" + suffix, **options)
+
+    def list_provider_contexts(
+        self,
+        *,
+        limit: Optional[int] = None,
+        instance_id: Optional[str] = None,
+        **options: Any,
+    ) -> Dict[str, Any]:
+        query_items: list[Tuple[str, Any]] = []
+        _add_optional_query(query_items, "limit", limit)
+        _add_optional_query(query_items, "instance_id", instance_id)
+        suffix = "?" + urllib.parse.urlencode(query_items) if query_items else ""
+        return self._request("GET", "/v1/browser/contexts" + suffix, **options)
+
+    def list_browser_tabs(
+        self,
+        *,
+        limit: Optional[int] = None,
+        context_id: Optional[str] = None,
+        state: Optional[str] = None,
+        **options: Any,
+    ) -> Dict[str, Any]:
+        query_items: list[Tuple[str, Any]] = []
+        _add_optional_query(query_items, "limit", limit)
+        _add_optional_query(query_items, "context_id", context_id)
+        _add_optional_query(query_items, "state", state)
+        suffix = "?" + urllib.parse.urlencode(query_items) if query_items else ""
+        return self._request("GET", "/v1/browser/tabs" + suffix, **options)
+
+    def get_browser_topology_summary(self, **options: Any) -> Dict[str, Any]:
+        return self._request("GET", "/v1/browser/summary", **options)
+
+    def get_concurrency(
+        self,
+        *,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+        **options: Any,
+    ) -> Dict[str, Any]:
+        query_items: list[Tuple[str, Any]] = []
+        _add_optional_query(query_items, "cursor", cursor)
+        _add_optional_query(query_items, "limit", limit)
+        suffix = "?" + urllib.parse.urlencode(query_items) if query_items else ""
+        return self._request("GET", "/v1/concurrency" + suffix, **options)
+
+    def sso_logout(
+        self,
+        request: Optional[Mapping[str, Any]] = None,
+        **options: Any,
+    ) -> Dict[str, Any]:
+        return self._mutate("/v1/sso/logout", request, options)
+
+    def export_audit(
+        self,
+        request: Optional[Mapping[str, Any]] = None,
+        **options: Any,
+    ) -> Dict[str, Any]:
+        return self._mutate("/v1/audit/export", request, options)
+
+    def _mutate(
+        self,
+        path: str,
+        request: Optional[Mapping[str, Any]],
+        options: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        body = _clone_json_object(request or {})
+        api_version = body.get("api_version") or options.get("api_version") or self.api_version
+        idempotency_key = (
+            body.get("idempotency_key")
+            or options.get("idempotency_key")
+            or generate_idempotency_key()
+        )
+        body["api_version"] = api_version
+        body["idempotency_key"] = idempotency_key
+        opts = dict(options)
+        opts["api_version"] = api_version
+        opts["idempotency_key"] = idempotency_key
+        opts["body"] = body
+        return self._request("POST", path, **opts)
+
+
     def get_metrics(self, **options: Any) -> str:
         opts = dict(options)
         headers = dict(opts.pop("headers", {}) or {})

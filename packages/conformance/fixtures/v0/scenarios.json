@@ -74,6 +74,48 @@
       "category": "webhooks",
       "title": "Webhook outbox persists terminal job callbacks and retries signed delivery attempts",
       "assertions": ["durable_outbox_delivery", "hmac_signed_http_post", "bounded_retry_backoff", "replay_requires_existing_delivery"]
+    },
+    {
+      "id": "multi-tab.topology-hierarchy",
+      "category": "multi_tab_topology",
+      "title": "Browser topology reads expose instance/context/tab hierarchy with boolean storage indicator",
+      "assertions": ["browser_context_tab_hierarchy", "tab_lifecycle_state_enum", "has_storage_state_boolean_only", "no_storage_state_uri"]
+    },
+    {
+      "id": "concurrency.aimd-ceiling",
+      "category": "adaptive_concurrency",
+      "title": "Adaptive concurrency exposes AIMD ceilings per provider and identity with last-change reason",
+      "assertions": ["per_provider_identity_cap", "min_max_bounds", "multiplicative_decrease_on_safety_signal", "last_change_reason_present"]
+    },
+    {
+      "id": "alerts.manual-action-lifecycle",
+      "category": "manual_action_alerts",
+      "title": "Manual-action alerts route human-solved CAPTCHA/login challenges with acknowledge/resolve lifecycle",
+      "assertions": ["open_acknowledged_resolved_lifecycle", "human_solved_no_auto_bypass", "smtp_config_no_password", "captcha_and_manual_login_kinds"]
+    },
+    {
+      "id": "audit.export-merkle-chain",
+      "category": "audit_export_chain",
+      "title": "Audit export returns a hash-chained, tamper-evident set with chain_valid verification",
+      "assertions": ["hash_chained_entries", "chain_valid_flag", "no_secret_payloads", "anchor_commitment"]
+    },
+    {
+      "id": "sso.session-logout",
+      "category": "sso_session",
+      "title": "SSO-minted sessions are revocable and logout invalidates the session immediately",
+      "assertions": ["sso_minted_session", "revocable_server_side_reference", "logout_invalidates_immediately", "audit_event_recorded"]
+    },
+    {
+      "id": "cross-engine.portable-selectors",
+      "category": "cross_engine",
+      "title": "Cross-engine execution runs portable selectors on Chromium CDP and Firefox/WebKit BiDi and remote grids",
+      "assertions": ["pluggable_engine", "engine_portable_selectors", "remote_grid_endpoint_operator_controlled", "no_client_supplied_browser_endpoint"]
+    },
+    {
+      "id": "persistence.postgres-enterprise",
+      "category": "postgres_persistence",
+      "title": "Enterprise Postgres persistence stores control-plane state with edge SQLite parity",
+      "assertions": ["postgres_and_sqlite_parity", "transactional_concurrency", "redacted_storage_state", "multi_tenant_isolation"]
     }
   ],
   "scenarios": [
@@ -1160,6 +1202,408 @@
         "error.code": "UBAG-RATE-LIMITED-001",
         "error.retryable": true,
         "error.retry_after_ms": 5000
+      }
+    },
+    {
+      "id": "browser.summary.ok",
+      "category": "browser",
+      "title": "Browser summary returns topology counts without storage-state URIs",
+      "request": {
+        "method": "GET",
+        "path": "/v1/browser/summary",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "browser_summary",
+          "data": {
+            "browser_instances": 3,
+            "provider_contexts": 5,
+            "channel_tabs": 11,
+            "quarantined_tabs": 1
+          },
+          "trace_id": "trace_browser_summary"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "browser_summary",
+        "body.data.browser_instances": 3
+      }
+    },
+    {
+      "id": "browser.instances.ok",
+      "category": "browser",
+      "title": "Browser instances list exposes engine and a boolean storage indicator",
+      "request": {
+        "method": "GET",
+        "path": "/v1/browser/instances?limit=1",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "browser_instances",
+          "data": [
+            {
+              "instance_id": "browser_inst_01",
+              "engine": "Chromium (CDP)",
+              "state": "ready",
+              "context_count": 2,
+              "trace_id": "trace_browser_instance_item"
+            }
+          ],
+          "next_cursor": null,
+          "trace_id": "trace_browser_instances"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "browser_instances",
+        "body.data.length": 1
+      }
+    },
+    {
+      "id": "browser.contexts.ok",
+      "category": "browser",
+      "title": "Browser contexts list exposes has_storage_state boolean and never a storage_state_uri",
+      "request": {
+        "method": "GET",
+        "path": "/v1/browser/contexts?limit=1",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "browser_contexts",
+          "data": [
+            {
+              "context_id": "ctx_openai_primary",
+              "instance_id": "browser_inst_01",
+              "provider": "chatgpt_web",
+              "identity": "acct-alpha",
+              "has_storage_state": true,
+              "tab_count": 2
+            }
+          ],
+          "next_cursor": null,
+          "trace_id": "trace_browser_contexts"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "browser_contexts",
+        "body.data.0.has_storage_state": true
+      }
+    },
+    {
+      "id": "browser.tabs.ok",
+      "category": "browser",
+      "title": "Browser tabs list exposes tab lifecycle state and boolean storage indicator only",
+      "request": {
+        "method": "GET",
+        "path": "/v1/browser/tabs?limit=1",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "browser_tabs",
+          "data": [
+            {
+              "tab_id": "tab_openai_a1",
+              "context_id": "ctx_openai_primary",
+              "provider": "chatgpt_web",
+              "state": "busy",
+              "job_id": "job_mock_018",
+              "has_storage_state": true
+            }
+          ],
+          "next_cursor": null,
+          "trace_id": "trace_browser_tabs"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "browser_tabs",
+        "body.data.0.state": "busy"
+      }
+    },
+    {
+      "id": "concurrency.list.ok",
+      "category": "concurrency",
+      "title": "Concurrency list returns AIMD caps with bounds and last-change reason",
+      "request": {
+        "method": "GET",
+        "path": "/v1/concurrency?limit=1",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "concurrency",
+          "data": [
+            {
+              "provider": "chatgpt_web",
+              "identity": "acct-alpha",
+              "current_cap": 4,
+              "min_tabs": 1,
+              "max_tabs": 6,
+              "inflight": 3,
+              "last_change_reason": "Increase · success streak",
+              "state": "ready"
+            }
+          ],
+          "next_cursor": null,
+          "trace_id": "trace_concurrency_list"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "concurrency",
+        "body.data.0.current_cap": 4
+      }
+    },
+    {
+      "id": "alerts.list.ok",
+      "category": "alerts",
+      "title": "Manual-action alerts list returns open challenges with lifecycle status",
+      "request": {
+        "method": "GET",
+        "path": "/v1/alerts?limit=1",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "alerts",
+          "data": [
+            {
+              "alert_id": "alert_captcha_01",
+              "kind": "captcha",
+              "job_id": "job_mock_018",
+              "target": "chatgpt_web · acct-alpha",
+              "status": "open",
+              "detail": "CAPTCHA wall detected mid-job. A human operator must solve it via noVNC; UBAG never auto-solves."
+            }
+          ],
+          "next_cursor": null,
+          "trace_id": "trace_alerts_list"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "alerts",
+        "body.data.0.status": "open"
+      }
+    },
+    {
+      "id": "alerts.config.ok",
+      "category": "alerts",
+      "title": "Alert config returns SMTP status flag without exposing the password",
+      "request": {
+        "method": "GET",
+        "path": "/v1/alerts/config",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "alert_config",
+          "sink": "smtp+dashboard",
+          "smtp_configured": true,
+          "recipient": "mindreader420123@gmail.com",
+          "resolution": "Human-solved (noVNC takeover) — no automated CAPTCHA bypass",
+          "trace_id": "trace_alert_config"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.smtp_configured": true,
+        "body.kind": "alert_config"
+      }
+    },
+    {
+      "id": "alerts.acknowledge.ok",
+      "category": "alerts",
+      "title": "Acknowledge alert records that a human is handling the challenge",
+      "request": {
+        "method": "POST",
+        "path": "/v1/alerts/alert_captcha_01/acknowledge",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Idempotency-Key": "01HXY7ALERTACK000000000001",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY7ALERTACK000000000001"
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_version": "2026-05-22",
+          "alert_id": "alert_captcha_01",
+          "status": "acknowledged",
+          "idempotent_replay": false,
+          "audit_event": "alert.acknowledged",
+          "trace_id": "trace_alert_ack"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.status": "acknowledged"
+      }
+    },
+    {
+      "id": "alerts.resolve.ok",
+      "category": "alerts",
+      "title": "Resolve alert marks the human action complete so the tab may resume",
+      "request": {
+        "method": "POST",
+        "path": "/v1/alerts/alert_captcha_01/resolve",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Idempotency-Key": "01HXY7ALERTRES000000000001",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY7ALERTRES000000000001"
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_version": "2026-05-22",
+          "alert_id": "alert_captcha_01",
+          "status": "resolved",
+          "idempotent_replay": false,
+          "audit_event": "alert.resolved",
+          "trace_id": "trace_alert_resolve"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.status": "resolved"
+      }
+    },
+    {
+      "id": "audit.export.chain-valid",
+      "category": "audit",
+      "title": "Audit export returns a hash-chained set with chain_valid true",
+      "request": {
+        "method": "POST",
+        "path": "/v1/audit/export",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Content-Type": "application/json",
+          "Idempotency-Key": "01HXY7AUDITEXPORT00000001",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY7AUDITEXPORT00000001",
+          "range": {
+            "from_sequence": 1,
+            "to_sequence": 2
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "audit_export",
+          "chain_valid": true,
+          "anchor": "sha256_anchor_fixture",
+          "entries": [
+            {
+              "event_id": "audit_01",
+              "type": "job.created",
+              "sequence": 1,
+              "prev_hash": "0000000000000000",
+              "hash": "sha256_entry_01"
+            },
+            {
+              "event_id": "audit_02",
+              "type": "alert.resolved",
+              "sequence": 2,
+              "prev_hash": "sha256_entry_01",
+              "hash": "sha256_entry_02"
+            }
+          ],
+          "trace_id": "trace_audit_export"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.chain_valid": true,
+        "body.kind": "audit_export"
+      }
+    },
+    {
+      "id": "sso.logout.ok",
+      "category": "sso",
+      "title": "SSO logout revokes the current session immediately",
+      "request": {
+        "method": "POST",
+        "path": "/v1/sso/logout",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Idempotency-Key": "01HXY7SSOLOGOUT0000000001",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY7SSOLOGOUT0000000001"
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_version": "2026-05-22",
+          "status": "logged_out",
+          "session_revoked": true,
+          "idempotent_replay": false,
+          "audit_event": "sso.session_revoked",
+          "trace_id": "trace_sso_logout"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.session_revoked": true,
+        "body.status": "logged_out"
       }
     }
   ]

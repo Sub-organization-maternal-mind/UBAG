@@ -69,7 +69,13 @@ def _types(events):
 
 class SelectorConfigTests(unittest.TestCase):
     def test_all_live_providers_have_selectors(self):
-        self.assertEqual(set(_LIVE_PROVIDERS), set(PROVIDER_SELECTORS))
+        # Every real provider is registered; the generic template ships as an
+        # additional copy-and-tune entry.
+        self.assertTrue(set(_LIVE_PROVIDERS).issubset(set(PROVIDER_SELECTORS)))
+        self.assertEqual(
+            set(PROVIDER_SELECTORS) - set(_LIVE_PROVIDERS),
+            {"generic_live_web"},
+        )
 
     def test_selector_groups_are_non_empty_and_versioned(self):
         for provider_id, selectors in PROVIDER_SELECTORS.items():
@@ -311,6 +317,67 @@ class AdapterWiringTests(unittest.TestCase):
                 self.assertEqual(events[-1]["type"], "completed")
                 self.assertEqual(events[-1]["data"]["result"]["text"], "ready")
                 self.assertEqual(events[-1]["data"]["metadata"]["adapter"], provider_id)
+
+
+class LiveWebTemplateTests(unittest.TestCase):
+    def test_generic_template_is_registered_and_discoverable(self):
+        self.assertIn("generic_live_web", PROVIDER_SELECTORS)
+        selectors = get_provider_selectors("generic_live_web")
+        self.assertEqual(selectors.provider_id, "generic_live_web")
+        self.assertTrue(selectors.target_url.startswith("https://"))
+        for group in selectors.all_groups():
+            self.assertTrue(group.candidates, "group %s empty" % group.name)
+
+    def test_template_runs_manual_flow_through_engine(self):
+        from ubag_worker.live import live_web_template
+
+        selectors = live_web_template(
+            provider_id="acme_chat_web",
+            display_name="Acme Chat",
+            target_url="https://chat.acme.example/",
+        )
+        engine = LiveSessionEngine(selectors)
+        driver = MockPageDriver(authenticated=False, login_after_wait=True, response_text="ok")
+
+        events = engine.run(_payload("acme_chat_web"), driver=driver)
+
+        types = _types(events)
+        self.assertIn("session.manual_action_required", types)
+        self.assertIn("session.authenticated", types)
+        self.assertEqual(types[-1], "completed")
+        self.assertEqual(events[-1]["data"]["metadata"]["adapter"], "acme_chat_web")
+
+    def test_template_rejects_secret_material(self):
+        from ubag_worker.live import live_web_template
+
+        engine = LiveSessionEngine(
+            live_web_template("acme_chat_web", "Acme Chat", "https://chat.acme.example/")
+        )
+        bad = _payload("acme_chat_web")
+        bad["job"]["input"]["cookies"] = "session=abc123"
+        with self.assertRaises(LiveSessionError):
+            engine.run(bad, driver=MockPageDriver())
+
+    def test_template_validates_inputs(self):
+        from ubag_worker.live import live_web_template
+
+        with self.assertRaises(ValueError):
+            live_web_template("", "Acme", "https://chat.acme.example/")
+        with self.assertRaises(ValueError):
+            live_web_template("acme", "Acme", "http://insecure.example/")
+
+    def test_template_allows_selector_overrides(self):
+        from ubag_worker.live import live_web_template
+
+        selectors = live_web_template(
+            provider_id="acme_chat_web",
+            display_name="Acme Chat",
+            target_url="https://chat.acme.example/",
+            prompt_input=("#acme-input",),
+        )
+        self.assertEqual(selectors.prompt_input.primary, "#acme-input")
+        # Untouched groups still carry safe placeholder defaults.
+        self.assertTrue(selectors.submit_button.candidates)
 
 
 if __name__ == "__main__":

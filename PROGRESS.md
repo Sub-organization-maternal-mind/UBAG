@@ -1,6 +1,6 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-05-29
+Last updated: 2026-05-30
 
 ## Current Phase
 
@@ -37,6 +37,7 @@ Rendered docs-site counterpart: `operations/agent-handoff`.
 | Public contracts | Complete | OpenAPI, shared JSON Schemas, Protobuf contract checks, executable conformance fixtures, and coverage scenarios added; `cmd /c pnpm test:schema` validates OpenAPI, JSON Schemas, and proto contract parity. |
 | Gateway control plane | Complete | `cmd /c pnpm test:gateway` passes through the portable Go-aware test runner, including `/v1` routes, scoped cross-job event history, collection pagination/AuthZ, SSE/WebSocket, metrics, AuthZ boundaries, webhook replay, validation, idempotency, artifact mutation idempotency, cancel, and retry. |
 | Gateway executor dispatch and ingestion | Complete | Gateway create/retry now rejects unsafe executable payloads before storage, dispatches accepted jobs once through an internal executor port, supports no-op, local file-spool, and NATS modes, leases worker envelopes from file-spool or JetStream, ingests normalized worker events/results, and exposes queue/worker/result-ingestion metric families. |
+| Human-in-the-loop manual-action alerts | Complete | New `apps/gateway/internal/alerts` package (memory/sqlite/postgres stores, log/SMTP/multi sinks, dedupe + lifecycle). Worker `session.manual_action_required` events raise alerts and email a human (default recipient `mindreader420123@gmail.com`) to solve CAPTCHA/login/verification in the live browser session. `/v1/alerts`, `/v1/alerts/config`, `/v1/alerts/{id}/acknowledge`, `/v1/alerts/{id}/resolve` (operator+ RBAC, nil-safe 501). Postgres migration `0007_alerts.sql`, SQLite `0005_alerts.sql`. `node tools/run-go-tests.mjs apps/gateway` and `node tools/check-contracts.mjs` green. |
 | Template catalog runtime | Complete | `/v1/templates` returns built-in scoped templates, readiness verifies the template store, and job creation applies template defaults before payload policy validation, storage, idempotency hashing, and executor enqueue. |
 | Postgres gateway stores | Complete | `UBAG_GATEWAY_STORE=postgres` enables Postgres-backed gateway jobs, events, worker-event dedupe keys, and idempotency records after `migrations/postgres/0001_gateway_stores.sql` is applied; default remains memory. Readiness verifies all required gateway SQL objects, API job reads hide cross-tenant job existence, and env-gated integration tests are documented. |
 | NATS JetStream executor | Complete | `UBAG_EXECUTOR_MODE=nats` dispatches jobs via JetStream and can consume them through the embedded durable worker queue when `UBAG_WORKER_CONSUMER_ENABLED=true`; stream/subject/durable/ack/nak/max-delivery settings are configurable; env-gated integration tests skip without `UBAG_TEST_NATS_URL`. |
@@ -46,9 +47,9 @@ Rendered docs-site counterpart: `operations/agent-handoff`.
 | Rate limiter (`internal/ratelimit`) | Code-complete & locally validated | Sliding-window limiter with memory + SQLite + Postgres stores and a policy resolver; `withRateLimit` middleware is pass-through when disabled (`UBAG_RATE_LIMIT_ENABLED`, default false). Go package tests pass. `GET /v1/rate-limits` (`rate_limit:manage`). |
 | Response cache (`internal/responsecache`) | Code-complete & locally validated | Privacy-aware cache (memory + SQLite) that never returns cached payload values via the API; `UBAG_CACHE_ENABLED` (default false), `UBAG_CACHE_TTL_MS`. `GET /v1/cache` (`job:read`), `DELETE /v1/cache` (`rate_limit:manage`) returns 501 when the cache is disabled. Go package tests pass. |
 | Workflow engine (`internal/workflow`) | Code-complete & locally validated | Multi-step job workflow definitions/runs (memory + SQLite) with payload policy enforced on every step input. `GET/POST /v1/workflows`, `POST /v1/workflows/{id}/runs`, `GET /v1/workflows/runs/{id}` (`job:read` / `job:create`). Go package tests pass. |
-| SSO (`internal/sso`) | Code-complete & locally validated (no session minting yet) | Stdlib-only OIDC (RS256) and SAML assertion verification, principal mapping, and config store (memory + SQLite). `GET/PUT /v1/sso/config` (`role:manage`), `POST /v1/sso/oidc/callback`, `POST /v1/sso/saml/acs` (verification, no RBAC). Callbacks return a verified principal but do NOT yet mint gateway sessions; SAML uses a pragmatic (non-full XML-C14N) fails-closed check. Go package tests pass. |
+| SSO (`internal/sso`) | Code-complete & locally validated | Stdlib-only OIDC (RS256) and SAML assertion verification, principal mapping, and config store (memory + SQLite). `GET/PUT /v1/sso/config` (`role:manage`), `POST /v1/sso/oidc/callback`, `POST /v1/sso/saml/acs` (verification, no RBAC). Callbacks now mint a server-side session (opaque crypto/rand token, SHA-256-hashed at rest, HttpOnly+Secure+SameSite=Lax cookie + JSON `session_token`); `POST /v1/sso/logout` revokes. SAML now applies exclusive XML-C14N (`internal/sso/canonicalize.go`) before digest/signature verification and fails closed. Go package tests pass. |
 | SCIM v2 (`internal/scim`) | Code-complete & locally validated | SCIM v2 Users/Groups CRUD + Patch store (memory + SQLite); passwords are never stored. `/v1/scim/v2/Users[/{id}]`, `/v1/scim/v2/Groups[/{id}]` (`role:manage`). Go package tests pass. |
-| SIEM export (`internal/siem`) | Code-complete & locally validated (audit source stub) | Audit/event export with redaction and File/HTTP/Syslog sinks via a non-blocking exporter with graceful shutdown; `UBAG_SIEM_FILE_PATH`. `GET/PUT /v1/siem/config` (`role:manage`), `POST /v1/audit/export` (`data:export`) currently returns exporter status/stats; full record export is a follow-up. Go package tests pass. |
+| SIEM export (`internal/siem`) | Code-complete & locally validated | Audit/event export with redaction and File/HTTP/Syslog sinks via a non-blocking exporter with graceful shutdown; `UBAG_SIEM_FILE_PATH`. `GET/PUT /v1/siem/config` (`role:manage`), `POST /v1/audit/export` (`data:export`) now streams the real persisted, Merkle-chained audit records (`internal/audit`, memory + SQLite + Postgres) for the requesting tenant with `chain_valid` + `head_hash` plus exporter stats. The handler accepts the SDK request body shape (`idempotency_key` is accepted and ignored for this read; optional `range.{from_sequence,to_sequence}` applies a post-query sequence window with chain verification computed over the full chain before filtering), reconciling the SDKs with the gateway's `DisallowUnknownFields` decoder. Go package tests pass (incl. `TestAuditExportAcceptsSDKBodyAndSequenceWindow`). |
 | Webhook secret rotation | Code-complete & locally validated | `POST /v1/webhooks/secret:rotate` (`secret:rotate`) performs reference-based secret rotation with no plaintext stored. Go package tests pass. |
 | Security contracts | Complete | `cmd /c pnpm test:security` tests and validates app-secret, device token, RBAC/ABAC, rate-limit, audit, and webhook signing contracts. |
 | Mock worker/adapter | Complete | `cmd /c pnpm test:worker` runs Python adapter and worker tests plus compileall and smoke output. |
@@ -106,6 +107,53 @@ go test ./...
 cmd /c pnpm test:plugins
 cmd /c pnpm test:adapter-registry
 cmd /c pnpm test:v0:local
+```
+
+## 2026-05-30 v2.1 Observability Presentation Surfaces
+
+This pass added ToS-safe, presentation-only observability for the v2.1 multi-tab/concurrency surfaces across the dashboard, docs, and conformance fixtures. No gateway runtime behavior changed; all new dashboard data has a mock fallback and a live `/v1` overlay.
+
+Completed and locally validated:
+
+- **Dashboard panels (`apps/dashboard`).** Three new read-only tabs: **Browser** (instance → provider context → channel tab topology with `warming|ready|busy|draining|quarantined` state badges and a boolean storage-state indicator — never a URI), **Concurrency** (per provider/identity AIMD cap, min/max bounds, in-flight, last-change reason), and **Alerts** (human-in-the-loop CAPTCHA/manual-login queue with Acknowledge/Resolve actions plus an SMTP status line that shows `smtp_configured` yes/no, never a password). Mock data in `mock-data.js`, live `/v1/browser/*`, `/v1/concurrency`, `/v1/alerts[/config]` clients in `gateway-client.js`, render + delegated alert-action handler in `app.js`, redaction guards in `scripts/check.mjs`, responsive `.alert-actions` CSS.
+- **Docs (`apps/docs`).** Six new Starlight pages wired into the sidebar: `worker/multi-tab-orchestration` (§12.6–§12.13), `worker/cross-engine-grids` (§13.10–§13.12), `operations/manual-action-alerts`, `security/audit-export-merkle` (§11.6), `security/sso-sessions`, `data/postgres-persistence` (§22). Coverage marked in `blueprint-coverage.md` and `implementation-coverage.md`.
+- **Conformance (`packages/conformance`).** 11 new executable replay scenarios (`browser.summary.ok`, `browser.instances.ok`, `browser.contexts.ok`, `browser.tabs.ok`, `concurrency.list.ok`, `alerts.list.ok`, `alerts.config.ok`, `alerts.acknowledge.ok`, `alerts.resolve.ok`, `audit.export.chain-valid`, `sso.logout.ok`) and 7 new named coverage scenarios (categories `multi_tab_topology`, `adaptive_concurrency`, `manual_action_alerts`, `audit_export_chain`, `sso_session`, `cross_engine`, `postgres_persistence`) — now 41 executable + 19 coverage. `validate-fixtures.mjs` gained redaction guards: no `"storage_state_uri"`, `alerts.config.ok` has no password and exposes `smtp_configured`, browser context/tab rows carry a boolean `has_storage_state`.
+
+Redaction honored end-to-end: storage state is a boolean indicator only (never a URI) in the dashboard and fixtures, and alert config exposes an `smtp_configured` flag only (never the SMTP password).
+
+Validation (Windows, `cmd /c pnpm`) passed:
+
+```powershell
+node apps/dashboard/scripts/check.mjs                     # Dashboard check passed
+node apps/dashboard/scripts/build.mjs                     # dist written
+node apps/dashboard/scripts/verify-responsive.mjs         # all 11 tabs pass at 320/375/414/768
+node packages/conformance/scripts/validate-fixtures.mjs   # Validated 41 scenarios
+node tools/check-contracts.mjs                            # Contract checks passed
+node tools/check-blueprint-coverage.mjs                   # 69 required docs present
+cmd /c pnpm --filter @ubag/docs build                     # 73 pages built, Complete!
+```
+
+## 2026-05-30 Enterprise SSO/Audit Follow-up Closure
+
+This pass closed the three v2.0 enterprise follow-ups left open in the prior gateway slice. All work is ToS-safe, security-hardening only, and lives in `apps/gateway` on the Go 1.26 toolchain.
+
+Completed and locally validated:
+
+- **Audit record persistence + full export.** New `internal/audit` package: a Merkle-chained, append-only, per-tenant audit log with memory + SQLite + Postgres backends (mirrors the webhooks store conventions, including `Ready()`). Each record stores `prev_hash` and its own `record_hash` (SHA-256 over canonical `tenant|app|actor|action|resource|outcome|timestamp|attributes|prev_hash`). Records are emitted (nil-safe) on every `authorizeGatewayAction` allow/deny decision and on SSO session mint/logout. `POST /v1/audit/export` (`data:export`) now streams the real persisted records for the requesting tenant (optional `since`/`until`/`limit` filter), verifies the chain, and returns `chain_valid`, `head_hash`, `count`, `records`, plus exporter `stats`.
+- **SSO session minting.** New `internal/session` package: opaque session tokens (`crypto/rand`, 32 bytes, base64url) with only the SHA-256 hash persisted (memory + SQLite + Postgres), the mapped `Principal`, `issued_at`/`expires_at` (TTL default 1h via `UBAG_SESSION_TTL_MS`), and a soft `revoked` flag. OIDC/SAML callbacks now mint a session, set a `HttpOnly`+`Secure`+`SameSite=Lax`+`Path=/` cookie (`ubag_session`), and return `session_token`/`session_expires_at` in JSON. `withAuth` now resolves a session principal from the cookie or bearer token in addition to the existing static `UBAG_APP_SECRET` path (sessions are additive; expired/revoked tokens are rejected). New `POST /v1/sso/logout` revokes the presented session, clears the cookie, and is idempotent.
+- **Exclusive XML-C14N for SAML.** `internal/sso/canonicalize.go` applies exclusive canonicalization (`http://www.w3.org/2001/10/xml-exc-c14n#`) to `SignedInfo` and the signed assertion subtree before digest/signature verification, with no new dependencies. Verification fails closed on any mismatch. Documented limitations: single prefix per namespace URI, no `InclusiveNamespaces` PrefixList, no DTD-defaulted attributes, and the subtree must carry its own namespace declarations.
+
+New migration: `migrations/postgres/0006_audit_sessions.sql` (`gateway_audit_log` with `UNIQUE(tenant_id, seq)` + tenant/occurred-at indexes, and `gateway_sessions` keyed by `token_hash` + expiry index; registers the `0006` row). SQLite parity is provided by each store's `Ready()` self-create. New env var: `UBAG_SESSION_TTL_MS` (default 1h).
+
+Security measures: `crypto/rand` token generation, SHA-256 hashing of session tokens at rest, parameterized SQL throughout, per-tenant advisory locking (Postgres) / single-writer transaction (SQLite) to keep the audit chain intact under concurrency, fail-closed C14N + signature verification, and no secrets logged. Sessions and audit default to in-memory stores in `NewServer`, and all emit paths are nil-safe, so existing behavior is unchanged when unconfigured.
+
+Deferred to the contracts/SDK agents (out of scope for this pass): OpenAPI/SDK updates for the new `session_token`/cookie response fields, the enriched `/v1/audit/export` body, and the `/v1/sso/logout` route.
+
+Validation (Go 1.26 local toolchain) passed:
+
+```powershell
+node tools/run-go-tests.mjs apps/gateway   # build + all gateway packages green
+node tools/check-contracts.mjs             # Contract checks passed
 ```
 
 ## 2026-05-25 Continuation Hardening Pass
