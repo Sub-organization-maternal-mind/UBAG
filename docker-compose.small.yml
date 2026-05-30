@@ -41,6 +41,16 @@ services:
       UBAG_WORKER_SCRIPT: ${UBAG_WORKER_SCRIPT:-/app/apps/worker/run_mock_worker.py}
       UBAG_WORKER_POLL_INTERVAL_MS: ${UBAG_WORKER_POLL_INTERVAL_MS:-500}
       UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-30000}
+      # Live-browser bridge: when the "live-browser" profile is up, point the
+      # worker at the shared Chromium (CDP) so live jobs reuse the user-owned,
+      # manually-logged-in profile instead of launching a throwaway browser.
+      UBAG_REMOTE_BROWSER_ENDPOINT: ${UBAG_REMOTE_BROWSER_ENDPOINT:-}
+      UBAG_BROWSER_HEADED: ${UBAG_BROWSER_HEADED:-false}
+      UBAG_BROWSER_ENGINE: ${UBAG_BROWSER_ENGINE:-}
+      UBAG_BROWSER_PROTOCOL: ${UBAG_BROWSER_PROTOCOL:-}
+      # Loopback noVNC base advertised in session.manual_action_required events.
+      # Must stay loopback (gateway redaction only forwards loopback noVNC URLs).
+      UBAG_NOVNC_BASE_URL: ${UBAG_NOVNC_BASE_URL:-http://127.0.0.1:7900}
       UBAG_WEBHOOK_OUTBOX: ${UBAG_WEBHOOK_OUTBOX:-}
       UBAG_WEBHOOK_WORKER_ENABLED: ${UBAG_WEBHOOK_WORKER_ENABLED:-false}
       UBAG_WEBHOOK_SECRET: ${UBAG_WEBHOOK_SECRET:-}
@@ -99,6 +109,42 @@ services:
       timeout: 5s
       retries: 3
       start_period: 5s
+
+  # Live-browser viewer: real persistent Chromium on a virtual display, streamed
+  # to the operator over noVNC for ToS-safe MANUAL login (no credential capture,
+  # no CAPTCHA bypass). The worker attaches to this Chromium over CDP so live
+  # jobs reuse the user-owned, already-logged-in profile. Opt-in via the
+  # "live-browser" profile; noVNC is published to loopback and password-gated.
+  browser-viewer:
+    build:
+      context: .
+      dockerfile: deploy/small/browser-viewer/Dockerfile
+    image: ${UBAG_BROWSER_VIEWER_IMAGE:-ubag/browser-viewer:small-local}
+    restart: unless-stopped
+    profiles: ["live-browser"]
+    environment:
+      UBAG_BROWSER_DISPLAY: ${UBAG_BROWSER_DISPLAY:-:99}
+      UBAG_BROWSER_GEOMETRY: ${UBAG_BROWSER_GEOMETRY:-1280x800x24}
+      UBAG_BROWSER_PROFILE_DIR: ${UBAG_BROWSER_PROFILE_DIR:-/profiles/default}
+      UBAG_BROWSER_CDP_PORT: ${UBAG_BROWSER_CDP_PORT:-9222}
+      UBAG_BROWSER_VNC_PORT: ${UBAG_BROWSER_VNC_PORT:-5900}
+      UBAG_BROWSER_NOVNC_PORT: ${UBAG_BROWSER_NOVNC_PORT:-6080}
+      UBAG_BROWSER_START_URL: ${UBAG_BROWSER_START_URL:-about:blank}
+      UBAG_BROWSER_VNC_PASSWORD: ${UBAG_BROWSER_VNC_PASSWORD:?Set UBAG_BROWSER_VNC_PASSWORD in deploy/small/env.local}
+    ports:
+      # noVNC published to loopback only (matches the worker's loopback noVNC URL
+      # at http://127.0.0.1:7900/session/...). CDP stays internal — never bound.
+      - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${UBAG_NOVNC_PORT:-7900}:6080"
+    volumes:
+      - browser_profiles:/profiles
+    networks:
+      - ubag-private
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:6080/"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   postgres:
     image: postgres:16-alpine
@@ -314,3 +360,4 @@ volumes:
   grafana_data:
   nats_data:
   executor_spool:
+  browser_profiles:

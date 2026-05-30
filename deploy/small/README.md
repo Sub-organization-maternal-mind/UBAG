@@ -216,6 +216,38 @@ Start the optional NATS JetStream service:
 .\deploy\small\small.ps1 -Action up -Profile queue
 ```
 
+### Live-browser viewer (noVNC)
+
+The `live-browser` profile adds a `browser-viewer` service: a real, persistent
+Chromium running on a virtual display (Xvfb), streamed to the operator's browser
+over noVNC (`x11vnc` + `websockify`). It exists so a **human** can complete
+login, CAPTCHA, 2FA, and consent prompts in a user-owned session. UBAG never
+fills credentials, captures cookies or storage state, or solves challenges — the
+machine only attaches to the already-logged-in profile over CDP to run jobs.
+
+```powershell
+# in deploy\small\env.local
+UBAG_BROWSER_VNC_PASSWORD=choose-a-strong-vnc-password
+UBAG_REMOTE_BROWSER_ENDPOINT=http://browser-viewer:9222
+UBAG_NOVNC_BASE_URL=http://127.0.0.1:7900
+```
+
+```powershell
+docker compose --env-file deploy\small\env.local -f docker-compose.small.yml --profile live-browser up -d --build
+```
+
+Security posture:
+
+- noVNC is published to loopback only (`UBAG_NOVNC_PORT`, default `7900`) and is
+  password-gated by `UBAG_BROWSER_VNC_PASSWORD`. Reach it over an SSH tunnel or
+  through the edge route `/novnc/` (the dashboard's **Take control** button).
+- Chromium DevTools/CDP (`9222`) stays on the internal `ubag-private` network and
+  is never published to a host port.
+- The browser profile persists on the `browser_profiles` volume so manual logins
+  survive restarts. Place that volume on an encrypted disk for shared hosts.
+- The gateway only forwards `novnc_url` values that are loopback URLs, so keep
+  `UBAG_NOVNC_BASE_URL` on `127.0.0.1`/`localhost`.
+
 Run raw Compose commands without the helper:
 
 ```powershell

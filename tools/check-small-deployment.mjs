@@ -46,6 +46,37 @@ requireTerms('docker-compose.small.yml', [
   '0003_webhook_outbox.sql'
 ]);
 
+// Live-browser (noVNC) viewer wiring — opt-in "live-browser" profile.
+requireTerms('docker-compose.small.yml', [
+  'browser-viewer',
+  'live-browser',
+  'UBAG_BROWSER_VNC_PASSWORD',
+  'UBAG_NOVNC_BASE_URL',
+  'UBAG_REMOTE_BROWSER_ENDPOINT',
+  'browser_profiles',
+  'deploy/small/browser-viewer/Dockerfile'
+]);
+
+requireTerms('deploy/small/browser-viewer/Dockerfile', [
+  'chromium',
+  'x11vnc',
+  'novnc',
+  'websockify',
+  'xvfb'
+]);
+
+requireTerms('deploy/small/browser-viewer/entrypoint.sh', [
+  'UBAG_BROWSER_VNC_PASSWORD',
+  'Xvfb',
+  'remote-debugging-port',
+  'websockify'
+]);
+
+requireTerms('deploy/small/caddy/Caddyfile', [
+  '/novnc/*',
+  'browser-viewer:6080'
+]);
+
 requireTerms('deploy/small/env.example', [
   'UBAG_EXECUTOR_MODE=noop',
   'UBAG_NATS_URL=nats://nats:4222',
@@ -64,7 +95,10 @@ requireTerms('deploy/small/env.example', [
   'UBAG_WEBHOOK_WORKER_ENABLED=false',
   'UBAG_WEBHOOK_SECRET=replace-with-local-webhook-secret',
   'UBAG_WEBHOOK_MAX_ATTEMPTS=8',
-  'UBAG_WEBHOOK_ALLOW_ANY_PUBLIC_HOST=false'
+  'UBAG_WEBHOOK_ALLOW_ANY_PUBLIC_HOST=false',
+  'UBAG_BROWSER_VNC_PASSWORD=replace-with-local-vnc-password',
+  'UBAG_NOVNC_BASE_URL=http://127.0.0.1:7900',
+  'UBAG_REMOTE_BROWSER_ENDPOINT=http://browser-viewer:9222'
 ]);
 
 requireTerms('deploy/small/small.ps1', [

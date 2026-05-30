@@ -468,9 +468,61 @@ const renderBrowser = () => {
         ],
         liveInstances || dashboardData.browserInstances
       )}
+      ${renderLiveViewer()}
     `
   );
 };
+
+// noVNC live-browser viewer. The dashboard never fills credentials or solves
+// CAPTCHAs — "Take control" simply embeds the password-gated remote display so a
+// human operator can complete login/2FA in the user-owned session. The viewer is
+// loaded only on demand and points at the same-origin edge route (/novnc/),
+// which Caddy proxies to the browser-viewer service when the "live-browser"
+// compose profile is running.
+const NOVNC_VIEWER_SRC =
+  '/novnc/vnc.html?autoconnect=true&resize=scale&reconnect=true&path=novnc/websockify';
+
+const renderLiveViewer = () => `
+  <section class="live-viewer" aria-labelledby="live-viewer-title" data-novnc-region>
+    <div class="list-heading">
+      <h3 id="live-viewer-title">Live login viewer (noVNC)</h3>
+      <span>Human-in-the-loop · password-gated</span>
+    </div>
+    <p class="live-viewer-note">
+      Take control opens the real, persistent browser running on the worker host.
+      A human completes login, CAPTCHA, 2FA, and consent manually — UBAG never
+      captures credentials, cookies, or storage state, and never solves
+      challenges. Requires the <code>live-browser</code> deployment profile.
+    </p>
+    <div class="live-viewer-actions">
+      <button class="control-button" type="button" data-novnc-action="take-control">
+        Take control
+      </button>
+      <a
+        class="control-button secondary"
+        data-novnc-action="open-tab"
+        href="${NOVNC_VIEWER_SRC}"
+        target="_blank"
+        rel="noopener noreferrer"
+      >Open full screen</a>
+      <button
+        class="control-button secondary"
+        type="button"
+        data-novnc-action="release"
+        hidden
+      >Release / hide</button>
+    </div>
+    <div class="live-viewer-stage" data-novnc-stage hidden>
+      <iframe
+        title="Live browser session (noVNC)"
+        class="live-viewer-frame"
+        data-novnc-frame
+        referrerpolicy="no-referrer"
+        sandbox="allow-scripts allow-same-origin allow-forms"
+      ></iframe>
+    </div>
+  </section>
+`;
 
 const renderConcurrency = () => {
   const liveRows =
@@ -647,6 +699,43 @@ panelStack.addEventListener('click', async (event) => {
 
   renderPanels();
   setActiveTab('alerts');
+});
+
+// noVNC live-viewer controls. "Take control" lazily loads the embedded viewer
+// (so the iframe never connects until a human asks for it); "Release" tears it
+// down. The dashboard only frames the password-gated remote display — it never
+// transmits credentials or automates the login.
+panelStack.addEventListener('click', (event) => {
+  const trigger = event.target.closest('[data-novnc-action]');
+  if (!trigger) return;
+
+  const action = trigger.dataset.novncAction;
+  if (action === 'open-tab') return; // native anchor handles it
+
+  const region = trigger.closest('[data-novnc-region]');
+  if (!region) return;
+  const stage = region.querySelector('[data-novnc-stage]');
+  const frame = region.querySelector('[data-novnc-frame]');
+  const releaseButton = region.querySelector('[data-novnc-action="release"]');
+
+  if (action === 'take-control') {
+    event.preventDefault();
+    if (!frame.getAttribute('src')) {
+      frame.setAttribute('src', NOVNC_VIEWER_SRC);
+    }
+    stage.hidden = false;
+    if (releaseButton) releaseButton.hidden = false;
+    refreshStatus.textContent =
+      'Live viewer requested. A human operator completes login manually — UBAG never fills credentials or solves CAPTCHAs.';
+  }
+
+  if (action === 'release') {
+    event.preventDefault();
+    frame.removeAttribute('src');
+    stage.hidden = true;
+    releaseButton.hidden = true;
+    refreshStatus.textContent = 'Live viewer released.';
+  }
 });
 
 const setActiveTab = (nextTab, focusPanel = false) => {

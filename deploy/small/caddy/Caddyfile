@@ -28,6 +28,17 @@
     reverse_proxy gateway:8080
   }
 
+  # Live-browser viewer (noVNC). Only resolves when the "live-browser" compose
+  # profile is running; otherwise Caddy returns 502. The remote display is still
+  # password-gated by the browser-viewer service (UBAG_BROWSER_VNC_PASSWORD).
+  handle /novnc/* {
+    # Allow the same-origin dashboard to embed the viewer in an iframe while the
+    # global default keeps every other surface at X-Frame-Options: DENY.
+    header X-Frame-Options "SAMEORIGIN"
+    uri strip_prefix /novnc
+    reverse_proxy browser-viewer:6080
+  }
+
   handle /dashboard/* {
     uri strip_prefix /dashboard
     root * /srv/dashboard

@@ -465,6 +465,40 @@ h1 {
   overflow: clip;
 }
 
+.live-viewer {
+  margin-block-start: var(--space-5);
+  border: var(--rule-thin) solid var(--color-rule);
+  border-radius: var(--radius-md);
+  background: var(--color-paper);
+  overflow: clip;
+}
+
+.live-viewer-note {
+  padding: var(--space-4);
+  margin: 0;
+  color: var(--color-marine);
+  border-block-end: var(--rule-thin) solid var(--color-rule);
+}
+
+.live-viewer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.live-viewer-stage {
+  border-block-start: var(--rule-thin) solid var(--color-rule);
+  background: #000;
+}
+
+.live-viewer-frame {
+  display: block;
+  inline-size: 100%;
+  block-size: clamp(360px, 60vh, 720px);
+  border: 0;
+}
+
 .list-heading,
 .work-item,
 .activity-item {

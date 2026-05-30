@@ -431,7 +431,30 @@ def _profile_label(user_data_dir: str) -> str:
 
 
 def _novnc_url(session_id: str) -> str:
-    return "http://127.0.0.1:7900/session/%s" % session_id
+    # The base is operator-configurable for deployments (e.g. the loopback port
+    # the live-browser viewer publishes), but it MUST stay loopback: the gateway
+    # only forwards a noVNC URL to operators when it is a loopback http URL with
+    # a port and a /session/ path (see isSafeLoopbackNoVNCURL). Anything else is
+    # rejected, so we fall back to the safe default rather than emit a URL the
+    # gateway would redact.
+    base = os.environ.get("UBAG_NOVNC_BASE_URL", "http://127.0.0.1:7900").strip()
+    base = base.rstrip("/")
+    if not _is_loopback_novnc_base(base):
+        base = "http://127.0.0.1:7900"
+    return "%s/session/%s" % (base, session_id)
+
+
+def _is_loopback_novnc_base(base: str) -> bool:
+    match = re.fullmatch(r"http://([^/:@?#]+):(\d{1,5})", base)
+    if not match:
+        return False
+    host = match.group(1).lower()
+    port = int(match.group(2))
+    if port < 1 or port > 65535:
+        return False
+    if host in ("localhost", "127.0.0.1", "::1", "[::1]"):
+        return True
+    return host.startswith("127.")
 
 
 def _safe_session_id(value: Any, job_id: str, target: str) -> str:

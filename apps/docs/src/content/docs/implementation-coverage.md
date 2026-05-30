@@ -3,11 +3,19 @@ title: A-Z Implementation Coverage
 description: Exact implementation coverage for the UBAG blueprint, with local evidence and external activation requirements.
 ---
 
-Last updated: 2026-06-01
+Last updated: 2026-06-02
 
 This ledger maps the UBAG A-Z plan to the current repository implementation. It is intentionally evidence-based: a row is marked **implemented** only when code, docs, configuration, and a validation command exist in this repo.
 
 For future agentic AI continuation, read the root `AGENT_HANDOFF.md` first, then `PROGRESS.md`, then this page. The rendered handoff is also available at `operations/agent-handoff`.
+
+## 2026-06-02 Live-Browser Viewer (noVNC) Admin Login Stack
+
+An opt-in `live-browser` Docker Compose profile lets a super-admin complete the **manual, human** AI-provider login/CAPTCHA/2FA flow inside a real, persistent Chromium streamed to the dashboard over noVNC. A new `browser-viewer` service (`deploy/small/browser-viewer/Dockerfile` + `entrypoint.sh`) runs Xvfb + fluxbox + Chromium (CDP on `9222`, profile on a persistent `browser_profiles` volume) + x11vnc + websockify/noVNC on `6080`. noVNC is published **loopback-only** (`UBAG_NOVNC_PORT`, default `7900`) and **VNC-password-gated** (`UBAG_BROWSER_VNC_PASSWORD`, fails closed); CDP stays on the internal `ubag-private` network. Caddy adds a `/novnc/*` reverse proxy (`X-Frame-Options: SAMEORIGIN`) and the dashboard adds a lazy, sandboxed **Take control** iframe (`frame-src 'self'`). The worker `_novnc_url` is now `UBAG_NOVNC_BASE_URL`-configurable but **loopback-gated** (`_is_loopback_novnc_base`), falling back to `http://127.0.0.1:7900` so the gateway's loopback-only forwarding contract is preserved. UBAG never captures credentials, cookies, or storage state, and never solves challenges — the operator logs in by hand and the worker attaches to the already-authenticated profile over CDP.
+
+Validation (all true exit 0): `node tools/run-go-tests.mjs apps/gateway`; `node tools/run-python-worker-tests.mjs` (150 tests + smoke); `cmd /c pnpm check`; `cmd /c pnpm test:deployment` (`docker compose config` validated the new service + static term checks); `cmd /c pnpm test:v0`. New tests: `apps/worker/tests/test_novnc_base_url.py` (7).
+
+Honest limitation (ToS-bound): the live real-browser provider path cannot be CI-validated (manual human login required), and the `browser-viewer` image was **not** built/run here (no guaranteed Linux Docker engine on this host) — only the static Compose/Caddy/Dockerfile config and the worker/dashboard wiring were validated. noVNC URLs remain runtime-generated, loopback-scoped, and VNC-password-gated; client-supplied noVNC URLs are rejected/redacted by the gateway.
 
 ## 2026-06-01 Worker Runtime Orchestration Integration
 
