@@ -516,6 +516,14 @@ These are external execution requirements, not untracked repo work:
 
 Continue in small reviewable slices, but do not put secrets, provider credentials, CAPTCHA solving, or credential scraping into the repository.
 
+### 2026-05-31 — v2.1 follow-ups committed
+
+- Wired worker `concurrency.cap_changed` telemetry to the gateway `ConcurrencyRegistry` (intercepted in the `WorkerConsumer` loop, recorded via `topology.ConcurrencyRegistry.Report`). Gateway + worker unit tests added and green.
+- Added `tools/run-postgres-roundtrip-tests.mjs` (`pnpm test:gateway:postgres`) with a false-green guard and `docs/postgres-roundtrip-tests.md`.
+- Added the ToS-safe live-provider template `live_web_template(...)` + registered `generic_live_web`, with `apps/worker/ubag_worker/live/ONBOARDING.md`.
+- Validation (all exit 0): `node tools/run-go-tests.mjs apps/gateway`, `node tools/run-python-worker-tests.mjs` (122 tests + smoke), `pnpm run check`, `pnpm test:v0:local`.
+- Git: baseline `0364595` (v0) + new delta commit `85d6eb0` (v2.1). Worktree clean; not pushed.
+
 Before any future implementation slice, run:
 
 ```powershell

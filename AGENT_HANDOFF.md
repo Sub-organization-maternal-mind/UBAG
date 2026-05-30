@@ -319,8 +319,9 @@ Pick up from these implementation tracks after preserving the current green base
 7. Expand workflow/cache execution and the template runtime beyond the current built-in/single-step foundation; acceptance requires idempotency, tenant/app scope, payload policy reuse, secret rejection, audit events, retention controls, and privacy-mode cache bypasses.
 8. Locally validate the non-TypeScript SDKs (rust/java/ruby/php/csharp/swift/kotlin/elixir) once their toolchains are available; C# is validated 10/10 and the Swift Windows stdlib is currently broken.
 9. Broaden SDK conformance beyond REST fixtures where runtime services exist, including event streaming and live binary artifact smoke before new transports are claimed.
-10. Wire worker-side `ConcurrencyRegistry.Report` to AIMD cap-change events so `/v1/concurrency` reflects live worker-reported lane concurrency (currently in-memory, worker-reported scaffold).
-11. Add CI after the repository has an initial commit and remote policy is known.
+10. DONE (v2.1): Worker-side `ConcurrencyRegistry.Report` is wired to AIMD cap-change events. The worker emits `concurrency.cap_changed` telemetry (`orchestration/telemetry.py`); the gateway intercepts it in the `WorkerConsumer` ingest loop and routes it to `topology.ConcurrencyRegistry.Report`, so `/v1/concurrency` reflects live worker-reported lane concurrency. Covered by gateway and worker unit tests.
+11. Add CI after remote policy is known. The repository now has a baseline commit (`0364595`, v0 platform) and a v2.1 delta commit (`85d6eb0`); neither is pushed. Postgres round-trip tests can run in CI via `pnpm test:gateway:postgres` (needs `UBAG_TEST_POSTGRES_DSN`; see `docs/postgres-roundtrip-tests.md`).
+12. Onboard real live providers using `live_web_template(...)` / `generic_live_web` and `apps/worker/ubag_worker/live/ONBOARDING.md`; activation still requires user-owned provider accounts and manual login.
 
 ## Documentation Update Rule
 
