@@ -1,0 +1,5 @@
+# Shell scripts and container entrypoints must use LF so they run under
+# /bin/sh inside Linux containers. CRLF causes "sh: bad interpreter" /
+# parse failures (e.g. the live-browser browser-viewer entrypoint).
+*.sh text eol=lf
+deploy/**/entrypoint.sh text eol=lf
