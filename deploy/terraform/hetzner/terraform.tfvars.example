@@ -1,0 +1,27 @@
+# ----------------------------------------------------------------------------
+# Hetzner / k3s — example variable values
+# Copy to terraform.tfvars and fill in real values.
+# NEVER commit terraform.tfvars — it is listed in .gitignore.
+# Sensitive values should be supplied via TF_VAR_* environment variables.
+# ----------------------------------------------------------------------------
+
+location     = "nbg1"
+server_type  = "cx21"
+worker_count = 2
+domain       = "api.example.com"
+cluster_name = "ubag-k3s"
+k3s_version  = "stable"
+
+# SSH public key material (not a file path)
+ssh_public_key = "ssh-ed25519 AAAA...your-public-key... user@host"
+
+# UBAG Helm release
+ubag_version = "latest"
+
+# Sensitive — supply via environment variables:
+#   export TF_VAR_hcloud_token="..."
+#   export TF_VAR_ubag_app_secret="..."
+#   export TF_VAR_ubag_postgres_dsn="..."
+#   export TF_VAR_ubag_minio_access_key="..."
+#   export TF_VAR_ubag_minio_secret_key="..."
+#   export TF_VAR_ubag_webhook_secret="..."

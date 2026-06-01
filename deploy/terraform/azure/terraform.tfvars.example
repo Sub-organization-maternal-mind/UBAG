@@ -1,0 +1,31 @@
+# ----------------------------------------------------------------------------
+# Azure / AKS — example variable values
+# Copy to terraform.tfvars and fill in real values.
+# NEVER commit terraform.tfvars — it is listed in .gitignore.
+# Sensitive values should be supplied via TF_VAR_* environment variables.
+# ----------------------------------------------------------------------------
+
+location       = "East US"
+resource_group = "ubag-rg"
+cluster_name   = "ubag-aks"
+node_count     = 3
+vm_size        = "Standard_D2s_v3"
+domain         = "api.example.com"
+
+kubernetes_version = "1.30"
+
+# Optional Azure PostgreSQL Flexible Server
+enable_postgres         = false
+postgres_sku_name       = "B_Standard_B1ms"
+postgres_admin_login    = "ubagadmin"
+# postgres_admin_password = ""   # supply via TF_VAR_postgres_admin_password
+
+# UBAG Helm release
+ubag_version = "latest"
+
+# Sensitive — supply via environment variables:
+#   export TF_VAR_ubag_app_secret="..."
+#   export TF_VAR_ubag_postgres_dsn="..."
+#   export TF_VAR_ubag_minio_access_key="..."
+#   export TF_VAR_ubag_minio_secret_key="..."
+#   export TF_VAR_ubag_webhook_secret="..."

@@ -1,0 +1,30 @@
+# ----------------------------------------------------------------------------
+# DigitalOcean / DOKS — example variable values
+# Copy to terraform.tfvars and fill in real values.
+# NEVER commit terraform.tfvars — it is listed in .gitignore.
+# Sensitive values should be supplied via TF_VAR_* environment variables.
+# ----------------------------------------------------------------------------
+
+region       = "nyc3"
+cluster_name = "ubag-doks"
+node_count   = 3
+node_size    = "s-2vcpu-4gb"
+domain       = "api.example.com"
+
+kubernetes_version = "1.30"
+
+# Optional Managed PostgreSQL
+enable_postgres     = false
+postgres_size       = "db-s-1vcpu-1gb"
+postgres_node_count = 1
+
+# UBAG Helm release
+ubag_version = "latest"
+
+# Sensitive — supply via environment variables:
+#   export TF_VAR_do_token="..."
+#   export TF_VAR_ubag_app_secret="..."
+#   export TF_VAR_ubag_postgres_dsn="..."
+#   export TF_VAR_ubag_minio_access_key="..."
+#   export TF_VAR_ubag_minio_secret_key="..."
+#   export TF_VAR_ubag_webhook_secret="..."

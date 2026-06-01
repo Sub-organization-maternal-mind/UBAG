@@ -1,0 +1,33 @@
+# ----------------------------------------------------------------------------
+# AWS / EKS — example variable values
+# Copy to terraform.tfvars and fill in real values.
+# NEVER commit terraform.tfvars — it is listed in .gitignore.
+# Sensitive values should be supplied via TF_VAR_* environment variables.
+# ----------------------------------------------------------------------------
+
+region       = "us-east-1"
+cluster_name = "ubag-eks"
+node_count   = 3
+node_size    = "t3.medium"
+domain       = "api.example.com"
+
+kubernetes_version = "1.30"
+
+# Optional managed Postgres
+enable_postgres         = false
+postgres_instance_class = "db.t3.micro"
+# postgres_password = ""   # supply via TF_VAR_postgres_password
+
+# Optional S3 bucket
+enable_s3      = false
+s3_bucket_name = "ubag-object-storage-change-me"
+
+# UBAG Helm release
+ubag_version = "latest"
+
+# Sensitive — supply via environment variables:
+#   export TF_VAR_ubag_app_secret="..."
+#   export TF_VAR_ubag_postgres_dsn="..."
+#   export TF_VAR_ubag_minio_access_key="..."
+#   export TF_VAR_ubag_minio_secret_key="..."
+#   export TF_VAR_ubag_webhook_secret="..."
