@@ -47,6 +47,7 @@ import (
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	mw "github.com/ubag/ubag/apps/gateway/internal/middleware"
 	"github.com/ubag/ubag/apps/gateway/internal/ratelimit"
+	"github.com/ubag/ubag/apps/gateway/internal/region"
 	"github.com/ubag/ubag/apps/gateway/internal/responsecache"
 	"github.com/ubag/ubag/apps/gateway/internal/scim"
 	"github.com/ubag/ubag/apps/gateway/internal/session"
@@ -194,6 +195,10 @@ type Config struct {
 
 	// Plugins is the optional WASM plugin host. When nil, no plugin hooks run.
 	Plugins *plugins.Host
+
+	// RegionRouter enables region-aware job routing (enterprise, GeoReplication=On).
+	// When nil the gateway runs in single-region mode (subject uses "default" segment).
+	RegionRouter *region.Router
 }
 
 type Server struct {
@@ -239,6 +244,7 @@ type Server struct {
 	semanticCache    semanticcache.Store
 	privacyStore     compliance.Store
 	plugins          *plugins.Host // nil-safe: no host → no hooks run
+	regionRouter     *region.Router
 
 	// §18 contract counters (Task 2.3) — updated atomically on the hot path.
 	idempotencyReplays atomic.Int64 // ubag_idempotency_replays_total
@@ -387,6 +393,7 @@ func NewServer(config Config) *Server {
 		semanticCache:    config.SemanticCache,
 		privacyStore:     config.PrivacyStore,
 		plugins:          config.Plugins,
+		regionRouter:     config.RegionRouter,
 
 		metrics: &metricState{
 			requests:    make(map[string]int),
@@ -1206,6 +1213,21 @@ func (s *Server) processBatchEntry(
 		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusInternalServerError
 	}
 
+	// Region-aware routing: resolve the dispatch region before enqueue.
+	dispatchCtx := ctx
+	if s.regionRouter != nil {
+		targetRegion, routeErr := s.regionRouter.Route(ctx, tenantID)
+		if routeErr != nil {
+			_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
+			s.releaseConcurrencyToken(tenantID, target, appID)
+			e := queueError("UBAG-REGION-MISMATCH-001", "tenant home region is unavailable for routing", true)
+			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusServiceUnavailable
+		}
+		if targetRegion != "" {
+			dispatchCtx = executor.WithDispatchRegion(ctx, string(targetRegion))
+		}
+	}
+
 	if s.outbox != nil {
 		env := executor.EnvelopeFromJob(job)
 		envelopeBytes, err := json.Marshal(env)
@@ -1215,14 +1237,14 @@ func (s *Server) processBatchEntry(
 			e := internalError("failed to marshal job envelope")
 			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusInternalServerError
 		}
-		if err := s.outbox.Append(ctx, job.ID, "jobs.dispatch", envelopeBytes); err != nil {
+		if err := s.outbox.Append(dispatchCtx, job.ID, "jobs.dispatch", envelopeBytes); err != nil {
 			_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
 			s.releaseConcurrencyToken(tenantID, target, appID)
 			e := queueError("UBAG-QUEUE-ENQUEUE-001", "failed to write job to outbox", true)
 			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusServiceUnavailable
 		}
 	} else {
-		if _, err := s.executor.EnqueueJob(ctx, job); err != nil {
+		if _, err := s.executor.EnqueueJob(dispatchCtx, job); err != nil {
 			_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
 			s.releaseConcurrencyToken(tenantID, target, appID)
 			e := queueError("UBAG-QUEUE-ENQUEUE-001", "failed to enqueue job", true)
@@ -1531,6 +1553,24 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to create job"))
 		return
 	}
+
+	// Region-aware routing: resolve the dispatch region before enqueue.
+	dispatchCtx := r.Context()
+	if s.regionRouter != nil {
+		targetRegion, routeErr := s.regionRouter.Route(dispatchCtx, tenantID)
+		if routeErr != nil {
+			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
+			_ = s.idempotency.Release(r.Context(), scope)
+			s.releaseConcurrencyToken(tenantID, request.Job.Target, appID)
+			s.writeError(w, r, http.StatusServiceUnavailable,
+				queueError("UBAG-REGION-MISMATCH-001", "tenant home region is unavailable for routing", true))
+			return
+		}
+		if targetRegion != "" {
+			dispatchCtx = executor.WithDispatchRegion(dispatchCtx, string(targetRegion))
+		}
+	}
+
 	if s.outbox != nil {
 		env := executor.EnvelopeFromJob(job)
 		envelopeBytes, err := json.Marshal(env)
@@ -1552,7 +1592,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		if _, err := s.executor.EnqueueJob(r.Context(), job); err != nil {
+		if _, err := s.executor.EnqueueJob(dispatchCtx, job); err != nil {
 			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
 			_ = s.idempotency.Release(r.Context(), scope)
 			s.releaseConcurrencyToken(tenantID, request.Job.Target, appID)

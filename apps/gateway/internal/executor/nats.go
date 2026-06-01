@@ -40,10 +40,25 @@ func laneFromPriority(priority string) string {
 	}
 }
 
-// laneSubject returns the NATS subject for a job in a given lane.
-// Format: {base}.{lane}.{jobID}
-func laneSubject(base, lane, jobID string) string {
-	return base + "." + lane + "." + jobID
+// laneSubject returns the NATS subject for a job in a given lane and region.
+// Format: {base}.{region}.{lane}.{jobID}
+func laneSubject(base, region, lane, jobID string) string {
+	return base + "." + region + "." + lane + "." + jobID
+}
+
+type regionContextKey struct{}
+
+// WithDispatchRegion returns ctx with the dispatch region set.
+func WithDispatchRegion(ctx context.Context, region string) context.Context {
+	return context.WithValue(ctx, regionContextKey{}, region)
+}
+
+// dispatchRegionFromContext extracts the dispatch region; defaults to "default".
+func dispatchRegionFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(regionContextKey{}).(string); ok && v != "" {
+		return v
+	}
+	return "default"
 }
 
 // NATSDispatcher publishes gateway-stamped job envelopes to a NATS JetStream
@@ -126,7 +141,8 @@ func (d *NATSDispatcher) EnqueueJob(ctx context.Context, job jobstore.Job) (Rece
 
 	opts := parseJobOptions(job.Options)
 	lane := laneFromPriority(opts.Priority)
-	subject := laneSubject(d.subject, lane, job.ID)
+	region := dispatchRegionFromContext(ctx)
+	subject := laneSubject(d.subject, region, lane, job.ID)
 	msg := &nats.Msg{
 		Subject: subject,
 		Data:    payload,

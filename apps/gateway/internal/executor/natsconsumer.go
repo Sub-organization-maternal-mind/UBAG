@@ -29,6 +29,10 @@ type NATSWorkerQueueConfig struct {
 	URL        string
 	StreamName string
 	Subject    string
+	// Region is the region segment used in the NATS subject filter.
+	// When empty it defaults to "default", which matches subjects published
+	// without an explicit region (single-region mode).
+	Region     string
 	Durable    string
 	AckWait    time.Duration
 	NakDelay   time.Duration
@@ -44,6 +48,7 @@ type NATSWorkerQueue struct {
 	url        string
 	streamName string
 	subject    string
+	region     string
 	durable    string
 	ackWait    time.Duration
 	nakDelay   time.Duration
@@ -96,6 +101,7 @@ func NewNATSWorkerQueue(config NATSWorkerQueueConfig) (*NATSWorkerQueue, error) 
 		url:        config.URL,
 		streamName: config.StreamName,
 		subject:    config.Subject,
+		region:     config.Region,
 		durable:    config.Durable,
 		ackWait:    config.AckWait,
 		nakDelay:   config.NakDelay,
@@ -239,6 +245,10 @@ func (q *NATSWorkerQueue) ensureConsumer(ctx context.Context) error {
 	if q.consumers[0] != nil {
 		return nil
 	}
+	region := q.region
+	if region == "" {
+		region = "default"
+	}
 	for i, lane := range priorityLanes {
 		name := q.durable + "-" + lane
 		cfg := jetstream.ConsumerConfig{
@@ -249,7 +259,7 @@ func (q *NATSWorkerQueue) ensureConsumer(ctx context.Context) error {
 			AckPolicy:     jetstream.AckExplicitPolicy,
 			AckWait:       q.ackWait,
 			MaxDeliver:    q.maxDeliver,
-			FilterSubject: q.subject + "." + lane + ".*",
+			FilterSubject: q.subject + "." + region + "." + lane + ".*",
 			ReplayPolicy:  jetstream.ReplayInstantPolicy,
 		}
 		consumer, err := q.stream.CreateOrUpdateConsumer(ctx, cfg)
@@ -293,9 +303,10 @@ func (q *NATSWorkerQueue) decodeMessage(msg jetstream.Msg) (DispatchEnvelope, er
 }
 
 // parseJobSubject parses a NATS dispatch subject and returns the lane and job ID.
-// Accepts two formats:
-//   - New: {base}.{lane}.{jobID}  →  returns the lane name
-//   - Legacy: {base}.{jobID}      →  returns "norm" as lane
+// Accepts three formats:
+//   - New region format: {base}.{region}.{lane}.{jobID}  →  3 segments after base; region detection: if part1 is not one of the 5 priorityLanes it is treated as a region segment
+//   - Lane format: {base}.{lane}.{jobID}                 →  part1 is one of the 5 known lane names
+//   - Legacy: {base}.{jobID}                             →  single token, treated as norm-priority job
 //
 // Returns ok=false if the subject does not match any expected format.
 func parseJobSubject(base, subject string) (lane, jobID string, ok bool) {
@@ -303,19 +314,53 @@ func parseJobSubject(base, subject string) (lane, jobID string, ok bool) {
 	if !found {
 		return "", "", false
 	}
-	// Try new format: {lane}.{jobID} (lane is one of the 5 known names)
-	for _, l := range priorityLanes {
-		prefix := l + "."
-		if after, cut := strings.CutPrefix(rest, prefix); cut {
-			if after != "" && !strings.Contains(after, ".") {
-				return l, after, true
+
+	parts := strings.SplitN(rest, ".", 3)
+	switch len(parts) {
+	case 3:
+		// Could be {region}.{lane}.{jobID} or {lane}.{jobID}.{extra} (latter is invalid).
+		// Detect by checking whether parts[0] is a known lane name.
+		part0IsLane := false
+		for _, l := range priorityLanes {
+			if parts[0] == l {
+				part0IsLane = true
+				break
 			}
 		}
+		if part0IsLane {
+			// Old lane format with an unexpected extra segment — treat as invalid.
+			return "", "", false
+		}
+		// parts[0] is the region segment; parts[1] must be a known lane; parts[2] is the jobID.
+		laneCandidate := parts[1]
+		for _, l := range priorityLanes {
+			if laneCandidate == l {
+				if jobIDCandidate := parts[2]; jobIDCandidate != "" && !strings.Contains(jobIDCandidate, ".") {
+					return l, jobIDCandidate, true
+				}
+			}
+		}
+		return "", "", false
+
+	case 2:
+		// {lane}.{jobID} format (lane is one of the 5 known names)
+		for _, l := range priorityLanes {
+			if parts[0] == l {
+				if parts[1] != "" {
+					return l, parts[1], true
+				}
+			}
+		}
+		return "", "", false
+
+	case 1:
+		// Legacy format: single token, no dots — treated as norm-priority job
+		if rest != "" {
+			return "norm", rest, true
+		}
+		return "", "", false
 	}
-	// Legacy format: single token, no dots — treated as norm-priority job
-	if !strings.Contains(rest, ".") && rest != "" {
-		return "norm", rest, true
-	}
+
 	return "", "", false
 }
 
