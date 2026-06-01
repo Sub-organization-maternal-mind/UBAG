@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ubag/ubag/apps/gateway/internal/plugins"
@@ -428,5 +431,163 @@ func TestHookPayloadThreaded(t *testing.T) {
 	}
 	if final["a"] != "from-plugin-a" || final["b"] != "from-plugin-b" {
 		t.Errorf("final payload missing fields; got %v", final)
+	}
+}
+
+// -----------------------------------------------------------------------
+// Test 7: Transform rejects invalid JSON output from plugin
+// -----------------------------------------------------------------------
+
+// TestTransformInvalidJSONRejected verifies that Transform returns an error
+// containing "invalid JSON" when a plugin executor returns non-JSON bytes.
+func TestTransformInvalidJSONRejected(t *testing.T) {
+	ctx := context.Background()
+
+	badPlugin := &mockExecutor{
+		hasTransform: true,
+		transformFn: func(_ context.Context, _ []byte) ([]byte, error) {
+			return []byte("not-json"), nil
+		},
+	}
+
+	host := plugins.NewHost(plugins.HostOptions{
+		BuildExecutor: makeFactory(badPlugin),
+	})
+
+	m := makeManifest("bad-json-plugin", plugins.CapabilityTransformPrompt)
+	if err := host.Register(ctx, m, nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	input, _ := json.Marshal("hello")
+	_, err := host.Transform(ctx, "prompt", input)
+	if err == nil {
+		t.Fatal("expected error for invalid JSON output, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid JSON") {
+		t.Errorf("error should mention \"invalid JSON\", got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------
+// Test 8: RunHooks rejects invalid payload JSON from hook
+// -----------------------------------------------------------------------
+
+// TestHookInvalidPayloadJSONRejected verifies that RunHooks returns an error
+// when a plugin hook returns a HookResult with a non-JSON payload.
+func TestHookInvalidPayloadJSONRejected(t *testing.T) {
+	ctx := context.Background()
+
+	badHook := &mockExecutor{
+		hasHook: true,
+		hookFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+			// Return a valid outer JSON object but with an invalid-JSON payload field.
+			// We build the raw bytes manually so the payload value is not valid JSON.
+			return []byte(`{"action":"continue","payload":"bad}`), nil
+		},
+	}
+
+	host := plugins.NewHost(plugins.HostOptions{
+		BuildExecutor: makeFactory(badHook),
+	})
+
+	m := makeManifest("bad-payload-plugin", plugins.CapabilityHookJobPre)
+	if err := host.Register(ctx, m, nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	payload, _ := json.Marshal(map[string]string{"k": "v"})
+	_, err := host.RunHooks(ctx, "job.pre", payload)
+	if err == nil {
+		t.Fatal("expected error for invalid payload JSON, got nil")
+	}
+}
+
+// -----------------------------------------------------------------------
+// Test 9: RunHooks rejects unknown hook action
+// -----------------------------------------------------------------------
+
+// TestHookUnknownActionRejected verifies that RunHooks returns an error when a
+// plugin returns an action value other than "continue" or "reject".
+func TestHookUnknownActionRejected(t *testing.T) {
+	ctx := context.Background()
+
+	unknownAction := &mockExecutor{
+		hasHook: true,
+		hookFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+			return []byte(`{"action":"unknown"}`), nil
+		},
+	}
+
+	host := plugins.NewHost(plugins.HostOptions{
+		BuildExecutor: makeFactory(unknownAction),
+	})
+
+	m := makeManifest("unknown-action-plugin", plugins.CapabilityHookJobPre)
+	if err := host.Register(ctx, m, nil); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	payload, _ := json.Marshal(map[string]string{"k": "v"})
+	_, err := host.RunHooks(ctx, "job.pre", payload)
+	if err == nil {
+		t.Fatal("expected error for unknown action, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown hook action") {
+		t.Errorf("error should mention \"unknown hook action\", got: %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------
+// Test 10: Integration test with real .wasm through Host.Register
+// -----------------------------------------------------------------------
+
+// TestHostIntegrationWithRealWasm exercises the NewWasmExecutorAdapter
+// production path end-to-end: Register + Transform with the echo_transform.wasm.
+func TestHostIntegrationWithRealWasm(t *testing.T) {
+	ctx := context.Background()
+
+	wasmPath := filepath.Join("testdata", "echo_transform.wasm")
+	wasmBytes, err := os.ReadFile(wasmPath)
+	if err != nil {
+		t.Fatalf("read echo_transform.wasm: %v", err)
+	}
+
+	m, err := plugins.ParseManifest([]byte(`{
+		"schema_version": "ubag.plugin.v0",
+		"id": "echo-transform",
+		"display_name": "Echo Transform",
+		"version": "0.1.0",
+		"entrypoint": {
+			"type": "core-module",
+			"module": "echo_transform.wasm",
+			"exports": {"transform": "transform"}
+		},
+		"capabilities": ["transform.prompt"],
+		"permissions": {
+			"host_functions": []
+		},
+		"engine": {"runtime": "wasi-preview1"}
+	}`))
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+
+	host := plugins.NewHost(plugins.HostOptions{
+		BuildExecutor: plugins.NewWasmExecutorAdapter,
+	})
+
+	if err := host.Register(ctx, m, wasmBytes); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	input := []byte(`"hello"`)
+	out, err := host.Transform(ctx, "prompt", input)
+	if err != nil {
+		t.Fatalf("Transform: %v", err)
+	}
+
+	if string(out) != string(input) {
+		t.Errorf("echo round-trip mismatch: got %q, want %q", out, input)
 	}
 }

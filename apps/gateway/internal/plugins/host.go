@@ -161,6 +161,9 @@ func (h *Host) Transform(ctx context.Context, target string, valueJSON []byte) (
 		if err != nil {
 			return nil, fmt.Errorf("plugin %s transform: %w", e.manifest.ID, err)
 		}
+		if !json.Valid(out) {
+			return nil, fmt.Errorf("plugin %s: transform returned invalid JSON", e.manifest.ID)
+		}
 		current = out
 	}
 	return current, nil
@@ -198,12 +201,19 @@ func (h *Host) RunHooks(ctx context.Context, event string, payloadJSON []byte) (
 			return nil, fmt.Errorf("plugin %s: invalid hook result JSON: %w", e.manifest.ID, err)
 		}
 
+		if result.Action != "continue" && result.Action != "reject" {
+			return nil, fmt.Errorf("plugin %s: unknown hook action %q", e.manifest.ID, result.Action)
+		}
+
 		if result.Action == "reject" {
 			return &result, nil
 		}
 
 		// Thread the updated payload forward.
-		if result.Payload != nil {
+		if len(result.Payload) > 0 && !json.Valid(result.Payload) {
+			return nil, fmt.Errorf("plugin %s: hook returned invalid payload JSON", e.manifest.ID)
+		}
+		if len(result.Payload) > 0 {
 			current = result.Payload
 		}
 	}
