@@ -124,3 +124,13 @@ jobs:
         with: { format: spdx-json, output-file: ubag.sbom.spdx.json }
       - uses: actions/upload-artifact@v4
         with: { name: sbom, path: ubag.sbom.spdx.json }
+
+  sdk-rust:
+    name: SDK (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and test Rust SDK
+        working-directory: packages/sdk-rust
+        run: cargo test --all-features

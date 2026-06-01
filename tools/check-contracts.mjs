@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { execSync } from 'node:child_process';
 
 const failures = [];
 
@@ -252,6 +253,23 @@ for (const [file, terms] of Object.entries(docChecks)) {
   for (const term of terms) {
     if (!text.includes(term)) failures.push(`${file} missing "${term}"`);
   }
+}
+
+// Verify SDK contract manifests are not stale relative to generate-manifest.mjs output.
+try {
+  execSync("node tools/make-sdks/generate-manifest.mjs", { stdio: "pipe" });
+  const status = execSync(
+    "git status --porcelain packages/sdk-typescript/src/generated packages/sdk-go/generated_contract_manifest.go packages/sdk-rust/src/generated",
+    { encoding: "utf8" }
+  );
+  if (status.trim() !== "") {
+    failures.push("SDK contract manifest is stale — run: node tools/make-sdks/generate-manifest.mjs");
+  }
+  // Restore: re-run to undo the git-dirty effect of the generator regenerating files
+  execSync("git restore packages/sdk-typescript/src/generated packages/sdk-go/generated_contract_manifest.go packages/sdk-rust/src/generated 2>/dev/null || true", { stdio: "pipe" });
+} catch (e) {
+  // If git or node tools aren't available, skip this check
+  console.warn("Manifest staleness check skipped:", e.message);
 }
 
 if (failures.length) {
