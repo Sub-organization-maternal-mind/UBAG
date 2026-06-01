@@ -2,6 +2,7 @@ package plugins_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,6 +105,36 @@ func TestWasmDeniedImportTraps(t *testing.T) {
 	_, err := plugins.NewWasmExecutor(context.Background(), "denied-plugin", manifest, wasmBytes)
 	if err == nil {
 		t.Fatal("expected instantiation error for denied import, got nil")
+	}
+}
+
+// TestWasmExecutorDeadAfterTimeout verifies that an executor that has been killed
+// by a deadline is permanently closed: a subsequent call must return ErrExecutorClosed
+// immediately without attempting to use the invalidated runtime.
+func TestWasmExecutorDeadAfterTimeout(t *testing.T) {
+	wasmBytes := loadWASM(t, "infinite_loop.wasm")
+	// 50 ms execution limit
+	manifest := minimalManifest(nil, 1*1024*1024, 50)
+
+	exec, err := plugins.NewWasmExecutor(context.Background(), "loop-plugin-dead", manifest, wasmBytes)
+	if err != nil {
+		t.Fatalf("NewWasmExecutor: %v", err)
+	}
+	defer exec.Close(context.Background())
+
+	// First call — should timeout.
+	_, firstErr := exec.Transform(context.Background(), []byte(`{}`))
+	if firstErr == nil {
+		t.Fatal("expected timeout error on first call, got nil")
+	}
+
+	// Second call — executor must be dead.
+	_, secondErr := exec.Transform(context.Background(), []byte(`{}`))
+	if secondErr == nil {
+		t.Fatal("expected ErrExecutorClosed on second call, got nil")
+	}
+	if !errors.Is(secondErr, plugins.ErrExecutorClosed) {
+		t.Fatalf("expected ErrExecutorClosed, got: %v", secondErr)
 	}
 }
 

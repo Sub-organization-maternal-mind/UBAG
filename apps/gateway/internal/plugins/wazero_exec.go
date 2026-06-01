@@ -2,13 +2,20 @@ package plugins
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 )
+
+// ErrExecutorClosed is returned by Transform and Hook after the executor has
+// been invalidated by a context cancellation or deadline exceeded on a prior
+// call.  The executor must be discarded; create a new one.
+var ErrExecutorClosed = errors.New("wasm executor is closed after a timeout or context cancellation")
 
 // WasmExecutor holds a compiled WASM module together with its wazero runtime
 // and enforces the permission and resource limits declared in the Manifest.
@@ -24,9 +31,17 @@ import (
 // WasmExecutor is NOT goroutine-safe.  The caller must serialise concurrent
 // calls, or create a separate WasmExecutor per goroutine.
 type WasmExecutor struct {
-	rt       wazero.Runtime
-	mod      api.Module
-	manifest Manifest
+	rt          wazero.Runtime
+	mod         api.Module
+	manifest    Manifest
+	pluginID    string
+	allocFn     api.Function
+	transformFn api.Function
+	hookFn      api.Function
+	// closed is set to 1 atomically after any context cancellation or deadline
+	// exceeded.  WithCloseOnContextDone(true) closes the underlying runtime on
+	// cancellation, so further calls would fail opaquely; instead we fail fast.
+	closed int32
 }
 
 // NewWasmExecutor compiles wasmBytes and instantiates the module under a
@@ -69,16 +84,24 @@ func NewWasmExecutor(ctx context.Context, pluginID string, manifest Manifest, wa
 
 	mod, err := rt.InstantiateModule(ctx, compiled,
 		wazero.NewModuleConfig().WithName(pluginID).WithStartFunctions())
+	// Release the compile cache immediately; the live instance is already running.
+	compiled.Close(ctx) //nolint:errcheck
 	if err != nil {
 		rt.Close(ctx) //nolint:errcheck
 		return nil, fmt.Errorf("plugin %s: instantiate: %w", pluginID, err)
 	}
 
-	return &WasmExecutor{
-		rt:       rt,
-		mod:      mod,
-		manifest: manifest,
-	}, nil
+	// Cache exported functions to avoid repeated map lookups on the hot path.
+	e := &WasmExecutor{
+		rt:          rt,
+		mod:         mod,
+		manifest:    manifest,
+		pluginID:    pluginID,
+		allocFn:     mod.ExportedFunction("alloc"),
+		transformFn: mod.ExportedFunction("transform"),
+		hookFn:      mod.ExportedFunction("hook"),
+	}
+	return e, nil
 }
 
 // Close releases the wazero runtime and all modules it holds.
@@ -94,12 +117,26 @@ func (e *WasmExecutor) Close(ctx context.Context) error {
 //  4. Read resultLen bytes from guest memory at resultPtr.
 //
 // A per-call context is derived with the deadline configured in the Manifest.
+//
+// If a previous call was interrupted by a context cancellation or timeout,
+// Transform returns ErrExecutorClosed immediately without touching the runtime.
 func (e *WasmExecutor) Transform(ctx context.Context, inputJSON []byte) ([]byte, error) {
+	if atomic.LoadInt32(&e.closed) == 1 {
+		return nil, ErrExecutorClosed
+	}
+
 	callCtx, cancel := context.WithTimeout(ctx,
 		time.Duration(e.manifest.Permissions.MaxExecutionMS)*time.Millisecond)
 	defer cancel()
 
-	return e.callTransform(callCtx, inputJSON)
+	result, err := e.callTransform(callCtx, inputJSON)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			atomic.StoreInt32(&e.closed, 1)
+		}
+		return nil, err
+	}
+	return result, nil
 }
 
 // Hook calls the guest's alloc + hook exports using the v1 ABI:
@@ -110,12 +147,26 @@ func (e *WasmExecutor) Transform(ctx context.Context, inputJSON []byte) ([]byte,
 //  4. Write payloadJSON into guest memory.
 //  5. hook(eventPtr, eventLen, payloadPtr, payloadLen) → packed u64
 //  6. Read result from guest memory.
+//
+// If a previous call was interrupted by a context cancellation or timeout,
+// Hook returns ErrExecutorClosed immediately without touching the runtime.
 func (e *WasmExecutor) Hook(ctx context.Context, event string, payloadJSON []byte) ([]byte, error) {
+	if atomic.LoadInt32(&e.closed) == 1 {
+		return nil, ErrExecutorClosed
+	}
+
 	callCtx, cancel := context.WithTimeout(ctx,
 		time.Duration(e.manifest.Permissions.MaxExecutionMS)*time.Millisecond)
 	defer cancel()
 
-	return e.callHook(callCtx, event, payloadJSON)
+	result, err := e.callHook(callCtx, event, payloadJSON)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			atomic.StoreInt32(&e.closed, 1)
+		}
+		return nil, err
+	}
+	return result, nil
 }
 
 // -----------------------------------------------------------------------
@@ -129,6 +180,10 @@ func (e *WasmExecutor) callTransform(ctx context.Context, input []byte) ([]byte,
 	}
 
 	// 1. alloc
+	// Note: alloc returning 0 is a valid allocation in WebAssembly (address 0 is
+	// the start of linear memory). Real plugins should not return 0 unless they
+	// genuinely allocate at address 0. A future v2 ABI may reserve 0 as a
+	// null/OOM sentinel.
 	ptr, err := e.alloc(ctx, uint32(len(input)))
 	if err != nil {
 		return nil, fmt.Errorf("alloc: %w", err)
@@ -140,11 +195,10 @@ func (e *WasmExecutor) callTransform(ctx context.Context, input []byte) ([]byte,
 	}
 
 	// 3. call transform
-	xform := e.mod.ExportedFunction("transform")
-	if xform == nil {
+	if e.transformFn == nil {
 		return nil, fmt.Errorf("module does not export 'transform'")
 	}
-	res, err := xform.Call(ctx, uint64(ptr), uint64(len(input)))
+	res, err := e.transformFn.Call(ctx, uint64(ptr), uint64(len(input)))
 	if err != nil {
 		return nil, fmt.Errorf("transform call: %w", err)
 	}
@@ -161,6 +215,10 @@ func (e *WasmExecutor) callHook(ctx context.Context, event string, payload []byt
 
 	eventBytes := []byte(event)
 
+	// Note: alloc returning 0 is a valid allocation in WebAssembly (address 0 is
+	// the start of linear memory). Real plugins should not return 0 unless they
+	// genuinely allocate at address 0. A future v2 ABI may reserve 0 as a
+	// null/OOM sentinel.
 	eventPtr, err := e.alloc(ctx, uint32(len(eventBytes)))
 	if err != nil {
 		return nil, fmt.Errorf("alloc event: %w", err)
@@ -177,11 +235,10 @@ func (e *WasmExecutor) callHook(ctx context.Context, event string, payload []byt
 		return nil, fmt.Errorf("write payload to guest memory failed")
 	}
 
-	hookFn := e.mod.ExportedFunction("hook")
-	if hookFn == nil {
+	if e.hookFn == nil {
 		return nil, fmt.Errorf("module does not export 'hook'")
 	}
-	res, err := hookFn.Call(ctx, uint64(eventPtr), uint64(len(eventBytes)), uint64(payloadPtr), uint64(len(payload)))
+	res, err := e.hookFn.Call(ctx, uint64(eventPtr), uint64(len(eventBytes)), uint64(payloadPtr), uint64(len(payload)))
 	if err != nil {
 		return nil, fmt.Errorf("hook call: %w", err)
 	}
@@ -189,13 +246,12 @@ func (e *WasmExecutor) callHook(ctx context.Context, event string, payload []byt
 	return e.readPackedResult(mem, res[0])
 }
 
-// alloc calls the guest's exported alloc function and returns the pointer.
+// alloc calls the guest's cached alloc function and returns the pointer.
 func (e *WasmExecutor) alloc(ctx context.Context, size uint32) (uint32, error) {
-	allocFn := e.mod.ExportedFunction("alloc")
-	if allocFn == nil {
+	if e.allocFn == nil {
 		return 0, fmt.Errorf("module does not export 'alloc'")
 	}
-	res, err := allocFn.Call(ctx, uint64(size))
+	res, err := e.allocFn.Call(ctx, uint64(size))
 	if err != nil {
 		return 0, err
 	}
@@ -292,7 +348,7 @@ func hostLog(_ context.Context, mod api.Module, stack []uint64) {
 	ptr := api.DecodeU32(stack[0])
 	length := api.DecodeU32(stack[1])
 	if msg, ok := mod.Memory().Read(ptr, length); ok {
-		os.Stderr.Write(msg) //nolint:errcheck
+		os.Stderr.Write(msg)          //nolint:errcheck
 		os.Stderr.WriteString("\n") //nolint:errcheck
 	}
 }
