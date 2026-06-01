@@ -21,6 +21,7 @@ Commands:
   cache purge
   doctor
   version
+  dashboard
 `
 
 // Dispatch is the main entry point for the CLI.  args should be os.Args[1:].
@@ -49,6 +50,8 @@ func Dispatch(args []string) (string, error) {
 		return CmdDoctor(client)
 	case "version":
 		return CmdVersion(client)
+	case "dashboard":
+		return CmdDashboard(client)
 	default:
 		return fmt.Sprintf("unknown command %q\n\n%s", args[0], usage), nil
 	}

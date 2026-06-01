@@ -159,3 +159,19 @@ func CmdVersion(client *Client) (string, error) {
 	}
 	return fmt.Sprintf("Version: %s  API-versions: [%s]", v.Version, apiVers), nil
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CmdDashboard
+// ─────────────────────────────────────────────────────────────────────────────
+
+// CmdDashboard opens the UBAG dashboard in the system browser.
+func CmdDashboard(client *Client) (string, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return "", err
+	}
+	if err := DashboardOpen(cfg.BaseURL); err != nil {
+		return "", fmt.Errorf("open dashboard: %w", err)
+	}
+	return "Opening dashboard at " + cfg.BaseURL + "/dashboard", nil
+}
