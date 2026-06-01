@@ -46,6 +46,27 @@ caddy run --config deploy/caddy/Caddyfile.standard
 
 ---
 
+## Hot-reload (zero connection drop)
+
+The standard Caddyfile binds the admin API to `localhost:2019` only (never
+public). This lets you reload config in-place without dropping any live
+connections:
+
+```bash
+# Reload from the file that caddy was started with
+caddy reload --address localhost:2019
+
+# Or POST the new config directly
+curl -X POST http://localhost:2019/load \
+  -H "Content-Type: text/caddyfile" \
+  --data-binary @deploy/caddy/Caddyfile.standard
+```
+
+Both paths are safe because the admin socket is loopback-only. The running
+process swaps routes atomically and keeps existing TLS sessions alive.
+
+---
+
 ## Profile switch (`UBAG_CADDY_PROFILE`)
 
 UBAG supports two Caddy profiles selected by the `UBAG_CADDY_PROFILE` environment
