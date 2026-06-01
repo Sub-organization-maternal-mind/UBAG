@@ -107,8 +107,8 @@ func TestPinEmptyTenantIDReturnsCurrent(t *testing.T) {
 	}
 }
 
-// TestMemoryHomeRegionResolverConcurrency verifies that concurrent reads and
-// writes on MemoryHomeRegionResolver do not race.
+// TestMemoryHomeRegionResolverConcurrency verifies that concurrent reads on
+// MemoryHomeRegionResolver do not race.
 func TestMemoryHomeRegionResolverConcurrency(t *testing.T) {
 	t.Parallel()
 	r := NewMemoryResolver(map[string]Region{"t": Region("us-east-1")})
@@ -116,7 +116,6 @@ func TestMemoryHomeRegionResolverConcurrency(t *testing.T) {
 	done := make(chan struct{})
 	for i := 0; i < 10; i++ {
 		go func() {
-			//nolint:errcheck
 			r.HomeRegion(ctx, "t") //nolint:errcheck
 			done <- struct{}{}
 		}()

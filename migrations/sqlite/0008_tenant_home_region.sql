@@ -16,3 +16,7 @@ CREATE TABLE IF NOT EXISTS gateway_tenants (
   created_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Record this migration
+INSERT OR IGNORE INTO edge_schema_migrations (version, name, applied_at)
+VALUES ('0008', 'tenant_home_region', strftime('%Y-%m-%dT%H:%M:%SZ','now'));
