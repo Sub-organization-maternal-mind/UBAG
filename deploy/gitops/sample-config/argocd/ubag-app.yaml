@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ubag
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ubag/ubag
+    targetRevision: v0.1.0
+    path: deploy/helm/ubag
+    helm:
+      valueFiles:
+        - values-production.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ubag
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
