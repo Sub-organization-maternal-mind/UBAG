@@ -9,6 +9,8 @@ mod error;
 mod idempotency;
 mod transport;
 
+pub mod retry;
+
 pub use error::{ApiError, Error, ErrorDetails, ErrorEnvelope};
 pub use idempotency::generate_idempotency_key;
 pub use transport::{HttpRequest, HttpResponse, Transport};
