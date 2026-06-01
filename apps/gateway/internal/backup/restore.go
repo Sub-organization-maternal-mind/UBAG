@@ -4,13 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
 // RestoreOptions configures a restore operation.
@@ -57,10 +58,15 @@ func Restore(ctx context.Context, opts RestoreOptions) error {
 // If from starts with "s3://", it downloads the files into a temp dir and
 // returns a cleanup function to remove it. Otherwise, it returns from directly.
 func resolveSource(ctx context.Context, from string) (dir string, cleanup func(), err error) {
-	if !strings.HasPrefix(from, "s3://") {
-		return from, nil, nil
+	if strings.HasPrefix(from, "s3://") {
+		return resolveS3Source(ctx, from)
 	}
+	return from, nil, nil
+}
 
+// resolveS3Source downloads backup files from MinIO/S3 into a temp directory
+// using the MinIO SDK with AWS Signature v4 authentication.
+func resolveS3Source(ctx context.Context, rawURI string) (sourceDir string, cleanup func(), err error) {
 	endpoint := os.Getenv("UBAG_MINIO_ENDPOINT")
 	accessKey := os.Getenv("UBAG_MINIO_ACCESS_KEY")
 	secretKey := os.Getenv("UBAG_MINIO_SECRET_KEY")
@@ -69,12 +75,25 @@ func resolveSource(ctx context.Context, from string) (dir string, cleanup func()
 	}
 
 	// Parse s3://bucket/prefix
-	u, err := url.Parse(from)
+	u, err := url.Parse(rawURI)
 	if err != nil {
-		return "", nil, fmt.Errorf("parse s3 URI %q: %w", from, err)
+		return "", nil, fmt.Errorf("invalid s3 URI %q: %w", rawURI, err)
 	}
 	bucket := u.Host
 	prefix := strings.TrimPrefix(u.Path, "/")
+
+	// Use TLS only if the endpoint looks like an https URL or contains :443
+	useSSL := strings.HasPrefix(endpoint, "https://") || strings.HasSuffix(endpoint, ":443")
+	// Strip scheme from endpoint for minio client
+	cleanEndpoint := strings.TrimPrefix(strings.TrimPrefix(endpoint, "https://"), "http://")
+
+	mc, err := minio.New(cleanEndpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
+		Secure: useSSL,
+	})
+	if err != nil {
+		return "", nil, fmt.Errorf("minio client: %w", err)
+	}
 
 	tmpDir, err := os.MkdirTemp("", "ubag-restore-*")
 	if err != nil {
@@ -82,62 +101,44 @@ func resolveSource(ctx context.Context, from string) (dir string, cleanup func()
 	}
 	cleanupFn := func() { _ = os.RemoveAll(tmpDir) }
 
-	// Download manifest.json first.
-	if err := s3Download(ctx, endpoint, bucket, prefix, "manifest.json", tmpDir); err != nil {
+	// Download manifest.json first
+	manifestObj := prefix + "manifest.json"
+	if prefix != "" && !strings.HasSuffix(prefix, "/") {
+		manifestObj = prefix + "/manifest.json"
+	}
+	if err := mc.FGetObject(ctx, bucket, manifestObj, filepath.Join(tmpDir, "manifest.json"), minio.GetObjectOptions{}); err != nil {
 		cleanupFn()
-		return "", nil, fmt.Errorf("download manifest.json: %w", err)
+		return "", nil, fmt.Errorf("download manifest.json from s3: %w", err)
 	}
 
-	// Read manifest to discover component paths.
-	manifest, err := ReadManifest(tmpDir)
+	// Read manifest to know which component files to download
+	m, err := ReadManifest(tmpDir)
 	if err != nil {
 		cleanupFn()
-		return "", nil, err
+		return "", nil, fmt.Errorf("read downloaded manifest: %w", err)
 	}
 
-	for _, c := range manifest.Components {
-		if err := s3Download(ctx, endpoint, bucket, prefix, c.Path, tmpDir); err != nil {
+	for _, c := range m.Components {
+		objKey := c.Path
+		if prefix != "" {
+			if !strings.HasSuffix(prefix, "/") {
+				objKey = prefix + "/" + c.Path
+			} else {
+				objKey = prefix + c.Path
+			}
+		}
+		destPath := filepath.Join(tmpDir, filepath.FromSlash(c.Path))
+		if err := os.MkdirAll(filepath.Dir(destPath), 0o700); err != nil {
 			cleanupFn()
-			return "", nil, fmt.Errorf("download component %q: %w", c.Name, err)
+			return "", nil, err
+		}
+		if err := mc.FGetObject(ctx, bucket, objKey, destPath, minio.GetObjectOptions{}); err != nil {
+			cleanupFn()
+			return "", nil, fmt.Errorf("download %s from s3: %w", c.Path, err)
 		}
 	}
 
 	return tmpDir, cleanupFn, nil
-}
-
-// s3Download fetches http://<endpoint>/<bucket>/<prefix>/<name> into <destDir>/<name>.
-func s3Download(ctx context.Context, endpoint, bucket, prefix, name, destDir string) error {
-	rawURL := fmt.Sprintf("http://%s/%s/%s/%s", endpoint, bucket, prefix, name)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return fmt.Errorf("build request for %s: %w", rawURL, err)
-	}
-
-	// Basic auth via query params or header — MinIO supports both.
-	// We use the access/secret key as HTTP basic auth for simplicity.
-	req.SetBasicAuth(os.Getenv("UBAG_MINIO_ACCESS_KEY"), os.Getenv("UBAG_MINIO_SECRET_KEY"))
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("GET %s: %w", rawURL, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET %s: unexpected status %d", rawURL, resp.StatusCode)
-	}
-
-	destPath := filepath.Join(destDir, filepath.Base(name))
-	f, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fmt.Errorf("create %s: %w", destPath, err)
-	}
-	defer f.Close()
-
-	if _, err := io.Copy(f, resp.Body); err != nil {
-		return fmt.Errorf("write %s: %w", destPath, err)
-	}
-	return nil
 }
 
 // restoreSQLite finds the sqlite component, copies it to opts.To, and verifies.
@@ -175,13 +176,26 @@ func restoreSQLite(ctx context.Context, manifest *Manifest, sourceDir, destPath 
 	}
 	defer db.Close()
 
-	var integrityResult string
-	row := db.QueryRowContext(ctx, "PRAGMA integrity_check")
-	if err := row.Scan(&integrityResult); err != nil {
-		return fmt.Errorf("restore verify: integrity_check scan: %w", err)
+	rows, err := db.QueryContext(ctx, "PRAGMA integrity_check")
+	if err != nil {
+		return fmt.Errorf("restore verify: integrity_check: %w", err)
 	}
-	if integrityResult != "ok" {
-		return fmt.Errorf("restore verify: integrity_check returned %q (want \"ok\")", integrityResult)
+	defer rows.Close()
+	var issues []string
+	for rows.Next() {
+		var result string
+		if err := rows.Scan(&result); err != nil {
+			return fmt.Errorf("restore verify: integrity_check scan: %w", err)
+		}
+		if result != "ok" {
+			issues = append(issues, result)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("restore verify: integrity_check rows: %w", err)
+	}
+	if len(issues) > 0 {
+		return fmt.Errorf("restore verify: integrity_check failed: %s", strings.Join(issues, "; "))
 	}
 
 	return nil
@@ -202,6 +216,15 @@ func restorePostgres(ctx context.Context, manifest *Manifest, sourceDir, dsn str
 	}
 
 	srcPath := filepath.Join(sourceDir, component.Path)
+
+	// Verify source file integrity before restore
+	srcChecksum, _, err := checksumFile(srcPath)
+	if err != nil {
+		return fmt.Errorf("restore postgres: checksum source: %w", err)
+	}
+	if srcChecksum != component.Checksum {
+		return fmt.Errorf("restore postgres: source file checksum mismatch (got %s, want %s)", srcChecksum, component.Checksum)
+	}
 
 	safeDSN := dsn
 	pgpassword := ""
