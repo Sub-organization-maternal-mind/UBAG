@@ -280,18 +280,21 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return true, fmt.Errorf("job %s disappeared during worker ingestion", lease.JobID())
 	}
 	if finalJob.Status == jobstore.StatusCanceled {
+		c.releaseConcurrencyToken(finalJob)
 		if err := c.notifyTerminalJob(ctx, lease, finalJob); err != nil {
 			return true, err
 		}
 		return true, lease.Cancel(ctx)
 	}
 	if finalJob.Status == jobstore.StatusCompleted || finalJob.Status == jobstore.StatusCompletedWithWarnings {
+		c.releaseConcurrencyToken(finalJob)
 		if err := c.notifyTerminalJob(ctx, lease, finalJob); err != nil {
 			return true, err
 		}
 		return true, lease.Complete(ctx)
 	}
 	if jobstore.TerminalStatus(finalJob.Status) {
+		c.releaseConcurrencyToken(finalJob)
 		if err := c.notifyTerminalJob(ctx, lease, finalJob); err != nil {
 			return true, err
 		}
@@ -306,6 +309,16 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return true, notifyErr
 	}
 	return true, lease.Fail(ctx)
+}
+
+// releaseConcurrencyToken releases the in-flight token for a job when it
+// reaches a terminal state. It is nil-safe and a no-op when Concurrency is not
+// configured.
+func (c *WorkerConsumer) releaseConcurrencyToken(job jobstore.Job) {
+	if c == nil || c.Concurrency == nil {
+		return
+	}
+	c.Concurrency.Release(job.TenantID, job.Target, job.AppID)
 }
 
 // raiseManualActionAlert raises a human-in-the-loop alert when a worker reports

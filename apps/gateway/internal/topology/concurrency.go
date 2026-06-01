@@ -7,6 +7,12 @@ import (
 	"time"
 )
 
+const (
+	// defaultConcurrencyCap is used when no AIMD cap has been reported for a
+	// (target, identityRef) pair. It acts as a permissive bootstrap ceiling.
+	defaultConcurrencyCap = 100
+)
+
 // ConcurrencyView is a read-only projection of the adaptive (AIMD) concurrency
 // ceiling the worker enforces for a given provider/target + identity pair. The
 // worker owns the live AIMD controller; the gateway is the control plane and
@@ -32,14 +38,24 @@ type ConcurrencyView struct {
 // ConcurrencyRegistry is an in-memory, tenant-scoped registry of the latest
 // AIMD ceilings reported by workers. It is safe for concurrent use and every
 // method is nil-safe.
+//
+// Beyond observability, the registry acts as a lightweight gateway-side
+// in-flight token pool: Acquire increments the in-flight count and returns
+// false if the ceiling would be exceeded; Release decrements it.
 type ConcurrencyRegistry struct {
 	mu       sync.RWMutex
 	byTenant map[string]map[string]ConcurrencyView
+	// inFlight is the gateway-side in-flight counter, separate from the
+	// AIMD view which reflects worker-reported counts.
+	inFlight map[string]map[string]int // [tenantID][key]count
 }
 
 // NewConcurrencyRegistry returns an empty registry.
 func NewConcurrencyRegistry() *ConcurrencyRegistry {
-	return &ConcurrencyRegistry{byTenant: map[string]map[string]ConcurrencyView{}}
+	return &ConcurrencyRegistry{
+		byTenant: map[string]map[string]ConcurrencyView{},
+		inFlight: map[string]map[string]int{},
+	}
 }
 
 func concurrencyKey(target, identityRef string) string {
@@ -94,4 +110,68 @@ func (r *ConcurrencyRegistry) List(tenantID string) []ConcurrencyView {
 		return out[i].IdentityRef < out[j].IdentityRef
 	})
 	return out
+}
+
+// Acquire attempts to reserve a concurrency token for a (tenant, target,
+// identityRef) tuple. It returns true and increments the in-flight count if
+// the current in-flight count is below the ceiling. It returns false if the
+// ceiling would be exceeded — the caller should return UBAG-CONCURRENCY-001.
+//
+// When no AIMD ceiling has been reported for the pair, defaultConcurrencyCap
+// is used so the gateway remains permissive during bootstrap.
+func (r *ConcurrencyRegistry) Acquire(tenantID, target, identityRef string) bool {
+	if r == nil {
+		return true
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	target = strings.TrimSpace(target)
+	identityRef = strings.TrimSpace(identityRef)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	cap := defaultConcurrencyCap
+	if tenant, ok := r.byTenant[tenantID]; ok {
+		if view, ok := tenant[concurrencyKey(target, identityRef)]; ok && view.CurrentCap > 0 {
+			cap = view.CurrentCap
+		}
+	}
+
+	if r.inFlight == nil {
+		r.inFlight = map[string]map[string]int{}
+	}
+	if r.inFlight[tenantID] == nil {
+		r.inFlight[tenantID] = map[string]int{}
+	}
+	key := concurrencyKey(target, identityRef)
+	if r.inFlight[tenantID][key] >= cap {
+		return false
+	}
+	r.inFlight[tenantID][key]++
+	return true
+}
+
+// Release decrements the in-flight count for a (tenant, target, identityRef)
+// tuple. It is a no-op on nil registries or for unknown pairs.
+func (r *ConcurrencyRegistry) Release(tenantID, target, identityRef string) {
+	if r == nil {
+		return
+	}
+	tenantID = strings.TrimSpace(tenantID)
+	target = strings.TrimSpace(target)
+	identityRef = strings.TrimSpace(identityRef)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.inFlight == nil {
+		return
+	}
+	if r.inFlight[tenantID] == nil {
+		return
+	}
+	key := concurrencyKey(target, identityRef)
+	if r.inFlight[tenantID][key] > 0 {
+		r.inFlight[tenantID][key]--
+	}
 }

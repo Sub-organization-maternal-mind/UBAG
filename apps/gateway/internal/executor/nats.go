@@ -21,6 +21,31 @@ const (
 	defaultNATSMaxAgeSecs = 86400 // 24 h
 )
 
+// priorityLanes are the §14.4 NATS subject lane names in descending priority.
+var priorityLanes = [5]string{"crit", "high", "norm", "low", "bulk"}
+
+// laneFromPriority maps a job options.priority string to its lane name.
+func laneFromPriority(priority string) string {
+	switch strings.ToLower(strings.TrimSpace(priority)) {
+	case "critical", "crit":
+		return "crit"
+	case "high":
+		return "high"
+	case "low":
+		return "low"
+	case "bulk", "background":
+		return "bulk"
+	default:
+		return "norm"
+	}
+}
+
+// laneSubject returns the NATS subject for a job in a given lane.
+// Format: {base}.{lane}.{jobID}
+func laneSubject(base, lane, jobID string) string {
+	return base + "." + lane + "." + jobID
+}
+
 // NATSDispatcher publishes gateway-stamped job envelopes to a NATS JetStream
 // stream and listens for cancellation notices.
 //
@@ -99,7 +124,9 @@ func (d *NATSDispatcher) EnqueueJob(ctx context.Context, job jobstore.Job) (Rece
 		return Receipt{}, fmt.Errorf("nats: envelope marshal failed: %w", err)
 	}
 
-	subject := d.subject + "." + job.ID
+	opts := parseJobOptions(job.Options)
+	lane := laneFromPriority(opts.Priority)
+	subject := laneSubject(d.subject, lane, job.ID)
 	msg := &nats.Msg{
 		Subject: subject,
 		Data:    payload,
@@ -108,6 +135,7 @@ func (d *NATSDispatcher) EnqueueJob(ctx context.Context, job jobstore.Job) (Rece
 	msg.Header.Set("Ubag-Job-Id", job.ID)
 	msg.Header.Set("Ubag-Tenant-Id", job.TenantID)
 	msg.Header.Set("Ubag-App-Id", job.AppID)
+	msg.Header.Set("Ubag-Lane", lane)
 	msg.Header.Set("Nats-Msg-Id", job.ID) // deduplication by job ID
 
 	ack, err := js.PublishMsg(ctx, msg)

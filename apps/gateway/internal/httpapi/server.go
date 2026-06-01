@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"os"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
+	"github.com/ubag/ubag/apps/gateway/internal/outbox"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/audit"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
@@ -142,6 +144,16 @@ type Config struct {
 	// by the worker-event ingestion path; the gateway never mutates it via HTTP.
 	Concurrency *topology.ConcurrencyRegistry
 
+	// Outbox, when non-nil, receives job-dispatch events atomically with job
+	// creation. The relay delivers them to NATS independently. When nil,
+	// EnqueueJob is called directly (backward-compatible).
+	Outbox outbox.Store
+
+	// MaxQueueDepth is the pending-job ceiling before the gateway returns
+	// UBAG-QUEUE-BACKPRESSURE-002 (429). Zero disables the check.
+	// Defaults to UBAG_MAX_QUEUE_DEPTH env var if set, or 10000.
+	MaxQueueDepth int
+
 	MaxBodyBytes int64
 }
 
@@ -179,6 +191,8 @@ type Server struct {
 	alerts           *alerts.Manager
 	topology         topology.Store
 	concurrency      *topology.ConcurrencyRegistry
+	outbox           outbox.Store
+	maxQueueDepth    int
 
 	metrics *metricState
 	mux     chi.Router
@@ -241,6 +255,9 @@ func NewServer(config Config) *Server {
 	}
 	if config.MaxBodyBytes <= 0 {
 		config.MaxBodyBytes = defaultMaxBodyBytes
+	}
+	if config.MaxQueueDepth <= 0 {
+		config.MaxQueueDepth = parseEnvInt("UBAG_MAX_QUEUE_DEPTH", 10000)
 	}
 	if config.Jobs == nil {
 		config.Jobs = jobstore.NewMemoryStore()
@@ -310,6 +327,8 @@ func NewServer(config Config) *Server {
 		alerts:           config.Alerts,
 		topology:         config.Topology,
 		concurrency:      config.Concurrency,
+		outbox:           config.Outbox,
+		maxQueueDepth:    config.MaxQueueDepth,
 
 		metrics: &metricState{
 			requests:    make(map[string]int),
@@ -1022,6 +1041,29 @@ func (s *Server) processBatchEntry(
 		idempKey = generatedTraceID() // unique per entry
 	}
 
+	// §14 backpressure: reject this entry when the queue is too deep.
+	if s.maxQueueDepth > 0 {
+		if stats, err := s.executor.Stats(ctx); err == nil {
+			pending := 0
+			for _, v := range stats.DepthByState {
+				pending += v
+			}
+			if pending >= s.maxQueueDepth {
+				e := queueError("UBAG-QUEUE-BACKPRESSURE-002", "queue is too deep; retry later", true)
+				e.RetryAfterMS = ptrInt(30 * 1000)
+				return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusTooManyRequests
+			}
+		}
+	}
+
+	// §14 concurrency ceiling: acquire a token before creating the job.
+	if s.concurrency != nil {
+		if !s.concurrency.Acquire(tenantID, target, appID) {
+			e := concurrencyError("UBAG-CONCURRENCY-001", "concurrency ceiling reached for this target", nil)
+			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusTooManyRequests
+		}
+	}
+
 	job, err := s.jobs.Create(ctx, jobstore.CreateRequest{
 		APIVersion:     apiVersion,
 		TenantID:       tenantID,
@@ -1039,12 +1081,14 @@ func (s *Server) processBatchEntry(
 		TraceID:        traceID,
 	})
 	if err != nil {
+		s.releaseConcurrencyToken(tenantID, target, appID)
 		e := internalError("failed to create job")
 		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusInternalServerError
 	}
 
 	if _, err := s.executor.EnqueueJob(ctx, job); err != nil {
 		_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
+		s.releaseConcurrencyToken(tenantID, target, appID)
 		e := queueError("UBAG-QUEUE-ENQUEUE-001", "failed to enqueue job", true)
 		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusServiceUnavailable
 	}
@@ -1262,6 +1306,35 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// §14 backpressure: reject new jobs when the queue is too deep.
+	if s.maxQueueDepth > 0 {
+		stats, err := s.executor.Stats(r.Context())
+		if err == nil {
+			pending := 0
+			for _, v := range stats.DepthByState {
+				pending += v
+			}
+			if pending >= s.maxQueueDepth {
+				const retryAfterSecs = 30
+				_ = s.idempotency.Release(r.Context(), scope)
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSecs))
+				errObj := queueError("UBAG-QUEUE-BACKPRESSURE-002", "queue is too deep; retry later", true)
+				errObj.RetryAfterMS = ptrInt(retryAfterSecs * 1000)
+				s.writeError(w, r, http.StatusTooManyRequests, errObj)
+				return
+			}
+		}
+	}
+
+	// §14 concurrency ceiling: acquire a token before creating the job.
+	if s.concurrency != nil {
+		if !s.concurrency.Acquire(tenantID, request.Job.Target, appID) {
+			_ = s.idempotency.Release(r.Context(), scope)
+			s.writeError(w, r, http.StatusTooManyRequests, concurrencyError("UBAG-CONCURRENCY-001", "concurrency ceiling reached for this target", nil))
+			return
+		}
+	}
+
 	job, err := s.jobs.Create(r.Context(), jobstore.CreateRequest{
 		APIVersion:     apiVersion,
 		TenantID:       tenantID,
@@ -1280,14 +1353,35 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		_ = s.idempotency.Release(r.Context(), scope)
+		s.releaseConcurrencyToken(tenantID, request.Job.Target, appID)
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to create job"))
 		return
 	}
-	if _, err := s.executor.EnqueueJob(r.Context(), job); err != nil {
-		_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
-		_ = s.idempotency.Release(r.Context(), scope)
-		s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-ENQUEUE-001", "failed to enqueue job for execution", true))
-		return
+	if s.outbox != nil {
+		env := executor.EnvelopeFromJob(job)
+		envelopeBytes, err := json.Marshal(env)
+		if err != nil {
+			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
+			_ = s.idempotency.Release(r.Context(), scope)
+			s.releaseConcurrencyToken(tenantID, request.Job.Target, appID)
+			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to marshal job envelope"))
+			return
+		}
+		if err := s.outbox.Append(r.Context(), job.ID, "jobs.dispatch", envelopeBytes); err != nil {
+			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
+			_ = s.idempotency.Release(r.Context(), scope)
+			s.releaseConcurrencyToken(tenantID, request.Job.Target, appID)
+			s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-ENQUEUE-001", "failed to write job to outbox", true))
+			return
+		}
+	} else {
+		if _, err := s.executor.EnqueueJob(r.Context(), job); err != nil {
+			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
+			_ = s.idempotency.Release(r.Context(), scope)
+			s.releaseConcurrencyToken(tenantID, request.Job.Target, appID)
+			s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-ENQUEUE-001", "failed to enqueue job for execution", true))
+			return
+		}
 	}
 
 	if err := s.idempotency.Complete(r.Context(), scope, job.ID, http.StatusAccepted); err != nil {
@@ -1777,6 +1871,14 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Ubag-Api-Version-Used", s.apiVersion)
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+// releaseConcurrencyToken releases a previously acquired concurrency token.
+// It is nil-safe and a no-op when concurrency enforcement is not configured.
+func (s *Server) releaseConcurrencyToken(tenantID, target, identityRef string) {
+	if s.concurrency != nil {
+		s.concurrency.Release(tenantID, target, identityRef)
+	}
 }
 
 func canonicalHash(raw []byte) (string, error) {
@@ -2698,6 +2800,17 @@ func traceIDFromContext(ctx context.Context) string {
 func principalFromContext(ctx context.Context) (authenticatedPrincipal, bool) {
 	principal, ok := ctx.Value(principalContextKey{}).(authenticatedPrincipal)
 	return principal, ok
+}
+
+func parseEnvInt(key string, fallback int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		return n
+	}
+	return fallback
 }
 
 func generatedTraceID() string {

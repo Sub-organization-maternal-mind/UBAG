@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+
+	"github.com/ubag/ubag/apps/gateway/internal/retrypolicy"
 )
 
 const (
@@ -33,6 +36,10 @@ type NATSWorkerQueueConfig struct {
 	MaxDeliver int
 }
 
+// starvationRoundMask is the bitmask for forcing lower-priority lane checks
+// every (1<<starvationRoundBits) rounds to prevent bulk/low starvation.
+const starvationRoundBits = 4 // every 16th round
+
 type NATSWorkerQueue struct {
 	url        string
 	streamName string
@@ -43,11 +50,12 @@ type NATSWorkerQueue struct {
 	fetchWait  time.Duration
 	maxDeliver int
 
-	mu       sync.Mutex
-	conn     *nats.Conn
-	js       jetstream.JetStream
-	stream   jetstream.Stream
-	consumer jetstream.Consumer
+	mu        sync.Mutex
+	conn      *nats.Conn
+	js        jetstream.JetStream
+	stream    jetstream.Stream
+	consumers [5]jetstream.Consumer // indexed by priority lane: 0=crit 1=high 2=norm 3=low 4=bulk
+	round     atomic.Uint64
 }
 
 func NewNATSWorkerQueue(config NATSWorkerQueueConfig) (*NATSWorkerQueue, error) {
@@ -117,22 +125,40 @@ func (q *NATSWorkerQueue) LeaseNext(ctx context.Context) (WorkerLease, bool, err
 	}
 
 	q.mu.Lock()
-	consumer := q.consumer
+	consumers := q.consumers
 	q.mu.Unlock()
-	msg, err := consumer.Next(jetstream.FetchMaxWait(q.fetchWait))
-	if errors.Is(err, nats.ErrTimeout) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("nats worker: fetch failed: %w", err)
+
+	// Determine polling order: normally high→low priority; every
+	// (1<<starvationRoundBits) rounds reverse the order so that bulk/low
+	// jobs are not starved when higher lanes are always busy.
+	r := q.round.Add(1)
+	order := [5]int{0, 1, 2, 3, 4} // crit first
+	if r&(1<<starvationRoundBits-1) == 0 {
+		order = [5]int{4, 3, 2, 1, 0} // bulk first on anti-starvation rounds
 	}
 
-	envelope, err := q.decodeMessage(msg)
-	if err != nil {
-		_ = terminateNATSMessage(msg, err.Error())
-		return nil, true, nil
+	// Use a short per-lane fetch timeout so we cascade quickly to the next lane.
+	shortWait := 5 * time.Millisecond
+	for _, idx := range order {
+		consumer := consumers[idx]
+		if consumer == nil {
+			continue
+		}
+		msg, err := consumer.Next(jetstream.FetchMaxWait(shortWait))
+		if errors.Is(err, nats.ErrTimeout) {
+			continue
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("nats worker: fetch failed: %w", err)
+		}
+		envelope, err := q.decodeMessage(msg)
+		if err != nil {
+			_ = terminateNATSMessage(msg, err.Error())
+			return nil, true, nil
+		}
+		return natsWorkerLease{queue: q, msg: msg, envelope: envelope}, true, nil
 	}
-	return natsWorkerLease{queue: q, msg: msg, envelope: envelope}, true, nil
+	return nil, false, nil
 }
 
 func (q *NATSWorkerQueue) Close() {
@@ -145,7 +171,7 @@ func (q *NATSWorkerQueue) Close() {
 		q.conn = nil
 		q.js = nil
 		q.stream = nil
-		q.consumer = nil
+		q.consumers = [5]jetstream.Consumer{}
 	}
 }
 
@@ -158,7 +184,7 @@ func (q *NATSWorkerQueue) ensureConnected() error {
 		q.conn = nil
 		q.js = nil
 		q.stream = nil
-		q.consumer = nil
+		q.consumers = [5]jetstream.Consumer{}
 	}
 	conn, err := nats.Connect(
 		q.url,
@@ -201,25 +227,28 @@ func (q *NATSWorkerQueue) ensureStream(ctx context.Context) error {
 }
 
 func (q *NATSWorkerQueue) ensureConsumer(ctx context.Context) error {
-	if q.consumer != nil {
+	if q.consumers[0] != nil {
 		return nil
 	}
-	cfg := jetstream.ConsumerConfig{
-		Name:          q.durable,
-		Durable:       q.durable,
-		Description:   "UBAG worker job consumer",
-		DeliverPolicy: jetstream.DeliverAllPolicy,
-		AckPolicy:     jetstream.AckExplicitPolicy,
-		AckWait:       q.ackWait,
-		MaxDeliver:    q.maxDeliver,
-		FilterSubject: q.subject + ".*",
-		ReplayPolicy:  jetstream.ReplayInstantPolicy,
+	for i, lane := range priorityLanes {
+		name := q.durable + "-" + lane
+		cfg := jetstream.ConsumerConfig{
+			Name:          name,
+			Durable:       name,
+			Description:   "UBAG worker job consumer lane=" + lane,
+			DeliverPolicy: jetstream.DeliverAllPolicy,
+			AckPolicy:     jetstream.AckExplicitPolicy,
+			AckWait:       q.ackWait,
+			MaxDeliver:    q.maxDeliver,
+			FilterSubject: q.subject + "." + lane + ".*",
+			ReplayPolicy:  jetstream.ReplayInstantPolicy,
+		}
+		consumer, err := q.stream.CreateOrUpdateConsumer(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		q.consumers[i] = consumer
 	}
-	consumer, err := q.stream.CreateOrUpdateConsumer(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	q.consumer = consumer
 	return nil
 }
 
@@ -234,9 +263,12 @@ func (q *NATSWorkerQueue) decodeMessage(msg jetstream.Msg) (DispatchEnvelope, er
 	if strings.TrimSpace(envelope.JobID) == "" {
 		return DispatchEnvelope{}, fmt.Errorf("nats worker: envelope missing job_id")
 	}
-	expectedSubject := q.subject + "." + envelope.JobID
-	if msg.Subject() != expectedSubject {
-		return DispatchEnvelope{}, fmt.Errorf("nats worker: subject %q does not match job subject %q", msg.Subject(), expectedSubject)
+	// Accept both lane-prefixed format ({base}.{lane}.{jobID}) and the legacy
+	// format ({base}.{jobID}) so messages published before the priority-lane
+	// upgrade are still consumed correctly.
+	_, jobIDFromSubject, ok := parseJobSubject(q.subject, msg.Subject())
+	if !ok || jobIDFromSubject != envelope.JobID {
+		return DispatchEnvelope{}, fmt.Errorf("nats worker: subject %q does not match job subject", msg.Subject())
 	}
 	headers := msg.Headers()
 	if headerJobID := strings.TrimSpace(headers.Get("Ubag-Job-Id")); headerJobID != "" && headerJobID != envelope.JobID {
@@ -249,6 +281,33 @@ func (q *NATSWorkerQueue) decodeMessage(msg jetstream.Msg) (DispatchEnvelope, er
 		return DispatchEnvelope{}, fmt.Errorf("nats worker: Ubag-App-Id header does not match envelope")
 	}
 	return envelope, nil
+}
+
+// parseJobSubject parses a NATS dispatch subject and returns the lane and job ID.
+// Accepts two formats:
+//   - New: {base}.{lane}.{jobID}  →  returns the lane name
+//   - Legacy: {base}.{jobID}      →  returns "norm" as lane
+//
+// Returns ok=false if the subject does not match any expected format.
+func parseJobSubject(base, subject string) (lane, jobID string, ok bool) {
+	rest, found := strings.CutPrefix(subject, base+".")
+	if !found {
+		return "", "", false
+	}
+	// Try new format: {lane}.{jobID} (lane is one of the 5 known names)
+	for _, l := range priorityLanes {
+		prefix := l + "."
+		if after, cut := strings.CutPrefix(rest, prefix); cut {
+			if after != "" && !strings.Contains(after, ".") {
+				return l, after, true
+			}
+		}
+	}
+	// Legacy format: single token, no dots — treated as norm-priority job
+	if !strings.Contains(rest, ".") && rest != "" {
+		return "norm", rest, true
+	}
+	return "", "", false
 }
 
 type natsWorkerLease struct {
@@ -293,9 +352,17 @@ func (l natsWorkerLease) Cancel(context.Context) error {
 }
 
 func (l natsWorkerLease) Retry(context.Context) error {
-	delay := defaultNATSWorkerNakDelay
-	if l.queue != nil && l.queue.nakDelay > 0 {
-		delay = l.queue.nakDelay
+	policy := retrypolicy.ParseFromMap(l.envelope.Job.Options)
+
+	// Derive attempt count from NATS delivery metadata (NumDelivered - 1).
+	retriesSoFar := 0
+	if meta, err := l.msg.Metadata(); err == nil && meta != nil && meta.NumDelivered > 1 {
+		retriesSoFar = int(meta.NumDelivered) - 1
+	}
+
+	delay := policy.NextDelay(retriesSoFar)
+	if delay <= 0 {
+		delay = defaultNATSWorkerNakDelay
 	}
 	return l.msg.NakWithDelay(delay)
 }

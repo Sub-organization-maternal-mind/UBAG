@@ -2,10 +2,28 @@ package executor
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 )
+
+// parseJobOptions extracts the typed options view from a raw options map.
+// Only the fields used by the executor (priority) are read here.
+func parseJobOptions(raw map[string]any) jobOptions {
+	opts := jobOptions{Priority: "normal"}
+	if raw == nil {
+		return opts
+	}
+	if v, ok := raw["priority"].(string); ok && strings.TrimSpace(v) != "" {
+		opts.Priority = strings.TrimSpace(v)
+	}
+	return opts
+}
+
+type jobOptions struct {
+	Priority string
+}
 
 type DispatchEnvelope struct {
 	APIVersion     string         `json:"api_version"`
