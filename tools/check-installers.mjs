@@ -11,6 +11,11 @@
 //     1. Contains "set -e" (fail-fast)
 //     2. Contains a launchctl reference (launchd daemon registration)
 //
+//   curl|sh one-liner (deploy/installers/get.sh):
+//     1. set -euo pipefail is present
+//     2. sha256 verification function is present
+//     3. verify_checksum is called BEFORE tar extraction
+//
 // Usage: node tools/check-installers.mjs
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -75,6 +80,46 @@ if (!/\blaunchctl\b/.test(postinstall)) {
 }
 
 // ---------------------------------------------------------------------------
+// get.sh one-liner installer checks
+// ---------------------------------------------------------------------------
+const getShPath = join(root, "deploy/installers/get.sh");
+let getSh;
+try {
+  getSh = readFileSync(getShPath, "utf8");
+} catch (e) {
+  console.error(`check-installers: cannot read ${getShPath}: ${e.message}`);
+  process.exit(1);
+}
+
+// 1. set -euo pipefail (strict mode — required for a safe installer)
+if (!/\bset\s+-euo\s+pipefail\b/.test(getSh)) {
+  fail("get.sh: missing 'set -euo pipefail' — installer must use strict error handling");
+}
+
+// 2. sha256 verification function is present
+if (!/verify_checksum\s*\(/.test(getSh)) {
+  fail("get.sh: no verify_checksum function found — sha256 verification is required");
+}
+
+// 3. verify_checksum must be called BEFORE tar extraction
+// Strategy: find the line index of the verify_checksum call and the tar -xz call,
+// and assert that verify comes first.
+const lines = getSh.split("\n");
+const verifyLine = lines.findIndex((l) => /verify_checksum\s+/.test(l));
+const tarLine = lines.findIndex((l) => /\btar\b.*-[a-zA-Z]*x[a-zA-Z]*z/.test(l));
+
+if (verifyLine === -1) {
+  fail("get.sh: verify_checksum is never called — checksum must be verified before extraction");
+} else if (tarLine === -1) {
+  fail("get.sh: no 'tar -xz' extraction call found");
+} else if (verifyLine > tarLine) {
+  fail(
+    `get.sh: verify_checksum (line ${verifyLine + 1}) appears AFTER tar extraction ` +
+      `(line ${tarLine + 1}) — checksum MUST be verified before extraction`
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Result
 // ---------------------------------------------------------------------------
 if (errors.length) {
@@ -83,4 +128,4 @@ if (errors.length) {
   process.exit(1);
 }
 
-console.log("✅ Installers: all checks passed");
+console.log("check-installers: all checks passed");
