@@ -154,6 +154,32 @@ func TestParseManifest_AllCapabilities(t *testing.T) {
 	}
 }
 
+func TestParseManifest_NewCapabilities(t *testing.T) {
+	tests := []struct {
+		name       string
+		capability plugins.Capability
+	}{
+		{"hook.webhook.transform", plugins.CapabilityHookWebhookTransform},
+		{"hook.validate", plugins.CapabilityHookValidate},
+		{"adapter.extension", plugins.CapabilityAdapterExtension},
+		{"command.custom", plugins.CapabilityCommandCustom},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			data := mutate(t, validManifestJSON(), func(m map[string]any) {
+				m["capabilities"] = []any{string(tc.capability)}
+			})
+			mf, err := plugins.ParseManifest(data)
+			if err != nil {
+				t.Fatalf("capability %q rejected: %v", tc.capability, err)
+			}
+			if len(mf.Capabilities) != 1 || mf.Capabilities[0] != tc.capability {
+				t.Errorf("Capabilities = %v, want [%q]", mf.Capabilities, tc.capability)
+			}
+		})
+	}
+}
+
 // --------------------------------------------------------------------------
 // schema_version
 // --------------------------------------------------------------------------

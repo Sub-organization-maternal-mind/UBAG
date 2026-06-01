@@ -21,17 +21,25 @@ const SchemaVersion = "ubag.plugin.v0"
 type Capability string
 
 const (
-	CapabilityTransformPrompt   Capability = "transform.prompt"
-	CapabilityTransformResponse Capability = "transform.response"
-	CapabilityHookJobPre        Capability = "hook.job.pre"
-	CapabilityHookJobPost       Capability = "hook.job.post"
+	CapabilityTransformPrompt      Capability = "transform.prompt"
+	CapabilityTransformResponse    Capability = "transform.response"
+	CapabilityHookJobPre           Capability = "hook.job.pre"
+	CapabilityHookJobPost          Capability = "hook.job.post"
+	CapabilityHookWebhookTransform Capability = "hook.webhook.transform"
+	CapabilityHookValidate         Capability = "hook.validate"
+	CapabilityAdapterExtension     Capability = "adapter.extension"
+	CapabilityCommandCustom        Capability = "command.custom"
 )
 
 var knownCapabilities = map[Capability]struct{}{
-	CapabilityTransformPrompt:   {},
-	CapabilityTransformResponse: {},
-	CapabilityHookJobPre:        {},
-	CapabilityHookJobPost:       {},
+	CapabilityTransformPrompt:      {},
+	CapabilityTransformResponse:    {},
+	CapabilityHookJobPre:           {},
+	CapabilityHookJobPost:          {},
+	CapabilityHookWebhookTransform: {},
+	CapabilityHookValidate:         {},
+	CapabilityAdapterExtension:     {},
+	CapabilityCommandCustom:        {},
 }
 
 // HostFunctionName represents a named host function a plugin may request.

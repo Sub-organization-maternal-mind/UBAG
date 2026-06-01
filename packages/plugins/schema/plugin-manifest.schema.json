@@ -74,7 +74,11 @@
           "transform.prompt",
           "transform.response",
           "hook.job.pre",
-          "hook.job.post"
+          "hook.job.post",
+          "hook.webhook.transform",
+          "hook.validate",
+          "adapter.extension",
+          "command.custom"
         ]
       },
       "description": "Extension points this plugin implements."

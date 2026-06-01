@@ -15,13 +15,21 @@ export type PluginCapability =
   | 'transform.prompt'
   | 'transform.response'
   | 'hook.job.pre'
-  | 'hook.job.post';
+  | 'hook.job.post'
+  | 'hook.webhook.transform'
+  | 'hook.validate'
+  | 'adapter.extension'
+  | 'command.custom';
 
 export const PLUGIN_CAPABILITIES: readonly PluginCapability[] = [
   'transform.prompt',
   'transform.response',
   'hook.job.pre',
   'hook.job.post',
+  'hook.webhook.transform',
+  'hook.validate',
+  'adapter.extension',
+  'command.custom',
 ];
 
 export type HostFunctionName = 'log' | 'clock' | 'random' | 'fetch' | 'read_file' | 'get_env';
