@@ -14,10 +14,10 @@ import (
 type tab int
 
 const (
-	tabJobs    tab = iota
-	tabTargets tab = iota
-	tabCache   tab = iota
-	tabHealth  tab = iota
+	tabJobs tab = iota
+	tabTargets
+	tabCache
+	tabHealth
 )
 
 var tabNames = []string{"Jobs", "Targets", "Cache", "Health"}
@@ -163,6 +163,9 @@ func (m Model) renderContent() string {
 // loadJobs returns a tea.Cmd that fetches jobs and emits a jobsLoadedMsg.
 func (m Model) loadJobs() tea.Cmd {
 	return func() tea.Msg {
+		if m.client == nil {
+			return errorMsg{err: fmt.Errorf("client not initialized")}
+		}
 		jobs, err := m.client.ListJobs(context.Background())
 		if err != nil {
 			return errorMsg{err}
@@ -173,6 +176,9 @@ func (m Model) loadJobs() tea.Cmd {
 
 func (m Model) loadTargets() tea.Cmd {
 	return func() tea.Msg {
+		if m.client == nil {
+			return errorMsg{err: fmt.Errorf("client not initialized")}
+		}
 		targets, err := m.client.ListTargets(context.Background())
 		if err != nil {
 			return errorMsg{err}
@@ -183,6 +189,9 @@ func (m Model) loadTargets() tea.Cmd {
 
 func (m Model) loadHealth() tea.Cmd {
 	return func() tea.Msg {
+		if m.client == nil {
+			return errorMsg{err: fmt.Errorf("client not initialized")}
+		}
 		health, err := m.client.Health(context.Background())
 		if err != nil {
 			return errorMsg{err}
