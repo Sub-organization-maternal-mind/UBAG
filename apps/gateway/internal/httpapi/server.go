@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 
+	"math"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/ubag/ubag/apps/gateway/internal/abac"
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
@@ -33,6 +35,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/compliance"
 	"github.com/ubag/ubag/apps/gateway/internal/outbox"
 	"github.com/ubag/ubag/apps/gateway/internal/pat"
+	"github.com/ubag/ubag/apps/gateway/internal/resilience"
 	"github.com/ubag/ubag/apps/gateway/internal/semanticcache"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/audit"
@@ -1449,6 +1452,16 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
 			_ = s.idempotency.Release(r.Context(), scope)
 			s.releaseConcurrencyToken(tenantID, request.Job.Target, appID)
+			var breakerErr *resilience.BreakerOpenError
+			if errors.As(err, &breakerErr) {
+				retryAfterSecs := int(math.Ceil(breakerErr.RetryAfter.Seconds()))
+				if retryAfterSecs < 1 {
+					retryAfterSecs = 1
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSecs))
+				s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-BREAKER-OPEN-001", breakerErr.Error(), true))
+				return
+			}
 			s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-ENQUEUE-001", "failed to enqueue job for execution", true))
 			return
 		}
@@ -1683,6 +1696,16 @@ func (s *Server) retryJob(w http.ResponseWriter, r *http.Request, id string) {
 	if _, err := s.executor.EnqueueJob(r.Context(), job); err != nil {
 		_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
 		_ = s.idempotency.Release(r.Context(), mutation.scope)
+		var breakerErr *resilience.BreakerOpenError
+		if errors.As(err, &breakerErr) {
+			retryAfterSecs := int(math.Ceil(breakerErr.RetryAfter.Seconds()))
+			if retryAfterSecs < 1 {
+				retryAfterSecs = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(retryAfterSecs))
+			s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-BREAKER-OPEN-001", breakerErr.Error(), true))
+			return
+		}
 		s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-ENQUEUE-001", "failed to enqueue retry job for execution", true))
 		return
 	}

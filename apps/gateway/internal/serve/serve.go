@@ -29,6 +29,7 @@ import (
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/profile"
 	"github.com/ubag/ubag/apps/gateway/internal/ratelimit"
+	"github.com/ubag/ubag/apps/gateway/internal/resilience"
 	"github.com/ubag/ubag/apps/gateway/internal/responsecache"
 	"github.com/ubag/ubag/apps/gateway/internal/scim"
 	"github.com/ubag/ubag/apps/gateway/internal/session"
@@ -82,6 +83,8 @@ func Run(ctx context.Context) error {
 	if closer, ok := dispatcher.(interface{ Close() }); ok {
 		defer closer.Close()
 	}
+	breakerRegistry := resilience.NewRegistry(resilience.DefaultConfig())
+	dispatcher = resilience.DispatcherMiddleware(dispatcher, breakerRegistry)
 	jobs, idempotencyStore, db, storeKind, closeStores, err := newStoresFromEnv(ctx)
 	if err != nil {
 		return fmt.Errorf("invalid store configuration: %w", err)
@@ -178,7 +181,7 @@ func Run(ctx context.Context) error {
 		}()
 	}
 	if webhookWorkerEnabled() {
-		worker, err := newWebhookWorkerFromEnv(webhookStore, webhookPolicy)
+		worker, err := newWebhookWorkerFromEnv(webhookStore, webhookPolicy, breakerRegistry)
 		if err != nil {
 			return fmt.Errorf("invalid webhook worker configuration: %w", err)
 		}
@@ -827,7 +830,7 @@ func webhookWorkerEnabled() bool {
 	return value == "1" || value == "true" || value == "yes"
 }
 
-func newWebhookWorkerFromEnv(store webhooks.OutboxStore, policy webhooks.URLPolicy) (*webhooks.DeliveryWorker, error) {
+func newWebhookWorkerFromEnv(store webhooks.OutboxStore, policy webhooks.URLPolicy, breakerReg *resilience.Registry) (*webhooks.DeliveryWorker, error) {
 	pollInterval, err := durationFromMillisEnv("UBAG_WEBHOOK_POLL_INTERVAL_MS", time.Second)
 	if err != nil {
 		return nil, err
@@ -865,11 +868,13 @@ func newWebhookWorkerFromEnv(store webhooks.OutboxStore, policy webhooks.URLPoli
 			URLPolicy:        policy,
 			APIVersion:       getenv("UBAG_API_VERSION", httpapi.DefaultAPIVersion),
 			MaxResponseBytes: int64(positiveIntEnv("UBAG_WEBHOOK_MAX_RESPONSE_BYTES")),
+			Breakers:         breakerReg,
 		},
 		WorkerID:     getenv("UBAG_WEBHOOK_WORKER_ID", "gateway-webhook-worker"),
 		PollInterval: pollInterval,
 		LeaseFor:     leaseFor,
 		BatchSize:    batchSize,
+		Breakers:     breakerReg,
 		RetryPolicy: webhooks.RetryPolicy{
 			MaxAttempts: maxAttempts,
 			BaseDelay:   baseDelay,
