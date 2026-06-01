@@ -32,6 +32,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/appjwt"
 	"github.com/ubag/ubag/apps/gateway/internal/outbox"
 	"github.com/ubag/ubag/apps/gateway/internal/pat"
+	"github.com/ubag/ubag/apps/gateway/internal/semanticcache"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/audit"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
@@ -169,6 +170,11 @@ type Config struct {
 	// check in authorizeGatewayAction. A nil enforcer is permissive (RBAC only).
 	ABACEnforcer *abac.Enforcer
 
+	// SemanticCache provides the §17 semantic response cache (SHA-256 exact +
+	// pgvector cosine similarity). When nil, the legacy ResponseCache remains
+	// active. Both may be configured simultaneously.
+	SemanticCache semanticcache.Store
+
 	// MaxQueueDepth is the pending-job ceiling before the gateway returns
 	// UBAG-QUEUE-BACKPRESSURE-002 (429). Zero disables the check.
 	// Defaults to UBAG_MAX_QUEUE_DEPTH env var if set, or 10000.
@@ -217,6 +223,7 @@ type Server struct {
 	patDefaultTTL    time.Duration
 	appJWTPublicKey  *crypto_rsa.PublicKey
 	abacEnforcer     *abac.Enforcer
+	semanticCache    semanticcache.Store
 
 	metrics *metricState
 	mux     chi.Router
@@ -357,6 +364,7 @@ func NewServer(config Config) *Server {
 		patDefaultTTL:    config.PATDefaultTTL,
 		appJWTPublicKey:  config.AppJWTPublicKey,
 		abacEnforcer:     config.ABACEnforcer,
+		semanticCache:    config.SemanticCache,
 
 		metrics: &metricState{
 			requests:    make(map[string]int),
@@ -405,6 +413,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/workflows", s.handleWorkflows)
 	s.mux.HandleFunc("/v1/workflows/*", s.handleWorkflowsSubtree)
 	s.mux.HandleFunc("/v1/templates", s.handleTemplates)
+	s.mux.HandleFunc("/v1/templates/*", s.handleTemplateRender)
 	s.mux.HandleFunc("/v1/targets", s.handleCollection("targets", targetCatalog(), "job:read"))
 	s.mux.HandleFunc("/v1/adapters", s.handleCollection("adapters", adapterCatalog(), "job:read"))
 	s.mux.HandleFunc("/v1/apps", s.handleCollection("apps", nil, "job:read"))
@@ -413,6 +422,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/webhooks/replay", s.replayWebhook)
 	s.mux.HandleFunc("/v1/webhooks/secret:rotate", s.rotateWebhookSecret)
 	s.mux.HandleFunc("/v1/cache", s.handleCache)
+	s.mux.HandleFunc("/v1/cache/invalidate", s.handleCacheInvalidate)
 	s.mux.HandleFunc("/v1/rate-limits", s.handleRateLimits)
 	s.mux.HandleFunc("/v1/audit", s.handleCollection("audit", nil, "audit:read"))
 	s.mux.HandleFunc("/v1/audit/export", s.handleAuditExport)

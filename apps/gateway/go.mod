@@ -21,6 +21,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/desertbit/timer v0.0.0-20180107155436-c41aec40b27f // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/flosch/pongo2/v6 v6.1.0 // indirect
 	github.com/go-chi/chi/v5 v5.3.0 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/google/cel-go v0.28.1 // indirect

@@ -1,9 +1,53 @@
 package httpapi
 
 import (
+	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 )
+
+type cacheInvalidateRequest struct {
+	Tag string `json:"tag"`
+}
+
+type cacheInvalidateResponse struct {
+	APIVersion string `json:"api_version"`
+	Removed    int    `json:"removed"`
+	TraceID    string `json:"trace_id"`
+}
+
+// handleCacheInvalidate handles POST /v1/cache/invalidate — removes all semantic
+// cache entries bearing the given tag for the caller's tenant.
+func (s *Server) handleCacheInvalidate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeMethodNotAllowed(w, r, http.MethodPost)
+		return
+	}
+	if s.semanticCache == nil {
+		s.writeJSON(w, http.StatusOK, cacheInvalidateResponse{APIVersion: s.apiVersion, TraceID: traceIDFromContext(r.Context())})
+		return
+	}
+	if !s.authorizeGatewayAction(w, r, "job:read") {
+		return
+	}
+	var req cacheInvalidateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Tag) == "" {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-CACHE-TAG-001", "tag is required"))
+		return
+	}
+	tenantID, _ := requestScope(r)
+	removed, err := s.semanticCache.InvalidateByTag(r.Context(), tenantID, req.Tag)
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to invalidate cache"))
+		return
+	}
+	s.writeJSON(w, http.StatusOK, cacheInvalidateResponse{
+		APIVersion: s.apiVersion,
+		Removed:    removed,
+		TraceID:    traceIDFromContext(r.Context()),
+	})
+}
 
 type cacheStatsPayload struct {
 	Entries int `json:"entries"`
