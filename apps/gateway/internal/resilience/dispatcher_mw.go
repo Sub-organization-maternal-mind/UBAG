@@ -40,10 +40,10 @@ func (d *breakerDispatcher) Ready(ctx context.Context) error {
 }
 
 func (d *breakerDispatcher) EnqueueJob(ctx context.Context, job jobstore.Job) (executor.Receipt, error) {
-	b := d.reg.Get(KindUpstream, job.Target)
+	b := d.reg.Get(KindUpstream, job.TenantID+"/"+job.Target)
 	if !b.Allow() {
 		return executor.Receipt{}, &BreakerOpenError{
-			Target:     job.Target,
+			Target:     job.TenantID + "/" + job.Target,
 			RetryAfter: b.CooldownRemaining(),
 		}
 	}

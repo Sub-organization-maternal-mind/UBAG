@@ -84,7 +84,7 @@ func TestDispatcherMiddleware_OpenBreaker_ShortCircuits(t *testing.T) {
 	mock := &mockDispatcher{enqueueErr: fmt.Errorf("backend unavailable")}
 	wrapped := DispatcherMiddleware(mock, reg)
 
-	job := jobstore.Job{ID: "job-1", Target: "target-a"}
+	job := jobstore.Job{ID: "job-1", TenantID: "tenant-x", Target: "target-a"}
 
 	// First call: should pass through and record failure, tripping the breaker.
 	_, err := wrapped.EnqueueJob(context.Background(), job)
@@ -102,8 +102,8 @@ func TestDispatcherMiddleware_OpenBreaker_ShortCircuits(t *testing.T) {
 	if !errors.As(err, &breakerErr) {
 		t.Fatalf("expected *BreakerOpenError via errors.As; got %T: %v", err, err)
 	}
-	if breakerErr.Target != "target-a" {
-		t.Errorf("expected Target=target-a, got %q", breakerErr.Target)
+	if breakerErr.Target != "tenant-x/target-a" {
+		t.Errorf("expected Target=tenant-x/target-a, got %q", breakerErr.Target)
 	}
 	if breakerErr.RetryAfter <= 0 {
 		t.Errorf("expected positive RetryAfter, got %s", breakerErr.RetryAfter)
@@ -123,7 +123,7 @@ func TestDispatcherMiddleware_ClosedBreaker_CallsThrough(t *testing.T) {
 	mock := &mockDispatcher{}
 	wrapped := DispatcherMiddleware(mock, reg)
 
-	job := jobstore.Job{ID: "job-2", Target: "target-b"}
+	job := jobstore.Job{ID: "job-2", TenantID: "tenant-y", Target: "target-b"}
 	receipt, err := wrapped.EnqueueJob(context.Background(), job)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -136,7 +136,7 @@ func TestDispatcherMiddleware_ClosedBreaker_CallsThrough(t *testing.T) {
 	}
 
 	// Breaker should still be closed (no failures recorded).
-	b := reg.Get(KindUpstream, "target-b")
+	b := reg.Get(KindUpstream, "tenant-y/target-b")
 	if b.State() != StateClosed {
 		t.Errorf("expected breaker closed after success, got %s", b.State())
 	}
@@ -158,14 +158,14 @@ func TestDispatcherMiddleware_FailedEnqueue_RecordsFailure(t *testing.T) {
 	mock := &mockDispatcher{enqueueErr: wantErr}
 	wrapped := DispatcherMiddleware(mock, reg)
 
-	job := jobstore.Job{ID: "job-3", Target: "target-c"}
+	job := jobstore.Job{ID: "job-3", TenantID: "tenant-z", Target: "target-c"}
 	_, err := wrapped.EnqueueJob(context.Background(), job)
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("expected wrapped error chain to contain wantErr, got %v", err)
 	}
 
 	// After 1 failure the breaker should still be closed (threshold=5).
-	b := reg.Get(KindUpstream, "target-c")
+	b := reg.Get(KindUpstream, "tenant-z/target-c")
 	if b.State() != StateClosed {
 		t.Errorf("expected breaker still closed after 1 of 5 failures, got %s", b.State())
 	}
