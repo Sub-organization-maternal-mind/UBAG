@@ -1,7 +1,11 @@
 package httpapi
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -175,14 +179,170 @@ func (s *Server) getSSOConfigWithVersion(w http.ResponseWriter, r *http.Request,
 	})
 }
 
-// handleSSOOIDCCallback verifies an OIDC id_token and resolves a principal.
-// The id_token is the verification input, so payloadpolicy.Validate (which
-// rejects an "id_token" key) is intentionally NOT applied to this body.
-func (s *Server) handleSSOOIDCCallback(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writeMethodNotAllowed(w, r, http.MethodPost)
+// handleSSOOIDCAuthorize initiates the OIDC authorization-code flow.
+// It generates a cryptographically random state+nonce pair, stores state in
+// the AuthCodeFlow StateStore (TTL 10 min), and redirects the browser to the
+// configured IdP authorization URL.
+//
+// Returns 501 when SSOAuthFlow is not configured.
+// Returns 400 when OIDC is not configured for the tenant.
+func (s *Server) handleSSOOIDCAuthorize(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeMethodNotAllowed(w, r, http.MethodGet)
 		return
 	}
+	if s.ssoAuthFlow == nil {
+		s.writeNotImplemented(w, r, "OIDC authorization-code flow is not configured")
+		return
+	}
+	if s.sso == nil {
+		s.writeNotImplemented(w, r, "single sign-on is not configured")
+		return
+	}
+
+	tenantID, _ := requestScope(r)
+	cfg, found, err := s.sso.GetOIDC(r.Context(), tenantID)
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to read OIDC configuration"))
+		return
+	}
+	if !found {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-OIDC-UNCONFIGURED-001", "no OIDC configuration for tenant"))
+		return
+	}
+	if cfg.AuthorizationURL == "" {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-OIDC-AUTHURL-001", "OIDC configuration is missing authorization_url"))
+		return
+	}
+
+	redirectURI := strings.TrimSpace(r.URL.Query().Get("redirect_uri"))
+
+	// Generate a random nonce for the ID token nonce claim.
+	nonceBytes := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, nonceBytes); err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to generate nonce"))
+		return
+	}
+	nonce := hex.EncodeToString(nonceBytes)
+
+	state, err := s.ssoAuthFlow.GenerateState(nonce)
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to generate state"))
+		return
+	}
+
+	params := url.Values{}
+	params.Set("response_type", "code")
+	params.Set("client_id", cfg.ClientID)
+	params.Set("scope", "openid")
+	params.Set("state", state)
+	params.Set("nonce", nonce)
+	if redirectURI != "" {
+		params.Set("redirect_uri", redirectURI)
+	}
+
+	authURL := cfg.AuthorizationURL
+	if strings.Contains(authURL, "?") {
+		authURL += "&" + params.Encode()
+	} else {
+		authURL += "?" + params.Encode()
+	}
+
+	http.Redirect(w, r, authURL, http.StatusFound)
+}
+
+// handleSSOOIDCCallback handles both the authorization-code callback (GET with
+// code+state) and the legacy direct id_token verification (POST). The POST
+// path is preserved for backward compatibility.
+//
+// GET flow (authorization-code):
+//  1. Validate code+state query params.
+//  2. Consume state from AuthCodeFlow.StateStore (verifies not replayed/expired).
+//  3. Exchange code for tokens via cfg.TokenURL.
+//  4. Verify the returned id_token using the existing RS256/JWKS verifier.
+//  5. Map claims to a UBAG principal and mint a session.
+//
+// POST flow (legacy direct id_token):
+//   - Unchanged from the original implementation.
+func (s *Server) handleSSOOIDCCallback(w http.ResponseWriter, r *http.Request) {
+	// Route by method: GET = authorization-code flow, POST = direct token flow.
+	switch r.Method {
+	case http.MethodGet:
+		s.handleSSOOIDCCallbackGET(w, r)
+	case http.MethodPost:
+		s.handleSSOOIDCCallbackPOST(w, r)
+	default:
+		s.writeMethodNotAllowed(w, r, http.MethodGet, http.MethodPost)
+	}
+}
+
+// handleSSOOIDCCallbackGET implements the authorization-code callback path.
+func (s *Server) handleSSOOIDCCallbackGET(w http.ResponseWriter, r *http.Request) {
+	if s.ssoAuthFlow == nil {
+		s.writeNotImplemented(w, r, "OIDC authorization-code flow is not configured")
+		return
+	}
+	if s.sso == nil {
+		s.writeNotImplemented(w, r, "single sign-on is not configured")
+		return
+	}
+
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+	if code == "" || state == "" {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-AUTHCODE-001", "code and state are required"))
+		return
+	}
+
+	_, err := s.ssoAuthFlow.ValidateCallback(state, code)
+	if err != nil {
+		s.writeError(w, r, http.StatusUnauthorized, authError("UBAG-AUTH-SSO-STATE-001", "invalid or expired state"))
+		return
+	}
+
+	tenantID, appID := requestScope(r)
+	cfg, found, cfgErr := s.sso.GetOIDC(r.Context(), tenantID)
+	if cfgErr != nil {
+		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to read OIDC configuration"))
+		return
+	}
+	if !found {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-OIDC-UNCONFIGURED-001", "no OIDC configuration for tenant"))
+		return
+	}
+
+	redirectURI := r.URL.Query().Get("redirect_uri")
+	// NOTE: In production, cfg.ClientSecretRef would be resolved via a secret
+	// store (e.g., Vault). For now we use it directly per the task spec.
+	clientSecret := cfg.ClientSecretRef
+
+	idTokenRaw, _, exchangeErr := s.ssoAuthFlow.Exchanger.Exchange(
+		r.Context(), cfg.TokenURL, code, cfg.ClientID, clientSecret, redirectURI,
+	)
+	if exchangeErr != nil {
+		s.writeError(w, r, http.StatusUnauthorized, authError("UBAG-AUTH-SSO-CODE-001", "code exchange failed"))
+		return
+	}
+
+	claims, verifyErr := sso.VerifyIDToken(r.Context(), idTokenRaw, cfg, time.Now().UTC())
+	if verifyErr != nil {
+		s.writeError(w, r, http.StatusUnauthorized, authError("UBAG-AUTH-SSO-OIDC-001", "id_token verification failed"))
+		return
+	}
+
+	principal, mapErr := sso.MapPrincipal(claims.Attributes(), cfg.AttributeMapping)
+	if mapErr != nil {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-PRINCIPAL-001", mapErr.Error()))
+		return
+	}
+
+	s.writeSSOPrincipal(w, r, s.apiVersion, tenantID, appID, principal)
+}
+
+// handleSSOOIDCCallbackPOST is the original direct id_token verification path.
+// The id_token is the verification input, so payloadpolicy.Validate (which
+// rejects an "id_token" key) is intentionally NOT applied to this body.
+func (s *Server) handleSSOOIDCCallbackPOST(w http.ResponseWriter, r *http.Request) {
 	if s.sso == nil {
 		s.writeNotImplemented(w, r, "single sign-on is not configured")
 		return

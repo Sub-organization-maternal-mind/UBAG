@@ -119,6 +119,11 @@ type Config struct {
 	// SSO backs the /v1/sso/* routes.
 	SSO sso.ConfigStore
 
+	// SSOAuthFlow, when non-nil, enables the OIDC authorization-code flow
+	// (GET /v1/sso/oidc/authorize + GET /v1/sso/oidc/callback?code=&state=).
+	// When nil only the direct id_token verification flow (POST callback) is available.
+	SSOAuthFlow *sso.AuthCodeFlow
+
 	// SCIM backs the /v1/scim/v2/* routes.
 	SCIM scim.Store
 
@@ -240,6 +245,7 @@ type Server struct {
 	workflows        workflow.Store
 	workflowEngine   *workflow.Engine
 	sso              sso.ConfigStore
+	ssoAuthFlow      *sso.AuthCodeFlow
 	scim             scim.Store
 	siemConfig       siem.ConfigStore
 	siemExporter     *siem.Exporter
@@ -393,6 +399,7 @@ func NewServer(config Config) *Server {
 		workflows:        config.Workflows,
 		workflowEngine:   config.WorkflowEngine,
 		sso:              config.SSO,
+		ssoAuthFlow:      config.SSOAuthFlow,
 		scim:             config.SCIM,
 		siemConfig:       config.SIEMConfig,
 		siemExporter:     config.SIEMExporter,
@@ -478,6 +485,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/audit", s.handleCollection("audit", nil, "audit:read"))
 	s.mux.HandleFunc("/v1/audit/export", s.handleAuditExport)
 	s.mux.HandleFunc("/v1/sso/config", s.handleSSOConfig)
+	s.mux.HandleFunc("/v1/sso/oidc/authorize", s.handleSSOOIDCAuthorize)
 	s.mux.HandleFunc("/v1/sso/oidc/callback", s.handleSSOOIDCCallback)
 	s.mux.HandleFunc("/v1/sso/saml/acs", s.handleSSOSAMLACS)
 	s.mux.HandleFunc("/v1/sso/logout", s.handleSSOLogout)
