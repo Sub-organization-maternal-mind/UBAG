@@ -18,6 +18,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	"github.com/ubag/ubag/apps/gateway/internal/plugins"
 	"github.com/ubag/ubag/apps/gateway/internal/templates"
 	"github.com/ubag/ubag/apps/gateway/internal/webhooks"
 )
@@ -1004,6 +1005,98 @@ func TestCreateJobAllowsWebhookSecretReferenceID(t *testing.T) {
 	}
 	if len(dispatcher.enqueued) != 1 {
 		t.Fatalf("executor enqueue count = %d, want 1", len(dispatcher.enqueued))
+	}
+}
+
+// TestCreateJobNilPluginHost is a regression test ensuring that a server with
+// Plugins: nil (the default) accepts jobs normally without panicking.
+func TestCreateJobNilPluginHost(t *testing.T) {
+	dispatcher := &recordingExecutor{}
+	server := NewServer(Config{AppSecret: "dev-secret", Executor: dispatcher, Plugins: nil}).Handler()
+	body := `{"api_version":"2026-05-22","idempotency_key":"idem_nil_plugins_001","client":{"app_id":"test","app_version":"0.0.0","sdk":{"name":"test","version":"0.0.0"}},"job":{"target":"mock","command_type":"submit","input":{"prompt":"hello"}}}`
+
+	response := doJSON(server, http.MethodPost, "/v1/jobs", body, authHeaders("idem_nil_plugins_001"))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusAccepted, response.Body.String())
+	}
+	if len(dispatcher.enqueued) != 1 {
+		t.Fatalf("executor enqueue count = %d, want 1", len(dispatcher.enqueued))
+	}
+}
+
+// rejectingExecutor is a test double for plugins.Executor that always rejects
+// job.pre hook events with a configurable reason.
+type rejectingExecutor struct {
+	reason string
+}
+
+func (r *rejectingExecutor) Transform(_ context.Context, inputJSON []byte) ([]byte, error) {
+	return inputJSON, nil
+}
+
+func (r *rejectingExecutor) Hook(_ context.Context, event string, _ []byte) ([]byte, error) {
+	if event == "job.pre" {
+		return json.Marshal(plugins.HookResult{Action: "reject", Reason: r.reason})
+	}
+	return json.Marshal(plugins.HookResult{Action: "continue"})
+}
+
+// HasHook reports true so the host accepts this executor for hook capabilities.
+func (r *rejectingExecutor) HasHook() bool { return true }
+
+// HasTransform reports true to satisfy the exportChecker interface.
+func (r *rejectingExecutor) HasTransform() bool { return true }
+
+// TestCreateJobPluginPreReject verifies that a job.pre hook with action "reject"
+// causes the server to return HTTP 400 with error code UBAG-PLUGIN-REJECT-001.
+func TestCreateJobPluginPreReject(t *testing.T) {
+	rejecter := &rejectingExecutor{reason: "blocked by test policy"}
+	factory := func(_ context.Context, m plugins.Manifest, _ []byte) (plugins.Executor, error) {
+		return rejecter, nil
+	}
+	host := plugins.NewHost(plugins.HostOptions{BuildExecutor: factory})
+	manifest := plugins.Manifest{
+		SchemaVersion: plugins.SchemaVersion,
+		ID:            "test-rejecter",
+		DisplayName:   "Test Rejecter",
+		Version:       "1.0.0",
+		Capabilities:  []plugins.Capability{plugins.CapabilityHookJobPre},
+		Entrypoint: plugins.Entrypoint{
+			Type:   plugins.EntrypointCoreModule,
+			Module: "test.wasm",
+			Exports: plugins.EntrypointExports{
+				Hook: "hook",
+			},
+		},
+		Permissions: plugins.Permissions{
+			MaxMemoryBytes: 65536,
+			MaxExecutionMS: 1000,
+		},
+		Engine: plugins.Engine{
+			Runtime: plugins.RuntimeCore,
+		},
+	}
+	if err := host.Register(context.Background(), manifest, nil); err != nil {
+		t.Fatalf("register plugin: %v", err)
+	}
+
+	dispatcher := &recordingExecutor{}
+	server := NewServer(Config{AppSecret: "dev-secret", Executor: dispatcher, Plugins: host}).Handler()
+	body := `{"api_version":"2026-05-22","idempotency_key":"idem_plugin_reject_001","client":{"app_id":"test","app_version":"0.0.0","sdk":{"name":"test","version":"0.0.0"}},"job":{"target":"mock","command_type":"submit","input":{"prompt":"hello"}}}`
+
+	response := doJSON(server, http.MethodPost, "/v1/jobs", body, authHeaders("idem_plugin_reject_001"))
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusBadRequest, response.Body.String())
+	}
+	var payload errorEnvelope
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if payload.Error.Code != "UBAG-PLUGIN-REJECT-001" {
+		t.Fatalf("error code = %q, want UBAG-PLUGIN-REJECT-001", payload.Error.Code)
+	}
+	if len(dispatcher.enqueued) != 0 {
+		t.Fatalf("executor enqueue count = %d, want 0 (rejected job must not be enqueued)", len(dispatcher.enqueued))
 	}
 }
 
