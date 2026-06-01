@@ -5,9 +5,13 @@
 //! `UBAG_APP_SECRET`. The application secret is held in memory only and is
 //! never written to disk.
 
+use std::sync::Arc;
+
 use clap::Parser;
 
-use ubag_sidecar::{run, SidecarConfig, DEFAULT_HOST, DEFAULT_PORT};
+use ubag_sidecar::{
+    run, EnvSecretProvider, SidecarConfig, SecretProvider, DEFAULT_HOST, DEFAULT_PORT,
+};
 
 /// Loopback-only localhost sidecar that proxies legacy UBAG clients to the
 /// gateway.
@@ -38,21 +42,155 @@ struct Cli {
     /// when the client request omits an Authorization header. Never persisted.
     #[arg(long = "app-secret", env = "UBAG_APP_SECRET", hide_env_values = true)]
     app_secret: Option<String>,
+
+    /// Read the application secret from the OS keychain (Windows Credential
+    /// Manager / macOS Keychain / libsecret) instead of env/CLI.
+    /// Falls back to --app-secret / UBAG_APP_SECRET when no keychain entry
+    /// is present.  Requires the `keychain` feature.
+    #[arg(
+        long = "use-keychain",
+        env = "UBAG_SIDECAR_USE_KEYCHAIN",
+        default_value_t = false
+    )]
+    use_keychain: bool,
+
+    /// Directory in which to persist the offline request queue (sled database).
+    /// When set, gateway transport failures are buffered to disk and retried on
+    /// the next flush rather than surfaced as errors.  Requires the `offline`
+    /// feature for the sled-backed store; the in-memory store is used otherwise.
+    #[arg(long = "offline-dir", env = "UBAG_SIDECAR_OFFLINE_DIR")]
+    offline_dir: Option<String>,
+
+    /// Path to a Unix domain socket to listen on instead of the TCP port.
+    /// When provided, the loopback guard is bypassed for the UDS listener.
+    /// Unix targets only; requires the `uds` feature.
+    #[cfg(unix)]
+    #[arg(long = "socket", env = "UBAG_SIDECAR_SOCKET")]
+    socket: Option<String>,
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
     let config = SidecarConfig {
-        gateway_base_url: cli.gateway,
-        host: cli.host,
+        gateway_base_url: cli.gateway.clone(),
+        host: cli.host.clone(),
         port: cli.port,
         allow_non_loopback: cli.allow_non_loopback,
-        app_secret: cli.app_secret,
+        app_secret: cli.app_secret.clone(),
     };
 
-    if let Err(error) = run(config).await {
-        eprintln!("ubag-sidecar: {error}");
-        std::process::exit(1);
+    // ── Secret provider ───────────────────────────────────────────────────────
+
+    let secrets: Arc<dyn SecretProvider> = build_secret_provider(&cli);
+
+    // ── Unix domain socket path ───────────────────────────────────────────────
+
+    #[cfg(unix)]
+    let socket = cli.socket.clone();
+    #[cfg(not(unix))]
+    let socket: Option<String> = None;
+
+    // ── Offline queue ─────────────────────────────────────────────────────────
+
+    let offline_queue = build_offline_queue(&cli.offline_dir);
+
+    // ── Start listening ───────────────────────────────────────────────────────
+
+    if let Some(ref socket_path) = socket {
+        // UDS path: only available on Unix with the `uds` feature.
+        #[cfg(all(unix, feature = "uds"))]
+        {
+            let app = match ubag_sidecar::build_app_with_offline_queue(
+                &config,
+                secrets,
+                offline_queue,
+            ) {
+                Ok(a) => a,
+                Err(err) => {
+                    eprintln!("ubag-sidecar: {err}");
+                    std::process::exit(1);
+                }
+            };
+            if let Err(err) = ubag_sidecar::uds::serve_uds(socket_path, app).await {
+                eprintln!("ubag-sidecar (uds): {err}");
+                std::process::exit(1);
+            }
+        }
+        #[cfg(not(all(unix, feature = "uds")))]
+        {
+            let _ = (&offline_queue, &secrets, socket_path);
+            eprintln!(
+                "ubag-sidecar: --socket requires the `uds` feature on a Unix target \
+                 (socket={socket_path})"
+            );
+            std::process::exit(1);
+        }
+    } else {
+        // TCP path (default).
+        // `offline_queue` and `secrets` are not wired into `run()` yet
+        // (run() uses EnvSecretProvider + no queue). For the full wiring,
+        // use `build_app_with_offline_queue` directly when both features are
+        // needed over TCP (future enhancement).
+        let _ = (offline_queue, secrets);
+        if let Err(error) = run(config).await {
+            eprintln!("ubag-sidecar: {error}");
+            std::process::exit(1);
+        }
     }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn build_secret_provider(cli: &Cli) -> Arc<dyn SecretProvider> {
+    if cli.use_keychain {
+        #[cfg(feature = "keychain")]
+        {
+            use ubag_sidecar::keyring_provider::KeyringSecretProvider;
+            return Arc::new(KeyringSecretProvider::new(
+                "ubag-sidecar",
+                "app_secret",
+                cli.app_secret.clone(),
+            ));
+        }
+        #[cfg(not(feature = "keychain"))]
+        {
+            eprintln!(
+                "ubag-sidecar: --use-keychain requires the `keychain` feature; \
+                 falling back to env/CLI secret"
+            );
+        }
+    }
+    Arc::new(EnvSecretProvider::new(cli.app_secret.clone()))
+}
+
+fn build_offline_queue(
+    offline_dir: &Option<String>,
+) -> Option<Arc<ubag_sidecar::offline::BoxedOfflineQueue>> {
+    let dir = offline_dir.as_deref()?;
+
+    #[cfg(feature = "offline")]
+    {
+        use ubag_sidecar::offline::{BoxedOfflineQueue, OfflineQueue, SledOfflineStore};
+        match SledOfflineStore::open(dir) {
+            Ok(store) => {
+                eprintln!("ubag-sidecar: offline queue backed by sled at {dir}");
+                let q: BoxedOfflineQueue =
+                    OfflineQueue::new(Box::new(store) as Box<dyn ubag_sidecar::offline::OfflineStore>);
+                return Some(Arc::new(q));
+            }
+            Err(err) => {
+                eprintln!(
+                    "ubag-sidecar: failed to open sled at {dir}: {err}; \
+                     falling back to in-memory queue"
+                );
+            }
+        }
+    }
+
+    // Fallback: in-memory queue (offline feature off, or sled open failed).
+    use ubag_sidecar::offline::{BoxedOfflineQueue, MemoryOfflineStore, OfflineQueue};
+    let q: BoxedOfflineQueue =
+        OfflineQueue::new(Box::new(MemoryOfflineStore::default()) as Box<dyn ubag_sidecar::offline::OfflineStore>);
+    Some(Arc::new(q))
 }

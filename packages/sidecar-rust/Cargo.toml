@@ -17,15 +17,33 @@ path = "src/main.rs"
 name = "ubag_sidecar"
 path = "src/lib.rs"
 
+[features]
+## Reads the application secret from the OS keychain (Windows Credential
+## Manager / macOS Keychain / libsecret) via the `keyring` crate, with an
+## automatic fallback to the in-memory secret from env/CLI.
+keychain = ["dep:keyring"]
+
+## Persists the offline request queue to a sled embedded database so that
+## buffered requests survive process restarts.
+offline = ["dep:sled"]
+
+## Exposes a Unix domain socket listener in addition to (or instead of) the
+## TCP listener.  Unix targets only.
+uds = []
+
 [dependencies]
 axum = "0.7"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde_json = "1"
+serde = { version = "1", features = ["derive"] }
 clap = { version = "4", features = ["derive", "env"] }
 url = "2"
 getrandom = "0.2"
 bytes = "1"
+keyring = { version = "3", optional = true }
+sled = { version = "0.34", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "io-util", "time"] }
+tempfile = "3"

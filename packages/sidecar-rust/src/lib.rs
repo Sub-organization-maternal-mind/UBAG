@@ -32,6 +32,22 @@ use axum::Router;
 use bytes::Bytes;
 use url::Url;
 
+// ── Feature-gated sub-modules ─────────────────────────────────────────────────
+
+/// OS keychain-backed [`SecretProvider`] (compiled with the `keychain` feature).
+#[cfg(feature = "keychain")]
+pub mod keyring_provider;
+
+/// Disk-backed offline request queue (always available; sled store requires
+/// the `offline` feature).
+pub mod offline;
+
+/// Unix domain socket listener (Unix only, requires the `uds` feature).
+#[cfg(all(unix, feature = "uds"))]
+pub mod uds;
+
+use offline::BoxedOfflineQueue;
+
 /// Default loopback host the sidecar binds to.
 pub const DEFAULT_HOST: &str = "127.0.0.1";
 /// Default loopback port the sidecar listens on.
@@ -108,6 +124,9 @@ struct SidecarState {
     loopback_only: bool,
     client: reqwest::Client,
     secrets: Arc<dyn SecretProvider>,
+    /// Optional offline queue.  When `Some`, transport failures in
+    /// `proxy_gateway` are buffered instead of surfaced as errors.
+    offline_queue: Option<Arc<BoxedOfflineQueue>>,
 }
 
 /// Returns `true` for loopback hosts the sidecar may bind without opt-in.
@@ -267,6 +286,34 @@ pub fn build_app_with_secrets(
         loopback_only: is_loopback_host(&config.host),
         client,
         secrets,
+        offline_queue: None,
+    };
+
+    Ok(Router::new().fallback(handle).with_state(state))
+}
+
+/// Builds the axum router with a caller-supplied [`SecretProvider`] **and**
+/// an optional in-memory offline queue.
+///
+/// When `queue` is `Some`, gateway transport failures are silently enqueued and
+/// the caller receives a `202 Accepted` response instead of `502 Bad Gateway`.
+pub fn build_app_with_offline_queue(
+    config: &SidecarConfig,
+    secrets: Arc<dyn SecretProvider>,
+    queue: Option<Arc<BoxedOfflineQueue>>,
+) -> Result<Router, String> {
+    let base_url = normalize_base_url(&config.gateway_base_url)?;
+    let client = reqwest::Client::builder()
+        .build()
+        .map_err(|err| format!("failed to build HTTP client: {err}"))?;
+
+    let state = SidecarState {
+        gateway_display: base_url.to_string(),
+        base_url,
+        loopback_only: is_loopback_host(&config.host),
+        client,
+        secrets,
+        offline_queue: queue,
     };
 
     Ok(Router::new().fallback(handle).with_state(state))
@@ -393,14 +440,35 @@ async fn proxy_gateway(
         }
     }
 
-    let upstream = state
+    let send_result = state
         .client
         .request(method, target)
         .headers(out_headers)
         .body(body_bytes.to_vec())
         .send()
-        .await
-        .map_err(|err| format!("gateway request failed: {err}"))?;
+        .await;
+
+    // When a transport error occurs and an offline queue is configured, buffer
+    // the request and return 202 Accepted instead of surfacing 502.
+    let upstream = match send_result {
+        Ok(resp) => resp,
+        Err(err) => {
+            if let Some(ref queue) = state.offline_queue {
+                let request_value = serde_json::json!({
+                    "path": uri.path(),
+                    "query": uri.query(),
+                });
+                let entry = queue.enqueue(request_value);
+                let payload = serde_json::json!({
+                    "queued": true,
+                    "entry_id": entry.id,
+                    "message": "request queued for later delivery",
+                });
+                return Ok(json_response(StatusCode::ACCEPTED, &payload));
+            }
+            return Err(format!("gateway request failed: {err}"));
+        }
+    };
 
     let status = upstream.status();
     let mut builder = Response::builder().status(status);

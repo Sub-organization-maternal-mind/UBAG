@@ -134,3 +134,13 @@ jobs:
       - name: Build and test Rust SDK
         working-directory: packages/sdk-rust
         run: cargo test --all-features
+
+  sidecar-rust:
+    name: Sidecar (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and test Rust sidecar
+        working-directory: packages/sidecar-rust
+        run: cargo test --all-features
