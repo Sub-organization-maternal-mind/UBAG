@@ -10,6 +10,7 @@ import {
   UbagApiError,
   createUbagClient
 } from '../dist/index.js';
+import * as sdk from '../dist/index.js';
 
 const packageRoot = dirname(fileURLToPath(import.meta.url));
 const fixturePath = join(packageRoot, '..', '..', 'conformance', 'fixtures', 'v0', 'scenarios.json');
@@ -331,3 +332,31 @@ async function requestBodyText(body) {
   if (typeof body.arrayBuffer === 'function') return Buffer.from(await body.arrayBuffer()).toString('utf8');
   return String(body);
 }
+
+// ── capability coverage tests (Task 11) ─────────────────────────────────────
+
+const CAPABILITY_FOR_CATEGORY = {
+  retries:       () => typeof sdk.computeBackoff === 'function' && typeof sdk.shouldRetry === 'function',
+  streaming:     () => typeof sdk.streamEvents === 'function' && typeof sdk.isTerminalEvent === 'function',
+  webhooks:      () => typeof sdk.verifyWebhookSignature === 'function',
+  sidecar:       () => typeof sdk.discoverSidecar === 'function',
+  offline_queue: () => typeof sdk.OfflineQueue === 'function',
+  otel:          () => typeof sdk.buildTraceparent === 'function',
+  grpc:          () => typeof sdk.UbagGrpcClient === 'function',
+};
+
+test('conformance suite has at least 250 scenarios', () => {
+  assert.ok(
+    fixture.coverage_scenarios.length >= 250,
+    `only ${fixture.coverage_scenarios.length} coverage_scenarios`
+  );
+});
+
+test('every scenario category the TS SDK claims is backed by a capability', () => {
+  const categories = new Set(fixture.coverage_scenarios.map((s) => s.category));
+  for (const [cat, check] of Object.entries(CAPABILITY_FOR_CATEGORY)) {
+    if (categories.has(cat)) {
+      assert.ok(check(), `TS SDK missing capability for category '${cat}'`);
+    }
+  }
+});
