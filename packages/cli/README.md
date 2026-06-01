@@ -1,3 +1,8 @@
+> **Deprecated** — `@ubag/cli` is superseded by the Go `ubag` binary
+> (`apps/gateway/cmd/ubag`). The TypeScript CLI remains available for
+> backward-compatibility but will not receive new features. Use
+> `make ubag-build` to build the replacement.
+
 # @ubag/cli
 
 Minimal TypeScript/Node developer CLI for the UBAG gateway and local mock worker.

@@ -1,4 +1,5 @@
 .PHONY: dev dev-edge gateway-build gateway-run gateway-test gateway-vet \
+	ubag-build sidecar-build \
 	test test-v0 test-v0-local itest sdks bench lint release help
 
 GATEWAY_DIR := apps/gateway
@@ -12,6 +13,8 @@ help:
 	@echo "  make bench        - run the benchmark suite"
 	@echo "  make lint         - lint Go + contracts + schemas + proto"
 	@echo "  make release      - cross-platform build + sign + SBOM (goreleaser)"
+	@echo "  make ubag-build   - build the ubag single binary"
+	@echo "  make sidecar-build - build the Rust sidecar (release)"
 
 # --- developer loop -------------------------------------------------------
 dev: dev-edge
@@ -19,6 +22,12 @@ dev-edge: gateway-run
 
 gateway-build:
 	cd $(GATEWAY_DIR) && go build ./...
+
+ubag-build:
+	cd $(GATEWAY_DIR) && go build -o ubag ./cmd/ubag
+
+sidecar-build:
+	cd packages/sidecar-rust && cargo build --release
 
 gateway-run:
 	cd $(GATEWAY_DIR) && go run ./cmd/gateway
