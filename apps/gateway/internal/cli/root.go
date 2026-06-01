@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"strings"
@@ -25,6 +26,9 @@ Commands:
   doctor
   version
   dashboard
+  backup   [--out <dir|s3://...>]
+  restore  --from <dir|s3://...>
+  migrate  [--store sqlite|postgres]
 `
 
 // Dispatch is the main entry point for the CLI.  args should be os.Args[1:].
@@ -57,6 +61,8 @@ func Dispatch(args []string) (string, error) {
 		return CmdVersion(client)
 	case "dashboard":
 		return CmdDashboard(client)
+	case "backup", "restore", "migrate":
+		return DispatchBackup(context.Background(), append([]string{args[0]}, args[1:]...))
 	default:
 		return fmt.Sprintf("unknown command %q\n\n%s", args[0], usage), nil
 	}
