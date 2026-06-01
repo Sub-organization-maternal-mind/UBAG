@@ -86,3 +86,4 @@ export {
   buildTraceparent, parseTraceparent, withSpan,
   type TracerLike, type SpanLike, type TelemetryOptions, type ParsedTraceparent,
 } from "./telemetry.js";
+export { UbagGrpcClient, grpcStatusToUbagCode, type UbagGrpcOptions } from "./grpc.js";
