@@ -1,0 +1,51 @@
+{
+  "title": "UBAG Cache Hit Rate",
+  "uid": "ubag-cache-hit-rate",
+  "schemaVersion": 36,
+  "version": 1,
+  "tags": [
+    "ubag",
+    "cache"
+  ],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Idempotency Replays/s",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "rate(ubag_idempotency_replays_total[5m])",
+          "legendFormat": "replays/s"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Replay Fraction",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "rate(ubag_idempotency_replays_total[5m])/(rate(ubag_jobs_created_total[5m])+rate(ubag_idempotency_replays_total[5m]))",
+          "legendFormat": "fraction"
+        }
+      ]
+    }
+  ]
+}

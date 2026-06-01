@@ -1,0 +1,60 @@
+{
+  "__requires": [{ "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" }],
+  "title": "UBAG Gateway HTTP",
+  "uid": "ubag-gateway-http",
+  "schemaVersion": 36,
+  "version": 1,
+  "tags": ["ubag", "gateway"],
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "HTTP Request Rate (req/s)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "rate(ubag_gateway_http_requests_total[1m])",
+          "legendFormat": "{{route}} {{method}} {{status_class}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "HTTP p99 Latency (s)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "rate(ubag_gateway_http_request_duration_seconds_sum[1m]) / rate(ubag_gateway_http_request_duration_seconds_count[1m])",
+          "legendFormat": "{{route}} avg latency"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Inflight Requests",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "ubag_gateway_http_inflight_requests",
+          "legendFormat": "inflight"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Gateway Ready Checks",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
+      "targets": [
+        {
+          "expr": "min(ubag_gateway_ready)",
+          "legendFormat": "ready"
+        }
+      ]
+    }
+  ]
+}

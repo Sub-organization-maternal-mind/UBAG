@@ -1,0 +1,59 @@
+{
+  "title": "UBAG Jobs Lifecycle",
+  "uid": "ubag-jobs-lifecycle",
+  "schemaVersion": 36,
+  "version": 1,
+  "tags": ["ubag", "jobs"],
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Jobs Created Rate",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "rate(ubag_jobs_created_total[1m])",
+          "legendFormat": "{{outcome}} {{source}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "bargauge",
+      "title": "Jobs by State",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "ubag_jobs_current",
+          "legendFormat": "{{state}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Idempotency Replays",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "rate(ubag_idempotency_replays_total[1m])",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Job End-to-End Duration (avg s)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "rate(ubag_jobs_duration_seconds_sum[5m]) / rate(ubag_jobs_duration_seconds_count[5m])",
+          "legendFormat": "{{terminal_state}} avg"
+        }
+      ]
+    }
+  ]
+}

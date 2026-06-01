@@ -1,0 +1,68 @@
+{
+  "title": "UBAG SLO Overview",
+  "uid": "ubag-slo-overview",
+  "schemaVersion": 36,
+  "version": 1,
+  "tags": [
+    "ubag",
+    "slo"
+  ],
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Gateway Success Rate (7d)",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(ubag_gateway_http_requests_total{outcome=~\"success\"}[7d]))/sum(rate(ubag_gateway_http_requests_total[7d]))",
+          "legendFormat": "rate"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Worker Success Rate (7d)",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(ubag_worker_jobs_processed_total{outcome=~\"success\"}[7d]))/sum(rate(ubag_worker_jobs_processed_total[7d]))",
+          "legendFormat": "rate"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Error Budget Burn (1h)",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "expr": "1-(sum(rate(ubag_gateway_http_requests_total{outcome=~\"success\"}[1h]))/sum(rate(ubag_gateway_http_requests_total[1h])))",
+          "legendFormat": "gateway error rate"
+        }
+      ]
+    }
+  ]
+}

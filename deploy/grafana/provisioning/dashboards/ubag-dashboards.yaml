@@ -1,0 +1,15 @@
+apiVersion: 1
+
+providers:
+  - name: "UBAG Dashboards"
+    orgId: 1
+    folder: "UBAG"
+    folderUid: "ubag"
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

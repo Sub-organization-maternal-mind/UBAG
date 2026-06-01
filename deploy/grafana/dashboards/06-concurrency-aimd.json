@@ -1,0 +1,51 @@
+{
+  "title": "UBAG Channel Pool / AIMD",
+  "uid": "ubag-concurrency-aimd",
+  "schemaVersion": 36,
+  "version": 1,
+  "tags": [
+    "ubag",
+    "concurrency"
+  ],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Adapter Requests/s",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "rate(ubag_adapter_requests_total[1m])",
+          "legendFormat": "{{adapter_family}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Adapter Latency (avg s)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "rate(ubag_adapter_request_duration_seconds_sum[5m])/rate(ubag_adapter_request_duration_seconds_count[5m])",
+          "legendFormat": "avg"
+        }
+      ]
+    }
+  ]
+}

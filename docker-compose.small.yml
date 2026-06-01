@@ -310,6 +310,8 @@ services:
       - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
     volumes:
       - ./deploy/small/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./deploy/grafana/dashboards:/etc/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     networks:
       - ubag-private

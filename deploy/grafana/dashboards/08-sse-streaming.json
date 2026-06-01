@@ -1,0 +1,51 @@
+{
+  "title": "UBAG SSE / Streaming",
+  "uid": "ubag-sse-streaming",
+  "schemaVersion": 36,
+  "version": 1,
+  "tags": [
+    "ubag",
+    "sse"
+  ],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Active SSE Connections",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "ubag_sse_connections_current",
+          "legendFormat": "connections"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "SSE Connection Trend",
+      "gridPos": {
+        "h": 8,
+        "w": 16,
+        "x": 8,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "ubag_sse_connections_current",
+          "legendFormat": "active"
+        }
+      ]
+    }
+  ]
+}
