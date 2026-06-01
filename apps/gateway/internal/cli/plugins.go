@@ -170,7 +170,21 @@ func CmdPluginsInstall(source string, policyCapabilities []string) (string, erro
 		return "", err
 	}
 
-	pluginDir := filepath.Join(dir, fmt.Sprintf("%s@%s", manifest.ID, manifest.Version))
+	// Sanitize version: strip characters that are path-unsafe (e.g. '/' in
+	// semver pre-release suffixes like "1.0.0+linux/amd64") before using it as
+	// a directory-name component.
+	safeVersion := strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' {
+			return '_'
+		}
+		return r
+	}, manifest.Version)
+	dirName := fmt.Sprintf("%s@%s", manifest.ID, safeVersion)
+	pluginDir := filepath.Join(dir, dirName)
+	// Double-check the resolved path is still inside the plugins dir.
+	if rel, err := filepath.Rel(dir, pluginDir); err != nil || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("install path escapes plugins directory: %s", dirName)
+	}
 	if err := os.MkdirAll(pluginDir, 0700); err != nil {
 		return "", fmt.Errorf("creating plugin directory: %w", err)
 	}
