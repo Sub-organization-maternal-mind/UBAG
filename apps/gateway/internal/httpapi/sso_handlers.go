@@ -294,7 +294,7 @@ func (s *Server) handleSSOOIDCCallbackGET(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	_, err := s.ssoAuthFlow.ValidateCallback(state, code)
+	expectedNonce, err := s.ssoAuthFlow.ValidateCallback(state, code)
 	if err != nil {
 		s.writeError(w, r, http.StatusUnauthorized, authError("UBAG-AUTH-SSO-STATE-001", "invalid or expired state"))
 		return
@@ -327,6 +327,12 @@ func (s *Server) handleSSOOIDCCallbackGET(w http.ResponseWriter, r *http.Request
 	claims, verifyErr := sso.VerifyIDToken(r.Context(), idTokenRaw, cfg, time.Now().UTC())
 	if verifyErr != nil {
 		s.writeError(w, r, http.StatusUnauthorized, authError("UBAG-AUTH-SSO-OIDC-001", "id_token verification failed"))
+		return
+	}
+
+	// Verify nonce claim matches the one stored during authorize (OIDC §3.1.3.7).
+	if tokenNonce, _ := claims.Raw["nonce"].(string); tokenNonce != expectedNonce {
+		s.writeError(w, r, http.StatusUnauthorized, authError("UBAG-AUTH-SSO-NONCE-001", "id_token nonce mismatch"))
 		return
 	}
 

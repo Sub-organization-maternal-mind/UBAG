@@ -243,13 +243,14 @@ func TestOIDCCallbackGetFlowSuccess(t *testing.T) {
 		t.Fatalf("SetOIDC: %v", err)
 	}
 
-	// Build a signed ID token.
+	// Build a signed ID token including the nonce that will be stored during authorize.
 	now := time.Now().UTC()
 	rawIDToken := signTestJWT(t, key, map[string]any{"alg": "RS256", "typ": "JWT"}, map[string]any{
 		"iss":   "https://idp.example/",
 		"aud":   "test-client",
 		"sub":   "user-42",
 		"email": "user@example.com",
+		"nonce": "test-nonce",
 		"iat":   now.Add(-60 * time.Second).Unix(),
 		"nbf":   now.Add(-60 * time.Second).Unix(),
 		"exp":   now.Add(3600 * time.Second).Unix(),
