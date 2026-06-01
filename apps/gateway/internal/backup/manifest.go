@@ -65,12 +65,11 @@ func (m *Manifest) Verify(dir string) error {
 	var errs []string
 	for _, c := range m.Components {
 		fullPath := filepath.Join(dir, c.Path)
-		data, err := os.ReadFile(fullPath)
+		got, _, err := checksumFile(fullPath)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("component %q: read error: %v", c.Name, err))
 			continue
 		}
-		got := sha256hex(data)
 		if got != c.Checksum {
 			errs = append(errs, fmt.Sprintf("component %q: checksum mismatch (want %s, got %s)", c.Name, c.Checksum, got))
 		}

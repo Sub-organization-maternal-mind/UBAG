@@ -7,11 +7,14 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 // Options configures a backup operation.
@@ -72,9 +75,15 @@ func backupSQLite(ctx context.Context, srcPath, outDir string) (*ComponentEntry,
 		return nil, fmt.Errorf("open: %w", err)
 	}
 	// Flush WAL to main DB file before copying.
-	if _, err := db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+	var busy, log, checkpointed int
+	row := db.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
+	if scanErr := row.Scan(&busy, &log, &checkpointed); scanErr != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("wal_checkpoint: %w", err)
+		return nil, fmt.Errorf("wal_checkpoint scan: %w", scanErr)
+	}
+	if busy != 0 {
+		_ = db.Close()
+		return nil, fmt.Errorf("wal_checkpoint incomplete (busy=1, log=%d, checkpointed=%d): another reader may be active", log, checkpointed)
 	}
 	if err := db.Close(); err != nil {
 		return nil, fmt.Errorf("close: %w", err)
@@ -99,17 +108,37 @@ func backupSQLite(ctx context.Context, srcPath, outDir string) (*ComponentEntry,
 	}, nil
 }
 
+// buildPgDumpCmd constructs the pg_dump command, extracting the password from
+// the DSN and passing it via PGPASSWORD to avoid it appearing on the command line.
+func buildPgDumpCmd(ctx context.Context, dsn, destPath string) *exec.Cmd {
+	safeDSN := dsn
+	pgpassword := ""
+	if u, err := url.Parse(dsn); err == nil && u.User != nil {
+		if pw, ok := u.User.Password(); ok {
+			pgpassword = pw
+			// Remove password from DSN passed on the command line.
+			u.User = url.User(u.User.Username())
+			safeDSN = u.String()
+		}
+	}
+	cmd := exec.CommandContext(ctx, "pg_dump",
+		"--format=custom",
+		"--no-password",
+		"--dbname="+safeDSN,
+		"--file="+destPath,
+	)
+	if pgpassword != "" {
+		cmd.Env = append(os.Environ(), "PGPASSWORD="+pgpassword)
+	}
+	return cmd
+}
+
 // backupPostgres runs pg_dump and returns a ComponentEntry for the dump file.
 func backupPostgres(ctx context.Context, dsn, outDir string) (*ComponentEntry, error) {
 	destName := "gateway.pgdump"
 	destPath := filepath.Join(outDir, destName)
 
-	cmd := exec.CommandContext(ctx, "pg_dump",
-		"--format=custom",
-		"--no-password",
-		"--dbname="+dsn,
-		"--file="+destPath,
-	)
+	cmd := buildPgDumpCmd(ctx, dsn, destPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("pg_dump: %w: %s", err, strings.TrimSpace(string(out)))
@@ -129,7 +158,7 @@ func backupPostgres(ctx context.Context, dsn, outDir string) (*ComponentEntry, e
 }
 
 // copyFile copies src to dst, creating dst if it does not exist.
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (retErr error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
@@ -140,12 +169,14 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if cerr := out.Close(); cerr != nil && retErr == nil {
+			retErr = cerr
+		}
+	}()
 
-	if _, err := io.Copy(out, in); err != nil {
-		return err
-	}
-	return out.Close()
+	_, retErr = io.Copy(out, in)
+	return retErr
 }
 
 // checksumFile returns the hex SHA-256 and size of the file at path.
@@ -162,12 +193,6 @@ func checksumFile(path string) (string, int64, error) {
 		return "", 0, err
 	}
 	return hex.EncodeToString(h.Sum(nil)), n, nil
-}
-
-// sha256hex returns the hex SHA-256 of data (used by manifest.Verify).
-func sha256hex(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
 }
 
 // joinLines joins strings with newline + indent.
