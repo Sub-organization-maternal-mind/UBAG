@@ -81,3 +81,4 @@ export { type RetryPolicy, DEFAULT_RETRY_POLICY, computeBackoff, shouldRetry } f
 export { verifyWebhookSignature, type VerifyWebhookOptions } from "./webhooks.js";
 export { discoverSidecar, SIDECAR_URL, type DiscoverSidecarOptions } from "./sidecar.js";
 export { OfflineQueue, type StorageAdapter, type JobQueueEntry, type QueueSender } from "./offline.js";
+export { parseSseChunk, isTerminalEvent, streamEvents, type SseEvent } from "./streaming.js";
