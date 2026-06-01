@@ -26,9 +26,10 @@ Commands:
   doctor
   version
   dashboard
-  backup   [--out <dir|s3://...>]
-  restore  --from <dir|s3://...>
-  migrate  [--store sqlite|postgres]
+  backup           [--out <dir|s3://...>]
+  restore          --from <dir|s3://...>
+  migrate          --to <tier> [--dry-run] [--from <tier>]
+  db-migrate       [--store sqlite|postgres]
 `
 
 // Dispatch is the main entry point for the CLI.  args should be os.Args[1:].
@@ -61,7 +62,14 @@ func Dispatch(args []string) (string, error) {
 		return CmdVersion(client)
 	case "dashboard":
 		return CmdDashboard(client)
-	case "backup", "restore", "migrate":
+	case "migrate":
+		// Tier-level migration: ubag migrate --to <tier> [--dry-run] [--from <tier>]
+		// Pass a bufio.Reader for stdin in prod; tests inject their own.
+		return CmdMigrate(args[1:], nil)
+	case "db-migrate":
+		// Schema-only SQL migration runner (formerly "ubag migrate --store ...").
+		return DispatchBackup(context.Background(), append([]string{"migrate"}, args[1:]...))
+	case "backup", "restore":
 		return DispatchBackup(context.Background(), append([]string{args[0]}, args[1:]...))
 	default:
 		return fmt.Sprintf("unknown command %q\n\n%s", args[0], usage), nil
