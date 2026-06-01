@@ -581,6 +581,10 @@ func TestHostIntegrationWithRealWasm(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
+	if !host.Has("echo-transform") {
+		t.Error("Host.Has(\"echo-transform\") = false; want true after Register")
+	}
+
 	input := []byte(`"hello"`)
 	out, err := host.Transform(ctx, "prompt", input)
 	if err != nil {
@@ -589,5 +593,80 @@ func TestHostIntegrationWithRealWasm(t *testing.T) {
 
 	if string(out) != string(input) {
 		t.Errorf("echo round-trip mismatch: got %q, want %q", out, input)
+	}
+}
+
+// -----------------------------------------------------------------------
+// Test 11: Whole-path E2E transform round-trip
+// -----------------------------------------------------------------------
+
+// TestHostE2ETransformRoundTrip is the whole-path integration test:
+// ParseManifest → NewWasmExecutorAdapter → Host.Register → Host.Transform.
+// It proves that the Go wazero host correctly implements the v1 JSON ABI
+// on a real committed .wasm binary (echo_transform.wasm, source in testdata/echo_transform.wat).
+//
+// The echo binary returns (ptr<<32)|len unchanged, so every JSON value that the
+// host writes to guest memory at ptr=0 is read back verbatim — a zero-copy
+// identity round-trip through the full host orchestration path.
+func TestHostE2ETransformRoundTrip(t *testing.T) {
+	ctx := context.Background()
+
+	wasmBytes, err := os.ReadFile(filepath.Join("testdata", "echo_transform.wasm"))
+	if err != nil {
+		t.Fatalf("read echo_transform.wasm: %v", err)
+	}
+
+	manifest, err := plugins.ParseManifest([]byte(`{
+		"schema_version": "ubag.plugin.v0",
+		"id": "echo-e2e",
+		"display_name": "Echo E2E",
+		"version": "0.1.0",
+		"entrypoint": {
+			"type": "core-module",
+			"module": "echo_transform.wasm",
+			"exports": {"transform": "transform"}
+		},
+		"capabilities": ["transform.prompt"],
+		"permissions": {
+			"host_functions": []
+		},
+		"engine": {"runtime": "wasi-preview1"}
+	}`))
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+
+	host := plugins.NewHost(plugins.HostOptions{
+		BuildExecutor: plugins.NewWasmExecutorAdapter,
+	})
+
+	if err := host.Register(ctx, manifest, wasmBytes); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	if !host.Has("echo-e2e") {
+		t.Error("Host.Has(\"echo-e2e\") = false; want true after Register")
+	}
+
+	cases := []struct {
+		name  string
+		input string
+	}{
+		{"json string", `"hello world"`},
+		{"json number", `42`},
+		{"json object", `{"key":"value"}`},
+		{"json array", `[1,2,3]`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := host.Transform(ctx, "prompt", []byte(tc.input))
+			if err != nil {
+				t.Fatalf("Transform(%q): %v", tc.input, err)
+			}
+			if string(out) != tc.input {
+				t.Errorf("round-trip mismatch: got %q, want %q", out, tc.input)
+			}
+		})
 	}
 }
