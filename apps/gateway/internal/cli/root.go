@@ -19,6 +19,9 @@ Commands:
   jobs list        [--json]
   targets list     [--json]
   cache purge
+  plugins list
+  plugins verify   <manifest-path>
+  plugins install  <path> [--allow-capability cap1,cap2,...]
   doctor
   version
   dashboard
@@ -46,6 +49,8 @@ func Dispatch(args []string) (string, error) {
 		return dispatchTargets(client, args[1:])
 	case "cache":
 		return dispatchCache(client, args[1:])
+	case "plugins":
+		return dispatchPlugins(args[1:])
 	case "doctor":
 		return CmdDoctor(client)
 	case "version":
@@ -187,5 +192,52 @@ func cacheUsage() string {
 	return strings.TrimSpace(`
 cache commands:
   cache purge
+`) + "\n"
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// plugins
+// ─────────────────────────────────────────────────────────────────────────────
+
+func dispatchPlugins(args []string) (string, error) {
+	if len(args) == 0 {
+		return pluginsUsage(), nil
+	}
+	switch args[0] {
+	case "list":
+		return CmdPluginsList()
+	case "verify":
+		if len(args) < 2 {
+			return "", fmt.Errorf("plugins verify requires a manifest path")
+		}
+		return CmdPluginsVerify(args[1])
+	case "install":
+		if len(args) < 2 {
+			return "", fmt.Errorf("plugins install requires a source path or URL")
+		}
+		fs := flag.NewFlagSet("plugins install", flag.ContinueOnError)
+		allowCaps := fs.String("allow-capability", "", "Comma-separated list of allowed capabilities (default: all)")
+		if err := fs.Parse(args[2:]); err != nil {
+			return "", err
+		}
+		var caps []string
+		if *allowCaps != "" {
+			caps = strings.Split(*allowCaps, ",")
+			for i := range caps {
+				caps[i] = strings.TrimSpace(caps[i])
+			}
+		}
+		return CmdPluginsInstall(args[1], caps)
+	default:
+		return fmt.Sprintf("unknown plugins subcommand %q\n\n%s", args[0], pluginsUsage()), nil
+	}
+}
+
+func pluginsUsage() string {
+	return strings.TrimSpace(`
+plugins commands:
+  plugins list
+  plugins verify   <manifest-path>
+  plugins install  <path> [--allow-capability cap1,cap2,...]
 `) + "\n"
 }
