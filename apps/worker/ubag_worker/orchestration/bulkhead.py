@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from threading import Lock
 from typing import Dict, Iterable, List, Optional
 
 from .topology import BrowserInstance, ChannelTab, Fleet, ProviderContext
@@ -200,7 +201,79 @@ class SingleFlightRelogin:
         return resumed
 
 
+@dataclass
+class BulkheadConfig:
+    """Configuration for bulkhead admission ceilings."""
+
+    max_tabs_per_tenant: int = 10   # concurrent tabs per tenant_id
+    max_tabs_per_target: int = 5    # concurrent tabs per target_id
+    # Either ceiling can be set to 0 to disable that dimension.
+
+
+class BulkheadRegistry:
+    """Admission control for concurrent tab allocations.
+
+    Enforces per-tenant and per-target tab ceilings independently.
+    try_acquire() returns True if BOTH ceilings have room; False if either is full.
+    release() must be called once per successful try_acquire() to free slots.
+    """
+
+    def __init__(self, config: BulkheadConfig | None = None) -> None:
+        self._config = config or BulkheadConfig()
+        self._lock = Lock()
+        self._tenant_counts: dict[str, int] = {}
+        self._target_counts: dict[str, int] = {}
+
+    def try_acquire(self, tenant_id: str, target_id: str) -> bool:
+        """Attempt to acquire a slot for (tenant_id, target_id).
+
+        Returns True if both per-tenant and per-target ceilings have room,
+        and atomically increments both counters. Returns False if either
+        ceiling would be exceeded — no counters are modified on False.
+        """
+        with self._lock:
+            tenant_count = self._tenant_counts.get(tenant_id, 0)
+            target_count = self._target_counts.get(target_id, 0)
+
+            max_tenant = self._config.max_tabs_per_tenant
+            max_target = self._config.max_tabs_per_target
+
+            if max_tenant != 0 and tenant_count >= max_tenant:
+                return False
+            if max_target != 0 and target_count >= max_target:
+                return False
+
+            self._tenant_counts[tenant_id] = tenant_count + 1
+            self._target_counts[target_id] = target_count + 1
+            return True
+
+    def release(self, tenant_id: str, target_id: str) -> None:
+        """Release a previously acquired slot. Safe to call even if the
+        slot was never acquired (no-op if counter is already 0)."""
+        with self._lock:
+            tenant_count = self._tenant_counts.get(tenant_id, 0)
+            if tenant_count > 0:
+                self._tenant_counts[tenant_id] = tenant_count - 1
+
+            target_count = self._target_counts.get(target_id, 0)
+            if target_count > 0:
+                self._target_counts[target_id] = target_count - 1
+
+    def snapshot(self) -> dict[str, dict[str, int]]:
+        """Return a copy of current counts for observability.
+
+        Returns {"tenant": {tenant_id: count, ...}, "target": {target_id: count, ...}}
+        """
+        with self._lock:
+            return {
+                "tenant": dict(self._tenant_counts),
+                "target": dict(self._target_counts),
+            }
+
+
 __all__ = [
+    "BulkheadConfig",
+    "BulkheadRegistry",
     "CrashLevel",
     "RecoveryAction",
     "RecoveryPlan",
