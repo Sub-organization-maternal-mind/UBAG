@@ -224,15 +224,47 @@ secrets:
   UBAG_WEBHOOK_SECRET: ""
 
 # ---------------------------------------------------------------------------
-# Backing services. Default: external (deploy=false). Connection details are
-# supplied through config.* (non-secret) and secrets.* (DSN/keys). The toggles
-# below are wired to the commented subchart dependencies in Chart.yaml.
+# Backing services — false = external managed service (provide DSNs via Secret).
+# Set deploy=true and run `helm dependency update` to enable in-cluster.
+# Connection details are supplied through config.* and secrets.*.
 # ---------------------------------------------------------------------------
-postgres:
-  deploy: false   # set true + uncomment dependency to run bitnami/postgresql
-dragonfly:
-  deploy: false   # external Dragonfly/Redis-compatible endpoint by default
+
+# Backing service toggles — false = external managed service (provide DSNs via Secret)
+postgresql:
+  deploy: false
+  # When deploy=true these values configure the bitnami/postgresql subchart:
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+  auth:
+    existingSecret: ubag-db-credentials
+    secretKeys:
+      adminPasswordKey: postgres-password
+      userPasswordKey: password
+
 nats:
-  deploy: false   # set true + uncomment dependency to run nats subchart
+  deploy: false
+  config:
+    jetstream:
+      enabled: true
+      fileStore:
+        enabled: true
+        pvc:
+          size: 10Gi
+    cluster:
+      enabled: true
+      replicas: 3
+
 minio:
-  deploy: false   # set true + uncomment dependency to run bitnami/minio
+  deploy: false
+  persistence:
+    enabled: true
+    size: 50Gi
+  auth:
+    existingSecret: ubag-minio-credentials
+    existingSecretPasswordKey: root-password
+
+dragonfly:
+  deploy: false
+  replicaCount: 1

@@ -1,0 +1,35 @@
+# HA in-cluster stack — enables all backing services with production replica counts.
+# Use: helm template deploy/helm/ubag -f deploy/helm/ubag/values-ha.yaml
+
+postgresql:
+  deploy: true
+  primary:
+    persistence:
+      enabled: true
+      size: 50Gi
+  readReplicas:
+    replicaCount: 2
+
+nats:
+  deploy: true
+  config:
+    cluster:
+      enabled: true
+      replicas: 3
+    jetstream:
+      enabled: true
+      fileStore:
+        enabled: true
+        pvc:
+          size: 20Gi
+
+minio:
+  deploy: true
+  replicaCount: 4
+  persistence:
+    enabled: true
+    size: 100Gi
+
+dragonfly:
+  deploy: true
+  replicaCount: 3

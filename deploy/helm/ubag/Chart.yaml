@@ -6,7 +6,7 @@ description: |
   Deploys the Go gateway with HPA, PodDisruptionBudget, NetworkPolicy, and an
   optional Prometheus ServiceMonitor. Backing services (Postgres, Dragonfly,
   NATS, MinIO) are consumed as external services by default; optional in-cluster
-  subcharts can be enabled (see README and the commented dependencies block).
+  subcharts can be enabled via the deploy toggles in values.yaml.
 type: application
 
 # Chart version is independent of the application version.
@@ -32,24 +32,29 @@ maintainers:
 # By default this chart targets EXTERNAL managed services (set the *.deploy
 # toggles to false in values.yaml and provide DSNs/endpoints via Secret).
 #
-# To run backing services in-cluster, uncomment the dependencies below, set the
-# matching <service>.deploy=true in values.yaml, then run:
+# To run backing services in-cluster, set the matching <service>.deploy=true
+# in values.yaml (or values-ha.yaml), then run:
 #
 #   helm dependency update deploy/helm/ubag
 #
-# These are intentionally left commented so `helm lint` and `helm template`
-# pass fully offline without first vendoring subcharts.
+# Conditions are evaluated against values.yaml toggles; when all toggles are
+# false (the default) helm lint and helm template pass fully offline without
+# vendoring subcharts.
 # ---------------------------------------------------------------------------
-# dependencies:
-#   - name: postgresql
-#     version: "~16.0.0"
-#     repository: https://charts.bitnami.com/bitnami
-#     condition: postgres.deploy
-#   - name: nats
-#     version: "~1.2.0"
-#     repository: https://nats-io.github.io/k8s/helm/charts/
-#     condition: nats.deploy
-#   - name: minio
-#     version: "~14.0.0"
-#     repository: https://charts.bitnami.com/bitnami
-#     condition: minio.deploy
+dependencies:
+  - name: postgresql
+    version: "~16.0.0"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.deploy
+  - name: nats
+    version: "~1.2.0"
+    repository: https://nats-io.github.io/k8s/helm/charts/
+    condition: nats.deploy
+  - name: minio
+    version: "~14.0.0"
+    repository: https://charts.bitnami.com/bitnami
+    condition: minio.deploy
+  - name: dragonfly
+    version: "~1.1.0"
+    repository: https://dragonflydb.github.io/charts
+    condition: dragonfly.deploy
