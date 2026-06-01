@@ -13,6 +13,7 @@ data ever flows through these events — only structural concurrency counters.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Optional
 
 from .aimd import CapChange
@@ -39,6 +40,7 @@ def concurrency_change_data(
     integer contract stays stable; the dashboard treats ``0`` as "unbounded".
     """
 
+    region = os.environ.get("UBAG_REGION", "").strip() or "default"
     return {
         "target": target,
         "identity_ref": identity_ref,
@@ -47,6 +49,7 @@ def concurrency_change_data(
         "max": int(maximum) if maximum is not None else 0,
         "in_flight": int(in_flight),
         "reason": change.reason,
+        "region": region,
     }
 
 

@@ -958,6 +958,11 @@ func workerQueueFromEnv(dispatcher executor.Dispatcher, maxRuntime time.Duration
 		if err != nil {
 			return nil, err
 		}
+		// Read region for worker subscription. UBAG_WORKER_ROAMING=1 widens to all regions.
+		workerRegion := strings.TrimSpace(os.Getenv("UBAG_REGION"))
+		if strings.TrimSpace(os.Getenv("UBAG_WORKER_ROAMING")) == "1" {
+			workerRegion = "" // empty = all regions (no region filter segment)
+		}
 		return executor.NewNATSWorkerQueue(executor.NATSWorkerQueueConfig{
 			URL:        url,
 			StreamName: streamName,
@@ -967,6 +972,7 @@ func workerQueueFromEnv(dispatcher executor.Dispatcher, maxRuntime time.Duration
 			NakDelay:   nakDelay,
 			FetchWait:  fetchWait,
 			MaxDeliver: maxDeliver,
+			Region:     workerRegion,
 		})
 	default:
 		return nil, fmt.Errorf("worker consumer requires UBAG_EXECUTOR_MODE=file or nats; got %q", mode)
