@@ -387,6 +387,57 @@ services:
     networks:
       - ubag-private
 
+  # ── WAL archiving + PITR (Task 3.4) — opt-in via COMPOSE_PROFILES=backup ───
+
+  postgres-wal-archive:
+    image: postgres:16-alpine
+    profiles: [backup]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PGPASSWORD=${UBAG_POSTGRES_PASSWORD:-ubag}
+      - MINIO_ENDPOINT=${UBAG_MINIO_ENDPOINT:-minio:9000}
+      - MINIO_ACCESS_KEY=${UBAG_MINIO_ACCESS_KEY:-ubag-admin}
+      - MINIO_SECRET_KEY=${UBAG_MINIO_SECRET_KEY:-ubag-secret-key}
+      - MINIO_BUCKET=${UBAG_MINIO_BUCKET:-ubag-artifacts}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=${UBAG_POSTGRES_USER:-ubag}
+      - POSTGRES_DB=${UBAG_POSTGRES_DB:-ubag}
+    volumes:
+      - ./deploy/small/backup/wal-archive.sh:/scripts/wal-archive.sh:ro
+      - wal_archive_data:/var/lib/wal-archive
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "apk add --no-cache curl && while true; do /scripts/wal-archive.sh; sleep 300; done"
+    networks:
+      - ubag-private
+    restart: unless-stopped
+
+  backup-cron:
+    image: postgres:16-alpine
+    profiles: [backup]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PGPASSWORD=${UBAG_POSTGRES_PASSWORD:-ubag}
+      - MINIO_ENDPOINT=${UBAG_MINIO_ENDPOINT:-minio:9000}
+      - MINIO_ACCESS_KEY=${UBAG_MINIO_ACCESS_KEY:-ubag-admin}
+      - MINIO_SECRET_KEY=${UBAG_MINIO_SECRET_KEY:-ubag-secret-key}
+      - MINIO_BUCKET=${UBAG_MINIO_BUCKET:-ubag-artifacts}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USER=${UBAG_POSTGRES_USER:-ubag}
+      - POSTGRES_DB=${UBAG_POSTGRES_DB:-ubag}
+    volumes:
+      - ./deploy/small/backup/backup-cron.sh:/scripts/backup-cron.sh:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "apk add --no-cache curl && while true; do /scripts/backup-cron.sh; sleep 3600; done"
+    networks:
+      - ubag-private
+    restart: unless-stopped
+
 networks:
   ubag-public:
   ubag-private:
@@ -405,3 +456,4 @@ volumes:
   browser_profiles:
   pyroscope_data:
   glitchtip_data:
+  wal_archive_data: {}
