@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import signal
 import sys
 from pathlib import Path
 
@@ -12,15 +11,29 @@ for import_path in (REPO_ROOT / "apps" / "worker", REPO_ROOT / "adapters" / "moc
     sys.path.insert(0, str(import_path))
 
 from ubag_worker.cli import main  # noqa: E402
+from ubag_worker.runtime.shutdown import GracefulDrainer, install_shutdown_handler  # noqa: E402
 
 
-def _shutdown_handler(sig: int, frame: object) -> None:
-    print("Worker shutting down cleanly (mock).", flush=True)
-    raise SystemExit(0)
+class _MockOrchestrator:
+    """Minimal stub satisfying OrchestratorProtocol for the mock worker.
+    No real tabs are active in the mock worker path, so all_inflight_job_ids
+    always returns empty — drain completes immediately.
+    """
+
+    def concurrency_state(self, tenant_id: str = "") -> object:
+        class _State:
+            inflight = 0
+        return _State()
+
+    def all_inflight_job_ids(self) -> list:
+        return []  # mock worker has no real in-flight jobs
+
+    def set_accepting(self, accepting: bool) -> None:
+        pass  # no-op for mock worker
 
 
-signal.signal(signal.SIGTERM, _shutdown_handler)
-signal.signal(signal.SIGINT, _shutdown_handler)
+_drainer = GracefulDrainer(orchestrator=_MockOrchestrator(), grace_window=5.0)
+install_shutdown_handler(_drainer)
 
 
 if __name__ == "__main__":
