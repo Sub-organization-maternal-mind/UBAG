@@ -1,7 +1,9 @@
 .PHONY: dev dev-edge gateway-build gateway-run gateway-test gateway-vet \
 	ubag-build sidecar-build \
 	test test-v0 test-v0-local itest sdks bench lint release \
-	plugins-build obs-check help
+	plugins-build obs-check \
+	chaos-smoke backup restore restore-verify \
+	help
 
 GATEWAY_DIR := apps/gateway
 
@@ -16,6 +18,10 @@ help:
 	@echo "  make release      - cross-platform build + sign + SBOM (goreleaser)"
 	@echo "  make ubag-build   - build the ubag single binary"
 	@echo "  make sidecar-build - build the Rust sidecar with all features (release)"
+	@echo "  make chaos-smoke  - validate chaos experiment schemas and steady-state evaluator"
+	@echo "  make backup       - create a local backup (SQLite)"
+	@echo "  make restore      - restore from ./ubag-backup-latest"
+	@echo "  make restore-verify - restore and verify integrity"
 
 # --- developer loop -------------------------------------------------------
 dev: dev-edge
@@ -80,3 +86,18 @@ plugins-build:
 obs-check:
 	node tools/check-metrics-cardinality.mjs deploy/grafana/dashboards/09-slo-overview.json || true
 	node tools/check-grafana-dashboards.mjs deploy/grafana/dashboards/
+
+# --- Phase 7: Reliability, chaos, backup ------------------------------------
+
+chaos-smoke:
+	python -m pytest tests/chaos/tests/ -v
+
+backup:
+	cd $(GATEWAY_DIR) && go run ./cmd/ubag backup --out ./ubag-backup-latest
+
+restore:
+	cd $(GATEWAY_DIR) && go run ./cmd/ubag restore --from ./ubag-backup-latest
+
+restore-verify:
+	cd $(GATEWAY_DIR) && go run ./cmd/ubag restore --from ./ubag-backup-latest && \
+	  sqlite3 ubag-gateway.db "PRAGMA integrity_check;"
