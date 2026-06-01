@@ -65,22 +65,36 @@ func (r *Registry) Get(kind Kind, target string) *Breaker {
 // Snapshot returns a point-in-time view of every breaker currently in the
 // registry.  It returns an empty (non-nil) slice when no breakers have been
 // created yet.  Snapshot is concurrency-safe.
+//
+// The registry lock is held only long enough to collect (kind, target, *Breaker)
+// tuples; b.State() is called in a second pass outside r.mu to avoid a
+// lock-ordering deadlock between r.mu and each Breaker's internal mutex.
 func (r *Registry) Snapshot() []BreakerSnapshot {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	entries := make([]struct {
+		kind   Kind
+		target string
+		b      *Breaker
+	}, 0, len(r.breakers))
+	for k, b := range r.breakers {
+		kind, target := splitKey(k)
+		entries = append(entries, struct {
+			kind   Kind
+			target string
+			b      *Breaker
+		}{kind, target, b})
+	}
+	r.mu.Unlock()
 
-	out := make([]BreakerSnapshot, 0, len(r.breakers))
-	for key, b := range r.breakers {
-		// Parse the key back into kind and target.
-		// The key format is "kind:target"; target may itself contain colons.
-		kind, target := splitKey(key)
-		out = append(out, BreakerSnapshot{
-			Kind:   kind,
-			Target: target,
-			State:  b.State(),
+	snaps := make([]BreakerSnapshot, 0, len(entries))
+	for _, e := range entries {
+		snaps = append(snaps, BreakerSnapshot{
+			Kind:   e.kind,
+			Target: e.target,
+			State:  e.b.State(),
 		})
 	}
-	return out
+	return snaps
 }
 
 // splitKey separates the first colon-delimited segment (kind) from the
