@@ -113,6 +113,17 @@ config:
   UBAG_WEBHOOK_ALLOWED_HOSTS: "hooks.example.com"
   UBAG_WEBHOOK_ALLOW_ANY_PUBLIC_HOST: "false"
 
+# L1 semantic cache — enable once an external DragonflyDB / Redis-compatible
+# endpoint is provisioned. Set addr to the cluster-internal or private endpoint.
+# dragonfly.deploy=false in production, so addr is NOT auto-resolved; supply it
+# explicitly or leave enabled=false to disable the cache tier entirely.
+cache:
+  l1:
+    enabled: false
+    addr: ""   # e.g. "dragonfly.cache.svc.cluster.local:6379"
+    maxItems: 50000
+    ttlSeconds: 600
+
 secrets:
   # Reference an externally-managed Secret holding the UBAG_* secret keys.
   existingSecret: ubag-gateway-secrets

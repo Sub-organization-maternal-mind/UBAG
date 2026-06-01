@@ -33,3 +33,12 @@ minio:
 dragonfly:
   deploy: true
   replicaCount: 3
+
+# L1 cache enabled for HA; addr auto-resolves to <release-name>-dragonfly:6379
+# via the configmap template because dragonfly.deploy=true.
+cache:
+  l1:
+    enabled: true
+    addr: ""   # Resolved automatically from release name when dragonfly.deploy=true
+    maxItems: 50000
+    ttlSeconds: 600

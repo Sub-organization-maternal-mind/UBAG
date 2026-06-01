@@ -8,3 +8,13 @@ data:
   {{- range $key, $value := .Values.config }}
   {{ $key }}: {{ $value | quote }}
   {{- end }}
+  {{- with .Values.cache.l1 }}
+  UBAG_CACHE_L1_ENABLED: {{ .enabled | quote }}
+  {{- if $.Values.dragonfly.deploy }}
+  UBAG_CACHE_L1_ADDR: {{ printf "%s-dragonfly:6379" (include "ubag.fullname" $) | quote }}
+  {{- else if .addr }}
+  UBAG_CACHE_L1_ADDR: {{ .addr | quote }}
+  {{- end }}
+  UBAG_CACHE_L1_MAX_ITEMS: {{ .maxItems | quote }}
+  UBAG_CACHE_L1_TTL_SECONDS: {{ .ttlSeconds | quote }}
+  {{- end }}

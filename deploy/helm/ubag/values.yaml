@@ -287,3 +287,15 @@ minio:
 dragonfly:
   deploy: false
   replicaCount: 1
+
+# ---------------------------------------------------------------------------
+# L1 semantic cache — points at in-cluster DragonflyDB when dragonfly.deploy=true.
+# When dragonfly.deploy=true the configmap template auto-sets UBAG_CACHE_L1_ADDR
+# to "<release-name>-dragonfly:6379", ignoring cache.l1.addr.
+# ---------------------------------------------------------------------------
+cache:
+  l1:
+    enabled: false
+    addr: ""         # Override: e.g. "ubag-dragonfly:6379" for external Dragonfly
+    maxItems: 10000
+    ttlSeconds: 300
