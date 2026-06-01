@@ -288,6 +288,28 @@ class LocalPlaywrightEngine(Engine):
         self._closed = True
 
 
+class PatchrightEngine(LocalPlaywrightEngine):
+    """Stealth engine backed by Patchright (drop-in Playwright fork with stealth patches).
+
+    Patchright patches the CDP protocol and browser fingerprint to reduce
+    bot-detection signals (§13.1/§13.2).  Activated when ``UBAG_USE_PATCHRIGHT=1``
+    or when the ``stealth`` flag in :class:`EngineSpec` is ``True``.
+
+    The import is lazy (inside :meth:`launch`) so tests that do not use a real
+    browser never require Patchright to be installed.
+    """
+
+    def launch(self) -> None:  # pragma: no cover - requires real browser
+        try:
+            from patchright.sync_api import sync_playwright as sync_patchright
+        except ImportError:
+            # Fall back to standard Playwright if Patchright is not installed.
+            super().launch()
+            return
+        self._playwright = sync_patchright().start()
+        self._launched = True
+
+
 # ---------------------------------------------------------------------------
 # Engine-portable selector strategy ordering (§13.12)
 # ---------------------------------------------------------------------------
@@ -407,6 +429,8 @@ def select_engine(spec_or_env: Optional[EngineSpec] = None) -> Engine:
     * ``None`` -> read configuration from environment variables.
     * A remote endpoint (in the spec or via ``UBAG_REMOTE_BROWSER_ENDPOINT``)
       yields a :class:`~ubag_worker.live.remote.RemoteGridEngine` (§13.11).
+    * ``UBAG_USE_PATCHRIGHT=1`` or ``spec.stealth=True`` yields a
+      :class:`PatchrightEngine` for anti-detection stealth runs (§13.1/§13.2).
     * Otherwise a local :class:`LocalPlaywrightEngine` is returned (default:
       chromium / CDP). The Playwright import stays lazy until ``launch()``.
     """
@@ -418,6 +442,10 @@ def select_engine(spec_or_env: Optional[EngineSpec] = None) -> Engine:
         from .remote import RemoteGridEngine
 
         return RemoteGridEngine(spec)
+
+    use_patchright = spec.stealth or _env_bool("UBAG_USE_PATCHRIGHT")
+    if use_patchright:
+        return PatchrightEngine(spec)
 
     return LocalPlaywrightEngine(spec)
 
@@ -431,6 +459,7 @@ __all__ = [
     "LocalPlaywrightEngine",
     "MockEngine",
     "NullEngine",
+    "PatchrightEngine",
     "classify_selector",
     "default_protocol_for",
     "engine_spec_from_env",

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "ubag-worker"
+version = "2.1.0"
+description = "UBAG Universal Browser Automation Worker"
+requires-python = ">=3.9"
+readme = "README.md"
+license = { text = "AGPL-3.0" }
+dependencies = []
+
+[project.scripts]
+ubag-worker = "ubag_worker.cli:main"
+
+[project.optional-dependencies]
+live = [
+    "playwright>=1.49",
+    "patchright>=1.49",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live: requires a real browser (playwright / patchright) — skipped in CI unless UBAG_LIVE_TESTS=1",
+]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ubag_worker*"]
