@@ -1,38 +1,94 @@
 ---
 title: Observability
-description: Logs, metrics, traces, profiling, error aggregation, and dashboards.
+description: Logs, metrics, traces, profiling, error aggregation, dashboards, and SLOs — all implemented in Phase 6.
 ---
 
-## Logs
+**Status:** Implemented in Phase 6. See [ADR 0010](/adrs/0010-phase6-wasm-observability).
 
-Structured JSON logs include timestamp, level, service, trace ID, span ID, tenant, app, job, target, adapter, and message. PII redaction applies before emission where configured.
+## Logs (§18.1)
 
-## Metrics
+The gateway emits **contract-conformant JSON logs** (`internal/obs/log.go`) with all required fields:
 
-Prometheus metrics follow RED for endpoints and USE for resources. Cardinality budgets forbid per-job labels.
+| Field | Description |
+|---|---|
+| `timestamp` | RFC3339Nano UTC |
+| `level` | debug / info / warn / error / fatal |
+| `environment` | `UBAG_ENVIRONMENT` env var (default: `local`) |
+| `service` | always `ubag-gateway` |
+| `message` | log message text |
+| `trace_id` | from W3C `traceparent` context |
 
-Gateway `/v1/metrics` emits queue/executor readiness checks plus `ubag_queue_depth`, `ubag_queue_oldest_job_age_seconds`, `ubag_worker_jobs_processed_total`, `ubag_worker_job_duration_seconds`, `ubag_worker_result_ingestions_total`, and `ubag_worker_result_ingestion_duration_seconds`. In the local file-spool bridge, these values are derived from gateway job/spool state and result-ingestion outcomes; production worker fleets should back the same metric families with durable stores.
+**PII/PHI redaction** drops keys matching patterns from `packages/observability/src/safety.mjs` (passwords, tokens, raw_prompt, api_key, etc.). PHI records (`ClassPHI`) are dropped entirely.
 
-Webhook readiness and backlog are exposed through
-`ubag_gateway_ready{check="webhooks"}`, `ubag_webhook_outbox_depth`, and
-`ubag_webhook_outbox_oldest_age_seconds`. Labels stay bounded to
-`endpoint_kind` and delivery `state`; delivery IDs, callback URLs, tenant IDs,
-and app IDs are intentionally excluded from metric labels.
+**Log level hot-reload:** send `SIGHUP` or set `UBAG_LOG_LEVEL=debug`.
 
-## Traces
+The Python worker emits the same JSON schema via `ubag_worker.obs.logging`.
 
-The current contracts reserve W3C trace context fields across SDK, gateway, worker, adapter, normalization, and webhook dispatch. Full OpenTelemetry export is a production hardening item.
+## Metrics (§18.2)
 
-## Dashboards
+Gateway `/v1/metrics` emits the full 22-metric contract from `packages/observability/src/metrics.mjs`. All metrics use only the bounded label names defined in the cardinality budget (≤6 labels per series, no job IDs or tenant IDs in labels).
 
-The small profile ships Prometheus/Grafana scaffolding and metric registries for gateway, queue, worker ingestion, and webhook outbox health. Production dashboards for per-target performance, tenant usage, cache hit rate, and session-pool health are planned hardening work.
+Key counters tracked atomically:
+- `ubag_idempotency_replays_total` — idempotency hit path
+- `ubag_artifact_captures_total` — successful artifact writes
+- `ubag_webhook_deliveries_total` — webhook delivery outcomes
 
-## Synthetic monitoring
+**CI validation:** `node tools/check-metrics-cardinality.mjs` and `node tools/check-grafana-dashboards.mjs` run in every CI push.
 
-The `@ubag/observability` health runner probes gateway, Caddy ingress,
-Prometheus, Grafana, NATS monitor, and MinIO live endpoints. Override local
-defaults with `UBAG_GATEWAY_BASE_URL`, `UBAG_INGRESS_BASE_URL`,
-`UBAG_PROMETHEUS_BASE_URL`, `UBAG_GRAFANA_BASE_URL`,
-`UBAG_NATS_MONITOR_BASE_URL`, and `UBAG_MINIO_API_BASE_URL`.
+## Traces (§18.3)
 
-Provider canaries require user-owned accounts and live manual sessions. The current repository keeps synthetic/provider canary behavior as an activation item rather than an always-on runtime.
+OpenTelemetry SDK is initialised in `internal/obs/otel.go` (`InitTracer`):
+- **No endpoint:** no-op provider installed (zero external dependency)
+- **With `UBAG_OTLP_ENDPOINT`:** OTLP/gRPC exporter to the configured collector
+
+**Sampling:** `ParentBased(ErrorOrRatio{10%})` — 10% root spans, 100% error spans (call `obs.SampleError(ctx)` on error paths).
+
+**Propagation:** W3C `traceparent` + `baggage`. Use `obs.WrapWithOTel(handler, name)` to wrap HTTP handlers with automatic span creation.
+
+The Python worker reads `trace_context.traceparent` from the gateway dispatch envelope and continues the trace via `ubag_worker.obs.tracing`.
+
+## Dashboards (§18.4)
+
+9 Grafana dashboards auto-provisioned under the `observability` compose profile (`deploy/grafana/dashboards/`):
+
+1. **Gateway HTTP** — request rate, p99 latency, inflight
+2. **Jobs Lifecycle** — creation rate, state distribution, idempotency replays
+3. **Queue Depth** — depth by state, oldest job age
+4. **Worker Throughput** — processed/s, duration, ingestion rate, artifact captures
+5. **Webhook Delivery** — attempts, latency, outbox depth
+6. **Channel Pool / AIMD** — adapter requests and latency
+7. **Cache Hit Rate** — idempotency replay fraction
+8. **SSE / Streaming** — active SSE connections
+9. **SLO Overview** — success rates (7d), error budget burn (1h windows)
+
+## Synthetic Monitoring & SLOs (§18.5)
+
+`tools/synthetic-monitor/monitor.mjs` periodically probes each adapter, records success/latency, and exposes `ubag_synthetic_*` Prometheus metrics including:
+- `ubag_synthetic_slo_burn_rate` — ratio of current error rate to allowed error rate
+- `ubag_synthetic_slo_error_rate`
+- `ubag_synthetic_slo_success_rate`
+- `ubag_synthetic_health` — 1=healthy, 0=degraded
+
+### SLO definition
+
+| Signal | Target | Window |
+|---|---|---|
+| Gateway availability | 99.9% | 30 days |
+| Worker job success | 99.5% | 30 days |
+| Webhook delivery | 99.0% | 30 days |
+
+Burn rate alert threshold: >14.4× (exhausts 1-hour budget in 5 minutes).
+
+The Go `FailureBudget` type (`internal/obs/slo.go`) implements the rolling-window math and is unit-tested.
+
+## Profiling / Error Aggregation / Log Shipping (§18.6)
+
+Enable with `docker compose --profile observability up`:
+
+| Service | Image | Purpose |
+|---|---|---|
+| `pyroscope` | `grafana/pyroscope` | Continuous profiling (gateway pprof via `UBAG_PPROF_ADDR`) |
+| `glitchtip` | `glitchtip/glitchtip` | Sentry-compatible error aggregation |
+| `vector` | `timberio/vector` | JSON log scraping → Loki |
+
+Gateway pprof endpoint is enabled when `UBAG_PPROF_ADDR` is set (e.g. `127.0.0.1:6060`).

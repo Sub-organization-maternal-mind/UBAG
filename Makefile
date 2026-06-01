@@ -1,6 +1,7 @@
 .PHONY: dev dev-edge gateway-build gateway-run gateway-test gateway-vet \
 	ubag-build sidecar-build \
-	test test-v0 test-v0-local itest sdks bench lint release help
+	test test-v0 test-v0-local itest sdks bench lint release \
+	plugins-build obs-check help
 
 GATEWAY_DIR := apps/gateway
 
@@ -65,3 +66,17 @@ lint: gateway-vet
 # --- release (blueprint §3.5, §11.7) --------------------------------------
 release:
 	goreleaser release --clean
+
+# --- Phase 6: WASM plugins + observability --------------------------------
+
+# plugins-build: compile the WAT test fixture to .wasm (requires wat2wasm).
+# The committed .wasm files are pre-compiled so CI does not need wat2wasm.
+plugins-build:
+	wat2wasm apps/gateway/internal/plugins/testdata/echo_transform.wat \
+	  -o apps/gateway/internal/plugins/testdata/echo_transform.wasm
+	@echo "echo_transform.wasm rebuilt"
+
+# obs-check: validate metrics cardinality budget and Grafana dashboards.
+obs-check:
+	node tools/check-metrics-cardinality.mjs deploy/grafana/dashboards/09-slo-overview.json || true
+	node tools/check-grafana-dashboards.mjs deploy/grafana/dashboards/

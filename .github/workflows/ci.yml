@@ -105,6 +105,14 @@ jobs:
         run: pnpm test:conformance && pnpm test:observability
       - name: CLI, dashboard, docs
         run: pnpm test:cli && pnpm test:dashboard && pnpm test:docs
+      # Phase 6: metrics cardinality + Grafana dashboard validation
+      - name: Check Grafana dashboards (Task 2.5)
+        run: node tools/check-grafana-dashboards.mjs deploy/grafana/dashboards/
+      - name: Verify committed .wasm fixtures present (Task 1.7)
+        run: |
+          test -f apps/gateway/internal/plugins/testdata/echo_transform.wasm || (echo "echo_transform.wasm missing" && exit 1)
+          test -f apps/gateway/internal/plugins/testdata/infinite_loop.wasm || (echo "infinite_loop.wasm missing" && exit 1)
+          echo "WASM fixtures: OK"
 
   security-scan:
     name: Supply-chain & vuln scan
