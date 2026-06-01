@@ -97,24 +97,23 @@ func (w *DeliveryWorker) RunOnce(ctx context.Context) (bool, error) {
 			return true, err
 		}
 		switch {
-		case result.StatusCode >= 200 && result.StatusCode < 300:
+		case result.ErrorClass == "none":
 			if err := w.Store.MarkDelivered(ctx, delivery.ID, delivery.LeaseID, result); err != nil {
 				return true, err
 			}
-		case result.ErrorClass == "circuit_open" && w.Breakers != nil:
+		case result.ErrorClass == "circuit_open":
 			// Use the breaker's cooldown as the retry delay to avoid DLQ churn.
-			var next time.Time
-			if u, parseErr := url.Parse(delivery.URL); parseErr == nil {
-				host := u.Hostname()
-				b := w.Breakers.Get(resilience.KindWebhook, host)
-				cooldown := b.CooldownRemaining()
-				if cooldown <= 0 {
-					cooldown = time.Second // fallback minimum
+			cooldown := time.Second // default floor
+			if w.Breakers != nil {
+				// url.Parse failure here is unreachable in practice — ValidateCallbackURL
+				// filters malformed URLs before they reach the delivery queue.
+				if u, parseErr := url.Parse(delivery.URL); parseErr == nil {
+					if remaining := w.Breakers.Get(resilience.KindWebhook, u.Hostname()).CooldownRemaining(); remaining > cooldown {
+						cooldown = remaining
+					}
 				}
-				next = now().UTC().Add(cooldown)
-			} else {
-				next = NextRetryAt(now().UTC(), delivery.ID, delivery.AttemptCount+1, w.RetryPolicy)
 			}
+			next := now().UTC().Add(cooldown)
 			if err := w.Store.MarkRetry(ctx, delivery.ID, delivery.LeaseID, next, result); err != nil {
 				return true, err
 			}

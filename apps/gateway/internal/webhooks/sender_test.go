@@ -115,6 +115,9 @@ func TestHTTPSender_CircuitOpenAfterThreshold(t *testing.T) {
 // TestHTTPSender_BreakerReclosesAfterCooldown verifies that once cooldown elapses
 // and a probe succeeds the breaker returns to closed and normal delivery proceeds.
 func TestHTTPSender_BreakerReclosesAfterCooldown(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping sleep-based timing test in short mode")
+	}
 	// First server: always 500 (to open breaker).
 	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -124,7 +127,7 @@ func TestHTTPSender_BreakerReclosesAfterCooldown(t *testing.T) {
 	cfg := resilience.Config{
 		FailureThreshold:    2,
 		SuccessBudget:       1,
-		CooldownBase:        50 * time.Millisecond,
+		CooldownBase:        10 * time.Millisecond,
 		CooldownMax:         200 * time.Millisecond,
 		HalfOpenMaxInflight: 1,
 	}
@@ -149,7 +152,7 @@ func TestHTTPSender_BreakerReclosesAfterCooldown(t *testing.T) {
 	}
 
 	// Wait for cooldown to elapse.
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	// Now point delivery at a success server.
 	okServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

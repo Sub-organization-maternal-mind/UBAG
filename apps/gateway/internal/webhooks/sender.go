@@ -85,6 +85,9 @@ func (s HTTPSender) Send(ctx context.Context, delivery Delivery) (AttemptResult,
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, delivery.URL, bytes.NewReader(delivery.Payload))
 	if err != nil {
+		if breaker != nil {
+			breaker.RecordFailure()
+		}
 		result.ErrorClass = "request_invalid"
 		result.ErrorMessage = err.Error()
 		return result, nil
