@@ -30,6 +30,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/abac"
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	"github.com/ubag/ubag/apps/gateway/internal/appjwt"
+	"github.com/ubag/ubag/apps/gateway/internal/compliance"
 	"github.com/ubag/ubag/apps/gateway/internal/outbox"
 	"github.com/ubag/ubag/apps/gateway/internal/pat"
 	"github.com/ubag/ubag/apps/gateway/internal/semanticcache"
@@ -175,6 +176,10 @@ type Config struct {
 	// active. Both may be configured simultaneously.
 	SemanticCache semanticcache.Store
 
+	// PrivacyStore backs POST /v1/privacy/export and /v1/privacy/erase (§28).
+	// When nil, the routes return 501.
+	PrivacyStore compliance.Store
+
 	// MaxQueueDepth is the pending-job ceiling before the gateway returns
 	// UBAG-QUEUE-BACKPRESSURE-002 (429). Zero disables the check.
 	// Defaults to UBAG_MAX_QUEUE_DEPTH env var if set, or 10000.
@@ -224,6 +229,7 @@ type Server struct {
 	appJWTPublicKey  *crypto_rsa.PublicKey
 	abacEnforcer     *abac.Enforcer
 	semanticCache    semanticcache.Store
+	privacyStore     compliance.Store
 
 	metrics *metricState
 	mux     chi.Router
@@ -365,6 +371,7 @@ func NewServer(config Config) *Server {
 		appJWTPublicKey:  config.AppJWTPublicKey,
 		abacEnforcer:     config.ABACEnforcer,
 		semanticCache:    config.SemanticCache,
+		privacyStore:     config.PrivacyStore,
 
 		metrics: &metricState{
 			requests:    make(map[string]int),
@@ -448,6 +455,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/jobs/*", s.handleJobByID)       // chi wildcard: all /v1/jobs/{id}/... sub-paths
 	s.mux.HandleFunc("/v1/sse/jobs/*", s.handleJobSSE)
 	s.mux.HandleFunc("/v1/auth/pat", s.handleIssuePAT)
+	s.mux.HandleFunc("/v1/privacy/export", s.handlePrivacyExport)
+	s.mux.HandleFunc("/v1/privacy/erase", s.handlePrivacyErase)
 	// Note: catch-all 404 is handled via s.mux.NotFound() registered above.
 }
 
