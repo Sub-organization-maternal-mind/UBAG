@@ -35,6 +35,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/compliance"
 	"github.com/ubag/ubag/apps/gateway/internal/outbox"
 	"github.com/ubag/ubag/apps/gateway/internal/pat"
+	"github.com/ubag/ubag/apps/gateway/internal/plugins"
 	"github.com/ubag/ubag/apps/gateway/internal/resilience"
 	"github.com/ubag/ubag/apps/gateway/internal/semanticcache"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
@@ -189,6 +190,9 @@ type Config struct {
 	MaxQueueDepth int
 
 	MaxBodyBytes int64
+
+	// Plugins is the optional WASM plugin host. When nil, no plugin hooks run.
+	Plugins *plugins.Host
 }
 
 type Server struct {
@@ -233,6 +237,7 @@ type Server struct {
 	abacEnforcer     *abac.Enforcer
 	semanticCache    semanticcache.Store
 	privacyStore     compliance.Store
+	plugins          *plugins.Host // nil-safe: no host → no hooks run
 
 	metrics *metricState
 	mux     chi.Router
@@ -375,6 +380,7 @@ func NewServer(config Config) *Server {
 		abacEnforcer:     config.ABACEnforcer,
 		semanticCache:    config.SemanticCache,
 		privacyStore:     config.PrivacyStore,
+		plugins:          config.Plugins,
 
 		metrics: &metricState{
 			requests:    make(map[string]int),
@@ -1350,6 +1356,38 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Custom-validator plugin hook: validate job input before proceeding.
+	if s.plugins != nil {
+		inputJSON, _ := json.Marshal(request.Job.Input)
+		if result, err := s.plugins.RunHooks(r.Context(), "validate", inputJSON); err != nil {
+			s.writeError(w, r, http.StatusInternalServerError, internalError("plugin validator error"))
+			return
+		} else if result.Action == "reject" {
+			reason := result.Reason
+			if reason == "" {
+				reason = "rejected by plugin validator"
+			}
+			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-PLUGIN-REJECT-001", reason))
+			return
+		}
+	}
+
+	// Pre-job plugin hook: runs before the job is created.
+	if s.plugins != nil {
+		hookPayload, _ := json.Marshal(request.Job)
+		if result, err := s.plugins.RunHooks(r.Context(), "job.pre", hookPayload); err != nil {
+			s.writeError(w, r, http.StatusInternalServerError, internalError("plugin pre-job hook error"))
+			return
+		} else if result.Action == "reject" {
+			reason := result.Reason
+			if reason == "" {
+				reason = "rejected by plugin"
+			}
+			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-PLUGIN-REJECT-001", reason))
+			return
+		}
+	}
+
 	requestHash, err := canonicalCreateJobHash(apiVersion, request)
 	if err != nil {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-JSON-001", "request body must be valid JSON"))
@@ -1440,6 +1478,9 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to marshal job envelope"))
 			return
 		}
+		// Outbox path: write to the reliable local buffer — the relay dispatcher handles
+		// the actual enqueue, and the breaker wraps the relay's EnqueueJob call.
+		// No breaker check is needed here; the outbox write itself cannot be circuit-broken.
 		if err := s.outbox.Append(r.Context(), job.ID, "jobs.dispatch", envelopeBytes); err != nil {
 			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
 			_ = s.idempotency.Release(r.Context(), scope)

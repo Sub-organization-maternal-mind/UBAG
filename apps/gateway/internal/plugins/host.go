@@ -53,8 +53,10 @@ var targetCapability = map[string]Capability{
 // eventCapability maps a hook event string to the corresponding Capability
 // constant.
 var eventCapability = map[string]Capability{
-	"job.pre":  CapabilityHookJobPre,
-	"job.post": CapabilityHookJobPost,
+	"job.pre":           CapabilityHookJobPre,
+	"job.post":          CapabilityHookJobPost,
+	"webhook.transform": CapabilityHookWebhookTransform,
+	"validate":          CapabilityHookValidate,
 }
 
 // HostOptions configures a Host.  The only required field is BuildExecutor.

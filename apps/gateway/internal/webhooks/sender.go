@@ -3,6 +3,7 @@ package webhooks
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ubag/ubag/apps/gateway/internal/plugins"
 	"github.com/ubag/ubag/apps/gateway/internal/resilience"
 )
 
@@ -28,6 +30,7 @@ type HTTPSender struct {
 	MaxResponseBytes int64
 	APIVersion       string
 	Breakers         *resilience.Registry // optional; nil disables breaker logic
+	Plugins          *plugins.Host        // optional; nil skips transform hook
 }
 
 func (s HTTPSender) Send(ctx context.Context, delivery Delivery) (AttemptResult, error) {
@@ -42,6 +45,24 @@ func (s HTTPSender) Send(ctx context.Context, delivery Delivery) (AttemptResult,
 		result.ErrorMessage = err.Error()
 		result.Retryable = false
 		return result, nil
+	}
+	// Webhook-transformer plugin hook: shape the payload before signing.
+	if s.Plugins != nil && len(delivery.Payload) > 0 {
+		hookPayload, _ := json.Marshal(map[string]any{
+			"url":     delivery.URL,
+			"payload": json.RawMessage(delivery.Payload),
+		})
+		if hookResult, err := s.Plugins.RunHooks(ctx, "webhook.transform", hookPayload); err == nil &&
+			hookResult.Action == "continue" && len(hookResult.Payload) > 0 {
+			var out struct {
+				Payload json.RawMessage `json:"payload"`
+			}
+			if json.Unmarshal(hookResult.Payload, &out) == nil && len(out.Payload) > 0 {
+				d := delivery
+				d.Payload = []byte(out.Payload)
+				delivery = d
+			}
+		}
 	}
 	resolver := s.SecretResolver
 	if resolver == nil {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	"github.com/ubag/ubag/apps/gateway/internal/plugins"
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
 )
 
@@ -54,6 +55,7 @@ type WorkerConsumer struct {
 	Concurrency      *topology.ConcurrencyRegistry
 	Topology         topology.TopologyIngestor
 	PollInterval     time.Duration
+	Plugins          *plugins.Host // optional; nil disables post-job hook
 }
 
 type WorkerQueue interface {
@@ -288,6 +290,15 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	}
 	if finalJob.Status == jobstore.StatusCompleted || finalJob.Status == jobstore.StatusCompletedWithWarnings {
 		c.releaseConcurrencyToken(finalJob)
+		if c.Plugins != nil {
+			hookPayload, _ := json.Marshal(map[string]any{
+				"job_id": finalJob.ID,
+				"status": string(finalJob.Status),
+				"target": finalJob.Target,
+			})
+			_, _ = c.Plugins.RunHooks(ctx, "job.post", hookPayload)
+			// post-job hooks are best-effort: ignore reject/error so terminal processing always completes
+		}
 		if err := c.notifyTerminalJob(ctx, lease, finalJob); err != nil {
 			return true, err
 		}
