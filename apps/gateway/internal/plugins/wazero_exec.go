@@ -109,6 +109,18 @@ func (e *WasmExecutor) Close(ctx context.Context) error {
 	return e.rt.Close(ctx)
 }
 
+// HasTransform reports whether the compiled WASM module exported a "transform"
+// function.  Used by the PluginHost to validate capability/export alignment.
+func (e *WasmExecutor) HasTransform() bool {
+	return e.transformFn != nil
+}
+
+// HasHook reports whether the compiled WASM module exported a "hook" function.
+// Used by the PluginHost to validate capability/export alignment.
+func (e *WasmExecutor) HasHook() bool {
+	return e.hookFn != nil
+}
+
 // Transform calls the guest's alloc + transform exports using the v1 ABI:
 //
 //  1. alloc(len) → ptr
