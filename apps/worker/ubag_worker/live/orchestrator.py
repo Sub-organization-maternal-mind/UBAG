@@ -122,6 +122,7 @@ class LiveOrchestrator:
         self._requeue_callback = requeue_callback
         self._pools: Dict[_Key, ChannelPool] = {}
         self._aimd: Dict[_Key, AIMDController] = {}
+        self._accepting: bool = True
         # Lock ordering: self._lock (RLock) is always acquired before
         # BulkheadRegistry._lock (plain Lock). Never acquire in reverse order.
         self._lock = threading.RLock()
@@ -145,6 +146,24 @@ class LiveOrchestrator:
 
         with self._lock:
             key = (tenant_id, provider_id, identity_ref)
+
+            # Shutdown admission check — reject immediately if not accepting
+            if not self._accepting:
+                backpressure_result = AssignResult(
+                    outcome=AssignOutcome.ENQUEUED,
+                    job_id=job_id,
+                    tab=None,
+                    conversation_id=conversation_id,
+                )
+                return LiveLease(
+                    key=key,
+                    tenant_id=tenant_id,
+                    provider_id=provider_id,
+                    identity_ref=identity_ref,
+                    pool=self._pools.get(key),
+                    context=None,
+                    result=backpressure_result,
+                )
 
             # Bulkhead admission check — reject before allocating any resources
             # so the job stays queued at a higher level for backpressure.
@@ -294,6 +313,21 @@ class LiveOrchestrator:
             self._requeue_callback(job_id)  # type: ignore[misc]  # guarded above
 
         return change
+
+    def set_accepting(self, accepting: bool) -> None:
+        """Enable or disable accepting new leases (used during graceful shutdown)."""
+        with self._lock:
+            self._accepting = accepting
+
+    def all_inflight_job_ids(self) -> List[str]:
+        """Return all currently in-flight job IDs across all tenant/target pools."""
+        with self._lock:
+            job_ids: List[str] = []
+            for pool in self._pools.values():
+                for tab in pool.tabs:
+                    if tab.state == TabState.BUSY and tab.current_job_id is not None:
+                        job_ids.append(tab.current_job_id)
+            return job_ids
 
     def concurrency_state(self, lease: LiveLease) -> ConcurrencyState:
         """Project the lease's pool ceiling for a ``concurrency.cap_changed`` event."""
