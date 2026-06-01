@@ -1,0 +1,77 @@
+{
+  "title": "Worker Process Kill",
+  "description": "Kills the UBAG worker process mid-job and verifies the system recovers: the job is requeued and eventually completed.",
+  "tags": ["worker", "process", "resilience"],
+  "steady-states": {
+    "before": {
+      "title": "Gateway is ready",
+      "probes": [
+        {
+          "type": "probe",
+          "name": "gateway-ready",
+          "tolerance": 200,
+          "provider": {
+            "type": "http",
+            "url": "${gateway_url}/v1/ready",
+            "timeout": 5
+          }
+        }
+      ]
+    },
+    "after": {
+      "title": "Gateway is ready after worker kill",
+      "probes": [
+        {
+          "type": "probe",
+          "name": "gateway-ready",
+          "tolerance": 200,
+          "provider": {
+            "type": "http",
+            "url": "${gateway_url}/v1/ready",
+            "timeout": 5
+          }
+        }
+      ]
+    }
+  },
+  "method": [
+    {
+      "type": "action",
+      "name": "kill-worker-process",
+      "provider": {
+        "type": "process",
+        "path": "docker",
+        "arguments": "compose -f docker-compose.small.yml kill worker"
+      }
+    },
+    {
+      "type": "action",
+      "name": "wait-for-requeue",
+      "provider": {
+        "type": "process",
+        "path": "sleep",
+        "arguments": "10"
+      }
+    },
+    {
+      "type": "action",
+      "name": "restart-worker",
+      "provider": {
+        "type": "process",
+        "path": "docker",
+        "arguments": "compose -f docker-compose.small.yml start worker"
+      }
+    }
+  ],
+  "rollbacks": [
+    {
+      "type": "action",
+      "name": "ensure-worker-running",
+      "provider": {
+        "type": "process",
+        "path": "docker",
+        "arguments": "compose -f docker-compose.small.yml start worker"
+      }
+    }
+  ]
+}

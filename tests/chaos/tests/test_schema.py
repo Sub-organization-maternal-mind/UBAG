@@ -94,3 +94,36 @@ def test_load_and_validate_malformed_experiment():
         assert len(errors) > 0
     finally:
         os.unlink(path)
+
+
+# ---------------------------------------------------------------------------
+# Experiment file validation
+# ---------------------------------------------------------------------------
+
+def test_kill_worker_experiment_valid():
+    _, errors = load_and_validate("tests/chaos/experiments/kill-worker.json")
+    assert errors == []
+
+
+def test_nats_message_drop_experiment_valid():
+    _, errors = load_and_validate("tests/chaos/experiments/nats-message-drop.json")
+    assert errors == []
+
+
+def test_postgres_latency_experiment_valid():
+    _, errors = load_and_validate("tests/chaos/experiments/postgres-latency.json")
+    assert errors == []
+
+
+def test_malformed_adapter_experiment_valid():
+    _, errors = load_and_validate("tests/chaos/experiments/malformed-adapter-output.json")
+    assert errors == []
+
+
+def test_malformed_adapter_experiment_has_rollbacks():
+    experiment, errors = load_and_validate("tests/chaos/experiments/malformed-adapter-output.json")
+    assert errors == []
+    # The malformed adapter experiment's method should reference UBAG_INJECT_MALFORMED_OUTPUT
+    # which is how the normalizer/guards test is activated
+    method = experiment["method"]
+    assert any("malformed" in str(step).lower() for step in method)

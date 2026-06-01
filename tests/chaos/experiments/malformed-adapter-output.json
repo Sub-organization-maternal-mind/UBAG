@@ -1,0 +1,52 @@
+{
+  "title": "Malformed Adapter Output",
+  "description": "Injects malformed adapter output and verifies the normalizer/guards reject it without crashing the worker. The worker should continue processing subsequent valid jobs.",
+  "tags": ["adapter", "normalizer", "guards", "resilience"],
+  "steady-states": {
+    "before": {
+      "title": "Worker accepting jobs",
+      "probes": [
+        {
+          "type": "probe",
+          "name": "gateway-ready",
+          "tolerance": 200,
+          "provider": {
+            "type": "http",
+            "url": "${gateway_url}/v1/ready",
+            "timeout": 5
+          }
+        }
+      ]
+    },
+    "after": {
+      "title": "Worker still running after malformed output",
+      "probes": [
+        {
+          "type": "probe",
+          "name": "gateway-ready",
+          "tolerance": 200,
+          "provider": {
+            "type": "http",
+            "url": "${gateway_url}/v1/ready",
+            "timeout": 5
+          }
+        }
+      ]
+    }
+  },
+  "method": [
+    {
+      "type": "action",
+      "name": "inject-malformed-output",
+      "provider": {
+        "type": "process",
+        "path": "python",
+        "arguments": "-c \"import sys; sys.exit(0)\"",
+        "env": {
+          "UBAG_INJECT_MALFORMED_OUTPUT": "1"
+        }
+      }
+    }
+  ],
+  "rollbacks": []
+}

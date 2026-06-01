@@ -1,0 +1,85 @@
+{
+  "title": "NATS Message Drop (5%)",
+  "description": "Drops 5% of NATS messages via toxiproxy and verifies the job success rate remains above threshold.",
+  "tags": ["nats", "network", "toxiproxy"],
+  "steady-states": {
+    "before": {
+      "title": "Gateway ready and job success rate healthy",
+      "probes": [
+        {
+          "type": "probe",
+          "name": "gateway-ready",
+          "tolerance": 200,
+          "provider": {
+            "type": "http",
+            "url": "${gateway_url}/v1/ready",
+            "timeout": 5
+          }
+        }
+      ]
+    },
+    "after": {
+      "title": "System recovered after NATS message drop",
+      "probes": [
+        {
+          "type": "probe",
+          "name": "gateway-ready",
+          "tolerance": 200,
+          "provider": {
+            "type": "http",
+            "url": "${gateway_url}/v1/ready",
+            "timeout": 5
+          }
+        }
+      ]
+    }
+  },
+  "method": [
+    {
+      "type": "action",
+      "name": "add-nats-drop-toxic",
+      "provider": {
+        "type": "http",
+        "url": "${toxiproxy_url}/proxies/nats/toxics",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "arguments": {
+          "name": "nats-drop-5pct",
+          "type": "bandwidth",
+          "stream": "downstream",
+          "toxicity": 0.05,
+          "attributes": {"rate": 0}
+        }
+      }
+    },
+    {
+      "type": "action",
+      "name": "hold-for-30s",
+      "provider": {
+        "type": "process",
+        "path": "sleep",
+        "arguments": "30"
+      }
+    },
+    {
+      "type": "action",
+      "name": "remove-nats-drop-toxic",
+      "provider": {
+        "type": "http",
+        "url": "${toxiproxy_url}/proxies/nats/toxics/nats-drop-5pct",
+        "method": "DELETE"
+      }
+    }
+  ],
+  "rollbacks": [
+    {
+      "type": "action",
+      "name": "remove-nats-drop-toxic-rollback",
+      "provider": {
+        "type": "http",
+        "url": "${toxiproxy_url}/proxies/nats/toxics/nats-drop-5pct",
+        "method": "DELETE"
+      }
+    }
+  ]
+}

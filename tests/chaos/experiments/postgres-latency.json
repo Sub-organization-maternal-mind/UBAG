@@ -1,0 +1,88 @@
+{
+  "title": "Postgres +500ms Latency",
+  "description": "Injects 500ms latency on the Postgres proxy via toxiproxy and verifies the system remains functional under elevated database response times.",
+  "tags": ["postgres", "latency", "toxiproxy", "resilience"],
+  "steady-states": {
+    "before": {
+      "title": "Gateway ready and Postgres reachable",
+      "probes": [
+        {
+          "type": "probe",
+          "name": "gateway-ready",
+          "tolerance": 200,
+          "provider": {
+            "type": "http",
+            "url": "${gateway_url}/v1/ready",
+            "timeout": 5
+          }
+        }
+      ]
+    },
+    "after": {
+      "title": "System recovered after Postgres latency injection",
+      "probes": [
+        {
+          "type": "probe",
+          "name": "gateway-ready",
+          "tolerance": 200,
+          "provider": {
+            "type": "http",
+            "url": "${gateway_url}/v1/ready",
+            "timeout": 5
+          }
+        }
+      ]
+    }
+  },
+  "method": [
+    {
+      "type": "action",
+      "name": "add-postgres-latency-toxic",
+      "provider": {
+        "type": "http",
+        "url": "${toxiproxy_url}/proxies/postgres/toxics",
+        "method": "POST",
+        "headers": {"Content-Type": "application/json"},
+        "arguments": {
+          "name": "postgres-latency-500ms",
+          "type": "latency",
+          "stream": "downstream",
+          "toxicity": 1.0,
+          "attributes": {
+            "latency": 500,
+            "jitter": 0
+          }
+        }
+      }
+    },
+    {
+      "type": "action",
+      "name": "hold-for-30s",
+      "provider": {
+        "type": "process",
+        "path": "sleep",
+        "arguments": "30"
+      }
+    },
+    {
+      "type": "action",
+      "name": "remove-postgres-latency-toxic",
+      "provider": {
+        "type": "http",
+        "url": "${toxiproxy_url}/proxies/postgres/toxics/postgres-latency-500ms",
+        "method": "DELETE"
+      }
+    }
+  ],
+  "rollbacks": [
+    {
+      "type": "action",
+      "name": "remove-postgres-latency-toxic-rollback",
+      "provider": {
+        "type": "http",
+        "url": "${toxiproxy_url}/proxies/postgres/toxics/postgres-latency-500ms",
+        "method": "DELETE"
+      }
+    }
+  ]
+}
