@@ -1,0 +1,85 @@
+# UBAG — Production Caddyfile (standard profile)
+#
+# Requires a custom Caddy build with:
+#   xcaddy build \
+#     --with github.com/mholt/caddy-ratelimit \
+#     --with github.com/corazawaf/coraza-caddy/v2
+#
+# Run: caddy run --config deploy/caddy/Caddyfile.standard
+# Profile selection: set UBAG_CADDY_PROFILE=standard (default) or =small for loopback dev.
+
+{
+  # TLS via ACME (Let's Encrypt / ZeroSSL).  Do NOT set auto_https off here —
+  # the "small" profile's Caddyfile handles loopback dev with auto_https off.
+  auto_https on
+
+  # HTTP/3 (QUIC) in addition to h1 + h2.
+  servers {
+    protocols h1 h2 h3
+  }
+
+  # Admin API restricted to loopback — never exposed to the public interface.
+  admin localhost:2019
+
+  # Rate-limit zone: 100 requests per 60-second window, per remote IP.
+  # Applied to /v1/* routes below.
+  rate_limit {
+    zone api_per_ip {
+      key   {remote_host}
+      events 100
+      window 60s
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Public HTTPS site
+# ---------------------------------------------------------------------------
+{$UBAG_DOMAIN:ubag.example.com} {
+
+  # ── Compression ────────────────────────────────────────────────────────────
+  encode zstd gzip
+
+  # ── Security headers ───────────────────────────────────────────────────────
+  header {
+    X-Content-Type-Options  "nosniff"
+    Referrer-Policy         "no-referrer"
+    X-Frame-Options         "DENY"
+    X-XSS-Protection        "1; mode=block"
+    Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+    # Remove headers that leak server internals
+    -Server
+  }
+
+  # ── WAF (Coraza) ───────────────────────────────────────────────────────────
+  # import coraza.conf  # Task 1.2 — enable WAF
+
+  # ── Hidden internal routes (respond 404 before any proxy) ─────────────────
+  handle /v1/metrics* {
+    respond "not found" 404
+  }
+
+  handle /v1/ready* {
+    respond "not found" 404
+  }
+
+  # ── Public API — rate-limited reverse proxy ────────────────────────────────
+  handle /v1/* {
+    rate_limit api_per_ip
+
+    reverse_proxy {$UBAG_BACKEND_ADDR:gateway:8080} {
+      header_up X-Forwarded-For {remote_host}
+      header_up X-Real-IP       {remote_host}
+    }
+  }
+
+  # ── Health check (plain, no rate limit) ───────────────────────────────────
+  handle /healthz {
+    respond "ok" 200
+  }
+
+  # ── Catch-all ─────────────────────────────────────────────────────────────
+  handle {
+    respond "UBAG gateway — API routes available under /v1/*" 200
+  }
+}
