@@ -109,7 +109,11 @@ func hostAllowed(host string, allowed []string) bool {
 	for _, pattern := range allowed {
 		normalized := strings.ToLower(pattern)
 		if strings.HasPrefix(normalized, "*.") {
-			suffix := normalized[1:] // ".example.com" — matches subdomains only, NOT the apex
+			// suffix is ".example.com" — matches sub.example.com, deep.sub.example.com, etc.
+			// Intentionally does NOT match the apex domain (example.com) unlike the TS
+			// source, which had a bug: *.foo.com matching foo.com is not standard glob
+			// behaviour and was a security risk.
+			suffix := normalized[1:]
 			if strings.HasSuffix(host, suffix) {
 				return true
 			}

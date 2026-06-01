@@ -38,21 +38,21 @@ var knownCapabilities = map[Capability]struct{}{
 type HostFunctionName string
 
 const (
-	HostFnLog     HostFunctionName = "log"
-	HostFnClock   HostFunctionName = "clock"
-	HostFnRandom  HostFunctionName = "random"
-	HostFnFetch   HostFunctionName = "fetch"
+	HostFnLog      HostFunctionName = "log"
+	HostFnClock    HostFunctionName = "clock"
+	HostFnRandom   HostFunctionName = "random"
+	HostFnFetch    HostFunctionName = "fetch"
 	HostFnReadFile HostFunctionName = "read_file"
-	HostFnGetEnv  HostFunctionName = "get_env"
+	HostFnGetEnv   HostFunctionName = "get_env"
 )
 
 var knownHostFunctions = map[HostFunctionName]struct{}{
-	HostFnLog:     {},
-	HostFnClock:   {},
-	HostFnRandom:  {},
-	HostFnFetch:   {},
+	HostFnLog:      {},
+	HostFnClock:    {},
+	HostFnRandom:   {},
+	HostFnFetch:    {},
 	HostFnReadFile: {},
-	HostFnGetEnv:  {},
+	HostFnGetEnv:   {},
 }
 
 // EntrypointType identifies the WASM component model variant.
@@ -200,25 +200,25 @@ func ParseManifest(data []byte) (Manifest, error) {
 
 	// schema_version
 	if sv, _ := record["schema_version"].(string); sv != SchemaVersion {
-		issues.add(fmt.Sprintf("schema_version must be %q", SchemaVersion))
+		issues.addUnique(fmt.Sprintf("schema_version must be %q", SchemaVersion))
 	}
 
 	// id
 	id, _ := record["id"].(string)
 	if !idPattern.MatchString(id) {
-		issues.add("id must match ^[a-z0-9][a-z0-9_-]{1,63}$")
+		issues.addUnique("id must match ^[a-z0-9][a-z0-9_-]{1,63}$")
 	}
 
 	// display_name
 	displayName, _ := record["display_name"].(string)
 	if displayName == "" {
-		issues.add("display_name must be a non-empty string")
+		issues.addUnique("display_name must be a non-empty string")
 	}
 
 	// version
 	version, _ := record["version"].(string)
 	if !semverPattern.MatchString(version) {
-		issues.add("version must be a semantic version string")
+		issues.addUnique("version must be a semantic version string")
 	}
 
 	// description (optional)
@@ -227,7 +227,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 		if s, ok := rawDesc.(string); ok {
 			description = s
 		} else if rawDesc != nil {
-			issues.add("description must be a string")
+			issues.addUnique("description must be a string")
 		}
 	}
 
@@ -267,7 +267,7 @@ func ParseManifest(data []byte) (Manifest, error) {
 func parseCapabilities(raw any, issues *issueCollector) []Capability {
 	arr, ok := raw.([]any)
 	if !ok || len(arr) == 0 {
-		issues.add("capabilities must be a non-empty array")
+		issues.addUnique("capabilities must be a non-empty array")
 		return nil
 	}
 	seen := map[Capability]struct{}{}
@@ -294,7 +294,7 @@ func parseCapabilities(raw any, issues *issueCollector) []Capability {
 func parseHostFunctions(raw any, issues *issueCollector) []HostFunctionName {
 	arr, ok := raw.([]any)
 	if !ok {
-		issues.add("permissions.host_functions must be an array")
+		issues.addUnique("permissions.host_functions must be an array")
 		return nil
 	}
 	seen := map[HostFunctionName]struct{}{}
@@ -388,10 +388,10 @@ func parsePermissions(raw any, issues *issueCollector) Permissions {
 	maxExec := parsePositiveInt(rec["max_execution_ms"], "permissions.max_execution_ms", defaultMaxExecutionMS, minExecutionMS, issues)
 
 	return Permissions{
-		HostFunctions: hostFns,
-		Network:       NetworkPermission{Allowed: netAllowed, AllowedHosts: netHosts},
-		Filesystem:    FilesystemPermission{Allowed: fsAllowed, AllowedPaths: fsPaths},
-		Env:           EnvPermission{Allowed: envAllowed, AllowedKeys: envKeys},
+		HostFunctions:  hostFns,
+		Network:        NetworkPermission{Allowed: netAllowed, AllowedHosts: netHosts},
+		Filesystem:     FilesystemPermission{Allowed: fsAllowed, AllowedPaths: fsPaths},
+		Env:            EnvPermission{Allowed: envAllowed, AllowedKeys: envKeys},
 		MaxMemoryBytes: maxMem,
 		MaxExecutionMS: maxExec,
 	}
@@ -430,7 +430,12 @@ func parseEntrypoint(raw any, issues *issueCollector) Entrypoint {
 	}
 
 	var exports EntrypointExports
-	if rawExports, ok := rec["exports"].(map[string]any); ok {
+	rawExportsAny, exportsPresent := rec["exports"]
+	if !exportsPresent || rawExportsAny == nil {
+		issues.addUnique("entrypoint.exports must be an object")
+	} else if rawExports, ok := rawExportsAny.(map[string]any); !ok {
+		issues.addUnique("entrypoint.exports must be an object")
+	} else {
 		if s, ok := rawExports["transform"].(string); ok && s != "" {
 			exports.Transform = s
 		} else if rawExports["transform"] != nil {
@@ -446,8 +451,6 @@ func parseEntrypoint(raw any, issues *issueCollector) Entrypoint {
 		} else if rawExports["init"] != nil {
 			issues.addUnique("entrypoint.exports.init must be a non-empty string")
 		}
-	} else if rec["exports"] != nil {
-		issues.addUnique("entrypoint.exports must be an object")
 	}
 
 	return Entrypoint{
@@ -508,14 +511,6 @@ func containsHostFn(fns []HostFunctionName, target HostFunctionName) bool {
 type issueCollector struct {
 	list []string
 	set  map[string]struct{}
-}
-
-func (ic *issueCollector) add(msg string) {
-	if ic.set == nil {
-		ic.set = make(map[string]struct{})
-	}
-	ic.list = append(ic.list, msg)
-	ic.set[msg] = struct{}{}
 }
 
 func (ic *issueCollector) addUnique(msg string) {

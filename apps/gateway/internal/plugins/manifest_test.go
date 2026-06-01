@@ -172,13 +172,13 @@ func TestParseManifest_IDValidation(t *testing.T) {
 		id   string
 		want bool
 	}{
-		{"a", false},       // too short (must be at least 2 chars)
-		{"ab", true},       // exactly 2 chars
+		{"a", false}, // too short (must be at least 2 chars)
+		{"ab", true}, // exactly 2 chars
 		{"my-plugin", true},
 		{"my_plugin", true},
-		{"my plugin", false},  // space
-		{"MyPlugin", false},   // uppercase
-		{"0abc", true},        // starts with digit OK
+		{"my plugin", false}, // space
+		{"MyPlugin", false},  // uppercase
+		{"0abc", true},       // starts with digit OK
 		{"UPPER", false},
 		{strings.Repeat("a", 65), false}, // 65 chars => too long (max 2+62=64)
 		{strings.Repeat("a", 64), true},  // 64 chars OK
@@ -365,6 +365,15 @@ func TestParseManifest_ModuleNotWasm(t *testing.T) {
 		m["entrypoint"] = ep
 	})
 	assertValidationError(t, data, ".wasm")
+}
+
+func TestParseManifest_MissingExports(t *testing.T) {
+	data := mutate(t, validManifestJSON(), func(m map[string]any) {
+		ep := copyMap(m["entrypoint"].(map[string]any))
+		delete(ep, "exports")
+		m["entrypoint"] = ep
+	})
+	assertValidationError(t, data, "entrypoint.exports")
 }
 
 // --------------------------------------------------------------------------
