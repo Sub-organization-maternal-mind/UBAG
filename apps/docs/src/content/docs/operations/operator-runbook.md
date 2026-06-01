@@ -137,3 +137,12 @@ The runbook is ready when:
 - Severity definitions are explicit.
 - Missing data behavior is tied to dashboard state language.
 - Release and observability docs define the evidence the operator should inspect.
+
+## Disaster Recovery
+
+For full disaster recovery procedures, RPO/RTO targets, and per-component failover playbooks, see the [Disaster Recovery runbook](./disaster-recovery).
+
+For backup and restore commands:
+- `ubag backup --out <path|s3://...>` — create a backup
+- `ubag restore --from <path|s3://...>` — restore from backup
+- `ubag migrate` — apply migrations (idempotent)
