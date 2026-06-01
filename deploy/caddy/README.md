@@ -26,7 +26,7 @@ This produces a `caddy` binary in the current directory that includes:
 
 | Module | Purpose |
 |--------|---------|
-| `github.com/mholt/caddy-ratelimit` | Per-IP token-bucket rate limiting on `/v1/*` (100 req / 60 s, burst 20) |
+| `github.com/mholt/caddy-ratelimit` | Per-IP rate limiting on `/v1/*` (100 requests per 60 seconds per IP) |
 | `github.com/corazawaf/coraza-caddy/v2` | Coraza WAF (OWASP Core Rule Set) — activated in Task 1.2 via `import coraza.conf` |
 
 ---

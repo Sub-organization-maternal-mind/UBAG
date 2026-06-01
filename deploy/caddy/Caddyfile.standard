@@ -16,6 +16,7 @@
   # HTTP/3 (QUIC) in addition to h1 + h2.
   servers {
     protocols h1 h2 h3
+    trusted_proxies static private_ranges
   }
 
   # Admin API restricted to loopback — never exposed to the public interface.
@@ -25,6 +26,9 @@
   # Applied to /v1/* routes below.
   rate_limit {
     zone api_per_ip {
+      # Bare-metal / local dev: {remote_host} is the real client IP.
+      # Behind a load balancer: change key to {http.request.header.X-Forwarded-For}
+      # after verifying trusted_proxies is correctly configured above.
       key   {remote_host}
       events 100
       window 60s
@@ -45,8 +49,7 @@
     X-Content-Type-Options  "nosniff"
     Referrer-Policy         "no-referrer"
     X-Frame-Options         "DENY"
-    X-XSS-Protection        "1; mode=block"
-    Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+    Strict-Transport-Security "max-age=63072000; includeSubDomains"
     # Remove headers that leak server internals
     -Server
   }
@@ -68,7 +71,7 @@
     rate_limit api_per_ip
 
     reverse_proxy {$UBAG_BACKEND_ADDR:gateway:8080} {
-      header_up X-Forwarded-For {remote_host}
+      header_up +X-Forwarded-For {remote_host}
       header_up X-Real-IP       {remote_host}
     }
   }
