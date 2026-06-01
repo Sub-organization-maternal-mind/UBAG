@@ -2,11 +2,19 @@ package httpapi
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/sso"
 )
@@ -28,6 +36,37 @@ func (m *mockExchanger) Exchange(_ context.Context, _, _, _, _, _ string) (strin
 		return "", "", m.err
 	}
 	return m.idToken, m.accessToken, nil
+}
+
+// testRSAKeypair generates a 2048-bit RSA key and returns private key + PEM public key.
+func testRSAKeypair(t *testing.T) (*rsa.PrivateKey, string, string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil {
+		t.Fatalf("marshal public key: %v", err)
+	}
+	pubPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}))
+	return key, pubPEM, ""
+}
+
+// signTestJWT builds a compact RS256 JWT from the supplied header and claims maps.
+func signTestJWT(t *testing.T, key *rsa.PrivateKey, header, claims map[string]any) string {
+	t.Helper()
+	headerJSON, _ := json.Marshal(header)
+	claimsJSON, _ := json.Marshal(claims)
+	headerSeg := base64.RawURLEncoding.EncodeToString(headerJSON)
+	claimsSeg := base64.RawURLEncoding.EncodeToString(claimsJSON)
+	signingInput := headerSeg + "." + claimsSeg
+	digest := sha256.Sum256([]byte(signingInput))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
+	if err != nil {
+		t.Fatalf("sign jwt: %v", err)
+	}
+	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
 
 // ---------------------------------------------------------------------------
@@ -104,7 +143,7 @@ func TestOIDCAuthorizeEndpointRedirects(t *testing.T) {
 	}
 	location := resp.Header().Get("Location")
 	if !strings.Contains(location, "https://idp.example/auth") {
-		t.Errorf("Location does not start with authorization URL: %q", location)
+		t.Errorf("Location does not contain authorization URL: %q", location)
 	}
 	if !strings.Contains(location, "response_type=code") {
 		t.Errorf("Location missing response_type=code: %q", location)
@@ -194,24 +233,26 @@ func TestOIDCCallbackGetFlowSuccess(t *testing.T) {
 		JWKSPublicKeysPEM: []string{pubPEM},
 		AllowedAudiences:  []string{"test-client"},
 		AttributeMapping: sso.AttributeMapping{
-			StaticTenantID: "tenant_edge",
-			StaticAppID:    "app_default",
-			DefaultRole:    "viewer",
+			StaticTenantID:   "tenant_edge",
+			StaticAppID:      "app_default",
+			DefaultRole:      "viewer",
+			SubjectAttribute: "sub",
+			EmailAttribute:   "email",
 		},
 	}); err != nil {
 		t.Fatalf("SetOIDC: %v", err)
 	}
 
 	// Build a signed ID token.
-	now := timeNow()
+	now := time.Now().UTC()
 	rawIDToken := signTestJWT(t, key, map[string]any{"alg": "RS256", "typ": "JWT"}, map[string]any{
 		"iss":   "https://idp.example/",
 		"aud":   "test-client",
 		"sub":   "user-42",
 		"email": "user@example.com",
-		"iat":   now.Add(-60).Unix(),
-		"nbf":   now.Add(-60).Unix(),
-		"exp":   now.Add(3600).Unix(),
+		"iat":   now.Add(-60 * time.Second).Unix(),
+		"nbf":   now.Add(-60 * time.Second).Unix(),
+		"exp":   now.Add(3600 * time.Second).Unix(),
 	})
 
 	// Mock exchanger that returns the pre-built ID token.
@@ -263,23 +304,25 @@ func TestOIDCCallbackPostFlowStillWorks(t *testing.T) {
 		JWKSPublicKeysPEM: []string{pubPEM},
 		AllowedAudiences:  []string{"test-client"},
 		AttributeMapping: sso.AttributeMapping{
-			StaticTenantID: "tenant_edge",
-			StaticAppID:    "app_default",
-			DefaultRole:    "viewer",
+			StaticTenantID:   "tenant_edge",
+			StaticAppID:      "app_default",
+			DefaultRole:      "viewer",
+			SubjectAttribute: "sub",
+			EmailAttribute:   "email",
 		},
 	}); err != nil {
 		t.Fatalf("SetOIDC: %v", err)
 	}
 
-	now := timeNow()
+	now := time.Now().UTC()
 	rawIDToken := signTestJWT(t, key, map[string]any{"alg": "RS256"}, map[string]any{
 		"iss":   "https://idp.example/",
 		"aud":   "test-client",
 		"sub":   "user-post",
 		"email": "post@example.com",
-		"iat":   now.Add(-60).Unix(),
-		"nbf":   now.Add(-60).Unix(),
-		"exp":   now.Add(3600).Unix(),
+		"iat":   now.Add(-60 * time.Second).Unix(),
+		"nbf":   now.Add(-60 * time.Second).Unix(),
+		"exp":   now.Add(3600 * time.Second).Unix(),
 	})
 
 	server := NewServer(Config{
@@ -306,51 +349,3 @@ func TestOIDCCallbackPostFlowStillWorks(t *testing.T) {
 		t.Errorf("subject = %q, want user-post", response.Subject)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Local test helpers (avoid import cycle — duplicate minimal helpers here)
-// ---------------------------------------------------------------------------
-
-import (
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
-	"encoding/json"
-	"encoding/pem"
-	"math/big"
-	"time"
-)
-
-func testRSAKeypair(t *testing.T) (*rsa.PrivateKey, string, string) {
-	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	pubDER, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-	if err != nil {
-		t.Fatalf("marshal public key: %v", err)
-	}
-	pubPEM := string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}))
-	return key, pubPEM, ""
-}
-
-func signTestJWT(t *testing.T, key *rsa.PrivateKey, header, claims map[string]any) string {
-	t.Helper()
-	headerJSON, _ := json.Marshal(header)
-	claimsJSON, _ := json.Marshal(claims)
-	headerSeg := base64.RawURLEncoding.EncodeToString(headerJSON)
-	claimsSeg := base64.RawURLEncoding.EncodeToString(claimsJSON)
-	signingInput := headerSeg + "." + claimsSeg
-	digest := sha256.Sum256([]byte(signingInput))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
-	if err != nil {
-		t.Fatalf("sign jwt: %v", err)
-	}
-	return signingInput + "." + base64.RawURLEncoding.EncodeToString(sig)
-}
-
-func timeNow() time.Time { return time.Now().UTC() }

@@ -3216,6 +3216,11 @@ func requiresAuth(path string) bool {
 	switch path {
 	case "/v1/health", "/v1/ready", "/v1/version", "/v1/metrics":
 		return false
+	// The authorization-code flow endpoints are browser-facing (no bearer token).
+	// The IdP redirects the user's browser to /authorize and then to /callback,
+	// so these two paths must be reachable without a pre-existing credential.
+	case "/v1/sso/oidc/authorize", "/v1/sso/oidc/callback":
+		return false
 	default:
 		return strings.HasPrefix(path, "/v1/")
 	}
