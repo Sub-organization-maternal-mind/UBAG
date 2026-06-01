@@ -2,9 +2,9 @@ package jitadmin
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/rand"
 	"encoding/hex"
-	"fmt"
+	"errors"
 	"sync"
 	"time"
 )
@@ -23,12 +23,15 @@ type Store interface {
 	Revoke(ctx context.Context, id string) error
 }
 
-// grantID generates a stable, deterministic grant ID from the actor, tenantID,
-// and creation timestamp. It is prefixed with "jit_" followed by 24 hex chars.
-func grantID(actor, tenantID string, createdAt time.Time) string {
-	raw := fmt.Sprintf("%s%s%d", actor, tenantID, createdAt.UnixNano())
-	sum := sha256.Sum256([]byte(raw))
-	return "jit_" + hex.EncodeToString(sum[:])[:24]
+// grantID generates a cryptographically random grant ID prefixed with "jit_"
+// followed by 24 hex chars (12 random bytes). Using crypto/rand ensures two
+// concurrent requests cannot collide on ID even within the same nanosecond.
+func grantID() string {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		panic("jitadmin: entropy failure")
+	}
+	return "jit_" + hex.EncodeToString(b)
 }
 
 // MemoryStore is the in-memory JIT grant store. It is safe for concurrent use.
@@ -51,7 +54,7 @@ func (m *MemoryStore) Create(_ context.Context, g Grant) (Grant, error) {
 	if g.ExpiresAt.IsZero() {
 		g.ExpiresAt = g.CreatedAt.Add(g.TTL)
 	}
-	g.ID = grantID(g.Actor, g.TenantID, g.CreatedAt)
+	g.ID = grantID()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -71,6 +74,8 @@ func (m *MemoryStore) Get(_ context.Context, id string) (Grant, error) {
 }
 
 // Approve marks the grant as approved by the given approver at the given time.
+// Returns ErrGrantNotFound if the ID is unknown, an error if the grant is
+// already revoked, or ErrGrantExpired if the grant's TTL has passed.
 func (m *MemoryStore) Approve(_ context.Context, id, approverSubject string, now time.Time) (Grant, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -78,9 +83,16 @@ func (m *MemoryStore) Approve(_ context.Context, id, approverSubject string, now
 	if !ok {
 		return Grant{}, ErrGrantNotFound
 	}
+	if g.Revoked {
+		return Grant{}, errors.New("jitadmin: cannot approve a revoked grant")
+	}
+	if !now.Before(g.ExpiresAt) {
+		return Grant{}, ErrGrantExpired
+	}
 	g.Approved = true
 	g.ApprovedBy = approverSubject
-	g.ApprovedAt = &now
+	t := now
+	g.ApprovedAt = &t
 	m.grants[id] = g
 	return g, nil
 }

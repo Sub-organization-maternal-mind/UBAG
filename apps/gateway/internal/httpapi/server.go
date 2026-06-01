@@ -3161,16 +3161,15 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 
 // applyJITElevation checks whether there is an active JIT elevation grant for
 // the principal and, if so, returns a copy with an elevated Role. When
-// s.jitAdmin is nil (feature not enabled) the principal is returned unchanged.
+// s.jitAdmin is nil (feature not enabled) or p.Subject is empty (bearer-secret
+// or machine-API-key auth that carries no Subject), the principal is returned
+// unchanged. Requiring a non-empty Subject prevents a grant for actor="service"
+// from escalating ALL bearer-secret requests (privilege-escalation guard).
 func (s *Server) applyJITElevation(ctx context.Context, p authenticatedPrincipal) authenticatedPrincipal {
-	if s.jitAdmin == nil {
+	if s.jitAdmin == nil || p.Subject == "" {
 		return p
 	}
-	actor := p.Subject
-	if actor == "" {
-		actor = p.Role
-	}
-	elevated := jitadmin.ElevatedRole(ctx, s.jitAdmin, actor, p.TenantID, p.Role, time.Now())
+	elevated := jitadmin.ElevatedRole(ctx, s.jitAdmin, p.Subject, p.TenantID, p.Role, time.Now())
 	if elevated != p.Role {
 		p.Role = elevated
 	}
@@ -3629,11 +3628,11 @@ func (s *Server) handleRequestElevation(w http.ResponseWriter, r *http.Request) 
 		s.writeMethodNotAllowed(w, r, http.MethodPost)
 		return
 	}
-	if !s.authorizeGatewayAction(w, r, "job:create") {
-		return
-	}
 	if s.jitAdmin == nil {
 		s.writeError(w, r, http.StatusNotImplemented, validationError("UBAG-JITADMIN-NOT-ENABLED-001", "JIT admin elevation is not enabled on this gateway"))
+		return
+	}
+	if !s.authorizeGatewayAction(w, r, "job:create") {
 		return
 	}
 
@@ -3652,10 +3651,11 @@ func (s *Server) handleRequestElevation(w http.ResponseWriter, r *http.Request) 
 	}
 
 	principal, _ := principalFromContext(r.Context())
-	actor := principal.Subject
-	if actor == "" {
-		actor = principal.Role
+	if principal.Subject == "" {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-JIT-SUBJECT-REQUIRED-001", "JIT elevation requires a session-based principal with a non-empty subject; bearer-secret and machine API keys do not support elevation"))
+		return
 	}
+	actor := principal.Subject
 	tenantID, appID := requestScope(r)
 	now := time.Now()
 	ttl := time.Duration(body.TTLSeconds) * time.Second
@@ -3701,11 +3701,11 @@ func (s *Server) handleApproveElevation(w http.ResponseWriter, r *http.Request) 
 		s.writeMethodNotAllowed(w, r, http.MethodPost)
 		return
 	}
-	if !s.authorizeGatewayAction(w, r, "role:manage") {
-		return
-	}
 	if s.jitAdmin == nil {
 		s.writeError(w, r, http.StatusNotImplemented, validationError("UBAG-JITADMIN-NOT-ENABLED-001", "JIT admin elevation is not enabled on this gateway"))
+		return
+	}
+	if !s.authorizeGatewayAction(w, r, "role:manage") {
 		return
 	}
 
@@ -3727,6 +3727,10 @@ func (s *Server) handleApproveElevation(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		if errors.Is(err, jitadmin.ErrGrantNotFound) {
 			s.writeError(w, r, http.StatusNotFound, validationError("UBAG-JITADMIN-NOT-FOUND-001", "elevation grant not found"))
+			return
+		}
+		if errors.Is(err, jitadmin.ErrGrantExpired) {
+			s.writeError(w, r, http.StatusConflict, validationError("UBAG-JITADMIN-EXPIRED-001", "elevation grant has expired and cannot be approved"))
 			return
 		}
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to approve elevation grant"))
