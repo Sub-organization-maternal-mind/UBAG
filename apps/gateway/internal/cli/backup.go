@@ -3,12 +3,16 @@ package cli
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/backup"
@@ -19,6 +23,11 @@ import (
 // top-level commands. These are local operations; no gateway Client is used.
 // It is exported so that tests can call it directly.
 func DispatchBackup(ctx context.Context, args []string) (string, error) {
+	// For long-running operations (backup, restore, migrate), wrap with
+	// a signal-aware context so pg_dump / S3 transfers can be cancelled.
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	if len(args) == 0 {
 		return backupUsage(), nil
 	}
@@ -37,6 +46,7 @@ func DispatchBackup(ctx context.Context, args []string) (string, error) {
 // cmdBackup implements: ubag backup [--out <dir>] [--profile <profile>]
 func cmdBackup(ctx context.Context, args []string) (string, error) {
 	fs := flag.NewFlagSet("backup", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // prevent duplicate usage write to stderr on --help
 	defaultOut := "ubag-backup-" + time.Now().UTC().Format("20060102-150405")
 	outDir := fs.String("out", defaultOut, "Output directory (local path or s3://bucket/prefix)")
 	defaultProfile := os.Getenv("UBAG_PROFILE")
@@ -45,6 +55,9 @@ func cmdBackup(ctx context.Context, args []string) (string, error) {
 	}
 	profile := fs.String("profile", defaultProfile, "Backup profile name")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return backupUsage(), nil
+		}
 		return "", err
 	}
 
@@ -77,8 +90,12 @@ func cmdBackup(ctx context.Context, args []string) (string, error) {
 // cmdRestore implements: ubag restore --from <dir|s3://bucket/prefix>
 func cmdRestore(ctx context.Context, args []string) (string, error) {
 	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // prevent duplicate usage write to stderr on --help
 	from := fs.String("from", "", "Source backup directory (local path or s3://bucket/prefix)")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return backupUsage(), nil
+		}
 		return "", err
 	}
 
@@ -104,6 +121,7 @@ func cmdRestore(ctx context.Context, args []string) (string, error) {
 // cmdMigrate implements: ubag migrate [--store sqlite|postgres] [--dsn <dsn>]
 func cmdMigrate(ctx context.Context, args []string) (string, error) {
 	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // prevent duplicate usage write to stderr on --help
 
 	// Determine default store kind from env.
 	defaultStore := "sqlite"
@@ -115,6 +133,9 @@ func cmdMigrate(ctx context.Context, args []string) (string, error) {
 	storeFlag := fs.String("store", defaultStore, "Store type: sqlite or postgres")
 	dsnFlag := fs.String("dsn", "", "Connection string (defaults to $UBAG_POSTGRES_DSN or $UBAG_GATEWAY_STORE)")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return backupUsage(), nil
+		}
 		return "", err
 	}
 
@@ -181,6 +202,10 @@ func runPostgresMigrations(ctx context.Context, dsn, migrationsDir string) (stri
 // files from migrationsDir, and applies each one that hasn't been applied yet.
 // placeholder is "?" for SQLite and "$1" for Postgres.
 func applyMigrations(ctx context.Context, db *sql.DB, migrationsDir string, placeholder string) (string, error) {
+	if placeholder != "?" && placeholder != "$1" {
+		return "", fmt.Errorf("migrate: unsupported placeholder %q (must be ? or $1)", placeholder)
+	}
+
 	// Ensure the tracking table exists.
 	_, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    TEXT PRIMARY KEY,
@@ -240,7 +265,13 @@ func applyMigrations(ctx context.Context, db *sql.DB, migrationsDir string, plac
 			return "", fmt.Errorf("migrate: read %q: %w", filename, err)
 		}
 
-		if _, err := db.ExecContext(ctx, string(sqlBytes)); err != nil {
+		// Apply the migration inside a transaction for atomicity.
+		tx, txErr := db.BeginTx(ctx, nil)
+		if txErr != nil {
+			return "", fmt.Errorf("migrate: begin tx for %q: %w", filename, txErr)
+		}
+		if _, err := tx.ExecContext(ctx, string(sqlBytes)); err != nil {
+			_ = tx.Rollback()
 			return "", fmt.Errorf("migrate: apply %q: %w", filename, err)
 		}
 
@@ -252,8 +283,12 @@ func applyMigrations(ctx context.Context, db *sql.DB, migrationsDir string, plac
 			insertSQL = "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)"
 		}
 		appliedAt := time.Now().UTC().Format(time.RFC3339)
-		if _, err := db.ExecContext(ctx, insertSQL, version, version, appliedAt); err != nil {
-			return "", fmt.Errorf("migrate: record %q: %w", version, err)
+		if _, err := tx.ExecContext(ctx, insertSQL, version, version, appliedAt); err != nil {
+			_ = tx.Rollback()
+			return "", fmt.Errorf("migrate: record %q: %w", filename, err)
+		}
+		if err := tx.Commit(); err != nil {
+			return "", fmt.Errorf("migrate: commit %q: %w", filename, err)
 		}
 
 		lines = append(lines, "applied "+version)
