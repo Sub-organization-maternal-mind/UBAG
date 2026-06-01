@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ubag-system
+  labels:
+    app.kubernetes.io/part-of: ubag
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ubag-operator
+  namespace: ubag-system
+  labels:
+    app.kubernetes.io/name: ubag-operator
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: ubag
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ubag-operator
+  namespace: ubag-system
+  labels:
+    app.kubernetes.io/name: ubag-operator
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: ubag
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ubag-operator
+  template:
+    metadata:
+      labels:
+        app: ubag-operator
+        app.kubernetes.io/name: ubag-operator
+        app.kubernetes.io/component: controller
+        app.kubernetes.io/part-of: ubag
+    spec:
+      serviceAccountName: ubag-operator
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: operator
+          image: ghcr.io/ubag/ubag-operator:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --leader-elect
+          env:
+            - name: UBAG_GATEWAY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ubag-operator-credentials
+                  key: gateway-url
+            - name: UBAG_APP_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ubag-operator-credentials
+                  key: app-secret
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault

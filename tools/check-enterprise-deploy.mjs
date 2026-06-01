@@ -40,6 +40,18 @@ function walk(dir, cb) {
 
 // 1. Required files per directory.
 const required = [
+  // Operator CRDs, RBAC, and config (Task 3.3).
+  "deploy/operator/config/crd/targets.ubag.dev_v1alpha1.yaml",
+  "deploy/operator/config/crd/adapters.ubag.dev_v1alpha1.yaml",
+  "deploy/operator/config/crd/templates.ubag.dev_v1alpha1.yaml",
+  "deploy/operator/config/crd/apps.ubag.dev_v1alpha1.yaml",
+  "deploy/operator/config/rbac/clusterrole.yaml",
+  "deploy/operator/config/rbac/clusterrolebinding.yaml",
+  "deploy/operator/config/manager/deployment.yaml",
+  "deploy/operator/config/kustomization.yaml",
+  // GitOps: operator-specific ArgoCD Application + Flux Kustomization.
+  "deploy/gitops/argocd/operator-application.yaml",
+  "deploy/gitops/flux/operator-kustomization.yaml",
   "deploy/helm/ubag/Chart.yaml",
   "deploy/helm/ubag/values.yaml",
   "deploy/helm/ubag/values-production.yaml",
@@ -118,7 +130,49 @@ walk("deploy", (p) => {
   }
 });
 
-// 6. Helm values: secrets must default empty (no inlined secret values).
+// 6. Operator CRD invariants: each CRD must declare the correct API group.
+const crdFiles = [
+  "deploy/operator/config/crd/targets.ubag.dev_v1alpha1.yaml",
+  "deploy/operator/config/crd/adapters.ubag.dev_v1alpha1.yaml",
+  "deploy/operator/config/crd/templates.ubag.dev_v1alpha1.yaml",
+  "deploy/operator/config/crd/apps.ubag.dev_v1alpha1.yaml",
+];
+for (const cf of crdFiles) {
+  if (!existsSync(join(root, cf))) continue; // already caught by must() above
+  const t = read(cf);
+  if (!t.includes("kind: CustomResourceDefinition")) {
+    fail(`${cf}: must declare kind: CustomResourceDefinition`);
+  }
+  if (!t.includes("group: ubag.dev")) {
+    fail(`${cf}: CRD spec.group must be ubag.dev`);
+  }
+  if (!t.includes("served: true")) {
+    fail(`${cf}: CRD version must have served: true`);
+  }
+  if (!t.includes("storage: true")) {
+    fail(`${cf}: CRD version must have storage: true`);
+  }
+}
+
+// 6b. ClusterRole least-privilege: no wildcard verbs, no wildcard resources.
+const crText = read("deploy/operator/config/rbac/clusterrole.yaml");
+if (/verbs:\s*\[\s*['"]\*['"]\s*\]/.test(crText) || /- "\*"/.test(crText) || /- '\*'/.test(crText)) {
+  fail("deploy/operator/config/rbac/clusterrole.yaml: wildcard verbs are not allowed (least-privilege)");
+}
+if (/resources:\s*\[\s*['"]\*['"]\s*\]/.test(crText)) {
+  fail("deploy/operator/config/rbac/clusterrole.yaml: wildcard resources are not allowed (least-privilege)");
+}
+
+// 6c. Operator Deployment must not run as root and must drop all caps.
+const deployText = read("deploy/operator/config/manager/deployment.yaml");
+if (!deployText.includes("runAsNonRoot: true")) {
+  fail("deploy/operator/config/manager/deployment.yaml: must set runAsNonRoot: true");
+}
+if (!deployText.includes("allowPrivilegeEscalation: false")) {
+  fail("deploy/operator/config/manager/deployment.yaml: must set allowPrivilegeEscalation: false");
+}
+
+// 7. Helm values: secrets must default empty (no inlined secret values).
 const values = read("deploy/helm/ubag/values.yaml");
 for (const k of ["UBAG_APP_SECRET", "UBAG_POSTGRES_DSN", "UBAG_WEBHOOK_SECRET"]) {
   const re = new RegExp(`${k}:\\s*""`);

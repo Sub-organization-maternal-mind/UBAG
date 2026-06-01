@@ -1,0 +1,42 @@
+# Argo CD Application for the UBAG operator (kustomize-based).
+#
+# Apply to your Argo CD instance:
+#   kubectl apply -f deploy/gitops/argocd/operator-application.yaml
+#
+# CRDs are installed as part of the same sync wave; the operator Deployment
+# comes up after they are established via syncOptions: Replace=true on the CRD
+# resources (configured at the resource level via annotations if needed).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ubag-operator
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  labels:
+    app.kubernetes.io/part-of: ubag
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ubag/ubag.git
+    targetRevision: main
+    path: deploy/operator/config
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ubag-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+      allowEmpty: false
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10

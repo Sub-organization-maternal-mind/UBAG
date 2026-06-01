@@ -1,0 +1,72 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: adapters.ubag.dev
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: ubag.dev
+  scope: Namespaced
+  names:
+    kind: Adapter
+    plural: adapters
+    singular: adapter
+    shortNames:
+      - adp
+    listKind: AdapterList
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              required:
+                - name
+                - type
+              properties:
+                name:
+                  type: string
+                  description: Human-readable name of the adapter.
+                type:
+                  type: string
+                  description: Adapter kind identifier (e.g. "openai", "bedrock", "ollama").
+                config:
+                  type: object
+                  description: Adapter-specific key-value configuration (e.g. API keys, region).
+                  additionalProperties:
+                    type: string
+            status:
+              type: object
+              properties:
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  description: The .metadata.generation the controller last reconciled.
+                ready:
+                  type: boolean
+                  description: Whether the resource has been successfully synced to the gateway.
+                lastSyncedHash:
+                  type: string
+                  description: Hash of the spec that was last successfully synced.
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Ready
+          type: boolean
+          jsonPath: .status.ready
+        - name: Type
+          type: string
+          jsonPath: .spec.type
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

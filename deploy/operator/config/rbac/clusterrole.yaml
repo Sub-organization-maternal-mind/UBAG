@@ -1,0 +1,49 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ubag-operator
+  labels:
+    app.kubernetes.io/name: ubag-operator
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: ubag
+rules:
+  # Full read + status-write on all UBAG CRs.
+  - apiGroups:
+      - ubag.dev
+    resources:
+      - targets
+      - adapters
+      - templates
+      - apps
+    verbs:
+      - get
+      - list
+      - watch
+      - update
+      - patch
+  # Status sub-resource updates only.
+  - apiGroups:
+      - ubag.dev
+    resources:
+      - targets/status
+      - adapters/status
+      - templates/status
+      - apps/status
+    verbs:
+      - update
+      - patch
+  # Read gateway credentials secret only (no list/watch — least privilege).
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+  # Emit Kubernetes events for reconciliation observability.
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch

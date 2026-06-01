@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - crd/targets.ubag.dev_v1alpha1.yaml
+  - crd/adapters.ubag.dev_v1alpha1.yaml
+  - crd/templates.ubag.dev_v1alpha1.yaml
+  - crd/apps.ubag.dev_v1alpha1.yaml
+  - rbac/clusterrole.yaml
+  - rbac/clusterrolebinding.yaml
+  - manager/deployment.yaml

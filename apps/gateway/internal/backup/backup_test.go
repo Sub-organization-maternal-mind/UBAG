@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -139,6 +140,107 @@ func TestBackup_PostgresSkippedWhenNoDSN(t *testing.T) {
 		t.Errorf("expected gateway.pgdump to not exist, but it does (or stat error: %v)", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Restore tests
+// ---------------------------------------------------------------------------
+
+// TestRestore_SQLiteRoundTrip verifies the full backup→restore→verify cycle
+// for SQLite: run a backup, restore it to a new path, and confirm the table
+// and row still exist in the restored database.
+func TestRestore_SQLiteRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	srcDB := newTestSQLiteDB(t)
+	backupDir := t.TempDir()
+
+	if _, err := Run(ctx, Options{
+		Profile:    "restore-test",
+		SQLitePath: srcDB,
+		OutDir:     backupDir,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	restorePath := filepath.Join(t.TempDir(), "restored.db")
+	if err := Restore(ctx, RestoreOptions{From: backupDir, To: restorePath}); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	// Verify the restored DB contains the original data.
+	db, err := sql.Open("sqlite", restorePath)
+	if err != nil {
+		t.Fatalf("open restored db: %v", err)
+	}
+	defer db.Close()
+
+	var count int
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM items").Scan(&count); err != nil {
+		t.Fatalf("count items: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("items row count: want 1, got %d", count)
+	}
+
+	var name string
+	if err := db.QueryRowContext(ctx, "SELECT name FROM items LIMIT 1").Scan(&name); err != nil {
+		t.Fatalf("select name: %v", err)
+	}
+	if name != "test-row" {
+		t.Errorf("items.name: want %q, got %q", "test-row", name)
+	}
+}
+
+// TestRestore_TamperedManifestFails verifies that Restore returns a non-nil
+// error when the manifest.json has been tampered with after the backup.
+func TestRestore_TamperedManifestFails(t *testing.T) {
+	ctx := context.Background()
+	srcDB := newTestSQLiteDB(t)
+	backupDir := t.TempDir()
+
+	m, err := Run(ctx, Options{
+		SQLitePath: srcDB,
+		OutDir:     backupDir,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Tamper: corrupt the checksum of the first component in manifest.json.
+	m.Components[0].Checksum = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	if err := m.Write(backupDir); err != nil {
+		t.Fatalf("write tampered manifest: %v", err)
+	}
+
+	restorePath := filepath.Join(t.TempDir(), "restored.db")
+	err = Restore(ctx, RestoreOptions{From: backupDir, To: restorePath})
+	if err == nil {
+		t.Error("Restore: want non-nil error after manifest tamper, got nil")
+	}
+}
+
+// TestRestore_S3URIParsing verifies that a restore from an s3:// URI without
+// the required MinIO environment variables set returns a clear error message
+// rather than panicking or returning nil.
+func TestRestore_S3URIParsing(t *testing.T) {
+	// Unset the MinIO env vars for this test.
+	t.Setenv("UBAG_MINIO_ENDPOINT", "")
+	t.Setenv("UBAG_MINIO_ACCESS_KEY", "")
+	t.Setenv("UBAG_MINIO_SECRET_KEY", "")
+
+	ctx := context.Background()
+	err := Restore(ctx, RestoreOptions{
+		From: "s3://mybucket/myprefix",
+		To:   filepath.Join(t.TempDir(), "test.db"),
+	})
+	if err == nil {
+		t.Fatal("Restore: want non-nil error when MinIO env vars are unset, got nil")
+	}
+	if !strings.Contains(err.Error(), "UBAG_MINIO_ENDPOINT") {
+		t.Errorf("Restore error should mention UBAG_MINIO_ENDPOINT; got: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 
 // TestBackup_PostgresRoundTrip is an integration test that only runs when
 // UBAG_TEST_POSTGRES_DSN is set.

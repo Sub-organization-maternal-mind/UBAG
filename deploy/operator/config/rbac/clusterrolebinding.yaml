@@ -1,0 +1,16 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ubag-operator
+  labels:
+    app.kubernetes.io/name: ubag-operator
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/part-of: ubag
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ubag-operator
+subjects:
+  - kind: ServiceAccount
+    name: ubag-operator
+    namespace: ubag-system

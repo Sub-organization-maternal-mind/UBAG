@@ -1,0 +1,34 @@
+# Flux Kustomization for the UBAG operator.
+#
+# The operator uses kustomize (not Helm), so this uses the
+# kustomize.toolkit.fluxcd.io/v1 Kustomization kind rather than a HelmRelease.
+#
+# Prerequisites:
+#   - A GitRepository named "ubag" in the flux-system namespace
+#     (see deploy/gitops/flux/gitrepository.yaml).
+#   - The ubag-operator-credentials Secret pre-created in ubag-system
+#     (use SOPS / sealed-secrets / external-secrets for secret management).
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ubag-operator
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/part-of: ubag
+spec:
+  interval: 10m
+  retryInterval: 2m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: ubag
+    namespace: flux-system
+  path: ./deploy/operator/config
+  prune: true
+  targetNamespace: ubag-system
+  wait: true
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: ubag-operator
+      namespace: ubag-system
