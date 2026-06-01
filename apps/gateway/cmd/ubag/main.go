@@ -15,7 +15,11 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		out, _ := cli.Dispatch(os.Args[1:])
+		out, err := cli.Dispatch(os.Args[1:])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
 		fmt.Println(out)
 		return
 	}

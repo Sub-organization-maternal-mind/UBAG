@@ -156,7 +156,11 @@ async fn main() {
         };
         eprintln!("ubag-sidecar listening on http://{local} -> {}", config.gateway_base_url);
         if let Err(err) = axum::serve(listener, app)
-            .with_graceful_shutdown(async { let _ = tokio::signal::ctrl_c().await; })
+            .with_graceful_shutdown(async {
+                if let Err(e) = tokio::signal::ctrl_c().await {
+                    eprintln!("ubag-sidecar: signal handler error: {e}");
+                }
+            })
             .await
         {
             eprintln!("ubag-sidecar: server error: {err}");

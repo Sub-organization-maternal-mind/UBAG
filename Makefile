@@ -14,7 +14,7 @@ help:
 	@echo "  make lint         - lint Go + contracts + schemas + proto"
 	@echo "  make release      - cross-platform build + sign + SBOM (goreleaser)"
 	@echo "  make ubag-build   - build the ubag single binary"
-	@echo "  make sidecar-build - build the Rust sidecar (release)"
+	@echo "  make sidecar-build - build the Rust sidecar with all features (release)"
 
 # --- developer loop -------------------------------------------------------
 dev: dev-edge
@@ -27,7 +27,7 @@ ubag-build:
 	cd $(GATEWAY_DIR) && go build -o ubag ./cmd/ubag
 
 sidecar-build:
-	cd packages/sidecar-rust && cargo build --release
+	cd packages/sidecar-rust && cargo build --release --all-features
 
 gateway-run:
 	cd $(GATEWAY_DIR) && go run ./cmd/gateway

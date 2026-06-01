@@ -31,6 +31,8 @@ type errorMsg struct{ err error }
 // Model is the Bubble Tea model for the ubag TUI.
 type Model struct {
 	client    *cli.Client
+	ctx       context.Context
+	cancel    context.CancelFunc
 	activeTab tab
 	jobs      []cli.JobResponse
 	targets   []cli.TargetResponse
@@ -43,8 +45,11 @@ type Model struct {
 
 // New creates a new Model with the given client.
 func New(client *cli.Client) Model {
+	ctx, cancel := context.WithCancel(context.Background())
 	return Model{
 		client:  client,
+		ctx:     ctx,
+		cancel:  cancel,
 		loading: true,
 	}
 }
@@ -65,6 +70,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
+			m.cancel()
 			return m, tea.Quit
 		case "tab", "right":
 			m.activeTab = tab((int(m.activeTab) + 1) % len(tabNames))
@@ -166,7 +172,7 @@ func (m Model) loadJobs() tea.Cmd {
 		if m.client == nil {
 			return errorMsg{err: fmt.Errorf("client not initialized")}
 		}
-		jobs, err := m.client.ListJobs(context.Background())
+		jobs, err := m.client.ListJobs(m.ctx)
 		if err != nil {
 			return errorMsg{err}
 		}
@@ -179,7 +185,7 @@ func (m Model) loadTargets() tea.Cmd {
 		if m.client == nil {
 			return errorMsg{err: fmt.Errorf("client not initialized")}
 		}
-		targets, err := m.client.ListTargets(context.Background())
+		targets, err := m.client.ListTargets(m.ctx)
 		if err != nil {
 			return errorMsg{err}
 		}
@@ -192,7 +198,7 @@ func (m Model) loadHealth() tea.Cmd {
 		if m.client == nil {
 			return errorMsg{err: fmt.Errorf("client not initialized")}
 		}
-		health, err := m.client.Health(context.Background())
+		health, err := m.client.Health(m.ctx)
 		if err != nil {
 			return errorMsg{err}
 		}
