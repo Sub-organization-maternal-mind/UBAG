@@ -79,3 +79,4 @@ export type {
 export { UBAG_DEFAULT_API_VERSION, UBAG_SDK_NAME, UBAG_SDK_VERSION } from "./types.js";
 export { type RetryPolicy, DEFAULT_RETRY_POLICY, computeBackoff, shouldRetry } from "./retry.js";
 export { verifyWebhookSignature, type VerifyWebhookOptions } from "./webhooks.js";
+export { discoverSidecar, SIDECAR_URL, type DiscoverSidecarOptions } from "./sidecar.js";
