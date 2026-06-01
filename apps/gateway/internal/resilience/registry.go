@@ -25,40 +25,47 @@ type BreakerSnapshot struct {
 	State  State
 }
 
+// registryEntry stores the metadata and breaker for a single (kind, target) pair.
+type registryEntry struct {
+	kind   Kind
+	target string
+	b      *Breaker
+}
+
 // Registry is a concurrency-safe, lazy-initialising store of *Breaker instances
 // keyed by (kind, target).
 type Registry struct {
-	mu       sync.Mutex
-	cfg      Config
-	breakers map[string]*Breaker // key: kind+":"+target
+	mu      sync.Mutex
+	cfg     Config
+	entries map[string]registryEntry // key: kind + "\x00" + target
 }
 
 // NewRegistry creates a Registry that uses cfg for every breaker it creates.
 func NewRegistry(cfg Config) *Registry {
 	return &Registry{
-		cfg:      cfg,
-		breakers: make(map[string]*Breaker),
+		cfg:     cfg,
+		entries: make(map[string]registryEntry),
 	}
 }
 
 // registryKey returns the canonical map key for a (kind, target) pair.
+// NUL byte (\x00) is used as a separator because it is not valid in Kind or
+// target strings, making the key unambiguous without any reverse-parse.
 func registryKey(kind Kind, target string) string {
-	return string(kind) + ":" + target
+	return string(kind) + "\x00" + target
 }
 
 // Get returns the *Breaker for the given (kind, target) pair, creating it
 // lazily on the first call.  Get is concurrency-safe.
 func (r *Registry) Get(kind Kind, target string) *Breaker {
-	key := registryKey(kind, target)
-
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	if b, ok := r.breakers[key]; ok {
-		return b
+	k := registryKey(kind, target)
+	if e, ok := r.entries[k]; ok {
+		return e.b
 	}
 	b := New(r.cfg)
-	r.breakers[key] = b
+	r.entries[k] = registryEntry{kind: kind, target: target, b: b}
 	return b
 }
 
@@ -71,18 +78,9 @@ func (r *Registry) Get(kind Kind, target string) *Breaker {
 // lock-ordering deadlock between r.mu and each Breaker's internal mutex.
 func (r *Registry) Snapshot() []BreakerSnapshot {
 	r.mu.Lock()
-	entries := make([]struct {
-		kind   Kind
-		target string
-		b      *Breaker
-	}, 0, len(r.breakers))
-	for k, b := range r.breakers {
-		kind, target := splitKey(k)
-		entries = append(entries, struct {
-			kind   Kind
-			target string
-			b      *Breaker
-		}{kind, target, b})
+	entries := make([]registryEntry, 0, len(r.entries))
+	for _, e := range r.entries {
+		entries = append(entries, e)
 	}
 	r.mu.Unlock()
 
@@ -95,16 +93,4 @@ func (r *Registry) Snapshot() []BreakerSnapshot {
 		})
 	}
 	return snaps
-}
-
-// splitKey separates the first colon-delimited segment (kind) from the
-// remainder (target).  This is the inverse of registryKey.
-func splitKey(key string) (Kind, string) {
-	for i := 0; i < len(key); i++ {
-		if key[i] == ':' {
-			return Kind(key[:i]), key[i+1:]
-		}
-	}
-	// Malformed key (no colon); treat the whole string as kind, empty target.
-	return Kind(key), ""
 }

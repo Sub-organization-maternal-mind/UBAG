@@ -16,6 +16,7 @@ func testRegistryCfg() Config {
 // TestRegistry_DistinctKeys verifies that two different (kind, target) pairs
 // produce independent *Breaker instances.
 func TestRegistry_DistinctKeys(t *testing.T) {
+	t.Parallel()
 	r := NewRegistry(testRegistryCfg())
 
 	b1 := r.Get(KindAdapter, "svc-a")
@@ -38,6 +39,7 @@ func TestRegistry_DistinctKeys(t *testing.T) {
 // TestRegistry_SameKey verifies that repeated calls with the same (kind, target)
 // return the identical *Breaker instance (lazy singleton).
 func TestRegistry_SameKey(t *testing.T) {
+	t.Parallel()
 	r := NewRegistry(testRegistryCfg())
 
 	b1 := r.Get(KindUpstream, "api.example.com")
@@ -51,6 +53,7 @@ func TestRegistry_SameKey(t *testing.T) {
 // TestRegistry_SnapshotState verifies that Snapshot reflects the current state
 // of each breaker — including one that has been opened.
 func TestRegistry_SnapshotState(t *testing.T) {
+	t.Parallel()
 	r := NewRegistry(testRegistryCfg())
 
 	r.Get(KindAdapter, "closed-svc")              // stays closed
@@ -77,6 +80,7 @@ func TestRegistry_SnapshotState(t *testing.T) {
 // TestRegistry_EmptySnapshot verifies that Snapshot on a registry with no
 // breakers returns a non-nil, empty slice (not nil).
 func TestRegistry_EmptySnapshot(t *testing.T) {
+	t.Parallel()
 	r := NewRegistry(DefaultConfig())
 	snaps := r.Snapshot()
 
@@ -91,6 +95,7 @@ func TestRegistry_EmptySnapshot(t *testing.T) {
 // TestRegistry_ConcurrentGet verifies that concurrent Get calls for the same
 // key never create duplicate breakers.
 func TestRegistry_ConcurrentGet(t *testing.T) {
+	t.Parallel()
 	const goroutines = 50
 	r := NewRegistry(DefaultConfig())
 
