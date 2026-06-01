@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ubag/ubag/apps/gateway/internal/cli"
+	"github.com/ubag/ubag/apps/gateway/internal/cli/tui"
 	"github.com/ubag/ubag/apps/gateway/internal/serve"
 )
 
@@ -31,7 +33,18 @@ func main() {
 		}
 		fmt.Println("Edge config initialized in ~/.ubag/")
 	case "tui":
-		fmt.Println("TUI not yet implemented")
+		cfg, err := cli.LoadConfig()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error loading config:", err)
+			os.Exit(1)
+		}
+		client := cli.NewClient(cfg.BaseURL, cfg.AppSecret, cfg.APIVersion)
+		model := tui.New(client)
+		p := tea.NewProgram(model, tea.WithAltScreen())
+		if _, err := p.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, "tui error:", err)
+			os.Exit(1)
+		}
 	default:
 		out, err := cli.Dispatch(os.Args[1:])
 		if err != nil {
