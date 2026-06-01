@@ -1092,6 +1092,37 @@ func (s *Server) processBatchEntry(
 		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
 	}
 
+	// Custom-validator plugin hook (matches createJob behaviour).
+	if s.plugins != nil {
+		inputJSON, _ := json.Marshal(req.Job.Input)
+		if result, err := s.plugins.RunHooks(ctx, "validate", inputJSON); err != nil {
+			e := internalError("plugin validator error")
+			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusInternalServerError
+		} else if result.Action == "reject" {
+			reason := result.Reason
+			if reason == "" {
+				reason = "rejected by plugin validator"
+			}
+			e := validationError("UBAG-PLUGIN-REJECT-001", reason)
+			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
+		}
+	}
+	// Pre-job plugin hook.
+	if s.plugins != nil {
+		hookPayload, _ := json.Marshal(req.Job)
+		if result, err := s.plugins.RunHooks(ctx, "job.pre", hookPayload); err != nil {
+			e := internalError("plugin pre-job hook error")
+			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusInternalServerError
+		} else if result.Action == "reject" {
+			reason := result.Reason
+			if reason == "" {
+				reason = "rejected by plugin"
+			}
+			e := validationError("UBAG-PLUGIN-REJECT-001", reason)
+			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
+		}
+	}
+
 	// Auto-generate idempotency key if absent.
 	idempKey := strings.TrimSpace(req.IdempotencyKey)
 	if idempKey == "" {

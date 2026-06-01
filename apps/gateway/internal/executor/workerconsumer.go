@@ -165,6 +165,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	}
 	envelope := EnvelopeFromJob(job)
 	if jobstore.TerminalStatus(job.Status) {
+		c.runPostJobHook(ctx, job)
 		if err := c.notifyTerminalJob(ctx, lease, job); err != nil {
 			return true, err
 		}
@@ -183,6 +184,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return true, fmt.Errorf("leased job %s does not exist in job store", lease.JobID())
 	}
 	if jobstore.TerminalStatus(assignedJob.Status) {
+		c.runPostJobHook(ctx, assignedJob)
 		if err := c.notifyTerminalJob(ctx, lease, assignedJob); err != nil {
 			return true, err
 		}
@@ -281,18 +283,9 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		_ = lease.Poison(ctx, "job disappeared during worker ingestion")
 		return true, fmt.Errorf("job %s disappeared during worker ingestion", lease.JobID())
 	}
-	// Fire post-job plugin hook for ALL terminal statuses (best-effort).
-	if c.Plugins != nil && jobstore.TerminalStatus(finalJob.Status) {
-		hookPayload, _ := json.Marshal(map[string]any{
-			"job_id": finalJob.ID,
-			"status": string(finalJob.Status),
-			"target": finalJob.Target,
-		})
-		_, _ = c.Plugins.RunHooks(ctx, "job.post", hookPayload)
-		// post-job hooks are best-effort: ignore reject/error so terminal processing always completes
-	}
 	if finalJob.Status == jobstore.StatusCanceled {
 		c.releaseConcurrencyToken(finalJob)
+		c.runPostJobHook(ctx, finalJob)
 		if err := c.notifyTerminalJob(ctx, lease, finalJob); err != nil {
 			return true, err
 		}
@@ -300,6 +293,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	}
 	if finalJob.Status == jobstore.StatusCompleted || finalJob.Status == jobstore.StatusCompletedWithWarnings {
 		c.releaseConcurrencyToken(finalJob)
+		c.runPostJobHook(ctx, finalJob)
 		if err := c.notifyTerminalJob(ctx, lease, finalJob); err != nil {
 			return true, err
 		}
@@ -307,6 +301,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	}
 	if jobstore.TerminalStatus(finalJob.Status) {
 		c.releaseConcurrencyToken(finalJob)
+		c.runPostJobHook(ctx, finalJob)
 		if err := c.notifyTerminalJob(ctx, lease, finalJob); err != nil {
 			return true, err
 		}
@@ -317,6 +312,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		_ = lease.Retry(ctx)
 		return true, applyErr
 	}
+	// runPostJobHook is called inside notifyCurrentTerminalJob before notification.
 	if notifyErr := c.notifyCurrentTerminalJob(ctx, lease); notifyErr != nil {
 		return true, notifyErr
 	}
@@ -592,9 +588,6 @@ func (c *WorkerConsumer) applyFailure(ctx context.Context, lease WorkerLease, en
 }
 
 func (c *WorkerConsumer) notifyCurrentTerminalJob(ctx context.Context, lease WorkerLease) error {
-	if c.TerminalNotifier == nil {
-		return nil
-	}
 	job, found, err := c.Jobs.Get(ctx, lease.JobID())
 	if err != nil {
 		_ = lease.Retry(ctx)
@@ -604,6 +597,7 @@ func (c *WorkerConsumer) notifyCurrentTerminalJob(ctx context.Context, lease Wor
 		_ = lease.Poison(ctx, "terminal notification referenced missing job")
 		return fmt.Errorf("terminal notification referenced missing job %s", lease.JobID())
 	}
+	c.runPostJobHook(ctx, job)
 	return c.notifyTerminalJob(ctx, lease, job)
 }
 
@@ -616,6 +610,20 @@ func (c *WorkerConsumer) notifyTerminalJob(ctx context.Context, lease WorkerLeas
 		return err
 	}
 	return nil
+}
+
+// runPostJobHook fires the job.post plugin hook if Plugins is configured.
+// It is best-effort: errors are silently ignored so terminal processing always completes.
+func (c *WorkerConsumer) runPostJobHook(ctx context.Context, job jobstore.Job) {
+	if c.Plugins == nil {
+		return
+	}
+	hookPayload, _ := json.Marshal(map[string]any{
+		"job_id": job.ID,
+		"status": string(job.Status),
+		"target": job.Target,
+	})
+	_, _ = c.Plugins.RunHooks(ctx, "job.post", hookPayload)
 }
 
 func (r ProcessWorkerRunner) RunWorker(ctx context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {

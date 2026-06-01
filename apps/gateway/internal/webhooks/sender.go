@@ -52,15 +52,27 @@ func (s HTTPSender) Send(ctx context.Context, delivery Delivery) (AttemptResult,
 			"url":     delivery.URL,
 			"payload": json.RawMessage(delivery.Payload),
 		})
-		if hookResult, err := s.Plugins.RunHooks(ctx, "webhook.transform", hookPayload); err == nil &&
-			hookResult.Action == "continue" && len(hookResult.Payload) > 0 {
-			var out struct {
-				Payload json.RawMessage `json:"payload"`
+		if result, err := s.Plugins.RunHooks(ctx, "webhook.transform", hookPayload); err == nil {
+			if result.Action == "reject" {
+				r := AttemptResult{OccurredAt: now().UTC()}
+				r.ErrorClass = "plugin_reject"
+				reason := result.Reason
+				if reason == "" {
+					reason = "webhook delivery rejected by plugin"
+				}
+				r.ErrorMessage = reason
+				r.Retryable = false
+				return r, nil
 			}
-			if json.Unmarshal(hookResult.Payload, &out) == nil && len(out.Payload) > 0 {
-				d := delivery
-				d.Payload = []byte(out.Payload)
-				delivery = d
+			if result.Action == "continue" && len(result.Payload) > 0 {
+				var out struct {
+					Payload json.RawMessage `json:"payload"`
+				}
+				if json.Unmarshal(result.Payload, &out) == nil && len(out.Payload) > 0 {
+					d := delivery
+					d.Payload = []byte(out.Payload)
+					delivery = d
+				}
 			}
 		}
 	}
