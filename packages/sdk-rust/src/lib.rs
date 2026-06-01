@@ -14,6 +14,7 @@ pub mod webhooks;
 pub mod streaming;
 pub mod telemetry;
 pub mod offline;
+pub mod sidecar;
 
 pub use error::{ApiError, Error, ErrorDetails, ErrorEnvelope};
 pub use idempotency::generate_idempotency_key;
