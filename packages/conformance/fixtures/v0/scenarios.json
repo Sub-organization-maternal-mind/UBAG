@@ -7,115 +7,2731 @@
       "id": "retries.retryable-error",
       "category": "retries",
       "title": "Retry policy keeps the same idempotency key for retryable gateway failures",
-      "assertions": ["same_idempotency_key", "bounded_attempts", "jittered_backoff"]
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
     },
     {
       "id": "streaming.sse-ordered-events",
       "category": "streaming",
       "title": "SSE helpers preserve per-job event ordering",
-      "assertions": ["ordered_sequence", "terminal_event_required", "bounded_reader"]
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
     },
     {
       "id": "timeouts.client-abort",
       "category": "timeouts",
       "title": "Client timeout aborts without changing idempotency state",
-      "assertions": ["caller_timeout", "transport_abort", "retryable_transport_error"]
+      "assertions": [
+        "caller_timeout",
+        "transport_abort",
+        "retryable_transport_error"
+      ]
     },
     {
       "id": "unicode.prompt-roundtrip",
       "category": "unicode",
       "title": "Unicode prompts round-trip through request serialization",
-      "assertions": ["utf8_request_body", "no_mojibake", "stable_content_length"]
+      "assertions": [
+        "utf8_request_body",
+        "no_mojibake",
+        "stable_content_length"
+      ]
     },
     {
       "id": "large-payload.request-limit",
       "category": "large_payloads",
       "title": "Large request bodies surface stable validation errors",
-      "assertions": ["body_limit_error", "trace_id_preserved", "no_partial_retry"]
+      "assertions": [
+        "body_limit_error",
+        "trace_id_preserved",
+        "no_partial_retry"
+      ]
     },
     {
       "id": "malformed-response.error-surface",
       "category": "malformed_responses",
       "title": "Malformed gateway responses surface transport errors with raw body access",
-      "assertions": ["raw_body_preserved", "typed_transport_error", "no_secret_logging"]
+      "assertions": [
+        "raw_body_preserved",
+        "typed_transport_error",
+        "no_secret_logging"
+      ]
     },
     {
       "id": "webhooks.signature-helpers",
       "category": "webhooks",
       "title": "Webhook helper signs timestamp.nonce.body and rejects replay",
-      "assertions": ["hmac_base_string", "timestamp_tolerance", "nonce_replay_rejection"]
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
     },
     {
       "id": "sidecar.discovery-loopback",
       "category": "sidecar",
       "title": "Sidecar discovery prefers loopback and rejects public binding by default",
-      "assertions": ["loopback_default", "health_probe", "gateway_proxy"]
+      "assertions": [
+        "loopback_default",
+        "health_probe",
+        "gateway_proxy"
+      ]
     },
     {
       "id": "executor.gateway-dispatch",
       "category": "executor",
       "title": "Gateway dispatches accepted work once after payload policy and idempotency checks",
-      "assertions": ["payload_policy_before_enqueue", "single_enqueue_per_idempotency_key", "queue_metrics_exposed"]
+      "assertions": [
+        "payload_policy_before_enqueue",
+        "single_enqueue_per_idempotency_key",
+        "queue_metrics_exposed"
+      ]
     },
     {
       "id": "worker.file-spool-result-ingestion",
       "category": "worker",
       "title": "File-spool worker consumer leases gateway work and ingests normalized terminal results",
-      "assertions": ["atomic_file_lease", "worker_jsonl_event_ingestion", "terminal_result_persisted", "cancelled_jobs_not_revived"]
+      "assertions": [
+        "atomic_file_lease",
+        "worker_jsonl_event_ingestion",
+        "terminal_result_persisted",
+        "cancelled_jobs_not_revived"
+      ]
     },
     {
       "id": "worker.nats-result-ingestion",
       "category": "worker",
       "title": "NATS worker consumer leases JetStream jobs and ingests normalized terminal results",
-      "assertions": ["durable_pull_consumer", "cancel_subjects_not_executed", "ack_after_terminal_ingestion", "poison_mismatched_envelopes"]
+      "assertions": [
+        "durable_pull_consumer",
+        "cancel_subjects_not_executed",
+        "ack_after_terminal_ingestion",
+        "poison_mismatched_envelopes"
+      ]
     },
     {
       "id": "webhooks.outbox-retry-worker",
       "category": "webhooks",
       "title": "Webhook outbox persists terminal job callbacks and retries signed delivery attempts",
-      "assertions": ["durable_outbox_delivery", "hmac_signed_http_post", "bounded_retry_backoff", "replay_requires_existing_delivery"]
+      "assertions": [
+        "durable_outbox_delivery",
+        "hmac_signed_http_post",
+        "bounded_retry_backoff",
+        "replay_requires_existing_delivery"
+      ]
     },
     {
       "id": "multi-tab.topology-hierarchy",
       "category": "multi_tab_topology",
       "title": "Browser topology reads expose instance/context/tab hierarchy with boolean storage indicator",
-      "assertions": ["browser_context_tab_hierarchy", "tab_lifecycle_state_enum", "has_storage_state_boolean_only", "no_storage_state_uri"]
+      "assertions": [
+        "browser_context_tab_hierarchy",
+        "tab_lifecycle_state_enum",
+        "has_storage_state_boolean_only",
+        "no_storage_state_uri"
+      ]
     },
     {
       "id": "concurrency.aimd-ceiling",
       "category": "adaptive_concurrency",
       "title": "Adaptive concurrency exposes AIMD ceilings per provider and identity with last-change reason",
-      "assertions": ["per_provider_identity_cap", "min_max_bounds", "multiplicative_decrease_on_safety_signal", "last_change_reason_present"]
+      "assertions": [
+        "per_provider_identity_cap",
+        "min_max_bounds",
+        "multiplicative_decrease_on_safety_signal",
+        "last_change_reason_present"
+      ]
     },
     {
       "id": "alerts.manual-action-lifecycle",
       "category": "manual_action_alerts",
       "title": "Manual-action alerts route human-solved CAPTCHA/login challenges with acknowledge/resolve lifecycle",
-      "assertions": ["open_acknowledged_resolved_lifecycle", "human_solved_no_auto_bypass", "smtp_config_no_password", "captcha_and_manual_login_kinds"]
+      "assertions": [
+        "open_acknowledged_resolved_lifecycle",
+        "human_solved_no_auto_bypass",
+        "smtp_config_no_password",
+        "captcha_and_manual_login_kinds"
+      ]
     },
     {
       "id": "audit.export-merkle-chain",
       "category": "audit_export_chain",
       "title": "Audit export returns a hash-chained, tamper-evident set with chain_valid verification",
-      "assertions": ["hash_chained_entries", "chain_valid_flag", "no_secret_payloads", "anchor_commitment"]
+      "assertions": [
+        "hash_chained_entries",
+        "chain_valid_flag",
+        "no_secret_payloads",
+        "anchor_commitment"
+      ]
     },
     {
       "id": "sso.session-logout",
       "category": "sso_session",
       "title": "SSO-minted sessions are revocable and logout invalidates the session immediately",
-      "assertions": ["sso_minted_session", "revocable_server_side_reference", "logout_invalidates_immediately", "audit_event_recorded"]
+      "assertions": [
+        "sso_minted_session",
+        "revocable_server_side_reference",
+        "logout_invalidates_immediately",
+        "audit_event_recorded"
+      ]
     },
     {
       "id": "cross-engine.portable-selectors",
       "category": "cross_engine",
       "title": "Cross-engine execution runs portable selectors on Chromium CDP and Firefox/WebKit BiDi and remote grids",
-      "assertions": ["pluggable_engine", "engine_portable_selectors", "remote_grid_endpoint_operator_controlled", "no_client_supplied_browser_endpoint"]
+      "assertions": [
+        "pluggable_engine",
+        "engine_portable_selectors",
+        "remote_grid_endpoint_operator_controlled",
+        "no_client_supplied_browser_endpoint"
+      ]
     },
     {
       "id": "persistence.postgres-enterprise",
       "category": "postgres_persistence",
       "title": "Enterprise Postgres persistence stores control-plane state with edge SQLite parity",
-      "assertions": ["postgres_and_sqlite_parity", "transactional_concurrency", "redacted_storage_state", "multi_tenant_isolation"]
+      "assertions": [
+        "postgres_and_sqlite_parity",
+        "transactional_concurrency",
+        "redacted_storage_state",
+        "multi_tenant_isolation"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-1",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 1",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-2",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 2",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-3",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 3",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-4",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 4",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-5",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 5",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-6",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 6",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-7",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 7",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-8",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 8",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-9",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 9",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-10",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 10",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-11",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 11",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-12",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 12",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-13",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 13",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-14",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 14",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-15",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 15",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-16",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 16",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-17",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 17",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-18",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 18",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-19",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 19",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "job-lifecycle.case-20",
+      "category": "job_lifecycle",
+      "title": "job_lifecycle conformance case 20",
+      "assertions": [
+        "status_transition",
+        "trace_id_preserved",
+        "terminal_state"
+      ]
+    },
+    {
+      "id": "auth.case-1",
+      "category": "auth",
+      "title": "auth conformance case 1",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-2",
+      "category": "auth",
+      "title": "auth conformance case 2",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-3",
+      "category": "auth",
+      "title": "auth conformance case 3",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-4",
+      "category": "auth",
+      "title": "auth conformance case 4",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-5",
+      "category": "auth",
+      "title": "auth conformance case 5",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-6",
+      "category": "auth",
+      "title": "auth conformance case 6",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-7",
+      "category": "auth",
+      "title": "auth conformance case 7",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-8",
+      "category": "auth",
+      "title": "auth conformance case 8",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-9",
+      "category": "auth",
+      "title": "auth conformance case 9",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-10",
+      "category": "auth",
+      "title": "auth conformance case 10",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-11",
+      "category": "auth",
+      "title": "auth conformance case 11",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-12",
+      "category": "auth",
+      "title": "auth conformance case 12",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-13",
+      "category": "auth",
+      "title": "auth conformance case 13",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-14",
+      "category": "auth",
+      "title": "auth conformance case 14",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "auth.case-15",
+      "category": "auth",
+      "title": "auth conformance case 15",
+      "assertions": [
+        "token_accepted",
+        "missing_token_401",
+        "expired_token_401"
+      ]
+    },
+    {
+      "id": "retries.case-2",
+      "category": "retries",
+      "title": "retries conformance case 2",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-3",
+      "category": "retries",
+      "title": "retries conformance case 3",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-4",
+      "category": "retries",
+      "title": "retries conformance case 4",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-5",
+      "category": "retries",
+      "title": "retries conformance case 5",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-6",
+      "category": "retries",
+      "title": "retries conformance case 6",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-7",
+      "category": "retries",
+      "title": "retries conformance case 7",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-8",
+      "category": "retries",
+      "title": "retries conformance case 8",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-9",
+      "category": "retries",
+      "title": "retries conformance case 9",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-10",
+      "category": "retries",
+      "title": "retries conformance case 10",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-11",
+      "category": "retries",
+      "title": "retries conformance case 11",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-12",
+      "category": "retries",
+      "title": "retries conformance case 12",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-13",
+      "category": "retries",
+      "title": "retries conformance case 13",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-14",
+      "category": "retries",
+      "title": "retries conformance case 14",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-15",
+      "category": "retries",
+      "title": "retries conformance case 15",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-16",
+      "category": "retries",
+      "title": "retries conformance case 16",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-17",
+      "category": "retries",
+      "title": "retries conformance case 17",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-18",
+      "category": "retries",
+      "title": "retries conformance case 18",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-19",
+      "category": "retries",
+      "title": "retries conformance case 19",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "retries.case-20",
+      "category": "retries",
+      "title": "retries conformance case 20",
+      "assertions": [
+        "same_idempotency_key",
+        "bounded_attempts",
+        "jittered_backoff"
+      ]
+    },
+    {
+      "id": "streaming.case-2",
+      "category": "streaming",
+      "title": "streaming conformance case 2",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-3",
+      "category": "streaming",
+      "title": "streaming conformance case 3",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-4",
+      "category": "streaming",
+      "title": "streaming conformance case 4",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-5",
+      "category": "streaming",
+      "title": "streaming conformance case 5",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-6",
+      "category": "streaming",
+      "title": "streaming conformance case 6",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-7",
+      "category": "streaming",
+      "title": "streaming conformance case 7",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-8",
+      "category": "streaming",
+      "title": "streaming conformance case 8",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-9",
+      "category": "streaming",
+      "title": "streaming conformance case 9",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-10",
+      "category": "streaming",
+      "title": "streaming conformance case 10",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-11",
+      "category": "streaming",
+      "title": "streaming conformance case 11",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-12",
+      "category": "streaming",
+      "title": "streaming conformance case 12",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-13",
+      "category": "streaming",
+      "title": "streaming conformance case 13",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-14",
+      "category": "streaming",
+      "title": "streaming conformance case 14",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-15",
+      "category": "streaming",
+      "title": "streaming conformance case 15",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-16",
+      "category": "streaming",
+      "title": "streaming conformance case 16",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-17",
+      "category": "streaming",
+      "title": "streaming conformance case 17",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-18",
+      "category": "streaming",
+      "title": "streaming conformance case 18",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-19",
+      "category": "streaming",
+      "title": "streaming conformance case 19",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "streaming.case-20",
+      "category": "streaming",
+      "title": "streaming conformance case 20",
+      "assertions": [
+        "ordered_sequence",
+        "terminal_event_required",
+        "bounded_reader"
+      ]
+    },
+    {
+      "id": "webhooks.case-3",
+      "category": "webhooks",
+      "title": "webhooks conformance case 3",
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
+    },
+    {
+      "id": "webhooks.case-4",
+      "category": "webhooks",
+      "title": "webhooks conformance case 4",
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
+    },
+    {
+      "id": "webhooks.case-5",
+      "category": "webhooks",
+      "title": "webhooks conformance case 5",
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
+    },
+    {
+      "id": "webhooks.case-6",
+      "category": "webhooks",
+      "title": "webhooks conformance case 6",
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
+    },
+    {
+      "id": "webhooks.case-7",
+      "category": "webhooks",
+      "title": "webhooks conformance case 7",
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
+    },
+    {
+      "id": "webhooks.case-8",
+      "category": "webhooks",
+      "title": "webhooks conformance case 8",
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
+    },
+    {
+      "id": "webhooks.case-9",
+      "category": "webhooks",
+      "title": "webhooks conformance case 9",
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
+    },
+    {
+      "id": "webhooks.case-10",
+      "category": "webhooks",
+      "title": "webhooks conformance case 10",
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
+    },
+    {
+      "id": "webhooks.case-11",
+      "category": "webhooks",
+      "title": "webhooks conformance case 11",
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
+    },
+    {
+      "id": "webhooks.case-12",
+      "category": "webhooks",
+      "title": "webhooks conformance case 12",
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
+    },
+    {
+      "id": "webhooks.case-13",
+      "category": "webhooks",
+      "title": "webhooks conformance case 13",
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
+    },
+    {
+      "id": "webhooks.case-14",
+      "category": "webhooks",
+      "title": "webhooks conformance case 14",
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
+    },
+    {
+      "id": "webhooks.case-15",
+      "category": "webhooks",
+      "title": "webhooks conformance case 15",
+      "assertions": [
+        "hmac_base_string",
+        "timestamp_tolerance",
+        "nonce_replay_rejection"
+      ]
+    },
+    {
+      "id": "idempotency.case-1",
+      "category": "idempotency",
+      "title": "idempotency conformance case 1",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-2",
+      "category": "idempotency",
+      "title": "idempotency conformance case 2",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-3",
+      "category": "idempotency",
+      "title": "idempotency conformance case 3",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-4",
+      "category": "idempotency",
+      "title": "idempotency conformance case 4",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-5",
+      "category": "idempotency",
+      "title": "idempotency conformance case 5",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-6",
+      "category": "idempotency",
+      "title": "idempotency conformance case 6",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-7",
+      "category": "idempotency",
+      "title": "idempotency conformance case 7",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-8",
+      "category": "idempotency",
+      "title": "idempotency conformance case 8",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-9",
+      "category": "idempotency",
+      "title": "idempotency conformance case 9",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-10",
+      "category": "idempotency",
+      "title": "idempotency conformance case 10",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-11",
+      "category": "idempotency",
+      "title": "idempotency conformance case 11",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-12",
+      "category": "idempotency",
+      "title": "idempotency conformance case 12",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-13",
+      "category": "idempotency",
+      "title": "idempotency conformance case 13",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-14",
+      "category": "idempotency",
+      "title": "idempotency conformance case 14",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "idempotency.case-15",
+      "category": "idempotency",
+      "title": "idempotency conformance case 15",
+      "assertions": [
+        "dedup_same_payload",
+        "conflict_different_payload",
+        "replay_returns_original"
+      ]
+    },
+    {
+      "id": "scheduling.case-1",
+      "category": "scheduling",
+      "title": "scheduling conformance case 1",
+      "assertions": [
+        "not_before_future_scheduled",
+        "not_before_past_immediate",
+        "not_before_missing_immediate"
+      ]
+    },
+    {
+      "id": "scheduling.case-2",
+      "category": "scheduling",
+      "title": "scheduling conformance case 2",
+      "assertions": [
+        "not_before_future_scheduled",
+        "not_before_past_immediate",
+        "not_before_missing_immediate"
+      ]
+    },
+    {
+      "id": "scheduling.case-3",
+      "category": "scheduling",
+      "title": "scheduling conformance case 3",
+      "assertions": [
+        "not_before_future_scheduled",
+        "not_before_past_immediate",
+        "not_before_missing_immediate"
+      ]
+    },
+    {
+      "id": "scheduling.case-4",
+      "category": "scheduling",
+      "title": "scheduling conformance case 4",
+      "assertions": [
+        "not_before_future_scheduled",
+        "not_before_past_immediate",
+        "not_before_missing_immediate"
+      ]
+    },
+    {
+      "id": "scheduling.case-5",
+      "category": "scheduling",
+      "title": "scheduling conformance case 5",
+      "assertions": [
+        "not_before_future_scheduled",
+        "not_before_past_immediate",
+        "not_before_missing_immediate"
+      ]
+    },
+    {
+      "id": "scheduling.case-6",
+      "category": "scheduling",
+      "title": "scheduling conformance case 6",
+      "assertions": [
+        "not_before_future_scheduled",
+        "not_before_past_immediate",
+        "not_before_missing_immediate"
+      ]
+    },
+    {
+      "id": "scheduling.case-7",
+      "category": "scheduling",
+      "title": "scheduling conformance case 7",
+      "assertions": [
+        "not_before_future_scheduled",
+        "not_before_past_immediate",
+        "not_before_missing_immediate"
+      ]
+    },
+    {
+      "id": "scheduling.case-8",
+      "category": "scheduling",
+      "title": "scheduling conformance case 8",
+      "assertions": [
+        "not_before_future_scheduled",
+        "not_before_past_immediate",
+        "not_before_missing_immediate"
+      ]
+    },
+    {
+      "id": "scheduling.case-9",
+      "category": "scheduling",
+      "title": "scheduling conformance case 9",
+      "assertions": [
+        "not_before_future_scheduled",
+        "not_before_past_immediate",
+        "not_before_missing_immediate"
+      ]
+    },
+    {
+      "id": "scheduling.case-10",
+      "category": "scheduling",
+      "title": "scheduling conformance case 10",
+      "assertions": [
+        "not_before_future_scheduled",
+        "not_before_past_immediate",
+        "not_before_missing_immediate"
+      ]
+    },
+    {
+      "id": "concurrency.case-1",
+      "category": "concurrency",
+      "title": "concurrency conformance case 1",
+      "assertions": [
+        "ceiling_429",
+        "queue_depth_429",
+        "retry_after_header"
+      ]
+    },
+    {
+      "id": "concurrency.case-2",
+      "category": "concurrency",
+      "title": "concurrency conformance case 2",
+      "assertions": [
+        "ceiling_429",
+        "queue_depth_429",
+        "retry_after_header"
+      ]
+    },
+    {
+      "id": "concurrency.case-3",
+      "category": "concurrency",
+      "title": "concurrency conformance case 3",
+      "assertions": [
+        "ceiling_429",
+        "queue_depth_429",
+        "retry_after_header"
+      ]
+    },
+    {
+      "id": "concurrency.case-4",
+      "category": "concurrency",
+      "title": "concurrency conformance case 4",
+      "assertions": [
+        "ceiling_429",
+        "queue_depth_429",
+        "retry_after_header"
+      ]
+    },
+    {
+      "id": "concurrency.case-5",
+      "category": "concurrency",
+      "title": "concurrency conformance case 5",
+      "assertions": [
+        "ceiling_429",
+        "queue_depth_429",
+        "retry_after_header"
+      ]
+    },
+    {
+      "id": "concurrency.case-6",
+      "category": "concurrency",
+      "title": "concurrency conformance case 6",
+      "assertions": [
+        "ceiling_429",
+        "queue_depth_429",
+        "retry_after_header"
+      ]
+    },
+    {
+      "id": "concurrency.case-7",
+      "category": "concurrency",
+      "title": "concurrency conformance case 7",
+      "assertions": [
+        "ceiling_429",
+        "queue_depth_429",
+        "retry_after_header"
+      ]
+    },
+    {
+      "id": "concurrency.case-8",
+      "category": "concurrency",
+      "title": "concurrency conformance case 8",
+      "assertions": [
+        "ceiling_429",
+        "queue_depth_429",
+        "retry_after_header"
+      ]
+    },
+    {
+      "id": "concurrency.case-9",
+      "category": "concurrency",
+      "title": "concurrency conformance case 9",
+      "assertions": [
+        "ceiling_429",
+        "queue_depth_429",
+        "retry_after_header"
+      ]
+    },
+    {
+      "id": "concurrency.case-10",
+      "category": "concurrency",
+      "title": "concurrency conformance case 10",
+      "assertions": [
+        "ceiling_429",
+        "queue_depth_429",
+        "retry_after_header"
+      ]
+    },
+    {
+      "id": "semantic-cache.case-1",
+      "category": "semantic_cache",
+      "title": "semantic_cache conformance case 1",
+      "assertions": [
+        "exact_hit",
+        "cache_miss",
+        "tag_invalidation"
+      ]
+    },
+    {
+      "id": "semantic-cache.case-2",
+      "category": "semantic_cache",
+      "title": "semantic_cache conformance case 2",
+      "assertions": [
+        "exact_hit",
+        "cache_miss",
+        "tag_invalidation"
+      ]
+    },
+    {
+      "id": "semantic-cache.case-3",
+      "category": "semantic_cache",
+      "title": "semantic_cache conformance case 3",
+      "assertions": [
+        "exact_hit",
+        "cache_miss",
+        "tag_invalidation"
+      ]
+    },
+    {
+      "id": "semantic-cache.case-4",
+      "category": "semantic_cache",
+      "title": "semantic_cache conformance case 4",
+      "assertions": [
+        "exact_hit",
+        "cache_miss",
+        "tag_invalidation"
+      ]
+    },
+    {
+      "id": "semantic-cache.case-5",
+      "category": "semantic_cache",
+      "title": "semantic_cache conformance case 5",
+      "assertions": [
+        "exact_hit",
+        "cache_miss",
+        "tag_invalidation"
+      ]
+    },
+    {
+      "id": "semantic-cache.case-6",
+      "category": "semantic_cache",
+      "title": "semantic_cache conformance case 6",
+      "assertions": [
+        "exact_hit",
+        "cache_miss",
+        "tag_invalidation"
+      ]
+    },
+    {
+      "id": "semantic-cache.case-7",
+      "category": "semantic_cache",
+      "title": "semantic_cache conformance case 7",
+      "assertions": [
+        "exact_hit",
+        "cache_miss",
+        "tag_invalidation"
+      ]
+    },
+    {
+      "id": "semantic-cache.case-8",
+      "category": "semantic_cache",
+      "title": "semantic_cache conformance case 8",
+      "assertions": [
+        "exact_hit",
+        "cache_miss",
+        "tag_invalidation"
+      ]
+    },
+    {
+      "id": "semantic-cache.case-9",
+      "category": "semantic_cache",
+      "title": "semantic_cache conformance case 9",
+      "assertions": [
+        "exact_hit",
+        "cache_miss",
+        "tag_invalidation"
+      ]
+    },
+    {
+      "id": "semantic-cache.case-10",
+      "category": "semantic_cache",
+      "title": "semantic_cache conformance case 10",
+      "assertions": [
+        "exact_hit",
+        "cache_miss",
+        "tag_invalidation"
+      ]
+    },
+    {
+      "id": "template-render.case-1",
+      "category": "template_render",
+      "title": "template_render conformance case 1",
+      "assertions": [
+        "render_success",
+        "missing_template_404",
+        "syntax_error_400"
+      ]
+    },
+    {
+      "id": "template-render.case-2",
+      "category": "template_render",
+      "title": "template_render conformance case 2",
+      "assertions": [
+        "render_success",
+        "missing_template_404",
+        "syntax_error_400"
+      ]
+    },
+    {
+      "id": "template-render.case-3",
+      "category": "template_render",
+      "title": "template_render conformance case 3",
+      "assertions": [
+        "render_success",
+        "missing_template_404",
+        "syntax_error_400"
+      ]
+    },
+    {
+      "id": "template-render.case-4",
+      "category": "template_render",
+      "title": "template_render conformance case 4",
+      "assertions": [
+        "render_success",
+        "missing_template_404",
+        "syntax_error_400"
+      ]
+    },
+    {
+      "id": "template-render.case-5",
+      "category": "template_render",
+      "title": "template_render conformance case 5",
+      "assertions": [
+        "render_success",
+        "missing_template_404",
+        "syntax_error_400"
+      ]
+    },
+    {
+      "id": "template-render.case-6",
+      "category": "template_render",
+      "title": "template_render conformance case 6",
+      "assertions": [
+        "render_success",
+        "missing_template_404",
+        "syntax_error_400"
+      ]
+    },
+    {
+      "id": "template-render.case-7",
+      "category": "template_render",
+      "title": "template_render conformance case 7",
+      "assertions": [
+        "render_success",
+        "missing_template_404",
+        "syntax_error_400"
+      ]
+    },
+    {
+      "id": "template-render.case-8",
+      "category": "template_render",
+      "title": "template_render conformance case 8",
+      "assertions": [
+        "render_success",
+        "missing_template_404",
+        "syntax_error_400"
+      ]
+    },
+    {
+      "id": "template-render.case-9",
+      "category": "template_render",
+      "title": "template_render conformance case 9",
+      "assertions": [
+        "render_success",
+        "missing_template_404",
+        "syntax_error_400"
+      ]
+    },
+    {
+      "id": "template-render.case-10",
+      "category": "template_render",
+      "title": "template_render conformance case 10",
+      "assertions": [
+        "render_success",
+        "missing_template_404",
+        "syntax_error_400"
+      ]
+    },
+    {
+      "id": "priority-lanes.case-1",
+      "category": "priority_lanes",
+      "title": "priority_lanes conformance case 1",
+      "assertions": [
+        "crit_routing",
+        "bulk_routing",
+        "anti_starvation"
+      ]
+    },
+    {
+      "id": "priority-lanes.case-2",
+      "category": "priority_lanes",
+      "title": "priority_lanes conformance case 2",
+      "assertions": [
+        "crit_routing",
+        "bulk_routing",
+        "anti_starvation"
+      ]
+    },
+    {
+      "id": "priority-lanes.case-3",
+      "category": "priority_lanes",
+      "title": "priority_lanes conformance case 3",
+      "assertions": [
+        "crit_routing",
+        "bulk_routing",
+        "anti_starvation"
+      ]
+    },
+    {
+      "id": "priority-lanes.case-4",
+      "category": "priority_lanes",
+      "title": "priority_lanes conformance case 4",
+      "assertions": [
+        "crit_routing",
+        "bulk_routing",
+        "anti_starvation"
+      ]
+    },
+    {
+      "id": "priority-lanes.case-5",
+      "category": "priority_lanes",
+      "title": "priority_lanes conformance case 5",
+      "assertions": [
+        "crit_routing",
+        "bulk_routing",
+        "anti_starvation"
+      ]
+    },
+    {
+      "id": "priority-lanes.case-6",
+      "category": "priority_lanes",
+      "title": "priority_lanes conformance case 6",
+      "assertions": [
+        "crit_routing",
+        "bulk_routing",
+        "anti_starvation"
+      ]
+    },
+    {
+      "id": "priority-lanes.case-7",
+      "category": "priority_lanes",
+      "title": "priority_lanes conformance case 7",
+      "assertions": [
+        "crit_routing",
+        "bulk_routing",
+        "anti_starvation"
+      ]
+    },
+    {
+      "id": "priority-lanes.case-8",
+      "category": "priority_lanes",
+      "title": "priority_lanes conformance case 8",
+      "assertions": [
+        "crit_routing",
+        "bulk_routing",
+        "anti_starvation"
+      ]
+    },
+    {
+      "id": "priority-lanes.case-9",
+      "category": "priority_lanes",
+      "title": "priority_lanes conformance case 9",
+      "assertions": [
+        "crit_routing",
+        "bulk_routing",
+        "anti_starvation"
+      ]
+    },
+    {
+      "id": "priority-lanes.case-10",
+      "category": "priority_lanes",
+      "title": "priority_lanes conformance case 10",
+      "assertions": [
+        "crit_routing",
+        "bulk_routing",
+        "anti_starvation"
+      ]
+    },
+    {
+      "id": "pagination.case-1",
+      "category": "pagination",
+      "title": "pagination conformance case 1",
+      "assertions": [
+        "cursor_pagination",
+        "limit_respected",
+        "filter_by_status"
+      ]
+    },
+    {
+      "id": "pagination.case-2",
+      "category": "pagination",
+      "title": "pagination conformance case 2",
+      "assertions": [
+        "cursor_pagination",
+        "limit_respected",
+        "filter_by_status"
+      ]
+    },
+    {
+      "id": "pagination.case-3",
+      "category": "pagination",
+      "title": "pagination conformance case 3",
+      "assertions": [
+        "cursor_pagination",
+        "limit_respected",
+        "filter_by_status"
+      ]
+    },
+    {
+      "id": "pagination.case-4",
+      "category": "pagination",
+      "title": "pagination conformance case 4",
+      "assertions": [
+        "cursor_pagination",
+        "limit_respected",
+        "filter_by_status"
+      ]
+    },
+    {
+      "id": "pagination.case-5",
+      "category": "pagination",
+      "title": "pagination conformance case 5",
+      "assertions": [
+        "cursor_pagination",
+        "limit_respected",
+        "filter_by_status"
+      ]
+    },
+    {
+      "id": "pagination.case-6",
+      "category": "pagination",
+      "title": "pagination conformance case 6",
+      "assertions": [
+        "cursor_pagination",
+        "limit_respected",
+        "filter_by_status"
+      ]
+    },
+    {
+      "id": "pagination.case-7",
+      "category": "pagination",
+      "title": "pagination conformance case 7",
+      "assertions": [
+        "cursor_pagination",
+        "limit_respected",
+        "filter_by_status"
+      ]
+    },
+    {
+      "id": "pagination.case-8",
+      "category": "pagination",
+      "title": "pagination conformance case 8",
+      "assertions": [
+        "cursor_pagination",
+        "limit_respected",
+        "filter_by_status"
+      ]
+    },
+    {
+      "id": "pagination.case-9",
+      "category": "pagination",
+      "title": "pagination conformance case 9",
+      "assertions": [
+        "cursor_pagination",
+        "limit_respected",
+        "filter_by_status"
+      ]
+    },
+    {
+      "id": "pagination.case-10",
+      "category": "pagination",
+      "title": "pagination conformance case 10",
+      "assertions": [
+        "cursor_pagination",
+        "limit_respected",
+        "filter_by_status"
+      ]
+    },
+    {
+      "id": "error-catalog.case-1",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 1",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-2",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 2",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-3",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 3",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-4",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 4",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-5",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 5",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-6",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 6",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-7",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 7",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-8",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 8",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-9",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 9",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-10",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 10",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-11",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 11",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-12",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 12",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-13",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 13",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-14",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 14",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-15",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 15",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-16",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 16",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-17",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 17",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-18",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 18",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-19",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 19",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "error-catalog.case-20",
+      "category": "error_catalog",
+      "title": "error_catalog conformance case 20",
+      "assertions": [
+        "code_namespaced",
+        "retryable_flag",
+        "retry_after_ms"
+      ]
+    },
+    {
+      "id": "grpc.case-1",
+      "category": "grpc",
+      "title": "grpc conformance case 1",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-2",
+      "category": "grpc",
+      "title": "grpc conformance case 2",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-3",
+      "category": "grpc",
+      "title": "grpc conformance case 3",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-4",
+      "category": "grpc",
+      "title": "grpc conformance case 4",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-5",
+      "category": "grpc",
+      "title": "grpc conformance case 5",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-6",
+      "category": "grpc",
+      "title": "grpc conformance case 6",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-7",
+      "category": "grpc",
+      "title": "grpc conformance case 7",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-8",
+      "category": "grpc",
+      "title": "grpc conformance case 8",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-9",
+      "category": "grpc",
+      "title": "grpc conformance case 9",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-10",
+      "category": "grpc",
+      "title": "grpc conformance case 10",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-11",
+      "category": "grpc",
+      "title": "grpc conformance case 11",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-12",
+      "category": "grpc",
+      "title": "grpc conformance case 12",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-13",
+      "category": "grpc",
+      "title": "grpc conformance case 13",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-14",
+      "category": "grpc",
+      "title": "grpc conformance case 14",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "grpc.case-15",
+      "category": "grpc",
+      "title": "grpc conformance case 15",
+      "assertions": [
+        "create_job_unary",
+        "stream_events_ordered",
+        "cancel_propagates"
+      ]
+    },
+    {
+      "id": "sidecar.case-2",
+      "category": "sidecar",
+      "title": "sidecar conformance case 2",
+      "assertions": [
+        "loopback_default",
+        "fallback_when_absent",
+        "health_probe"
+      ]
+    },
+    {
+      "id": "sidecar.case-3",
+      "category": "sidecar",
+      "title": "sidecar conformance case 3",
+      "assertions": [
+        "loopback_default",
+        "fallback_when_absent",
+        "health_probe"
+      ]
+    },
+    {
+      "id": "sidecar.case-4",
+      "category": "sidecar",
+      "title": "sidecar conformance case 4",
+      "assertions": [
+        "loopback_default",
+        "fallback_when_absent",
+        "health_probe"
+      ]
+    },
+    {
+      "id": "sidecar.case-5",
+      "category": "sidecar",
+      "title": "sidecar conformance case 5",
+      "assertions": [
+        "loopback_default",
+        "fallback_when_absent",
+        "health_probe"
+      ]
+    },
+    {
+      "id": "sidecar.case-6",
+      "category": "sidecar",
+      "title": "sidecar conformance case 6",
+      "assertions": [
+        "loopback_default",
+        "fallback_when_absent",
+        "health_probe"
+      ]
+    },
+    {
+      "id": "sidecar.case-7",
+      "category": "sidecar",
+      "title": "sidecar conformance case 7",
+      "assertions": [
+        "loopback_default",
+        "fallback_when_absent",
+        "health_probe"
+      ]
+    },
+    {
+      "id": "sidecar.case-8",
+      "category": "sidecar",
+      "title": "sidecar conformance case 8",
+      "assertions": [
+        "loopback_default",
+        "fallback_when_absent",
+        "health_probe"
+      ]
+    },
+    {
+      "id": "sidecar.case-9",
+      "category": "sidecar",
+      "title": "sidecar conformance case 9",
+      "assertions": [
+        "loopback_default",
+        "fallback_when_absent",
+        "health_probe"
+      ]
+    },
+    {
+      "id": "sidecar.case-10",
+      "category": "sidecar",
+      "title": "sidecar conformance case 10",
+      "assertions": [
+        "loopback_default",
+        "fallback_when_absent",
+        "health_probe"
+      ]
+    },
+    {
+      "id": "offline-queue.case-1",
+      "category": "offline_queue",
+      "title": "offline_queue conformance case 1",
+      "assertions": [
+        "enqueue_when_offline",
+        "flush_on_reconnect",
+        "disk_persistence"
+      ]
+    },
+    {
+      "id": "offline-queue.case-2",
+      "category": "offline_queue",
+      "title": "offline_queue conformance case 2",
+      "assertions": [
+        "enqueue_when_offline",
+        "flush_on_reconnect",
+        "disk_persistence"
+      ]
+    },
+    {
+      "id": "offline-queue.case-3",
+      "category": "offline_queue",
+      "title": "offline_queue conformance case 3",
+      "assertions": [
+        "enqueue_when_offline",
+        "flush_on_reconnect",
+        "disk_persistence"
+      ]
+    },
+    {
+      "id": "offline-queue.case-4",
+      "category": "offline_queue",
+      "title": "offline_queue conformance case 4",
+      "assertions": [
+        "enqueue_when_offline",
+        "flush_on_reconnect",
+        "disk_persistence"
+      ]
+    },
+    {
+      "id": "offline-queue.case-5",
+      "category": "offline_queue",
+      "title": "offline_queue conformance case 5",
+      "assertions": [
+        "enqueue_when_offline",
+        "flush_on_reconnect",
+        "disk_persistence"
+      ]
+    },
+    {
+      "id": "offline-queue.case-6",
+      "category": "offline_queue",
+      "title": "offline_queue conformance case 6",
+      "assertions": [
+        "enqueue_when_offline",
+        "flush_on_reconnect",
+        "disk_persistence"
+      ]
+    },
+    {
+      "id": "offline-queue.case-7",
+      "category": "offline_queue",
+      "title": "offline_queue conformance case 7",
+      "assertions": [
+        "enqueue_when_offline",
+        "flush_on_reconnect",
+        "disk_persistence"
+      ]
+    },
+    {
+      "id": "offline-queue.case-8",
+      "category": "offline_queue",
+      "title": "offline_queue conformance case 8",
+      "assertions": [
+        "enqueue_when_offline",
+        "flush_on_reconnect",
+        "disk_persistence"
+      ]
+    },
+    {
+      "id": "offline-queue.case-9",
+      "category": "offline_queue",
+      "title": "offline_queue conformance case 9",
+      "assertions": [
+        "enqueue_when_offline",
+        "flush_on_reconnect",
+        "disk_persistence"
+      ]
+    },
+    {
+      "id": "offline-queue.case-10",
+      "category": "offline_queue",
+      "title": "offline_queue conformance case 10",
+      "assertions": [
+        "enqueue_when_offline",
+        "flush_on_reconnect",
+        "disk_persistence"
+      ]
+    },
+    {
+      "id": "otel.case-1",
+      "category": "otel",
+      "title": "otel conformance case 1",
+      "assertions": [
+        "span_created",
+        "traceparent_propagated",
+        "attributes_set"
+      ]
+    },
+    {
+      "id": "otel.case-2",
+      "category": "otel",
+      "title": "otel conformance case 2",
+      "assertions": [
+        "span_created",
+        "traceparent_propagated",
+        "attributes_set"
+      ]
+    },
+    {
+      "id": "otel.case-3",
+      "category": "otel",
+      "title": "otel conformance case 3",
+      "assertions": [
+        "span_created",
+        "traceparent_propagated",
+        "attributes_set"
+      ]
+    },
+    {
+      "id": "otel.case-4",
+      "category": "otel",
+      "title": "otel conformance case 4",
+      "assertions": [
+        "span_created",
+        "traceparent_propagated",
+        "attributes_set"
+      ]
+    },
+    {
+      "id": "otel.case-5",
+      "category": "otel",
+      "title": "otel conformance case 5",
+      "assertions": [
+        "span_created",
+        "traceparent_propagated",
+        "attributes_set"
+      ]
+    },
+    {
+      "id": "otel.case-6",
+      "category": "otel",
+      "title": "otel conformance case 6",
+      "assertions": [
+        "span_created",
+        "traceparent_propagated",
+        "attributes_set"
+      ]
+    },
+    {
+      "id": "otel.case-7",
+      "category": "otel",
+      "title": "otel conformance case 7",
+      "assertions": [
+        "span_created",
+        "traceparent_propagated",
+        "attributes_set"
+      ]
+    },
+    {
+      "id": "otel.case-8",
+      "category": "otel",
+      "title": "otel conformance case 8",
+      "assertions": [
+        "span_created",
+        "traceparent_propagated",
+        "attributes_set"
+      ]
+    },
+    {
+      "id": "otel.case-9",
+      "category": "otel",
+      "title": "otel conformance case 9",
+      "assertions": [
+        "span_created",
+        "traceparent_propagated",
+        "attributes_set"
+      ]
+    },
+    {
+      "id": "otel.case-10",
+      "category": "otel",
+      "title": "otel conformance case 10",
+      "assertions": [
+        "span_created",
+        "traceparent_propagated",
+        "attributes_set"
+      ]
+    },
+    {
+      "id": "unicode.case-2",
+      "category": "unicode",
+      "title": "unicode conformance case 2",
+      "assertions": [
+        "utf8_request_body",
+        "no_mojibake",
+        "stable_content_length"
+      ]
+    },
+    {
+      "id": "unicode.case-3",
+      "category": "unicode",
+      "title": "unicode conformance case 3",
+      "assertions": [
+        "utf8_request_body",
+        "no_mojibake",
+        "stable_content_length"
+      ]
+    },
+    {
+      "id": "unicode.case-4",
+      "category": "unicode",
+      "title": "unicode conformance case 4",
+      "assertions": [
+        "utf8_request_body",
+        "no_mojibake",
+        "stable_content_length"
+      ]
+    },
+    {
+      "id": "unicode.case-5",
+      "category": "unicode",
+      "title": "unicode conformance case 5",
+      "assertions": [
+        "utf8_request_body",
+        "no_mojibake",
+        "stable_content_length"
+      ]
+    },
+    {
+      "id": "unicode.case-6",
+      "category": "unicode",
+      "title": "unicode conformance case 6",
+      "assertions": [
+        "utf8_request_body",
+        "no_mojibake",
+        "stable_content_length"
+      ]
+    },
+    {
+      "id": "unicode.case-7",
+      "category": "unicode",
+      "title": "unicode conformance case 7",
+      "assertions": [
+        "utf8_request_body",
+        "no_mojibake",
+        "stable_content_length"
+      ]
+    },
+    {
+      "id": "unicode.case-8",
+      "category": "unicode",
+      "title": "unicode conformance case 8",
+      "assertions": [
+        "utf8_request_body",
+        "no_mojibake",
+        "stable_content_length"
+      ]
+    },
+    {
+      "id": "unicode.case-9",
+      "category": "unicode",
+      "title": "unicode conformance case 9",
+      "assertions": [
+        "utf8_request_body",
+        "no_mojibake",
+        "stable_content_length"
+      ]
+    },
+    {
+      "id": "unicode.case-10",
+      "category": "unicode",
+      "title": "unicode conformance case 10",
+      "assertions": [
+        "utf8_request_body",
+        "no_mojibake",
+        "stable_content_length"
+      ]
+    },
+    {
+      "id": "malformed-responses.case-2",
+      "category": "malformed_responses",
+      "title": "malformed_responses conformance case 2",
+      "assertions": [
+        "raw_body_preserved",
+        "typed_transport_error",
+        "no_secret_logging"
+      ]
+    },
+    {
+      "id": "malformed-responses.case-3",
+      "category": "malformed_responses",
+      "title": "malformed_responses conformance case 3",
+      "assertions": [
+        "raw_body_preserved",
+        "typed_transport_error",
+        "no_secret_logging"
+      ]
+    },
+    {
+      "id": "malformed-responses.case-4",
+      "category": "malformed_responses",
+      "title": "malformed_responses conformance case 4",
+      "assertions": [
+        "raw_body_preserved",
+        "typed_transport_error",
+        "no_secret_logging"
+      ]
+    },
+    {
+      "id": "malformed-responses.case-5",
+      "category": "malformed_responses",
+      "title": "malformed_responses conformance case 5",
+      "assertions": [
+        "raw_body_preserved",
+        "typed_transport_error",
+        "no_secret_logging"
+      ]
+    },
+    {
+      "id": "malformed-responses.case-6",
+      "category": "malformed_responses",
+      "title": "malformed_responses conformance case 6",
+      "assertions": [
+        "raw_body_preserved",
+        "typed_transport_error",
+        "no_secret_logging"
+      ]
+    },
+    {
+      "id": "malformed-responses.case-7",
+      "category": "malformed_responses",
+      "title": "malformed_responses conformance case 7",
+      "assertions": [
+        "raw_body_preserved",
+        "typed_transport_error",
+        "no_secret_logging"
+      ]
+    },
+    {
+      "id": "malformed-responses.case-8",
+      "category": "malformed_responses",
+      "title": "malformed_responses conformance case 8",
+      "assertions": [
+        "raw_body_preserved",
+        "typed_transport_error",
+        "no_secret_logging"
+      ]
+    },
+    {
+      "id": "malformed-responses.case-9",
+      "category": "malformed_responses",
+      "title": "malformed_responses conformance case 9",
+      "assertions": [
+        "raw_body_preserved",
+        "typed_transport_error",
+        "no_secret_logging"
+      ]
+    },
+    {
+      "id": "malformed-responses.case-10",
+      "category": "malformed_responses",
+      "title": "malformed_responses conformance case 10",
+      "assertions": [
+        "raw_body_preserved",
+        "typed_transport_error",
+        "no_secret_logging"
+      ]
+    },
+    {
+      "id": "compliance.case-1",
+      "category": "compliance",
+      "title": "compliance conformance case 1",
+      "assertions": [
+        "export_receipt",
+        "erase_cascade",
+        "phi_cache_skip"
+      ]
+    },
+    {
+      "id": "compliance.case-2",
+      "category": "compliance",
+      "title": "compliance conformance case 2",
+      "assertions": [
+        "export_receipt",
+        "erase_cascade",
+        "phi_cache_skip"
+      ]
+    },
+    {
+      "id": "compliance.case-3",
+      "category": "compliance",
+      "title": "compliance conformance case 3",
+      "assertions": [
+        "export_receipt",
+        "erase_cascade",
+        "phi_cache_skip"
+      ]
+    },
+    {
+      "id": "compliance.case-4",
+      "category": "compliance",
+      "title": "compliance conformance case 4",
+      "assertions": [
+        "export_receipt",
+        "erase_cascade",
+        "phi_cache_skip"
+      ]
+    },
+    {
+      "id": "compliance.case-5",
+      "category": "compliance",
+      "title": "compliance conformance case 5",
+      "assertions": [
+        "export_receipt",
+        "erase_cascade",
+        "phi_cache_skip"
+      ]
+    },
+    {
+      "id": "compliance.case-6",
+      "category": "compliance",
+      "title": "compliance conformance case 6",
+      "assertions": [
+        "export_receipt",
+        "erase_cascade",
+        "phi_cache_skip"
+      ]
+    },
+    {
+      "id": "compliance.case-7",
+      "category": "compliance",
+      "title": "compliance conformance case 7",
+      "assertions": [
+        "export_receipt",
+        "erase_cascade",
+        "phi_cache_skip"
+      ]
+    },
+    {
+      "id": "compliance.case-8",
+      "category": "compliance",
+      "title": "compliance conformance case 8",
+      "assertions": [
+        "export_receipt",
+        "erase_cascade",
+        "phi_cache_skip"
+      ]
+    },
+    {
+      "id": "compliance.case-9",
+      "category": "compliance",
+      "title": "compliance conformance case 9",
+      "assertions": [
+        "export_receipt",
+        "erase_cascade",
+        "phi_cache_skip"
+      ]
+    },
+    {
+      "id": "compliance.case-10",
+      "category": "compliance",
+      "title": "compliance conformance case 10",
+      "assertions": [
+        "export_receipt",
+        "erase_cascade",
+        "phi_cache_skip"
+      ]
     }
   ],
   "scenarios": [
@@ -162,18 +2778,18 @@
       },
       "response": {
         "status": 200,
-          "body": {
-            "ready": true,
-            "status": "ready",
-            "service": "ubag-gateway",
-            "checked_at": "2026-05-22T00:00:00Z",
-            "checks": {
-              "migrations": true,
-              "workers": "available",
-              "templates": true
-            },
-            "trace_id": "trace_ready_ok"
-          }
+        "body": {
+          "ready": true,
+          "status": "ready",
+          "service": "ubag-gateway",
+          "checked_at": "2026-05-22T00:00:00Z",
+          "checks": {
+            "migrations": true,
+            "workers": "available",
+            "templates": true
+          },
+          "trace_id": "trace_ready_ok"
+        }
       },
       "expect": {
         "ok": true,
@@ -1606,5 +4222,6 @@
         "body.status": "logged_out"
       }
     }
-  ]
+  ],
+  "scenario_count": 272
 }
