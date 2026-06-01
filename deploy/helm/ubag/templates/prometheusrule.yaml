@@ -1,0 +1,82 @@
+{{- if .Values.prometheus.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "ubag.fullname" . }}-slo
+  labels:
+    {{- include "ubag.labels" . | nindent 4 }}
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    # ---------------------------------------------------------------------------
+    # Gateway availability SLO — 5xx error rate must stay below 1 % over 1 h
+    # ---------------------------------------------------------------------------
+    - name: ubag.slo.availability
+      rules:
+        - alert: UBAGHighErrorRate
+          expr: |
+            (
+              rate(http_requests_total{job="{{ include "ubag.fullname" . }}",status=~"5.."}[5m])
+              /
+              rate(http_requests_total{job="{{ include "ubag.fullname" . }}"}[5m])
+            ) > 0.01
+          for: {{ .Values.prometheus.rules.errorRate.for | default "5m" }}
+          labels:
+            severity: {{ .Values.prometheus.rules.errorRate.severity | default "warning" }}
+            slo: availability
+          annotations:
+            summary: "UBAG error rate > 1%"
+            description: >-
+              Gateway 5xx rate is {{ "{{" }} $value | humanizePercentage {{ "}}" }}
+              over the last 5 minutes. SLO target is < 1 % over 1 h.
+            runbook_url: "https://github.com/ubag/ubag/blob/main/docs/runbooks/high-error-rate.md"
+
+    # ---------------------------------------------------------------------------
+    # Gateway latency SLO — p99 request duration must stay below 1 s
+    # ---------------------------------------------------------------------------
+    - name: ubag.slo.latency
+      rules:
+        - alert: UBAGHighLatencyP99
+          expr: |
+            histogram_quantile(
+              0.99,
+              rate(http_request_duration_seconds_bucket{job="{{ include "ubag.fullname" . }}"}[5m])
+            ) > 1.0
+          for: {{ .Values.prometheus.rules.latency.for | default "5m" }}
+          labels:
+            severity: {{ .Values.prometheus.rules.latency.severity | default "warning" }}
+            slo: latency
+          annotations:
+            summary: "UBAG p99 latency > 1 s"
+            description: >-
+              Gateway p99 request duration is {{ "{{" }} $value | humanizeDuration {{ "}}" }},
+              which exceeds the 1 s SLO target.
+            runbook_url: "https://github.com/ubag/ubag/blob/main/docs/runbooks/high-latency.md"
+
+    # ---------------------------------------------------------------------------
+    # Job success-rate SLO — failed jobs must stay below 5 % over 6 h
+    # ---------------------------------------------------------------------------
+    - name: ubag.slo.jobs
+      rules:
+        - alert: UBAGHighJobFailureRate
+          expr: |
+            (
+              rate(ubag_jobs_failed_total{job="{{ include "ubag.fullname" . }}"}[6h])
+              /
+              (
+                rate(ubag_jobs_completed_total{job="{{ include "ubag.fullname" . }}"}[6h])
+                + rate(ubag_jobs_failed_total{job="{{ include "ubag.fullname" . }}"}[6h])
+              )
+            ) > 0.05
+          for: {{ .Values.prometheus.rules.jobFailure.for | default "15m" }}
+          labels:
+            severity: {{ .Values.prometheus.rules.jobFailure.severity | default "warning" }}
+            slo: job-success-rate
+          annotations:
+            summary: "UBAG job failure rate > 5%"
+            description: >-
+              Background job failure rate is {{ "{{" }} $value | humanizePercentage {{ "}}" }}
+              over the last 6 h. SLO target is < 5 % failed jobs.
+            runbook_url: "https://github.com/ubag/ubag/blob/main/docs/runbooks/high-job-failure-rate.md"
+{{- end }}

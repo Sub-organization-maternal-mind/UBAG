@@ -55,6 +55,7 @@ const required = [
   "deploy/helm/ubag/templates/secret.yaml",
   "deploy/helm/ubag/templates/networkpolicy.yaml",
   "deploy/helm/ubag/templates/servicemonitor.yaml",
+  "deploy/helm/ubag/templates/prometheusrule.yaml",
   "deploy/terraform/ubag/versions.tf",
   "deploy/terraform/ubag/variables.tf",
   "deploy/terraform/ubag/main.tf",

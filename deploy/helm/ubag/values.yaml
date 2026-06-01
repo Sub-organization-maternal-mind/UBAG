@@ -154,6 +154,25 @@ serviceMonitor:
   scheme: http
   honorLabels: false
 
+prometheus:
+  # -- Create a PrometheusRule CR with Phase 6 SLO burn-rate alerts.
+  # Requires prometheus-operator (kube-prometheus-stack) to be installed.
+  enabled: false
+  # -- Per-rule tuning (severity and `for` duration). Defaults shown below.
+  rules:
+    errorRate:
+      # Fire after the 5xx rate exceeds 1 % for this long.
+      for: 5m
+      severity: warning
+    latency:
+      # Fire after p99 latency exceeds 1 s for this long.
+      for: 5m
+      severity: warning
+    jobFailure:
+      # Fire after job failure rate exceeds 5 % over 6 h for this long.
+      for: 15m
+      severity: warning
+
 # ---------------------------------------------------------------------------
 # Gateway configuration -> rendered into a ConfigMap (non-secret UBAG_* env).
 # Mirrors deploy/small/env.example. Adjust per environment.
