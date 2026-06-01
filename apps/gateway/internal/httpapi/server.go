@@ -34,6 +34,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	"github.com/ubag/ubag/apps/gateway/internal/appjwt"
 	"github.com/ubag/ubag/apps/gateway/internal/compliance"
+	"github.com/ubag/ubag/apps/gateway/internal/mfa"
 	"github.com/ubag/ubag/apps/gateway/internal/outbox"
 	"github.com/ubag/ubag/apps/gateway/internal/pat"
 	"github.com/ubag/ubag/apps/gateway/internal/plugins"
@@ -203,6 +204,11 @@ type Config struct {
 	// KillSwitch enables per-region operational state management (enterprise).
 	// When nil the gateway acts as if the current region is always active.
 	KillSwitch *region.KillSwitch
+
+	// MFA, when non-nil, enables TOTP-based multi-factor authentication (§MFA).
+	// POST /v1/mfa/enroll and POST /v1/mfa/verify are active only when this is set.
+	// When nil, both routes return 501.
+	MFA *mfa.Service
 }
 
 type Server struct {
@@ -250,6 +256,8 @@ type Server struct {
 	plugins          *plugins.Host // nil-safe: no host → no hooks run
 	regionRouter     *region.Router
 	killSwitch       *region.KillSwitch
+	mfaSvc           *mfa.Service
+	mfaSessions      mfaSessionSet // in-memory set of MFA-verified session IDs
 
 	// §18 contract counters (Task 2.3) — updated atomically on the hot path.
 	idempotencyReplays atomic.Int64 // ubag_idempotency_replays_total
@@ -400,6 +408,7 @@ func NewServer(config Config) *Server {
 		plugins:          config.Plugins,
 		regionRouter:     config.RegionRouter,
 		killSwitch:       config.KillSwitch,
+		mfaSvc:           config.MFA,
 
 		metrics: &metricState{
 			requests:    make(map[string]int),
@@ -486,6 +495,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/privacy/export", s.handlePrivacyExport)
 	s.mux.HandleFunc("/v1/privacy/erase", s.handlePrivacyErase)
 	s.mux.HandleFunc("/v1/admin/regions/{region}/state", s.handleSetRegionState)
+	s.mux.HandleFunc("/v1/mfa/enroll", s.handleMFAEnroll)
+	s.mux.HandleFunc("/v1/mfa/verify", s.handleMFAVerify)
 	// Note: catch-all 404 is handled via s.mux.NotFound() registered above.
 }
 
@@ -2752,6 +2763,19 @@ func (s *Server) authorizeGatewayAction(w http.ResponseWriter, r *http.Request, 
 		return false
 	}
 
+	// MFA gate: certain sensitive actions require a verified MFA session.
+	// Only enforced when MFA is enabled (s.mfaSvc != nil) AND the request is
+	// authenticated via an SSO session (static API keys are exempt).
+	if s.mfaSvc != nil && principal.SessionBased {
+		if action == "role:manage" || action == "data:export" || action == "region:manage" {
+			if !principal.MFAVerified {
+				s.emitAuthorizationAudit(r, principal, action, "deny-mfa-required")
+				s.writeError(w, r, http.StatusForbidden, authzError("UBAG-AUTHZ-MFA-REQUIRED-001", "this action requires MFA verification"))
+				return false
+			}
+		}
+	}
+
 	// ABAC: evaluate CEL policy bundle after RBAC passes.
 	if s.abacEnforcer != nil {
 		abacPrincipal := abac.Principal{
@@ -2889,10 +2913,35 @@ type traceContextKey struct{}
 type principalContextKey struct{}
 
 type authenticatedPrincipal struct {
-	Role     string
-	TenantID string
-	AppID    string
-	Subject  string
+	Role         string
+	TenantID     string
+	AppID        string
+	Subject      string
+	MFAVerified  bool // true when the principal's session has completed MFA verification
+	SessionBased bool // true when authenticated via an SSO session token (not a static API key)
+}
+
+// mfaSessionSet is a concurrency-safe in-memory set of session IDs that have
+// been verified via MFA (POST /v1/mfa/verify).
+type mfaSessionSet struct {
+	mu  sync.Mutex
+	set map[string]struct{}
+}
+
+func (s *mfaSessionSet) Add(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.set == nil {
+		s.set = make(map[string]struct{})
+	}
+	s.set[sessionID] = struct{}{}
+}
+
+func (s *mfaSessionSet) Contains(sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.set[sessionID]
+	return ok
 }
 
 func (s *Server) withMetrics(next http.Handler) http.Handler {
@@ -3080,10 +3129,12 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 				sess, ok, err := s.sessions.Resolve(r.Context(), token, time.Now())
 				if err == nil && ok {
 					principal := authenticatedPrincipal{
-						Role:     sess.Role,
-						TenantID: sess.TenantID,
-						AppID:    sess.AppID,
-						Subject:  sess.Subject,
+						Role:         sess.Role,
+						TenantID:     sess.TenantID,
+						AppID:        sess.AppID,
+						Subject:      sess.Subject,
+						MFAVerified:  s.mfaSessions.Contains(token),
+						SessionBased: true,
 					}
 					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
 					return
@@ -3429,4 +3480,104 @@ func safeArtifactContentType(raw string) string {
 	default:
 		return "application/octet-stream"
 	}
+}
+
+// ---------------------------------------------------------------------------
+// MFA handlers: POST /v1/mfa/enroll, POST /v1/mfa/verify
+// ---------------------------------------------------------------------------
+
+// handleMFAEnroll enrolls the current user in TOTP-based MFA.
+// RBAC: job:create (any authenticated user may enroll themselves).
+// Returns the base32 secret, an otpauth:// URI for QR scanning, and one-time
+// recovery codes. When MFA is not configured (s.mfaSvc == nil) returns 501.
+func (s *Server) handleMFAEnroll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeMethodNotAllowed(w, r, http.MethodPost)
+		return
+	}
+	if !s.authorizeGatewayAction(w, r, "job:create") {
+		return
+	}
+	if s.mfaSvc == nil {
+		s.writeError(w, r, http.StatusNotImplemented, validationError("UBAG-MFA-NOT-ENABLED-001", "MFA is not enabled on this gateway"))
+		return
+	}
+
+	var body struct {
+		Issuer string `json:"issuer"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, s.maxBody)).Decode(&body); err != nil && err != io.EOF {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-BODY-001", "invalid request body"))
+		return
+	}
+
+	principal, _ := principalFromContext(r.Context())
+	issuer := strings.TrimSpace(body.Issuer)
+	if issuer == "" {
+		issuer = "UBAG"
+	}
+
+	result, err := s.mfaSvc.Enroll(r.Context(), mfa.EnrollRequest{
+		TenantID: principal.TenantID,
+		UserID:   principal.Subject,
+		Issuer:   issuer,
+	})
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to enroll MFA"))
+		return
+	}
+
+	s.writeJSON(w, http.StatusOK, map[string]any{
+		"secret":         result.Secret,
+		"otpauth_uri":    result.OTPAuthURI,
+		"recovery_codes": result.RecoveryCodes,
+	})
+}
+
+// handleMFAVerify verifies a TOTP code or recovery code for the current user.
+// On success it marks the current session as MFA-verified. RBAC: job:create.
+func (s *Server) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeMethodNotAllowed(w, r, http.MethodPost)
+		return
+	}
+	if !s.authorizeGatewayAction(w, r, "job:create") {
+		return
+	}
+	if s.mfaSvc == nil {
+		s.writeError(w, r, http.StatusNotImplemented, validationError("UBAG-MFA-NOT-ENABLED-001", "MFA is not enabled on this gateway"))
+		return
+	}
+
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, s.maxBody)).Decode(&body); err != nil {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-BODY-001", "invalid request body"))
+		return
+	}
+	code := strings.TrimSpace(body.Code)
+	if code == "" {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-MFA-CODE-001", "code is required"))
+		return
+	}
+
+	principal, _ := principalFromContext(r.Context())
+	ok, err := s.mfaSvc.Verify(r.Context(), principal.TenantID, principal.Subject, code)
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, internalError("MFA verification error"))
+		return
+	}
+	if !ok {
+		s.writeError(w, r, http.StatusUnauthorized, authError("UBAG-MFA-INVALID-CODE-001", "MFA code is invalid or expired"))
+		return
+	}
+
+	// Mark the session token as MFA-verified for subsequent requests.
+	if token := sessionTokenFromRequest(r); token != "" {
+		s.mfaSessions.Add(token)
+	}
+
+	w.Header().Set("X-MFA-Verified", "true")
+	s.writeJSON(w, http.StatusOK, map[string]any{"verified": true})
 }
