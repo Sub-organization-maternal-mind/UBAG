@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -38,7 +39,7 @@ func CmdAuthLogin(client *Client, baseURL, appSecret string) (string, error) {
 
 // CmdJobsSend creates a job and returns a short confirmation.
 func CmdJobsSend(client *Client, target, prompt, cmdType string) (string, error) {
-	job, err := client.CreateJob(CreateJobRequest{
+	job, err := client.CreateJob(context.Background(), CreateJobRequest{
 		Target:      target,
 		Prompt:      prompt,
 		CommandType: cmdType,
@@ -55,7 +56,7 @@ func CmdJobsSend(client *Client, target, prompt, cmdType string) (string, error)
 
 // CmdJobsGet fetches a single job and returns it formatted as a table or JSON.
 func CmdJobsGet(client *Client, id string, jsonOut bool) (string, error) {
-	job, err := client.GetJob(id)
+	job, err := client.GetJob(context.Background(), id)
 	if err != nil {
 		return "", err
 	}
@@ -73,7 +74,7 @@ func CmdJobsGet(client *Client, id string, jsonOut bool) (string, error) {
 
 // CmdJobsList lists all jobs and returns them formatted as a table or JSON.
 func CmdJobsList(client *Client, jsonOut bool) (string, error) {
-	jobs, err := client.ListJobs()
+	jobs, err := client.ListJobs(context.Background())
 	if err != nil {
 		return "", err
 	}
@@ -94,7 +95,7 @@ func CmdJobsList(client *Client, jsonOut bool) (string, error) {
 
 // CmdTargetsList lists all targets and returns them formatted as a table or JSON.
 func CmdTargetsList(client *Client, jsonOut bool) (string, error) {
-	targets, err := client.ListTargets()
+	targets, err := client.ListTargets(context.Background())
 	if err != nil {
 		return "", err
 	}
@@ -115,7 +116,7 @@ func CmdTargetsList(client *Client, jsonOut bool) (string, error) {
 
 // CmdCachePurge invalidates the response cache and returns a confirmation.
 func CmdCachePurge(client *Client) (string, error) {
-	if err := client.PurgeCache(); err != nil {
+	if err := client.PurgeCache(context.Background()); err != nil {
 		return "", err
 	}
 	return "Cache purged", nil
@@ -127,7 +128,7 @@ func CmdCachePurge(client *Client) (string, error) {
 
 // CmdDoctor performs a health check and returns a human-readable status.
 func CmdDoctor(client *Client) (string, error) {
-	h, err := client.Health()
+	h, err := client.Health(context.Background())
 	if err != nil {
 		return "", fmt.Errorf("health check failed: %w", err)
 	}
@@ -148,7 +149,7 @@ func CmdDoctor(client *Client) (string, error) {
 
 // CmdVersion returns version and supported API versions from the server.
 func CmdVersion(client *Client) (string, error) {
-	v, err := client.Version()
+	v, err := client.Version(context.Background())
 	if err != nil {
 		return "", err
 	}

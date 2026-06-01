@@ -17,11 +17,8 @@ func withTempConfig(t *testing.T) (cfgPath string, restore func()) {
 	dir := t.TempDir()
 	cfgPath = filepath.Join(dir, ".ubag", "config.json")
 	cli.SetConfigPath(cfgPath)
-	return cfgPath, func() {
-		// Reset to default by pointing at a non-existent path.
-		// The next test that calls withTempConfig will overwrite it anyway.
-		cli.SetConfigPath(cfgPath) // keep as-is; each test sets its own
-	}
+	t.Cleanup(func() { cli.SetConfigPath("") })
+	return cfgPath, func() {}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,6 +28,7 @@ func withTempConfig(t *testing.T) (cfgPath string, restore func()) {
 func TestLoadConfig_DefaultsWhenMissing(t *testing.T) {
 	dir := t.TempDir()
 	cli.SetConfigPath(filepath.Join(dir, "nonexistent", "config.json"))
+	t.Cleanup(func() { cli.SetConfigPath("") })
 
 	cfg, err := cli.LoadConfig()
 	if err != nil {

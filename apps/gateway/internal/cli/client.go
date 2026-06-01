@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -72,7 +73,7 @@ func NewClient(baseURL, appSecret, apiVersion string) *Client {
 		BaseURL:    strings.TrimRight(baseURL, "/"),
 		AppSecret:  appSecret,
 		APIVersion: apiVersion,
-		HTTPClient: &http.Client{},
+		HTTPClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
@@ -120,8 +121,8 @@ func (c *Client) do(req *http.Request, out any) error {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Health calls GET /v1/health.
-func (c *Client) Health() (HealthResponse, error) {
-	req, err := c.newRequest(context.Background(), http.MethodGet, "/v1/health", nil)
+func (c *Client) Health(ctx context.Context) (HealthResponse, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/v1/health", nil)
 	if err != nil {
 		return HealthResponse{}, err
 	}
@@ -130,8 +131,8 @@ func (c *Client) Health() (HealthResponse, error) {
 }
 
 // Version calls GET /v1/version.
-func (c *Client) Version() (VersionResponse, error) {
-	req, err := c.newRequest(context.Background(), http.MethodGet, "/v1/version", nil)
+func (c *Client) Version(ctx context.Context) (VersionResponse, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/v1/version", nil)
 	if err != nil {
 		return VersionResponse{}, err
 	}
@@ -140,12 +141,12 @@ func (c *Client) Version() (VersionResponse, error) {
 }
 
 // CreateJob calls POST /v1/jobs.
-func (c *Client) CreateJob(jobReq CreateJobRequest) (JobResponse, error) {
+func (c *Client) CreateJob(ctx context.Context, jobReq CreateJobRequest) (JobResponse, error) {
 	b, err := json.Marshal(jobReq)
 	if err != nil {
 		return JobResponse{}, err
 	}
-	req, err := c.newRequest(context.Background(), http.MethodPost, "/v1/jobs", bytes.NewReader(b))
+	req, err := c.newRequest(ctx, http.MethodPost, "/v1/jobs", bytes.NewReader(b))
 	if err != nil {
 		return JobResponse{}, err
 	}
@@ -154,8 +155,8 @@ func (c *Client) CreateJob(jobReq CreateJobRequest) (JobResponse, error) {
 }
 
 // GetJob calls GET /v1/jobs/{id}.
-func (c *Client) GetJob(id string) (JobResponse, error) {
-	req, err := c.newRequest(context.Background(), http.MethodGet, "/v1/jobs/"+id, nil)
+func (c *Client) GetJob(ctx context.Context, id string) (JobResponse, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/v1/jobs/"+id, nil)
 	if err != nil {
 		return JobResponse{}, err
 	}
@@ -169,8 +170,8 @@ type listJobsEnvelope struct {
 }
 
 // ListJobs calls GET /v1/jobs.
-func (c *Client) ListJobs() ([]JobResponse, error) {
-	req, err := c.newRequest(context.Background(), http.MethodGet, "/v1/jobs", nil)
+func (c *Client) ListJobs(ctx context.Context) ([]JobResponse, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/v1/jobs", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -223,8 +224,8 @@ type listTargetsEnvelope struct {
 }
 
 // ListTargets calls GET /v1/targets.
-func (c *Client) ListTargets() ([]TargetResponse, error) {
-	req, err := c.newRequest(context.Background(), http.MethodGet, "/v1/targets", nil)
+func (c *Client) ListTargets(ctx context.Context) ([]TargetResponse, error) {
+	req, err := c.newRequest(ctx, http.MethodGet, "/v1/targets", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -254,8 +255,8 @@ func (c *Client) ListTargets() ([]TargetResponse, error) {
 }
 
 // PurgeCache calls POST /v1/cache/invalidate.
-func (c *Client) PurgeCache() error {
-	req, err := c.newRequest(context.Background(), http.MethodPost, "/v1/cache/invalidate", nil)
+func (c *Client) PurgeCache(ctx context.Context) error {
+	req, err := c.newRequest(ctx, http.MethodPost, "/v1/cache/invalidate", nil)
 	if err != nil {
 		return err
 	}

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/cli"
 )
@@ -47,7 +48,7 @@ func TestHealth_OK(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv)
-	h, err := client.Health()
+	h, err := client.Health(context.Background())
 	if err != nil {
 		t.Fatalf("Health() error: %v", err)
 	}
@@ -66,7 +67,7 @@ func TestHealth_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv)
-	_, err := client.Health()
+	_, err := client.Health(context.Background())
 	if err == nil {
 		t.Fatal("expected error from 500 response")
 	}
@@ -87,7 +88,7 @@ func TestVersion_OK(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv)
-	v, err := client.Version()
+	v, err := client.Version(context.Background())
 	if err != nil {
 		t.Fatalf("Version() error: %v", err)
 	}
@@ -115,7 +116,7 @@ func TestGetJob_ReturnsCorrectID(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv)
-	job, err := client.GetJob(wantID)
+	job, err := client.GetJob(context.Background(), wantID)
 	if err != nil {
 		t.Fatalf("GetJob() error: %v", err)
 	}
@@ -149,7 +150,7 @@ func TestCreateJob_SendsCorrectBody(t *testing.T) {
 		Prompt:      "hello world",
 		CommandType: "chat",
 	}
-	job, err := client.CreateJob(req)
+	job, err := client.CreateJob(context.Background(), req)
 	if err != nil {
 		t.Fatalf("CreateJob() error: %v", err)
 	}
@@ -187,7 +188,7 @@ func TestListJobs_ReturnsJobs(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv)
-	jobs, err := client.ListJobs()
+	jobs, err := client.ListJobs(context.Background())
 	if err != nil {
 		t.Fatalf("ListJobs() error: %v", err)
 	}
@@ -214,7 +215,7 @@ func TestListTargets_ReturnsArray(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv)
-	targets, err := client.ListTargets()
+	targets, err := client.ListTargets(context.Background())
 	if err != nil {
 		t.Fatalf("ListTargets() error: %v", err)
 	}
@@ -237,7 +238,7 @@ func TestListTargets_WrappedResponse(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv)
-	targets, err := client.ListTargets()
+	targets, err := client.ListTargets(context.Background())
 	if err != nil {
 		t.Fatalf("ListTargets() wrapped error: %v", err)
 	}
@@ -260,7 +261,7 @@ func TestPurgeCache_SendsPostToCorrectURL(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(srv)
-	if err := client.PurgeCache(); err != nil {
+	if err := client.PurgeCache(context.Background()); err != nil {
 		t.Fatalf("PurgeCache() error: %v", err)
 	}
 	if gotMethod != http.MethodPost {
@@ -348,7 +349,11 @@ func TestWatchJob_ContextCancellation(t *testing.T) {
 			cancel() // cancel after receiving first event
 		})
 	}()
-	<-done // wait for WatchJob to return
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("WatchJob did not return after context cancellation within 3s")
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -370,7 +375,7 @@ func TestNoAuthHeader_WhenSecretEmpty(t *testing.T) {
 		APIVersion: cli.DefaultAPIVersion,
 		HTTPClient: srv.Client(),
 	}
-	if _, err := client.Health(); err != nil {
+	if _, err := client.Health(context.Background()); err != nil {
 		t.Fatalf("Health() error: %v", err)
 	}
 }
