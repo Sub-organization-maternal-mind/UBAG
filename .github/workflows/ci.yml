@@ -52,6 +52,12 @@ jobs:
         working-directory: apps/gateway
         env: { GOTOOLCHAIN: local }
         run: go vet ./...
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - name: Chaos experiment schema validation
+        run: |
+          pip install pytest
+          python -m pytest tests/chaos/tests/test_schema.py -v
 
   gateway:
     name: Gateway (Go)

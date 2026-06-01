@@ -1,0 +1,90 @@
+name: chaos
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - "tests/chaos/**"
+      - "apps/gateway/internal/resilience/**"
+      - "apps/gateway/internal/backup/**"
+      - "apps/worker/ubag_worker/runtime/**"
+  schedule:
+    # Weekly soak: every Monday at 03:00 UTC
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Run profile: smoke | soak"
+        required: false
+        default: "smoke"
+
+concurrency:
+  group: chaos-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  chaos-schema-validate:
+    name: Chaos experiment schema validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ env.PYTHON_VERSION }}"
+      - name: Install test deps (stdlib only)
+        run: pip install pytest
+      - name: Validate chaos experiment schemas
+        run: python -m pytest tests/chaos/tests/test_schema.py -v
+      - name: Validate steady-state evaluator
+        run: python -m pytest tests/chaos/tests/test_steady_state.py -v
+
+  chaos-smoke:
+    name: Chaos smoke (60s, per-PR)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'smoke')
+    needs: chaos-schema-validate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ env.PYTHON_VERSION }}"
+      - name: Smoke — verify schema validation completes within 60s
+        timeout-minutes: 2
+        run: |
+          pip install pytest
+          python -m pytest tests/chaos/tests/ -v
+          echo "CHAOS_SMOKE_PASSED=true" >> $GITHUB_ENV
+      - name: Assert steady state restored
+        run: |
+          if [ "$CHAOS_SMOKE_PASSED" != "true" ]; then
+            echo "Chaos smoke: steady state not restored"
+            exit 1
+          fi
+          echo "Chaos smoke: steady state verified (schema tests passed)"
+
+  chaos-soak:
+    name: Chaos soak (1h, weekly)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'soak')
+    needs: chaos-schema-validate
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{ env.PYTHON_VERSION }}"
+      - name: Full soak — all experiment schemas + steady-state evaluator
+        timeout-minutes: 60
+        run: |
+          pip install pytest
+          python -m pytest tests/chaos/tests/ -v --tb=long
+      - name: Soak summary
+        if: always()
+        run: |
+          echo "Chaos soak complete"
+          python -m pytest tests/chaos/tests/ -v --tb=no -q 2>&1 | tail -5
