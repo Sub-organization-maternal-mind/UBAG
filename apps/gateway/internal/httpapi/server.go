@@ -1087,11 +1087,28 @@ func (s *Server) processBatchEntry(
 		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusInternalServerError
 	}
 
-	if _, err := s.executor.EnqueueJob(ctx, job); err != nil {
-		_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
-		s.releaseConcurrencyToken(tenantID, target, appID)
-		e := queueError("UBAG-QUEUE-ENQUEUE-001", "failed to enqueue job", true)
-		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusServiceUnavailable
+	if s.outbox != nil {
+		env := executor.EnvelopeFromJob(job)
+		envelopeBytes, err := json.Marshal(env)
+		if err != nil {
+			_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
+			s.releaseConcurrencyToken(tenantID, target, appID)
+			e := internalError("failed to marshal job envelope")
+			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusInternalServerError
+		}
+		if err := s.outbox.Append(ctx, job.ID, "jobs.dispatch", envelopeBytes); err != nil {
+			_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
+			s.releaseConcurrencyToken(tenantID, target, appID)
+			e := queueError("UBAG-QUEUE-ENQUEUE-001", "failed to write job to outbox", true)
+			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusServiceUnavailable
+		}
+	} else {
+		if _, err := s.executor.EnqueueJob(ctx, job); err != nil {
+			_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
+			s.releaseConcurrencyToken(tenantID, target, appID)
+			e := queueError("UBAG-QUEUE-ENQUEUE-001", "failed to enqueue job", true)
+			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusServiceUnavailable
+		}
 	}
 
 	return batchJobOutcome{Index: index, Status: "accepted", JobID: job.ID}, http.StatusAccepted
