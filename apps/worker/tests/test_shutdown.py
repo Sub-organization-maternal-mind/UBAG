@@ -31,11 +31,6 @@ class MockOrchestrator:
 
     # --- protocol methods ---
 
-    def concurrency_state(self, tenant_id: str = "") -> object:
-        class _State:
-            inflight = 0
-        return _State()
-
     def all_inflight_job_ids(self) -> List[str]:
         with self._lock:
             return list(self._job_ids)
@@ -118,7 +113,7 @@ def test_grace_window_timeout_triggers_requeue() -> None:
     drainer = GracefulDrainer(
         orchestrator=orch,
         requeue_callback=requeued.append,
-        grace_window=0.1,   # tiny window → must time out
+        grace_window=0.3,   # small window → must time out; 0.3 s gives CI tolerance
         poll_interval=0.05,
     )
 

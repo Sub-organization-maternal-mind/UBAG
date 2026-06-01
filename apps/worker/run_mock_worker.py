@@ -20,11 +20,6 @@ class _MockOrchestrator:
     always returns empty — drain completes immediately.
     """
 
-    def concurrency_state(self, tenant_id: str = "") -> object:
-        class _State:
-            inflight = 0
-        return _State()
-
     def all_inflight_job_ids(self) -> list:
         return []  # mock worker has no real in-flight jobs
 

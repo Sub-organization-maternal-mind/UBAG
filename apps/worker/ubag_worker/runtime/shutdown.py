@@ -9,7 +9,7 @@ Mirrors the gateway's signal.NotifyContext + http.Server.Shutdown(10s) pattern:
 
 Usage:
     drainer = GracefulDrainer(
-        orchestrator=live_orchestrator,   # provides concurrency_state() + requeue
+        orchestrator=live_orchestrator,   # provides set_accepting() + all_inflight_job_ids()
         requeue_callback=lambda job_id: ...,
         grace_window=30.0,
     )
@@ -17,6 +17,7 @@ Usage:
     # ... main run loop checks drainer.accepting ...
     # On signal: drainer.drain() is called automatically
 """
+from __future__ import annotations
 
 import signal
 import threading
@@ -27,10 +28,6 @@ from typing import Callable, Optional, Protocol
 
 class OrchestratorProtocol(Protocol):
     """Minimal interface the drainer needs from the orchestrator."""
-
-    def concurrency_state(self, tenant_id: str = "") -> object:
-        """Returns an object with an inflight attribute (int)."""
-        ...
 
     def all_inflight_job_ids(self) -> list[str]:
         """Returns all currently in-flight job IDs across all tenants/targets."""
@@ -96,11 +93,11 @@ class GracefulDrainer:
         # Phase 2: drain in-flight jobs
         deadline = start + self._grace_window
         initial_inflight = self._orchestrator.all_inflight_job_ids()
+        initial_count = len(initial_inflight)
 
         while time.monotonic() < deadline:
             remaining = self._orchestrator.all_inflight_job_ids()
             if not remaining:
-                summary.drained_jobs = len(initial_inflight)
                 break
             time.sleep(self._poll_interval)
         else:
@@ -108,6 +105,7 @@ class GracefulDrainer:
 
         # Phase 3: requeue unfinished jobs
         still_inflight = self._orchestrator.all_inflight_job_ids()
+        summary.drained_jobs = initial_count - len(still_inflight)
         if still_inflight and self._requeue_callback is not None:
             for job_id in still_inflight:
                 self._requeue_callback(job_id)
@@ -122,12 +120,17 @@ def install_shutdown_handler(drainer: GracefulDrainer) -> None:
     """Install SIGTERM and SIGINT handlers that trigger drainer.drain().
 
     The drain runs in a daemon thread so the signal handler returns immediately.
+    A guard ensures only one drain thread is ever started, even if the signal
+    fires multiple times.
     """
+    _drain_started = threading.Event()
 
     def _handler(signum: int, _frame: object) -> None:
         drainer.request_shutdown()
-        t = threading.Thread(target=drainer.drain, daemon=True, name="shutdown-drain")
-        t.start()
+        if not _drain_started.is_set():
+            _drain_started.set()
+            t = threading.Thread(target=drainer.drain, daemon=True, name="shutdown-drain")
+            t.start()
 
     signal.signal(signal.SIGTERM, _handler)
     signal.signal(signal.SIGINT, _handler)
