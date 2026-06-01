@@ -1,0 +1,126 @@
+# UBAG continuous integration (blueprint §0 Phase 0, §32 testing strategy).
+# Lints, tests, scans, and builds every push and pull request. The jobs mirror
+# the canonical local validation commands in package.json so "green in CI"
+# matches "green on a contributor's machine".
+name: ci
+
+on:
+  push:
+    branches: [master, "feat/**", "release/**"]
+  pull_request:
+    branches: [master]
+
+# One in-flight run per ref; new pushes cancel stale runs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PNPM_VERSION: "10.33.2"
+  GO_VERSION: "1.26.x"
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "20"
+
+jobs:
+  lint:
+    name: Lint & contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: "${{ env.PNPM_VERSION }}" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: pnpm }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
+      - run: pnpm install --frozen-lockfile
+      - name: OpenAPI / JSON-Schema / proto contracts
+        run: pnpm test:schema
+      - name: Blueprint coverage & REST contracts
+        run: pnpm check:blueprint && pnpm check:contracts
+      - name: SDK freshness (generated contracts in sync)
+        run: pnpm check:sdk-freshness
+      - name: gofmt
+        working-directory: apps/gateway
+        run: |
+          fmt_out="$(gofmt -l .)"
+          if [ -n "$fmt_out" ]; then echo "gofmt needs to be run on:"; echo "$fmt_out"; exit 1; fi
+      - name: go vet
+        working-directory: apps/gateway
+        env: { GOTOOLCHAIN: local }
+        run: go vet ./...
+
+  gateway:
+    name: Gateway (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
+      - name: go test ./...
+        working-directory: apps/gateway
+        env: { GOTOOLCHAIN: local }
+        run: go test -race -coverprofile=coverage.out ./...
+      - name: Coverage summary
+        working-directory: apps/gateway
+        run: go tool cover -func=coverage.out | tail -1
+
+  worker:
+    name: Worker (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - name: Install worker (offline/mock test mode)
+        run: python -m pip install --upgrade pip && python -m pip install -e "apps/worker[dev]" || python -m pip install -e apps/worker
+      - name: ruff
+        run: python -m pip install ruff && ruff check apps/worker adapters
+      - name: pytest (UBAG_ADAPTER_OFFLINE=1)
+        env: { UBAG_ADAPTER_OFFLINE: "1" }
+        run: node tools/run-python-worker-tests.mjs
+
+  node-suite:
+    name: Node packages, SDKs, dashboard, docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: "${{ env.PNPM_VERSION }}" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}", cache: pnpm }
+      - uses: actions/setup-go@v5
+        with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - run: pnpm install --frozen-lockfile
+      - name: Edge store, plugins, adapter-registry, security, sidecar
+        run: pnpm test:edge-store && pnpm test:plugins && pnpm test:adapter-registry && pnpm test:security && pnpm test:sidecar
+      - name: SDK suite (TS + Python + Go)
+        run: pnpm test:sdk
+      - name: Conformance + observability
+        run: pnpm test:conformance && pnpm test:observability
+      - name: CLI, dashboard, docs
+        run: pnpm test:cli && pnpm test:dashboard && pnpm test:docs
+
+  security-scan:
+    name: Supply-chain & vuln scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
+      - name: govulncheck
+        working-directory: apps/gateway
+        env: { GOTOOLCHAIN: local }
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./... || true
+      - name: pip-audit
+        run: pipx run pip-audit -r apps/worker/requirements.txt || true
+      - name: Generate SBOM (syft)
+        uses: anchore/sbom-action@v0
+        with: { format: spdx-json, output-file: ubag.sbom.spdx.json }
+      - uses: actions/upload-artifact@v4
+        with: { name: sbom, path: ubag.sbom.spdx.json }

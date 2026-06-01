@@ -27,6 +27,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/httpapi"
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	"github.com/ubag/ubag/apps/gateway/internal/profile"
 	"github.com/ubag/ubag/apps/gateway/internal/ratelimit"
 	"github.com/ubag/ubag/apps/gateway/internal/responsecache"
 	"github.com/ubag/ubag/apps/gateway/internal/scim"
@@ -58,6 +59,26 @@ func run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Resolve the deployment profile (blueprint §4). The profile gates optional
+	// surfaces and sets capacity ceilings via its §4.5 feature matrix.
+	prof, err := profile.ParseOrDefault(os.Getenv("UBAG_PROFILE"))
+	if err != nil {
+		return fmt.Errorf("invalid profile configuration: %w", err)
+	}
+	feat := prof.Features()
+	slog.Info("ubag gateway profile resolved",
+		"profile", prof.String(),
+		"job_backend", string(feat.JobBackend),
+		"browser_session_pool_max", feat.BrowserSessionPoolMax,
+		"semantic_cache", feat.SemanticCache.String(),
+		"multi_tenant_rbac", feat.MultiTenantRBAC.String(),
+		"sso", feat.SSO.String(),
+		"scim", feat.SCIM.String(),
+		"audit_delivery", string(feat.AuditDelivery),
+		"tracing", string(feat.Tracing),
+		"compliance_modes", feat.ComplianceModes.String(),
+	)
+
 	addr := getenv("UBAG_GATEWAY_ADDR", ":8080")
 	dispatcher, err := newDispatcherFromEnv()
 	if err != nil {
@@ -71,6 +92,13 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("invalid store configuration: %w", err)
 	}
 	defer closeStores()
+
+	// Advisory: the small+ profiles promise persistent jobs (§4.5). An ephemeral
+	// in-memory store silently drops jobs on restart, so flag the mismatch.
+	if prof.AtLeast(profile.Small) && storeKind == "memory" {
+		slog.Warn("profile expects persistent jobs but UBAG_GATEWAY_STORE=memory; jobs will not survive restart",
+			"profile", prof.String(), "expected_backend", string(feat.JobBackend))
+	}
 
 	artifactStore, err := newArtifactStoreFromEnv(storeKind, db)
 	if err != nil {

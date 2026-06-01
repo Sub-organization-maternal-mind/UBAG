@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ubag.dev/errors.json",
+  "title": "UBAG Error Catalog",
+  "description": "All stable UBAG error codes (blueprint §6.3). Every error carries code, category, message, retryable, retry_after_ms?, details?, doc_url, trace_id.",
+  "type": "object",
+  "properties": {
+    "namespaces": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["prefix", "category", "description", "codes"],
+        "properties": {
+          "prefix":      { "type": "string" },
+          "category":    { "type": "string" },
+          "description": { "type": "string" },
+          "codes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["code", "message", "retryable"],
+              "properties": {
+                "code":      { "type": "string" },
+                "message":   { "type": "string" },
+                "retryable": { "type": "boolean" },
+                "note":      { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "x-catalog": {
+    "namespaces": [
+      {
+        "prefix": "UBAG-AUTH",
+        "category": "auth",
+        "description": "Authentication failures — missing/invalid/expired credential.",
+        "codes": [
+          { "code": "UBAG-AUTH-MISSING-001",           "message": "Authorization header missing",                           "retryable": false },
+          { "code": "UBAG-AUTH-INVALID-002",            "message": "Bearer token is invalid or malformed",                  "retryable": false },
+          { "code": "UBAG-AUTH-EXPIRED-003",            "message": "Token has expired",                                     "retryable": false },
+          { "code": "UBAG-AUTH-REVOKED-004",            "message": "Token has been revoked",                                "retryable": false },
+          { "code": "UBAG-AUTH-DEVICE-MISMATCH-005",    "message": "Device token bound to a different device fingerprint", "retryable": false },
+          { "code": "UBAG-AUTH-MTLS-REQUIRED-006",      "message": "mTLS client certificate required for this endpoint",   "retryable": false }
+        ]
+      },
+      {
+        "prefix": "UBAG-AUTHZ",
+        "category": "authz",
+        "description": "Authorization failures — insufficient role or ABAC predicate not satisfied.",
+        "codes": [
+          { "code": "UBAG-AUTHZ-ROLE-DENIED-001",   "message": "Action denied: insufficient role",                      "retryable": false },
+          { "code": "UBAG-AUTHZ-SCOPE-DENIED-002",  "message": "Action denied: missing required scope",                  "retryable": false },
+          { "code": "UBAG-AUTHZ-ABAC-DENIED-003",   "message": "Action denied: ABAC predicate not satisfied",            "retryable": false },
+          { "code": "UBAG-AUTHZ-TENANT-MISMATCH-004","message": "Resource belongs to a different tenant",               "retryable": false }
+        ]
+      },
+      {
+        "prefix": "UBAG-VALIDATION",
+        "category": "validation",
+        "description": "Request envelope validation failures — always non-retryable.",
+        "codes": [
+          { "code": "UBAG-VALIDATION-API-VERSION-001",             "message": "api_version field missing or blank",                     "retryable": false },
+          { "code": "UBAG-VALIDATION-API-VERSION-MISMATCH-001",    "message": "api_version does not match expected format",             "retryable": false },
+          { "code": "UBAG-VALIDATION-API-VERSION-UNSUPPORTED-001", "message": "api_version is not supported by this gateway",           "retryable": false },
+          { "code": "UBAG-VALIDATION-IDEMPOTENCY-KEY-001",         "message": "Idempotency-Key header is invalid",                      "retryable": false },
+          { "code": "UBAG-VALIDATION-IDEMPOTENCY-KEY-MISSING-001", "message": "Idempotency-Key header is required for this operation",  "retryable": false },
+          { "code": "UBAG-VALIDATION-IDEMPOTENCY-CONFLICT-001",    "message": "Idempotency-Key already used with a different payload",  "retryable": false },
+          { "code": "UBAG-VALIDATION-IDEMPOTENCY-IN-PROGRESS-001", "message": "Identical request already in flight; wait and retry",   "retryable": true  },
+          { "code": "UBAG-VALIDATION-IDEMPOTENCY-KEY-MISMATCH-001","message": "Idempotency-Key scope mismatch",                        "retryable": false },
+          { "code": "UBAG-VALIDATION-CLIENT-APP-ID-001",           "message": "client.app_id missing or invalid",                      "retryable": false },
+          { "code": "UBAG-VALIDATION-CLIENT-APP-VERSION-001",      "message": "client.app_version missing or invalid",                 "retryable": false },
+          { "code": "UBAG-VALIDATION-CLIENT-SDK-001",              "message": "client.sdk.name or client.sdk.version missing",         "retryable": false },
+          { "code": "UBAG-VALIDATION-JOB-TARGET-001",              "message": "job.target missing or invalid format",                  "retryable": false },
+          { "code": "UBAG-VALIDATION-JOB-COMMAND-001",             "message": "job.command_type missing or invalid format",            "retryable": false },
+          { "code": "UBAG-VALIDATION-JOB-INPUT-001",               "message": "job.input must be a non-null JSON object",              "retryable": false },
+          { "code": "UBAG-VALIDATION-JOB-PAYLOAD-SAFETY-001",      "message": "job.input contains disallowed secret-like value",       "retryable": false },
+          { "code": "UBAG-VALIDATION-JOB-STATUS-001",              "message": "filter[status] is not a recognized job status",         "retryable": false },
+          { "code": "UBAG-VALIDATION-JOB-SORT-001",                "message": "sort parameter value is not supported",                 "retryable": false },
+          { "code": "UBAG-VALIDATION-JOB-ID-MISMATCH-001",         "message": "Job ID in URL does not match body",                     "retryable": false },
+          { "code": "UBAG-VALIDATION-TEMPLATE-COMMAND-001",        "message": "Template not compatible with command_type",             "retryable": false },
+          { "code": "UBAG-VALIDATION-TEMPLATE-TARGET-001",         "message": "Template not compatible with target",                   "retryable": false },
+          { "code": "UBAG-VALIDATION-WEBHOOK-CALLBACK-001",        "message": "callbacks.webhook_url is not a valid HTTPS URL",        "retryable": false },
+          { "code": "UBAG-VALIDATION-WEBHOOK-REPLAY-DELIVERY-001", "message": "delivery_id is required for webhook replay",            "retryable": false },
+          { "code": "UBAG-VALIDATION-WEBHOOK-REPLAY-REASON-001",   "message": "reason is required for webhook replay",                 "retryable": false },
+          { "code": "UBAG-VALIDATION-WEBSOCKET-UPGRADE-001",       "message": "WebSocket upgrade headers missing",                     "retryable": false },
+          { "code": "UBAG-VALIDATION-WEBSOCKET-KEY-001",           "message": "Sec-WebSocket-Key header missing or invalid",           "retryable": false },
+          { "code": "UBAG-VALIDATION-ARTIFACT-KEY-001",            "message": "Artifact key is empty or invalid",                      "retryable": false },
+          { "code": "UBAG-VALIDATION-BODY-TOO-LARGE-001",          "message": "Request body exceeds maximum allowed size",             "retryable": false },
+          { "code": "UBAG-VALIDATION-BODY-READ-001",               "message": "Failed to read request body",                          "retryable": false },
+          { "code": "UBAG-VALIDATION-BODY-LENGTH-001",             "message": "Content-Length header missing or invalid",              "retryable": false },
+          { "code": "UBAG-VALIDATION-JSON-001",                    "message": "Request body is not valid JSON",                        "retryable": false },
+          { "code": "UBAG-VALIDATION-METHOD-001",                  "message": "HTTP method not allowed for this endpoint",             "retryable": false },
+          { "code": "UBAG-VALIDATION-ROUTE-001",                   "message": "Route not found",                                       "retryable": false },
+          { "code": "UBAG-VALIDATION-LIMIT-001",                   "message": "Pagination limit is out of range (1–100)",              "retryable": false },
+          { "code": "UBAG-VALIDATION-EVENT-SEQUENCE-001",          "message": "SSE/WS event sequence number out of order",             "retryable": false },
+          { "code": "UBAG-VALIDATION-COMMAND-SCHEMA-001",          "message": "job.input does not match the JSON Schema for command_type×api_version", "retryable": false, "note": "Phase 2 command validator" }
+        ]
+      },
+      {
+        "prefix": "UBAG-QUOTA",
+        "category": "quota",
+        "description": "Tenant/app usage limits exceeded.",
+        "codes": [
+          { "code": "UBAG-QUOTA-DAILY-001",       "message": "Daily job quota exceeded for this app/target pair",  "retryable": true,  "note": "retry_after_ms = ms until quota resets" },
+          { "code": "UBAG-QUOTA-CREDITS-002",      "message": "Insufficient credit balance",                        "retryable": false },
+          { "code": "UBAG-QUOTA-CONCURRENT-003",   "message": "Maximum concurrent jobs for this app reached",       "retryable": true  }
+        ]
+      },
+      {
+        "prefix": "UBAG-RATE",
+        "category": "rate",
+        "description": "Gateway-level rate limiting (token bucket per app/IP). Communicated via RateLimit-* headers.",
+        "codes": [
+          { "code": "UBAG-RATE-APP-001",    "message": "Per-app rate limit exceeded",    "retryable": true },
+          { "code": "UBAG-RATE-IP-002",     "message": "Per-IP rate limit exceeded",     "retryable": true },
+          { "code": "UBAG-RATE-TOKEN-003",  "message": "Per-token rate limit exceeded",  "retryable": true }
+        ]
+      },
+      {
+        "prefix": "UBAG-QUEUE",
+        "category": "queue",
+        "description": "Job queue and orchestration failures.",
+        "codes": [
+          { "code": "UBAG-QUEUE-ENQUEUE-001",                    "message": "Failed to enqueue job",                               "retryable": true  },
+          { "code": "UBAG-QUEUE-JOB-NOT-FOUND-001",              "message": "Job not found",                                       "retryable": false },
+          { "code": "UBAG-QUEUE-CANCEL-001",                     "message": "Failed to cancel job",                                "retryable": true  },
+          { "code": "UBAG-QUEUE-BACKPRESSURE-002",               "message": "Queue depth limit reached; submit after retry_after_ms", "retryable": true },
+          { "code": "UBAG-QUEUE-DLQ-003",                        "message": "Job has been moved to dead-letter queue after exhausting retries", "retryable": false },
+          { "code": "UBAG-QUEUE-OUTBOX-004",                     "message": "Transactional outbox relay failed; job is durable",   "retryable": true  },
+          { "code": "UBAG-QUEUE-READY-001",                      "message": "Queue subsystem not ready",                           "retryable": true  },
+          { "code": "UBAG-QUEUE-EXECUTOR-READY-001",             "message": "Executor not ready",                                  "retryable": true  },
+          { "code": "UBAG-QUEUE-IDEMPOTENCY-READY-001",          "message": "Idempotency store not ready",                         "retryable": true  },
+          { "code": "UBAG-QUEUE-ARTIFACT-READY-001",             "message": "Artifact store not ready",                            "retryable": true  },
+          { "code": "UBAG-QUEUE-WEBHOOK-READY-001",              "message": "Webhook store not ready",                             "retryable": true  },
+          { "code": "UBAG-QUEUE-WEBHOOK-DELIVERY-NOT-FOUND-001", "message": "Webhook delivery not found",                          "retryable": false }
+        ]
+      },
+      {
+        "prefix": "UBAG-WORKER",
+        "category": "worker",
+        "description": "Browser worker fleet failures.",
+        "codes": [
+          { "code": "UBAG-WORKER-UNAVAILABLE-001", "message": "No worker available to accept the job",         "retryable": true },
+          { "code": "UBAG-WORKER-OOM-002",          "message": "Worker ran out of memory; job requeued",        "retryable": true },
+          { "code": "UBAG-WORKER-TIMEOUT-003",      "message": "Worker did not complete job within timeout",    "retryable": true },
+          { "code": "UBAG-WORKER-CRASHED-004",      "message": "Worker process crashed; job requeued",          "retryable": true }
+        ]
+      },
+      {
+        "prefix": "UBAG-BROWSER",
+        "category": "browser",
+        "description": "Browser-instance level failures.",
+        "codes": [
+          { "code": "UBAG-BROWSER-TOPOLOGY-READY-001", "message": "Browser topology store not ready",                         "retryable": true  },
+          { "code": "UBAG-BROWSER-SPAWN-001",           "message": "Failed to spawn browser instance",                         "retryable": true  },
+          { "code": "UBAG-BROWSER-CRASH-002",           "message": "Browser instance crashed; all contexts requeued",          "retryable": true  },
+          { "code": "UBAG-BROWSER-LIMIT-003",           "message": "Max browser instances per worker reached",                  "retryable": true  }
+        ]
+      },
+      {
+        "prefix": "UBAG-CONTEXT",
+        "category": "context",
+        "description": "Provider-context (logged-in session) failures. v2.1 multi-tab model §12.",
+        "codes": [
+          { "code": "UBAG-CONTEXT-LOGIN-EXPIRED-002",    "message": "Provider context logged out; single-flight re-login in progress", "retryable": true },
+          { "code": "UBAG-CONTEXT-SPA-SINGLETON-011",    "message": "Target supports only one live conversation per login; fanned out to multi-context", "retryable": false, "note": "informational" },
+          { "code": "UBAG-CONTEXT-SPAWN-001",            "message": "Failed to create provider context",                              "retryable": true },
+          { "code": "UBAG-CONTEXT-CRASH-003",            "message": "Provider context crashed; tabs requeued, snapshot restore in progress", "retryable": true },
+          { "code": "UBAG-CONTEXT-LIMIT-004",            "message": "Max contexts per browser reached",                               "retryable": true }
+        ]
+      },
+      {
+        "prefix": "UBAG-TAB",
+        "category": "tab",
+        "description": "Channel-tab level failures. v2.1 multi-tab model §12.",
+        "codes": [
+          { "code": "UBAG-TAB-CRASHED-003",         "message": "Channel tab crashed; job requeued, replacement tab opening",   "retryable": true },
+          { "code": "UBAG-TAB-MEMORY-RECYCLED-009", "message": "Tab exceeded RSS budget and was recycled mid-idle",             "retryable": true },
+          { "code": "UBAG-TAB-ZOMBIE-005",           "message": "Tab had no heartbeat and was reaped; job requeued",            "retryable": true },
+          { "code": "UBAG-TAB-HEALTH-FAIL-006",      "message": "Tab health probe failed (CAPTCHA or error wall detected)",     "retryable": true },
+          { "code": "UBAG-TAB-LIMIT-007",            "message": "Max tabs per browser reached",                                  "retryable": true },
+          { "code": "UBAG-TAB-WARM-008",             "message": "Tab is still warming; request parked in pool queue",           "retryable": true }
+        ]
+      },
+      {
+        "prefix": "UBAG-CONCURRENCY",
+        "category": "concurrency",
+        "description": "Per-provider adaptive concurrency control (AIMD). v2.1 §12.9.",
+        "codes": [
+          { "code": "UBAG-CONCURRENCY-001",                       "message": "Per-provider concurrency ceiling reached; job parked in pool queue",         "retryable": true },
+          { "code": "UBAG-CONCURRENCY-PROVIDER-THROTTLED-007",    "message": "Target signalled throttle/429; AIMD cap reduced, pacer widened",             "retryable": true },
+          { "code": "UBAG-CONCURRENCY-PACER-002",                  "message": "Global submit pacer delaying submission to protect provider account",        "retryable": true },
+          { "code": "UBAG-CONCURRENCY-CAPTCHA-003",                "message": "CAPTCHA detected; session moved to manual-resolution queue",                  "retryable": true }
+        ]
+      },
+      {
+        "prefix": "UBAG-ADAPTER",
+        "category": "adapter",
+        "description": "Target-adapter failures (UI interaction, drift, normalization).",
+        "codes": [
+          { "code": "UBAG-ADAPTER-DRIFT-014",         "message": "Target UI changed; selector not found after all fallbacks",         "retryable": true  },
+          { "code": "UBAG-ADAPTER-TIMEOUT-001",        "message": "Adapter timed out waiting for target response",                    "retryable": true  },
+          { "code": "UBAG-ADAPTER-SUBMIT-002",         "message": "Adapter failed to submit prompt",                                   "retryable": true  },
+          { "code": "UBAG-ADAPTER-EXTRACT-003",        "message": "Adapter failed to extract output",                                  "retryable": true  },
+          { "code": "UBAG-ADAPTER-NORMALIZE-004",      "message": "Output normalization failed; output schema validation rejected",    "retryable": true  },
+          { "code": "UBAG-ADAPTER-FORBIDDEN-005",      "message": "Output contains forbidden phrase; retry with stricter instructions", "retryable": true },
+          { "code": "UBAG-ADAPTER-VERSION-MISMATCH-006","message": "Requested adapter version not found",                             "retryable": false },
+          { "code": "UBAG-ADAPTER-QUARANTINED-007",    "message": "Adapter auto-quarantined due to excessive drift; previous version active", "retryable": true }
+        ]
+      },
+      {
+        "prefix": "UBAG-TARGET",
+        "category": "target",
+        "description": "Target-site level failures (site down, UI unavailable).",
+        "codes": [
+          { "code": "UBAG-TARGET-DOWN-001",            "message": "Target site is unreachable or returning 5xx",                    "retryable": true  },
+          { "code": "UBAG-TARGET-NOT-FOUND-002",       "message": "Target name is not registered in this gateway",                  "retryable": false },
+          { "code": "UBAG-TARGET-DISABLED-003",        "message": "Target has been administratively disabled",                      "retryable": false },
+          { "code": "UBAG-TARGET-MAINTENANCE-004",     "message": "Target is in maintenance window; retry_after_ms is the window end", "retryable": true }
+        ]
+      },
+      {
+        "prefix": "UBAG-TEMPLATE",
+        "category": "template",
+        "description": "Prompt-template failures.",
+        "codes": [
+          { "code": "UBAG-TEMPLATE-NOT-FOUND-001",         "message": "Template not found",                                    "retryable": false },
+          { "code": "UBAG-TEMPLATE-READY-001",             "message": "Template store not ready",                              "retryable": true  },
+          { "code": "UBAG-TEMPLATE-RENDER-002",            "message": "Template render failed",                                "retryable": false },
+          { "code": "UBAG-TEMPLATE-INPUT-SCHEMA-003",      "message": "Template input schema validation failed",              "retryable": false },
+          { "code": "UBAG-TEMPLATE-OUTPUT-SCHEMA-004",     "message": "Template output schema validation failed; retrying",   "retryable": true  },
+          { "code": "UBAG-TEMPLATE-VERSION-CONFLICT-005",  "message": "Template version conflict; specified version inactive", "retryable": false }
+        ]
+      },
+      {
+        "prefix": "UBAG-CACHE",
+        "category": "cache",
+        "description": "Response-cache failures.",
+        "codes": [
+          { "code": "UBAG-CACHE-LOOKUP-001",    "message": "Cache lookup failed (transient backend error)",   "retryable": true  },
+          { "code": "UBAG-CACHE-WRITE-002",     "message": "Cache write failed (transient backend error)",    "retryable": true  },
+          { "code": "UBAG-CACHE-PURGE-003",     "message": "Cache purge failed",                              "retryable": true  },
+          { "code": "UBAG-CACHE-DISABLED-004",  "message": "Cache is disabled for this template (PII/PHI)",  "retryable": false }
+        ]
+      },
+      {
+        "prefix": "UBAG-WEBHOOK",
+        "category": "webhook",
+        "description": "Webhook dispatcher failures.",
+        "codes": [
+          { "code": "UBAG-WEBHOOK-DELIVERY-FAILED-001",   "message": "Webhook delivery failed; scheduled for retry",     "retryable": true  },
+          { "code": "UBAG-WEBHOOK-DLQ-002",               "message": "Webhook delivery exhausted retries; in DLQ",        "retryable": false },
+          { "code": "UBAG-WEBHOOK-SIGNATURE-003",         "message": "Webhook HMAC signature verification failed",        "retryable": false },
+          { "code": "UBAG-WEBHOOK-ENDPOINT-INVALID-004",  "message": "Webhook endpoint URL is not reachable or invalid",  "retryable": false },
+          { "code": "UBAG-WEBHOOK-CIRCUIT-OPEN-005",      "message": "Webhook endpoint circuit breaker is open",          "retryable": true  }
+        ]
+      },
+      {
+        "prefix": "UBAG-INTERNAL",
+        "category": "internal",
+        "description": "Unexpected gateway-internal errors. Always retryable.",
+        "codes": [
+          { "code": "UBAG-INTERNAL-GATEWAY-001",  "message": "Internal gateway error",           "retryable": true },
+          { "code": "UBAG-INTERNAL-WORKER-002",   "message": "Internal worker error",             "retryable": true },
+          { "code": "UBAG-INTERNAL-DB-003",       "message": "Internal database error",           "retryable": true },
+          { "code": "UBAG-INTERNAL-QUEUE-004",    "message": "Internal queue error",              "retryable": true },
+          { "code": "UBAG-INTERNAL-CRYPTO-005",   "message": "Internal cryptographic operation failed", "retryable": true }
+        ]
+      }
+    ]
+  }
+}

@@ -76,3 +76,85 @@ func internalError(message string) apiError {
 		Retryable: true,
 	}
 }
+
+// quotaError constructs a UBAG-QUOTA-* error (§6.3 quota namespace).
+func quotaError(code, message string, retryAfterMS *int) apiError {
+	return apiError{
+		Code:         code,
+		Category:     "quota",
+		Message:      message,
+		Retryable:    retryAfterMS != nil,
+		RetryAfterMS: retryAfterMS,
+	}
+}
+
+// rateError constructs a UBAG-RATE-* error (§6.3 rate namespace).
+func rateError(code, message string, retryAfterMS *int) apiError {
+	return apiError{
+		Code:         code,
+		Category:     "rate",
+		Message:      message,
+		Retryable:    true,
+		RetryAfterMS: retryAfterMS,
+	}
+}
+
+// workerError constructs a UBAG-WORKER-* error (§6.3 worker namespace).
+func workerError(code, message string) apiError {
+	return apiError{Code: code, Category: "worker", Message: message, Retryable: true}
+}
+
+// browserError constructs a UBAG-BROWSER-* error (§6.3 browser namespace).
+func browserError(code, message string) apiError {
+	return apiError{Code: code, Category: "browser", Message: message, Retryable: true}
+}
+
+// contextError constructs a UBAG-CONTEXT-* error (§6.3 v2.1 context namespace).
+func contextError(code, message string) apiError {
+	return apiError{Code: code, Category: "context", Message: message, Retryable: true}
+}
+
+// tabError constructs a UBAG-TAB-* error (§6.3 v2.1 tab namespace).
+func tabError(code, message string) apiError {
+	return apiError{Code: code, Category: "tab", Message: message, Retryable: true}
+}
+
+// concurrencyError constructs a UBAG-CONCURRENCY-* error (§6.3 v2.1 concurrency namespace).
+func concurrencyError(code, message string, retryAfterMS *int) apiError {
+	return apiError{
+		Code:         code,
+		Category:     "concurrency",
+		Message:      message,
+		Retryable:    true,
+		RetryAfterMS: retryAfterMS,
+	}
+}
+
+// adapterError constructs a UBAG-ADAPTER-* error (§6.3 adapter namespace).
+func adapterError(code, message string, details map[string]any) apiError {
+	return apiError{Code: code, Category: "adapter", Message: message, Retryable: true, Details: details}
+}
+
+// targetError constructs a UBAG-TARGET-* error (§6.3 target namespace).
+func targetError(code, message string, retryable bool, retryAfterMS *int) apiError {
+	return apiError{
+		Code:         code,
+		Category:     "target",
+		Message:      message,
+		Retryable:    retryable,
+		RetryAfterMS: retryAfterMS,
+	}
+}
+
+// cacheError constructs a UBAG-CACHE-* error (§6.3 cache namespace).
+func cacheError(code, message string, retryable bool) apiError {
+	return apiError{Code: code, Category: "cache", Message: message, Retryable: retryable}
+}
+
+// webhookError constructs a UBAG-WEBHOOK-* error (§6.3 webhook namespace).
+func webhookError(code, message string, retryable bool) apiError {
+	return apiError{Code: code, Category: "webhook", Message: message, Retryable: retryable}
+}
+
+// ptrInt returns a pointer to an int literal — helper for RetryAfterMS.
+func ptrInt(v int) *int { return &v }
