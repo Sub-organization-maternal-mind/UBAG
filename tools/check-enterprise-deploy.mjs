@@ -73,6 +73,9 @@ const required = [
   "deploy/terraform/ubag/main.tf",
   "deploy/terraform/ubag/outputs.tf",
   "deploy/terraform/ubag/README.md",
+  "deploy/terraform/_shared/backend.tf",
+  "deploy/terraform/_shared/variables.tf",
+  "deploy/terraform/_shared/README.md",
   "deploy/installers/install.sh",
   "deploy/installers/install.ps1",
   "deploy/installers/systemd/ubag-gateway.service",
@@ -129,6 +132,27 @@ walk("deploy", (p) => {
     fail(`unexpected key/cert material committed: ${p}`);
   }
 });
+
+// 5b. Shared Terraform backend: assert file exists and contains no inline credentials.
+// Comments (lines starting with #) are allowed to mention example values, but
+// no uncommented `access_key =` or `secret_key =` assignments are permitted.
+{
+  const backendPath = "deploy/terraform/_shared/backend.tf";
+  if (existsSync(join(root, backendPath))) {
+    const backendLines = read(backendPath).split("\n");
+    for (let i = 0; i < backendLines.length; i++) {
+      const raw = backendLines[i];
+      const stripped = raw.replace(/#.*$/, ""); // remove inline comments
+      // Flag uncommented access_key or secret_key assignments
+      if (/\baccess_key\s*=\s*"[^"]+"/.test(stripped)) {
+        fail(`${backendPath}:${i + 1}: uncommented access_key credential detected`);
+      }
+      if (/\bsecret_key\s*=\s*"[^"]+"/.test(stripped)) {
+        fail(`${backendPath}:${i + 1}: uncommented secret_key credential detected`);
+      }
+    }
+  }
+}
 
 // 6. Operator CRD invariants: each CRD must declare the correct API group.
 const crdFiles = [
