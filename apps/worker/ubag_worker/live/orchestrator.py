@@ -29,7 +29,14 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 
 from ..orchestration.aimd import AIMDController, CapChange, NegativeSignal
+from ..orchestration.bulkhead import (
+    BulkheadRegistry,
+    CrashLevel,
+    RecoveryAction,
+    compute_recovery,
+)
 from ..orchestration.channel_pool import (
+    AssignOutcome,
     AssignResult,
     ChannelPool,
     Job,
@@ -101,11 +108,15 @@ class LiveOrchestrator:
         fleet: Optional[Fleet] = None,
         pool_config: Optional[PoolConfig] = None,
         worker_id: str = "worker-1",
+        bulkhead: Optional[BulkheadRegistry] = None,
+        requeue_callback: Optional[Callable[[str], None]] = None,
     ) -> None:
         self._clock = clock
         self._fleet = fleet if fleet is not None else Fleet()
         self._pool_config = pool_config
         self._worker_id = worker_id
+        self._bulkhead = bulkhead
+        self._requeue_callback = requeue_callback
         self._pools: Dict[_Key, ChannelPool] = {}
         self._aimd: Dict[_Key, AIMDController] = {}
         self._lock = threading.RLock()
@@ -129,6 +140,54 @@ class LiveOrchestrator:
 
         with self._lock:
             key = (tenant_id, provider_id, identity_ref)
+
+            # Bulkhead admission check — reject before allocating any resources
+            # so the job stays queued at a higher level for backpressure.
+            if self._bulkhead is not None:
+                if not self._bulkhead.try_acquire(tenant_id, provider_id):
+                    # Build a minimal context/pool so the caller has a valid
+                    # LiveLease object to inspect (tab will be None / not assigned).
+                    context = self._fleet.get_or_create_context(
+                        tenant_id=tenant_id,
+                        target_id=provider_id,
+                        identity_ref=identity_ref,
+                        worker_id=self._worker_id,
+                        conversation_model=conversation_model,
+                    )
+                    pool = self._pools.get(key)
+                    if pool is None:
+                        aimd = self._aimd.get(key)
+                        if aimd is None:
+                            aimd = AIMDController(clock=self._clock)
+                            self._aimd[key] = aimd
+                        pool = ChannelPool(
+                            tenant_id=tenant_id,
+                            provider_id=provider_id,
+                            identity_ref=identity_ref,
+                            context=context,
+                            config=self._pool_config,
+                            aimd=aimd,
+                            clock=self._clock,
+                            conversation_model=context.conversation_model,
+                        )
+                        self._pools[key] = pool
+                    # Return an enqueued (not-assigned) result to signal backpressure.
+                    backpressure_result = AssignResult(
+                        outcome=AssignOutcome.ENQUEUED,
+                        job_id=job_id,
+                        tab=None,
+                        conversation_id=conversation_id,
+                    )
+                    return LiveLease(
+                        key=key,
+                        tenant_id=tenant_id,
+                        provider_id=provider_id,
+                        identity_ref=identity_ref,
+                        pool=pool,
+                        context=context,
+                        result=backpressure_result,
+                    )
+
             context = self._fleet.get_or_create_context(
                 tenant_id=tenant_id,
                 target_id=provider_id,
@@ -179,6 +238,7 @@ class LiveOrchestrator:
         *,
         success: bool,
         signal: Optional[NegativeSignal] = None,
+        crash_level: Optional[CrashLevel] = None,
     ) -> Optional[CapChange]:
         """Drive AIMD from the job outcome and release the leased tab.
 
@@ -186,6 +246,10 @@ class LiveOrchestrator:
         :class:`CapChange`); otherwise a success additively increases it once the
         success window is met. Returns the emitted :class:`CapChange`, if any, so
         the caller can report it to the gateway as ``concurrency.cap_changed``.
+
+        When ``crash_level`` is provided, :func:`compute_recovery` is called and
+        any jobs identified in the recovery plan are requeued via
+        ``requeue_callback`` (if set on the orchestrator).
         """
 
         with self._lock:
@@ -195,9 +259,34 @@ class LiveOrchestrator:
             elif success:
                 change = lease.pool.aimd.record_success(now=self._clock())
 
+            # Crash recovery must be computed BEFORE pool.complete() clears
+            # current_job_id on the tab, so the blast radius still has the
+            # in-flight job id.
+            if crash_level is not None and self._requeue_callback is not None:
+                tab = lease.result.tab
+                context = lease.context
+                plan = compute_recovery(
+                    crash_level,
+                    tab=tab,
+                    context=context,
+                    tabs=[tab] if tab is not None else [],
+                    contexts=[context] if context is not None else [],
+                )
+                # OUTBOX_REQUEUE (worker-level) and REQUEUE_JOB (tab/context/
+                # browser-level) both indicate jobs that need to be rescheduled.
+                requeue_actions = {RecoveryAction.OUTBOX_REQUEUE, RecoveryAction.REQUEUE_JOB}
+                if requeue_actions & set(plan.actions):
+                    for job_id in plan.requeue_job_ids:
+                        self._requeue_callback(job_id)
+
             if lease.result.tab is not None:
                 lease.pool.complete(lease.result.tab, now=self._clock())
                 self._fleet.unregister_tab(lease.result.tab)
+
+            # Release the bulkhead slot now that the tab is done.
+            if self._bulkhead is not None and lease.result.tab is not None:
+                self._bulkhead.release(lease.tenant_id, lease.provider_id)
+
             return change
 
     def concurrency_state(self, lease: LiveLease) -> ConcurrencyState:
