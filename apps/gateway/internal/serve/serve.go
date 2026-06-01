@@ -27,6 +27,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/httpapi"
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	"github.com/ubag/ubag/apps/gateway/internal/obs"
 	"github.com/ubag/ubag/apps/gateway/internal/profile"
 	"github.com/ubag/ubag/apps/gateway/internal/ratelimit"
 	"github.com/ubag/ubag/apps/gateway/internal/resilience"
@@ -54,6 +55,11 @@ const defaultSQLiteDSN = "file:ubag-gateway.db?_pragma=busy_timeout(5000)&_pragm
 func Run(ctx context.Context) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Initialise contract-conformant JSON logging (§18.1). Must come before any
+	// slog calls so all downstream logs use the redacting handler.
+	logger := obs.InitLogger(ctx, os.Stderr)
+	slog.SetDefault(logger)
 
 	// Resolve the deployment profile (blueprint §4). The profile gates optional
 	// surfaces and sets capacity ceilings via its §4.5 feature matrix.
