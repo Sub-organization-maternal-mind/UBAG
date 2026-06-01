@@ -58,6 +58,15 @@ type Filter struct {
 }
 
 // Store persists audit records and exposes chain inspection.
+//
+// WORM contract:
+//  1. This interface intentionally exposes NO Update or Delete methods.
+//     Every record is write-once; mutations are detected by VerifyChain.
+//  2. DB-level enforcement: REVOKE UPDATE, DELETE ON gateway_audit_records FROM ubag_app;
+//     Any implementation that omits this grant revocation is a SECURITY DEFECT.
+//  3. Any implementation that adds an Update or Delete method, or that mutates
+//     persisted rows via a side channel, violates WORM semantics and constitutes
+//     a SECURITY DEFECT.
 type Store interface {
 	Ready(ctx context.Context) error
 	// Append links rec onto its tenant's chain and persists it. The caller
