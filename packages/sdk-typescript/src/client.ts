@@ -1,4 +1,6 @@
 import { UbagApiError, UbagTransportError, isUbagErrorEnvelope } from "./errors.js";
+import { type RetryPolicy, DEFAULT_RETRY_POLICY, computeBackoff, shouldRetry } from "./retry.js";
+import { type TelemetryOptions, withSpan } from "./telemetry.js";
 import {
   UBAG_DEFAULT_API_VERSION,
   UBAG_SDK_NAME,
@@ -50,6 +52,9 @@ export interface UbagClientOptions {
   apiVersion?: string;
   fetch?: UbagFetch;
   headers?: Record<string, string>;
+  retry?: RetryPolicy;
+  telemetry?: TelemetryOptions;
+  sidecarDiscovery?: boolean;
 }
 
 export interface UbagRequestOptions {
@@ -77,6 +82,8 @@ export class UbagClient {
   private readonly appSecret: string | undefined;
   private readonly fetchImpl: UbagFetch;
   private readonly defaultHeaders: Record<string, string>;
+  private readonly retry: RetryPolicy;
+  private readonly telemetry: TelemetryOptions | undefined;
 
   constructor(options: UbagClientOptions) {
     const fetchImpl = options.fetch ?? globalThis.fetch;
@@ -89,6 +96,8 @@ export class UbagClient {
     this.appSecret = options.appSecret;
     this.fetchImpl = fetchImpl.bind(globalThis) as UbagFetch;
     this.defaultHeaders = { ...options.headers };
+    this.retry = options.retry ?? DEFAULT_RETRY_POLICY;
+    this.telemetry = options.telemetry;
   }
 
   async health(options: UbagRequestOptions = {}): Promise<UbagHealthResponse> {
@@ -106,24 +115,25 @@ export class UbagClient {
   async createJob(request: UbagCreateJobRequest, options: UbagRequestOptions = {}): Promise<UbagJobResponse> {
     const apiVersion = request.api_version ?? options.apiVersion ?? this.apiVersion;
     const idempotencyKey = request.idempotency_key ?? options.idempotencyKey ?? generateIdempotencyKey();
-    const body: UbagCreateJobRequest = {
-      ...request,
-      api_version: apiVersion,
-      idempotency_key: idempotencyKey,
-      client: {
-        ...request.client,
-        sdk: request.client.sdk ?? {
-          name: UBAG_SDK_NAME,
-          version: UBAG_SDK_VERSION
+    return this.withRetries("createJob", { "ubag.target": String(request.job?.target ?? "") }, () => {
+      const body: UbagCreateJobRequest = {
+        ...request,
+        api_version: apiVersion,
+        idempotency_key: idempotencyKey,
+        client: {
+          ...request.client,
+          sdk: request.client.sdk ?? {
+            name: UBAG_SDK_NAME,
+            version: UBAG_SDK_VERSION
+          }
         }
-      }
-    };
-
-    return this.request("POST", "/v1/jobs", {
-      ...options,
-      apiVersion,
-      idempotencyKey,
-      body
+      };
+      return this.request("POST", "/v1/jobs", {
+        ...options,
+        apiVersion,
+        idempotencyKey,
+        body
+      });
     });
   }
 
@@ -430,6 +440,28 @@ export class UbagClient {
       apiVersion,
       idempotencyKey,
       body
+    });
+  }
+
+  private async withRetries<T>(
+    op: string,
+    attrs: Record<string, string>,
+    fn: () => Promise<T>,
+  ): Promise<T> {
+    return withSpan(this.telemetry, `ubag.${op}`, attrs, async () => {
+      let attempt = 0;
+      for (;;) {
+        try {
+          return await fn();
+        } catch (err) {
+          const isRetryable = err instanceof UbagApiError && err.retryable;
+          if (!isRetryable || !shouldRetry(this.retry, attempt, true)) throw err;
+          const apiErr = err as UbagApiError;
+          const delay = apiErr.retryAfterMs ?? computeBackoff(this.retry, attempt);
+          await new Promise<void>((r) => setTimeout(r, delay));
+          attempt++;
+        }
+      }
     });
   }
 
