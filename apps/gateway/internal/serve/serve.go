@@ -61,6 +61,14 @@ func Run(ctx context.Context) error {
 	logger := obs.InitLogger(ctx, os.Stderr)
 	slog.SetDefault(logger)
 
+	// Initialise OpenTelemetry tracing (§18 / Task 2.2). When UBAG_OTLP_ENDPOINT
+	// is unset a no-op provider is installed — no external dependency required.
+	tracerShutdown, err := obs.InitTracer(ctx)
+	if err != nil {
+		return fmt.Errorf("obs: init tracer: %w", err)
+	}
+	defer func() { _ = tracerShutdown(context.Background()) }()
+
 	// Resolve the deployment profile (blueprint §4). The profile gates optional
 	// surfaces and sets capacity ceilings via its §4.5 feature matrix.
 	prof, err := profile.ParseOrDefault(os.Getenv("UBAG_PROFILE"))
