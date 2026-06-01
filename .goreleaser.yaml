@@ -1,0 +1,112 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# goreleaser v2 — https://goreleaser.com/customization/
+version: 2
+
+project_name: ubag
+
+before:
+  hooks:
+    - go mod tidy -C apps/gateway
+
+builds:
+  - id: ubag
+    main: ./cmd/ubag/main.go
+    binary: ubag
+    dir: apps/gateway
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+        -X main.version={{.Version}}
+        -X main.commit={{.Commit}}
+        -X main.date={{.Date}}
+
+archives:
+  - id: ubag
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+signs:
+  - cmd: cosign
+    certificate: "${artifact}.pem"
+    output: true
+    artifacts: checksum
+    args:
+      - sign-blob
+      - --output-certificate=${certificate}
+      - --output-signature=${signature}
+      - ${artifact}
+      - --yes
+
+nfpms:
+  - id: ubag
+    package_name: ubag
+    vendor: UBAG
+    homepage: https://github.com/ubag/ubag
+    description: UBAG — Universal Bridge / Agent Gateway
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: deploy/installers/systemd/ubag-gateway.service
+        dst: /lib/systemd/system/ubag-gateway.service
+        type: config|noreplace
+      - src: deploy/installers/gateway.env.example
+        dst: /etc/ubag/gateway.env.example
+        type: config|noreplace
+
+brews:
+  - name: ubag
+    repository:
+      owner: ubag
+      name: homebrew-tap
+    folder: Formula
+    homepage: https://github.com/ubag/ubag
+    description: UBAG — Universal Bridge / Agent Gateway
+    license: MIT
+    install: |
+      bin.install "ubag"
+    test: |
+      system "#{bin}/ubag", "version"
+
+snapcrafts:
+  - name: ubag
+    summary: Universal Bridge / Agent Gateway
+    description: |
+      UBAG routes AI agent requests across LLM providers with caching,
+      rate limiting, and observability built in.
+    grade: stable
+    confinement: classic
+    publish: false
+    apps:
+      ubag:
+        command: ubag
+
+release:
+  github:
+    owner: ubag
+    name: ubag
+  draft: false
+  prerelease: auto
