@@ -25,9 +25,11 @@ type Store interface {
 	Enroll(ctx context.Context, e Enrollment) error
 	// Get returns the enrollment for (tenantID, userID). ok=false if none.
 	Get(ctx context.Context, tenantID, userID string) (Enrollment, bool, error)
-	// MarkCounterUsed records that a TOTP counter step has been used so the same
-	// code cannot be replayed within the same 30-second window.
-	MarkCounterUsed(ctx context.Context, tenantID, userID string, counter uint64) error
+	// MarkCounterUsed atomically checks and records that a TOTP counter step has
+	// been used so the same code cannot be replayed within the same 30-second
+	// window. Returns (true, nil) when the counter was newly marked (first use)
+	// and (false, nil) when it was already consumed (replay attack).
+	MarkCounterUsed(ctx context.Context, tenantID, userID string, counter uint64) (bool, error)
 	// ConsumeRecovery checks if code matches any unused recovery hash and marks
 	// it used. Returns true if a match was found.
 	ConsumeRecovery(ctx context.Context, tenantID, userID, code string) (bool, error)
@@ -75,31 +77,23 @@ func (m *MemoryStore) Get(_ context.Context, tenantID, userID string) (Enrollmen
 	return out, true, nil
 }
 
-// MarkCounterUsed records a used TOTP counter (replay protection).
-func (m *MemoryStore) MarkCounterUsed(_ context.Context, tenantID, userID string, counter uint64) error {
+// MarkCounterUsed atomically checks and records a TOTP counter (replay
+// protection). Returns (true, nil) on first use, (false, nil) if already used.
+func (m *MemoryStore) MarkCounterUsed(_ context.Context, tenantID, userID string, counter uint64) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	e, ok := m.data[enrollmentKey(tenantID, userID)]
 	if !ok {
-		return fmt.Errorf("mfa: enrollment not found for %s/%s", tenantID, userID)
+		return false, fmt.Errorf("mfa: enrollment not found for %s/%s", tenantID, userID)
 	}
 	if e.UsedCounters == nil {
 		e.UsedCounters = make(map[uint64]struct{})
 	}
-	e.UsedCounters[counter] = struct{}{}
-	return nil
-}
-
-// IsCounterUsed reports whether the given counter step has already been consumed.
-func (m *MemoryStore) IsCounterUsed(tenantID, userID string, counter uint64) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	e, ok := m.data[enrollmentKey(tenantID, userID)]
-	if !ok {
-		return false
+	if _, exists := e.UsedCounters[counter]; exists {
+		return false, nil // already used — replay attack
 	}
-	_, used := e.UsedCounters[counter]
-	return used
+	e.UsedCounters[counter] = struct{}{}
+	return true, nil // newly marked
 }
 
 // ConsumeRecovery checks whether code matches any remaining (unused) recovery

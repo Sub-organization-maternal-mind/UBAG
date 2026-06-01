@@ -2,6 +2,7 @@ package mfa
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"math"
 	"time"
@@ -79,21 +80,15 @@ func VerifyCode(ctx context.Context, store Store, tenantID, userID, code string,
 			if err != nil {
 				return false, fmt.Errorf("mfa: compute totp: %w", err)
 			}
-			if candidate == code {
-				// Replay protection: reject if this counter was already consumed.
-				if ms, ok := store.(*MemoryStore); ok {
-					if ms.IsCounterUsed(tenantID, userID, c) {
-						return false, nil
-					}
-					if err := store.MarkCounterUsed(ctx, tenantID, userID, c); err != nil {
-						return false, err
-					}
-				} else {
-					// Generic Store: always mark used (non-MemoryStore implementations
-					// must implement MarkCounterUsed to support replay protection).
-					if err := store.MarkCounterUsed(ctx, tenantID, userID, c); err != nil {
-						return false, err
-					}
+			// Use constant-time comparison to prevent timing side-channels.
+			if subtle.ConstantTimeCompare([]byte(candidate), []byte(code)) == 1 {
+				// Atomically check-and-mark: prevents TOCTOU replay attack.
+				marked, err := store.MarkCounterUsed(ctx, tenantID, userID, c)
+				if err != nil {
+					return false, err
+				}
+				if !marked {
+					return false, nil // already used — replay attack
 				}
 				return true, nil
 			}
