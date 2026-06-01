@@ -47,6 +47,10 @@ func (m *MemoryStore) Create(_ context.Context, request CreateRequest) (Job, err
 	now := m.now().UTC()
 	id := fmt.Sprintf("job_%012d", m.sequence)
 
+	status := StatusQueued
+	if request.NotBefore != nil && request.NotBefore.After(now) {
+		status = StatusScheduled
+	}
 	job := Job{
 		ID:             id,
 		APIVersion:     request.APIVersion,
@@ -62,9 +66,10 @@ func (m *MemoryStore) Create(_ context.Context, request CreateRequest) (Job, err
 		Options:        cloneMap(request.Options),
 		Callbacks:      cloneMap(request.Callbacks),
 		Context:        cloneMap(request.Context),
-		Status:         StatusQueued,
+		Status:         status,
 		TraceID:        request.TraceID,
 		RetryOf:        request.RetryOf,
+		NotBefore:      request.NotBefore,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}

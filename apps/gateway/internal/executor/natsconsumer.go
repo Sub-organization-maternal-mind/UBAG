@@ -156,6 +156,15 @@ func (q *NATSWorkerQueue) LeaseNext(ctx context.Context) (WorkerLease, bool, err
 			_ = terminateNATSMessage(msg, err.Error())
 			return nil, true, nil
 		}
+		// §14.6 scheduling: if not_before is in the future, nack with computed delay.
+		if envelope.NotBefore != nil && envelope.NotBefore.After(time.Now()) {
+			delay := time.Until(*envelope.NotBefore)
+			if delay > q.ackWait {
+				delay = q.ackWait // cap at ack_wait to avoid exceeding the NATS deadline
+			}
+			_ = msg.NakWithDelay(delay)
+			continue
+		}
 		return natsWorkerLease{queue: q, msg: msg, envelope: envelope}, true, nil
 	}
 	return nil, false, nil

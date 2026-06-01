@@ -1079,6 +1079,7 @@ func (s *Server) processBatchEntry(
 		Callbacks:      req.Job.Callbacks,
 		Context:        req.Job.Context,
 		TraceID:        traceID,
+		NotBefore:      req.Job.NotBefore,
 	})
 	if err != nil {
 		s.releaseConcurrencyToken(tenantID, target, appID)
@@ -1106,6 +1107,9 @@ func (s *Server) handleJobByID(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(segments) == 1 && r.Method == http.MethodGet:
 		s.getJob(w, r, segments[0])
+	// DELETE /v1/jobs/{id} — hard cancel: cooperative signal + immediate status force
+	case len(segments) == 1 && r.Method == http.MethodDelete:
+		s.cancelJob(w, r, segments[0])
 	case len(segments) == 2 && segments[1] == "events" && r.Method == http.MethodGet:
 		s.listJobEvents(w, r, segments[0])
 	case len(segments) == 2 && segments[1] == "cancel" && r.Method == http.MethodPost:
@@ -1129,7 +1133,7 @@ func (s *Server) handleJobByID(w http.ResponseWriter, r *http.Request) {
 	case len(segments) == 3 && segments[1] == "artifacts":
 		s.writeMethodNotAllowed(w, r, http.MethodGet, http.MethodPut, http.MethodDelete)
 	case len(segments) == 1:
-		s.writeMethodNotAllowed(w, r, http.MethodGet)
+		s.writeMethodNotAllowed(w, r, http.MethodGet, http.MethodDelete)
 	case len(segments) == 2 && (segments[1] == "events"):
 		s.writeMethodNotAllowed(w, r, http.MethodGet)
 	case len(segments) == 2 && (segments[1] == "cancel" || segments[1] == "retry"):
@@ -1350,6 +1354,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		Callbacks:      request.Job.Callbacks,
 		Context:        request.Job.Context,
 		TraceID:        traceIDFromContext(r.Context()),
+		NotBefore:      request.Job.NotBefore,
 	})
 	if err != nil {
 		_ = s.idempotency.Release(r.Context(), scope)
@@ -1555,6 +1560,8 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if jobstore.TerminalStatus(job.Status) {
+		// Release the concurrency token on hard cancel.
+		s.releaseConcurrencyToken(job.TenantID, job.Target, job.AppID)
 		notifier := webhooks.JobOutbox{Store: s.webhooks, URLPolicy: s.webhookURLs}
 		if err := notifier.EnqueueTerminalJob(r.Context(), job); err != nil {
 			_ = s.idempotency.Release(r.Context(), mutation.scope)

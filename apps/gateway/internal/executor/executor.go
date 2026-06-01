@@ -33,6 +33,9 @@ type DispatchEnvelope struct {
 	IdempotencyKey string         `json:"idempotency_key,omitempty"`
 	TraceID        string         `json:"trace_id"`
 	RetryOf        string         `json:"retry_of,omitempty"`
+	// NotBefore, when set, instructs the consumer to nack+requeue the job
+	// until time.Now() >= NotBefore (§14.6 scheduling).
+	NotBefore      *time.Time     `json:"not_before,omitempty"`
 	Job            DispatchJob    `json:"job"`
 	Client         map[string]any `json:"client,omitempty"`
 	CreatedAt      time.Time      `json:"created_at"`
@@ -78,6 +81,7 @@ func EnvelopeFromJob(job jobstore.Job) DispatchEnvelope {
 		IdempotencyKey: job.IdempotencyKey,
 		TraceID:        job.TraceID,
 		RetryOf:        job.RetryOf,
+		NotBefore:      job.NotBefore,
 		Client:         cloneMap(job.Client),
 		CreatedAt:      job.CreatedAt,
 		Job: DispatchJob{

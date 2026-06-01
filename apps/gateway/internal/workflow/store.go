@@ -63,6 +63,20 @@ type Step struct {
 	TemplateID      string
 	Input           map[string]any
 	ContinueOnError bool
+	// DependsOn lists step IDs that must reach StateSucceeded before this
+	// step is dispatched. An empty list means "depends on the prior step"
+	// (preserving the original linear semantics).
+	DependsOn []string
+	// When is a CEL expression evaluated before dispatching this step. If the
+	// expression evaluates to false the step is skipped (treated as succeeded).
+	// An empty string means "always run".
+	When string
+	// Compensation, if non-nil, is dispatched when this step fails and all
+	// retries are exhausted (saga compensating transaction).
+	Compensation *Step
+	// MaxRetries is the per-step retry ceiling (0 = no retry beyond the first
+	// attempt). Retries use exponential backoff from the default policy.
+	MaxRetries int
 }
 
 // Definition is an ordered template of steps scoped to a tenant and app.
@@ -81,6 +95,7 @@ type StepRun struct {
 	State       RunState
 	JobID       string
 	Error       string
+	Retries     int
 	StartedAt   time.Time
 	CompletedAt time.Time
 }
@@ -131,7 +146,8 @@ func validateScope(tenantID string, appID string) error {
 	return nil
 }
 
-// validateStep enforces the target allowlist and a non-empty command.
+// validateStep enforces the target allowlist, a non-empty command, and that
+// per-step retry count is non-negative.
 func validateStep(step Step) error {
 	if strings.TrimSpace(step.ID) == "" {
 		return fmt.Errorf("%w: step id is required", ErrInvalidDef)
@@ -141,6 +157,9 @@ func validateStep(step Step) error {
 	}
 	if strings.TrimSpace(step.Command) == "" {
 		return fmt.Errorf("%w: step %q command is required", ErrInvalidDef, step.ID)
+	}
+	if step.MaxRetries < 0 {
+		return fmt.Errorf("%w: step %q max_retries must be >= 0", ErrInvalidDef, step.ID)
 	}
 	return nil
 }
@@ -193,6 +212,14 @@ func newID(prefix string) string {
 func cloneStep(in Step) Step {
 	out := in
 	out.Input = cloneMap(in.Input)
+	if in.DependsOn != nil {
+		out.DependsOn = make([]string, len(in.DependsOn))
+		copy(out.DependsOn, in.DependsOn)
+	}
+	if in.Compensation != nil {
+		comp := cloneStep(*in.Compensation)
+		out.Compensation = &comp
+	}
 	return out
 }
 

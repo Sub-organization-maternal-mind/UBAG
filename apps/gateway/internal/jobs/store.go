@@ -9,6 +9,7 @@ type Status string
 
 const (
 	StatusCreated               Status = "created"
+	StatusScheduled             Status = "scheduled"
 	StatusQueued                Status = "queued"
 	StatusAssigned              Status = "assigned"
 	StatusRunning               Status = "running"
@@ -61,6 +62,10 @@ type CreateRequest struct {
 	Context        map[string]any
 	TraceID        string
 	RetryOf        string
+	// NotBefore, when set, delays execution until this time. The job is created
+	// with StatusScheduled and the worker consumer nacks+requeues until the
+	// time is reached.
+	NotBefore *time.Time
 }
 
 type Job struct {
@@ -82,6 +87,7 @@ type Job struct {
 	Result         any
 	TraceID        string
 	RetryOf        string
+	NotBefore      *time.Time
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
 }
@@ -126,6 +132,7 @@ type EventLister interface {
 func KnownStatus(status Status) bool {
 	switch status {
 	case StatusCreated,
+		StatusScheduled,
 		StatusQueued,
 		StatusAssigned,
 		StatusRunning,
@@ -162,6 +169,7 @@ func TerminalStatus(status Status) bool {
 func LifecycleStatuses() []Status {
 	return []Status{
 		StatusCreated,
+		StatusScheduled,
 		StatusQueued,
 		StatusAssigned,
 		StatusRunning,

@@ -67,6 +67,9 @@ type jobRequest struct {
 	Options        map[string]any `json:"options,omitempty"`
 	Callbacks      map[string]any `json:"callbacks,omitempty"`
 	Context        map[string]any `json:"context,omitempty"`
+	// NotBefore defers execution until the given UTC time (RFC3339). When
+	// omitted or in the past the job executes immediately (§14.6 scheduling).
+	NotBefore *time.Time `json:"not_before,omitempty"`
 }
 
 // JobOptions is the typed view of jobRequest.Options (blueprint §6.1).
