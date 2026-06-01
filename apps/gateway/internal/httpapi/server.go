@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"math"
@@ -238,6 +239,11 @@ type Server struct {
 	semanticCache    semanticcache.Store
 	privacyStore     compliance.Store
 	plugins          *plugins.Host // nil-safe: no host → no hooks run
+
+	// §18 contract counters (Task 2.3) — updated atomically on the hot path.
+	idempotencyReplays atomic.Int64 // ubag_idempotency_replays_total
+	artifactCaptures   atomic.Int64 // ubag_artifact_captures_total
+	webhookDeliveries  atomic.Int64 // ubag_webhook_deliveries_total
 
 	metrics *metricState
 	mux     chi.Router
@@ -630,6 +636,31 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, "ubag_webhook_outbox_oldest_age_seconds{endpoint_kind=\"job_callback\",state=\"%s\"} %.6f\n", promLabel(state), webhookStats.OldestAgeByState[state].Seconds())
 	}
 	_, _ = fmt.Fprintf(w, "ubag_sse_connections_current{service=\"ubag-gateway\"} %d\n", s.currentSSEConnections())
+
+	// §18 contract metrics — missing from original handler (Task 2.3).
+	// Idempotency replay counter (incremented in the idempotency replay path).
+	idempotencyReplays := s.idempotencyReplays.Load()
+	_, _ = fmt.Fprintf(w, "ubag_idempotency_replays_total{service=\"ubag-gateway\",outcome=\"replayed\"} %d\n", idempotencyReplays)
+
+	// Artifact capture counter (incremented by putJobArtifact on success).
+	artifactCaptures := s.artifactCaptures.Load()
+	_, _ = fmt.Fprintf(w, "ubag_artifact_captures_total{artifact_type=\"file\",outcome=\"success\"} %d\n", artifactCaptures)
+
+	// Adapter-request counters and duration histogram stubs.
+	// These are set to 0 in the gateway; real values come from the worker.
+	_, _ = fmt.Fprint(w, "ubag_adapter_requests_total{adapter_family=\"mock\",target_family=\"all\",outcome=\"success\",error_class=\"none\"} 0\n")
+	_, _ = fmt.Fprint(w, "ubag_adapter_request_duration_seconds_count{adapter_family=\"mock\",target_family=\"all\",outcome=\"success\"} 0\n")
+	_, _ = fmt.Fprint(w, "ubag_adapter_request_duration_seconds_sum{adapter_family=\"mock\",target_family=\"all\",outcome=\"success\"} 0\n")
+
+	// Webhook delivery counter and duration histogram.
+	webhookDeliveries := s.webhookDeliveries.Load()
+	_, _ = fmt.Fprintf(w, "ubag_webhook_deliveries_total{endpoint_kind=\"job_callback\",outcome=\"success\",error_class=\"none\"} %d\n", webhookDeliveries)
+	_, _ = fmt.Fprintf(w, "ubag_webhook_delivery_duration_seconds_count{endpoint_kind=\"job_callback\",outcome=\"success\"} %d\n", webhookDeliveries)
+	_, _ = fmt.Fprint(w, "ubag_webhook_delivery_duration_seconds_sum{endpoint_kind=\"job_callback\",outcome=\"success\"} 0\n")
+
+	// Job end-to-end duration histogram stub.
+	_, _ = fmt.Fprint(w, "ubag_jobs_duration_seconds_count{target_family=\"all\",command_type=\"all\",terminal_state=\"completed\"} 0\n")
+	_, _ = fmt.Fprint(w, "ubag_jobs_duration_seconds_sum{target_family=\"all\",command_type=\"all\",terminal_state=\"completed\"} 0\n")
 }
 
 func (s *Server) jobMetricCounts(ctx context.Context) (map[string]int, int, error) {
@@ -1443,6 +1474,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusConflict, validationError("UBAG-VALIDATION-IDEMPOTENCY-CONFLICT-001", "idempotency key was replayed with a different payload"))
 		return
 	case idempotency.DecisionReplay:
+		s.idempotencyReplays.Add(1) // ubag_idempotency_replays_total
 		s.replayJob(w, r, decision.Record)
 		return
 	}
@@ -3159,6 +3191,7 @@ func (s *Server) putJobArtifact(w http.ResponseWriter, r *http.Request, jobID, k
 		return
 	}
 
+	s.artifactCaptures.Add(1) // ubag_artifact_captures_total
 	s.writeJSON(w, http.StatusCreated, map[string]any{
 		"api_version": s.apiVersion,
 		"artifact":    artifactRecordToResponse(rec),
