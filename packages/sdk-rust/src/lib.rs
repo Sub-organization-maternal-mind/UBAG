@@ -10,6 +10,7 @@ mod idempotency;
 mod transport;
 
 pub mod retry;
+pub mod webhooks;
 
 pub use error::{ApiError, Error, ErrorDetails, ErrorEnvelope};
 pub use idempotency::generate_idempotency_key;
