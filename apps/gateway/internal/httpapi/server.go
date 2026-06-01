@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	crypto_rsa "crypto/rsa"
 	"os"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -26,8 +27,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ubag/ubag/apps/gateway/internal/abac"
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
+	"github.com/ubag/ubag/apps/gateway/internal/appjwt"
 	"github.com/ubag/ubag/apps/gateway/internal/outbox"
+	"github.com/ubag/ubag/apps/gateway/internal/pat"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/audit"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
@@ -149,6 +153,22 @@ type Config struct {
 	// EnqueueJob is called directly (backward-compatible).
 	Outbox outbox.Store
 
+	// PAT, when non-nil, enables Personal Access Token issuance and validation
+	// (§11). POST /v1/auth/pat issues tokens; Bearer ubag_pat_... authenticates.
+	PAT pat.Store
+
+	// PATDefaultTTL is the default TTL for issued PATs. Zero means no expiry.
+	PATDefaultTTL time.Duration
+
+	// AppJWTPublicKey, when non-nil, enables App JWT authentication (§11).
+	// Requests bearing a Bearer RS256 JWT signed with the matching private key
+	// are accepted. The JWT must carry tid (tenant_id), sub (app_id), and role.
+	AppJWTPublicKey *crypto_rsa.PublicKey
+
+	// ABACEnforcer, when non-nil, applies CEL policy rules after the RBAC role
+	// check in authorizeGatewayAction. A nil enforcer is permissive (RBAC only).
+	ABACEnforcer *abac.Enforcer
+
 	// MaxQueueDepth is the pending-job ceiling before the gateway returns
 	// UBAG-QUEUE-BACKPRESSURE-002 (429). Zero disables the check.
 	// Defaults to UBAG_MAX_QUEUE_DEPTH env var if set, or 10000.
@@ -193,6 +213,10 @@ type Server struct {
 	concurrency      *topology.ConcurrencyRegistry
 	outbox           outbox.Store
 	maxQueueDepth    int
+	patStore         pat.Store
+	patDefaultTTL    time.Duration
+	appJWTPublicKey  *crypto_rsa.PublicKey
+	abacEnforcer     *abac.Enforcer
 
 	metrics *metricState
 	mux     chi.Router
@@ -329,6 +353,10 @@ func NewServer(config Config) *Server {
 		concurrency:      config.Concurrency,
 		outbox:           config.Outbox,
 		maxQueueDepth:    config.MaxQueueDepth,
+		patStore:         config.PAT,
+		patDefaultTTL:    config.PATDefaultTTL,
+		appJWTPublicKey:  config.AppJWTPublicKey,
+		abacEnforcer:     config.ABACEnforcer,
 
 		metrics: &metricState{
 			requests:    make(map[string]int),
@@ -409,6 +437,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/jobs/batch", s.handleBatchJobs) // §10, §19.2: up to 100 jobs/request; chi resolves before wildcard
 	s.mux.HandleFunc("/v1/jobs/*", s.handleJobByID)       // chi wildcard: all /v1/jobs/{id}/... sub-paths
 	s.mux.HandleFunc("/v1/sse/jobs/*", s.handleJobSSE)
+	s.mux.HandleFunc("/v1/auth/pat", s.handleIssuePAT)
 	// Note: catch-all 404 is handled via s.mux.NotFound() registered above.
 }
 
@@ -2478,6 +2507,22 @@ func (s *Server) authorizeGatewayAction(w http.ResponseWriter, r *http.Request, 
 		return false
 	}
 
+	// ABAC: evaluate CEL policy bundle after RBAC passes.
+	if s.abacEnforcer != nil {
+		abacPrincipal := abac.Principal{
+			TenantID: principal.TenantID,
+			AppID:    principal.AppID,
+			Role:     principal.Role,
+			Subject:  principal.Subject,
+		}
+		ok, err := s.abacEnforcer.Allow(abacPrincipal, "gateway", action)
+		if err != nil || !ok {
+			s.emitAuthorizationAudit(r, principal, action, "deny-abac")
+			s.writeError(w, r, http.StatusForbidden, authzError("UBAG-AUTHZ-POLICY-DENIED-001", "request denied by access policy"))
+			return false
+		}
+	}
+
 	s.emitAuthorizationAudit(r, principal, action, "allow")
 	return true
 }
@@ -2574,6 +2619,16 @@ func validBearerToken(header string, expectedSecret string) bool {
 		return false
 	}
 	return constantTimeEqual(parts[1], expectedSecret)
+}
+
+// bearerToken extracts the token value from an "Authorization: Bearer <token>"
+// header. Returns empty string if the header is absent or malformed.
+func bearerToken(header string) string {
+	parts := strings.Fields(header)
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		return parts[1]
+	}
+	return ""
 }
 
 type metricSnapshot struct {
@@ -2739,6 +2794,37 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
 			return
+		}
+
+		// App JWT: validate RS256 Bearer token.
+		if s.appJWTPublicKey != nil {
+			if bearer := bearerToken(r.Header.Get("Authorization")); bearer != "" {
+				if claims, err := appjwt.Verify(bearer, s.appJWTPublicKey); err == nil {
+					principal := authenticatedPrincipal{
+						Role:     claims.Role,
+						TenantID: claims.TenantID,
+						AppID:    claims.AppID,
+					}
+					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
+					return
+				}
+			}
+		}
+
+		// PAT: resolve a personal access token (ubag_pat_... Bearer).
+		if s.patStore != nil {
+			if bearer := bearerToken(r.Header.Get("Authorization")); pat.IsValidFormat(bearer) {
+				token, ok, err := s.patStore.Resolve(r.Context(), bearer, time.Now())
+				if err == nil && ok {
+					principal := authenticatedPrincipal{
+						Role:     token.Role,
+						TenantID: token.TenantID,
+						AppID:    token.AppID,
+					}
+					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
+					return
+				}
+			}
 		}
 
 		// Additive: resolve a server-side SSO session from a cookie or bearer
