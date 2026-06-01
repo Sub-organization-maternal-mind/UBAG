@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="1">
+  <title>UBAG Gateway</title>
+  <organization>dev.ubag</organization>
+  <domains enable_localSystem="true"/>
+  <options customize="never" require-scripts="false"/>
+  <choices-outline>
+    <line choice="default">
+      <line choice="com.ubag.gateway"/>
+    </line>
+  </choices-outline>
+  <choice id="default"/>
+  <choice id="com.ubag.gateway" visible="false">
+    <pkg-ref id="com.ubag.gateway"/>
+  </choice>
+  <pkg-ref id="com.ubag.gateway" version="0" onConclusion="none">UBAGGateway.pkg</pkg-ref>
+</installer-gui-script>

@@ -1,0 +1,16 @@
+#!/bin/bash
+set -e
+
+INSTALL_DIR="/usr/local/bin"
+PLIST_SRC="/usr/local/share/ubag/com.ubag.gateway.plist"
+PLIST_DST="/Library/LaunchDaemons/com.ubag.gateway.plist"
+
+# Install launchd plist if provided
+if [ -f "$PLIST_SRC" ]; then
+  cp "$PLIST_SRC" "$PLIST_DST"
+  launchctl load -w "$PLIST_DST" 2>/dev/null || true
+fi
+
+echo "UBAG Gateway installed to $INSTALL_DIR/ubag"
+echo "Run 'ubag init' to configure."
+exit 0

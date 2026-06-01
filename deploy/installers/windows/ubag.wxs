@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="UBAG Gateway"
+           Language="1033"
+           Version="$(var.Version)"
+           Manufacturer="UBAG"
+           UpgradeCode="A1B2C3D4-E5F6-7890-ABCD-EF1234567890">
+
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of UBAG is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="ProductFeature" Title="UBAG Gateway" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+    </Feature>
+  </Product>
+
+  <Fragment>
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="UBAG">
+          <Directory Id="BinDir" Name="bin" />
+          <Directory Id="ConfigDir" Name="config" />
+        </Directory>
+      </Directory>
+    </Directory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="ProductComponents" Directory="BinDir">
+      <Component Id="UbagExe" Guid="B1C2D3E4-F5A6-7890-BCDE-F12345678901">
+        <File Id="UbagExeFile" Source="$(var.BinaryPath)" KeyPath="yes" />
+        <ServiceInstall
+          Id="UbagGatewayService"
+          Name="UbagGateway"
+          DisplayName="UBAG Gateway Service"
+          Description="Universal Bridge / Agent Gateway"
+          Type="ownProcess"
+          Start="auto"
+          ErrorControl="normal"
+          Account="LocalService" />
+        <ServiceControl
+          Id="StartUbagGateway"
+          Name="UbagGateway"
+          Start="install"
+          Stop="both"
+          Remove="uninstall"
+          Wait="yes" />
+      </Component>
+      <Component Id="UbagConfig" Guid="C2D3E4F5-A6B7-8901-CDEF-123456789012" Directory="ConfigDir">
+        <File Id="GatewayEnvExample"
+              Source="$(var.RepoRoot)\deploy\installers\gateway.env.example"
+              KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>
