@@ -199,6 +199,10 @@ type Config struct {
 	// RegionRouter enables region-aware job routing (enterprise, GeoReplication=On).
 	// When nil the gateway runs in single-region mode (subject uses "default" segment).
 	RegionRouter *region.Router
+
+	// KillSwitch enables per-region operational state management (enterprise).
+	// When nil the gateway acts as if the current region is always active.
+	KillSwitch *region.KillSwitch
 }
 
 type Server struct {
@@ -245,6 +249,7 @@ type Server struct {
 	privacyStore     compliance.Store
 	plugins          *plugins.Host // nil-safe: no host → no hooks run
 	regionRouter     *region.Router
+	killSwitch       *region.KillSwitch
 
 	// §18 contract counters (Task 2.3) — updated atomically on the hot path.
 	idempotencyReplays atomic.Int64 // ubag_idempotency_replays_total
@@ -394,6 +399,7 @@ func NewServer(config Config) *Server {
 		privacyStore:     config.PrivacyStore,
 		plugins:          config.Plugins,
 		regionRouter:     config.RegionRouter,
+		killSwitch:       config.KillSwitch,
 
 		metrics: &metricState{
 			requests:    make(map[string]int),
@@ -479,6 +485,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/auth/pat", s.handleIssuePAT)
 	s.mux.HandleFunc("/v1/privacy/export", s.handlePrivacyExport)
 	s.mux.HandleFunc("/v1/privacy/erase", s.handlePrivacyErase)
+	s.mux.HandleFunc("/v1/admin/regions/{region}/state", s.handleSetRegionState)
 	// Note: catch-all 404 is handled via s.mux.NotFound() registered above.
 }
 
@@ -542,6 +549,10 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if s.killSwitch != nil && !s.killSwitch.IsReady(r.Context()) {
+		s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-REGION-DISABLED-001", "region is disabled", false))
+		return
+	}
 
 	s.writeJSON(w, http.StatusOK, healthResponse{
 		Service:   serviceName,
@@ -560,6 +571,49 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 		},
 		TraceID: traceIDFromContext(r.Context()),
 	})
+}
+
+// handleSetRegionState implements POST /v1/admin/regions/{region}/state.
+// It requires the "region:manage" RBAC action (admin or superadmin).
+// Body: {"state": "active"|"draining"|"disabled"}
+func (s *Server) handleSetRegionState(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeMethodNotAllowed(w, r, http.MethodPost)
+		return
+	}
+	if !s.authorizeGatewayAction(w, r, "region:manage") {
+		return
+	}
+	if s.killSwitch == nil {
+		s.writeError(w, r, http.StatusNotImplemented, validationError("UBAG-REGION-KILLSWITCH-DISABLED-001", "region kill switch is not enabled"))
+		return
+	}
+	regionName := chi.URLParam(r, "region")
+
+	raw, ok := s.readBody(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		State string `json:"state"`
+	}
+	if !s.decodeBody(w, r, raw, &body) {
+		return
+	}
+
+	tenantID, appID := requestScope(r)
+	principal, _ := principalFromContext(r.Context())
+	actor := ""
+	if principal.Subject != "" {
+		actor = principal.Subject
+	}
+
+	newState := region.State(body.State)
+	if err := s.killSwitch.SetState(r.Context(), region.Region(regionName), newState, actor, tenantID, appID); err != nil {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-REGION-STATE-INVALID-001", err.Error()))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
@@ -1429,6 +1483,11 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.authorizeGatewayAction(w, r, "job:create") {
+		return
+	}
+	if s.killSwitch != nil && !s.killSwitch.IsAcceptingJobs(r.Context()) {
+		w.Header().Set("Retry-After", "60")
+		s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-REGION-DRAINING-001", "this region is not accepting new jobs; try another region or retry later", true))
 		return
 	}
 	if _, _, err := webhooks.CallbackFromMap(request.Job.Callbacks, s.webhookURLs); err != nil {
@@ -2677,7 +2736,7 @@ func (s *Server) authorizeGatewayAction(w http.ResponseWriter, r *http.Request, 
 	case "operator":
 		allowed = action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry" || action == "artifact:write" || action == "artifact:delete" || action == "device:enroll" || action == "device:revoke" || action == "webhook:configure" || action == "webhook:replay" || action == "audit:read" || action == "alerts:read" || action == "alerts:manage" || action == "browser:read" || action == "concurrency:read"
 	case "admin":
-		allowed = action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry" || action == "artifact:write" || action == "artifact:delete" || action == "device:enroll" || action == "device:revoke" || action == "secret:rotate" || action == "webhook:configure" || action == "webhook:replay" || action == "audit:read" || action == "rate_limit:manage" || action == "role:manage" || action == "data:export" || action == "alerts:read" || action == "alerts:manage" || action == "browser:read" || action == "concurrency:read"
+		allowed = action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry" || action == "artifact:write" || action == "artifact:delete" || action == "device:enroll" || action == "device:revoke" || action == "secret:rotate" || action == "webhook:configure" || action == "webhook:replay" || action == "audit:read" || action == "rate_limit:manage" || action == "role:manage" || action == "data:export" || action == "alerts:read" || action == "alerts:manage" || action == "browser:read" || action == "concurrency:read" || action == "region:manage"
 	case "superadmin":
 		allowed = true
 	case "service":
