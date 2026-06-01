@@ -55,7 +55,18 @@
   }
 
   # ── WAF (Coraza) ───────────────────────────────────────────────────────────
-  # import coraza.conf  # Task 1.2 — enable WAF
+  # Running in detection-only mode by default.  Switch to enforcement by
+  # changing SecRuleEngine DetectionOnly → SecRuleEngine On below.
+  # See deploy/caddy/coraza.conf for the full CRS configuration reference.
+  coraza_waf {
+    load_owasp_crs
+    directives `
+      SecRuleEngine DetectionOnly
+      SecRequestBodyAccess On
+      SecResponseBodyAccess Off
+      SecDebugLogLevel 1
+    `
+  }
 
   # ── Hidden internal routes (respond 404 before any proxy) ─────────────────
   handle /v1/metrics* {
