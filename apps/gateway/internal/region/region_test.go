@@ -26,6 +26,7 @@ func TestCurrentRegionEmpty(t *testing.T) {
 // TestUnknownRegionDefaultsToActive verifies safe default for unknown regions
 // so cross-region routing doesn't break when a region hasn't been registered.
 func TestUnknownRegionDefaultsToActive(t *testing.T) {
+	t.Parallel()
 	reg := NewRegistry(NewMemoryStateStore())
 	ctx := context.Background()
 	state, err := reg.RegionState(ctx, Region("us-east-99"))
@@ -39,6 +40,7 @@ func TestUnknownRegionDefaultsToActive(t *testing.T) {
 
 // TestValidTransitions verifies every allowed state machine edge.
 func TestValidTransitions(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		from, to State
 	}{
@@ -50,6 +52,7 @@ func TestValidTransitions(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.from)+"->"+string(tc.to), func(t *testing.T) {
+			t.Parallel()
 			store := NewMemoryStateStore()
 			reg := NewRegistry(store)
 			ctx := context.Background()
@@ -76,6 +79,7 @@ func TestValidTransitions(t *testing.T) {
 
 // TestInvalidTransitionDisabledToDraining verifies that disabled→draining is rejected.
 func TestInvalidTransitionDisabledToDraining(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryStateStore()
 	reg := NewRegistry(store)
 	ctx := context.Background()
@@ -92,6 +96,7 @@ func TestInvalidTransitionDisabledToDraining(t *testing.T) {
 
 // TestIsHealthy verifies that IsHealthy returns true only for StateActive.
 func TestIsHealthy(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryStateStore()
 	reg := NewRegistry(store)
 	ctx := context.Background()
@@ -106,6 +111,7 @@ func TestIsHealthy(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.state), func(t *testing.T) {
+			t.Parallel()
 			r := Region("region-" + string(tc.state))
 			if err := store.Set(r, tc.state); err != nil {
 				t.Fatalf("seed state: %v", err)
@@ -120,6 +126,7 @@ func TestIsHealthy(t *testing.T) {
 
 // TestKnownRegions verifies that KnownRegions reflects all set regions.
 func TestKnownRegions(t *testing.T) {
+	t.Parallel()
 	store := NewMemoryStateStore()
 	reg := NewRegistry(store)
 	ctx := context.Background()
@@ -152,6 +159,7 @@ func TestKnownRegions(t *testing.T) {
 // TestSetStateOnUnknownRegion verifies that setting state on a new region works
 // when starting from the "active" default (no entry in store).
 func TestSetStateOnUnknownRegion(t *testing.T) {
+	t.Parallel()
 	reg := NewRegistry(NewMemoryStateStore())
 	ctx := context.Background()
 	r := Region("brand-new")

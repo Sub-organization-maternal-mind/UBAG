@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 )
 
@@ -134,9 +135,15 @@ func (reg *Registry) RegionState(_ context.Context, r Region) (State, error) {
 // disabled→draining is explicitly forbidden because a disabled region should
 // not be returned to service incrementally without first re-enabling it.
 func (reg *Registry) SetState(_ context.Context, r Region, next State) error {
+	if next != StateActive && next != StateDraining && next != StateDisabled {
+		return fmt.Errorf("region %q: unknown state %q", r, next)
+	}
 	current, err := reg.store.Get(r)
 	if err != nil {
 		return fmt.Errorf("region %q: get current state: %w", r, err)
+	}
+	if current == next {
+		return nil
 	}
 	allowed, ok := validTransitions[current]
 	if !ok || !allowed[next] {
@@ -166,5 +173,6 @@ func (reg *Registry) KnownRegions(_ context.Context) ([]Region, error) {
 	for r := range all {
 		regions = append(regions, r)
 	}
+	sort.Slice(regions, func(i, j int) bool { return regions[i] < regions[j] })
 	return regions, nil
 }
