@@ -68,9 +68,9 @@ type Breaker struct {
 	openedAt        time.Time
 	cooldownForOpen time.Duration
 
-	// Now is called to get the current time. Defaults to time.Now.
-	// Settable in tests to control time.
-	Now func() time.Time
+	// now is called to get the current time. Defaults to time.Now.
+	// Unexported; injectable in same-package tests via direct field assignment.
+	now func() time.Time
 }
 
 // New constructs a Breaker. Zero-value Config fields fall back to DefaultConfig values.
@@ -93,7 +93,7 @@ func New(cfg Config) *Breaker {
 	}
 	return &Breaker{
 		cfg: cfg,
-		Now: time.Now,
+		now: time.Now,
 	}
 }
 
@@ -101,7 +101,7 @@ func New(cfg Config) *Breaker {
 // using the same exponential-backoff formula as retrypolicy.
 func (b *Breaker) cooldown(openCount int) time.Duration {
 	p := retrypolicy.Policy{
-		MaxRetries:    10,
+		MaxRetries:    10, // Not used by the delay formula; must be > 0 to satisfy Clamp().
 		BackoffBaseMS: int(b.cfg.CooldownBase.Milliseconds()),
 		BackoffMaxMS:  int(b.cfg.CooldownMax.Milliseconds()),
 	}
@@ -123,7 +123,7 @@ func (b *Breaker) Allow() bool {
 		return true
 
 	case StateOpen:
-		now := b.Now()
+		now := b.now()
 		if now.Before(b.openedAt.Add(b.cooldownForOpen)) {
 			return false
 		}
@@ -149,6 +149,9 @@ func (b *Breaker) Allow() bool {
 // Half-open: increments the consecutive-success counter; re-closes when the
 // SuccessBudget is reached and resets openCount.
 // Open: no-op.
+//
+// RecordSuccess should be called once per Allow() that returned true.
+// A call without a preceding Allow() in half-open state is a no-op.
 func (b *Breaker) RecordSuccess() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -158,9 +161,10 @@ func (b *Breaker) RecordSuccess() {
 		b.failures = 0
 
 	case StateHalfOpen:
-		if b.inflight > 0 {
-			b.inflight--
+		if b.inflight <= 0 {
+			return // no matching Allow() — ignore spurious RecordSuccess
 		}
+		b.inflight--
 		b.successes++
 		if b.successes >= b.cfg.SuccessBudget {
 			b.state = StateClosed
@@ -206,7 +210,7 @@ func (b *Breaker) RecordFailure() {
 func (b *Breaker) doOpen() {
 	b.openCount++
 	b.state = StateOpen
-	b.openedAt = b.Now()
+	b.openedAt = b.now()
 	b.cooldownForOpen = b.cooldown(b.openCount)
 }
 
@@ -226,7 +230,7 @@ func (b *Breaker) CooldownRemaining() time.Duration {
 	if b.state != StateOpen {
 		return 0
 	}
-	remaining := b.openedAt.Add(b.cooldownForOpen).Sub(b.Now())
+	remaining := b.openedAt.Add(b.cooldownForOpen).Sub(b.now())
 	if remaining < 0 {
 		return 0
 	}

@@ -16,15 +16,15 @@ func fixedNow(t time.Time) func() time.Time {
 func newTestBreaker(cfg Config) (*Breaker, *time.Time) {
 	base := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	b := New(cfg)
-	b.Now = fixedNow(base)
+	b.now = fixedNow(base)
 	return b, &base
 }
 
-// advanceNow updates the pinned Now to base + d.
+// advanceNow updates the pinned now to base + d.
 func advanceNow(b *Breaker, base *time.Time, d time.Duration) {
 	t := (*base).Add(d)
 	*base = t
-	b.Now = fixedNow(t)
+	b.now = fixedNow(t)
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +312,7 @@ func TestBreaker_Concurrent(t *testing.T) {
 	b := New(cfg)
 	// Use a time source that advances at ~10µs per call to quickly cycle states.
 	var tick atomic.Int64
-	b.Now = func() time.Time {
+	b.now = func() time.Time {
 		v := tick.Add(int64(10 * time.Microsecond))
 		return time.Unix(0, v)
 	}
