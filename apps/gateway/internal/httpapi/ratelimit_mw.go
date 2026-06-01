@@ -100,10 +100,11 @@ func (s *Server) withRateLimit(next http.Handler) http.Handler {
 			return
 		}
 
-		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(decision.Limit))
-		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(decision.Remaining))
+		// Blueprint §10.6: IETF draft-ietf-httpapi-ratelimit-headers (RateLimit-*, not X-RateLimit-*).
+		w.Header().Set("RateLimit-Limit", strconv.Itoa(decision.Limit))
+		w.Header().Set("RateLimit-Remaining", strconv.Itoa(decision.Remaining))
 		if !decision.ResetAt.IsZero() {
-			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(decision.ResetAt.UTC().Unix(), 10))
+			w.Header().Set("RateLimit-Reset", strconv.FormatInt(decision.ResetAt.UTC().Unix(), 10))
 		}
 
 		if !decision.Allowed {
@@ -118,8 +119,8 @@ func (s *Server) withRateLimit(next http.Handler) http.Handler {
 			w.Header().Set("Retry-After", strconv.Itoa(seconds))
 			retryMS := seconds * 1000
 			s.writeError(w, r, http.StatusTooManyRequests, apiError{
-				Code:         "UBAG-RATE-LIMIT-001",
-				Category:     "rate_limit",
+				Code:         "UBAG-RATE-APP-001",
+				Category:     "rate",
 				Message:      "rate limit exceeded for this action",
 				Retryable:    true,
 				RetryAfterMS: &retryMS,

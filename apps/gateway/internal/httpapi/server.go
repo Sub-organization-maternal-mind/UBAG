@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/audit"
@@ -31,6 +32,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
 	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	mw "github.com/ubag/ubag/apps/gateway/internal/middleware"
 	"github.com/ubag/ubag/apps/gateway/internal/ratelimit"
 	"github.com/ubag/ubag/apps/gateway/internal/responsecache"
 	"github.com/ubag/ubag/apps/gateway/internal/scim"
@@ -179,7 +181,7 @@ type Server struct {
 	concurrency      *topology.ConcurrencyRegistry
 
 	metrics *metricState
-	mux     *http.ServeMux
+	mux     chi.Router
 }
 
 type metricState struct {
@@ -313,7 +315,7 @@ func NewServer(config Config) *Server {
 			requests:    make(map[string]int),
 			durationSum: make(map[string]float64),
 		},
-		mux: http.NewServeMux(),
+		mux: chi.NewRouter(),
 	}
 	server.routes()
 
@@ -321,13 +323,32 @@ func NewServer(config Config) *Server {
 }
 
 func (s *Server) Handler() http.Handler {
-	// withRateLimit is nested inside withAuth so the authenticated principal
-	// (tenant/app/role) and the resolved action are available before a limit
-	// decision is made. It is a pass-through when rate limiting is not enabled.
-	return s.withMetrics(s.withRecovery(s.withTrace(s.withAuth(s.withRateLimit(s.withAPIVersionHeader(s.mux))))))
+	// Blueprint §7.2 middleware chain is applied in routes() via s.mux.Use() so
+	// that it is set up once at construction time and only once. Handler() just
+	// returns the fully configured chi router.
+	return s.mux
 }
 
 func (s *Server) routes() {
+	// Blueprint §7.2 middleware chain: trace → recover → log → auth → rate-limit → handle.
+	// Registered via chi.Use() so the chain is applied exactly once, at construction.
+	s.mux.Use(
+		s.withMetrics,              // outermost: always records request timing
+		s.withRecovery,             // catches panics before they propagate
+		mw.Trace,                   // injects/extracts W3C trace ID (§18.3)
+		mw.RequestLog(serviceName), // structured JSON request log line (§18.1)
+		s.withAuth,                 // authenticates bearer / device / SSO session
+		s.withRateLimit,            // IETF token-bucket rate-limiting (§10.6)
+		mw.APIVersionHeader(s.apiVersion), // sets Ubag-Api-Version-Used (§6.5)
+	)
+
+	// Custom not-found handler — chi's default writes plain text; we need JSON.
+	s.mux.NotFound(s.handleNotFound)
+	// Custom method-not-allowed handler.
+	s.mux.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
+		s.writeError(w, r, http.StatusMethodNotAllowed, validationError("UBAG-VALIDATION-METHOD-001", "method not allowed"))
+	})
+
 	s.mux.HandleFunc("/v1/health", s.handleHealth)
 	s.mux.HandleFunc("/v1/ready", s.handleReady)
 	s.mux.HandleFunc("/v1/version", s.handleVersion)
@@ -335,7 +356,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/events", s.handleEvents)
 	s.mux.HandleFunc("/v1/stream", s.handleStream)
 	s.mux.HandleFunc("/v1/workflows", s.handleWorkflows)
-	s.mux.HandleFunc("/v1/workflows/", s.handleWorkflowsSubtree)
+	s.mux.HandleFunc("/v1/workflows/*", s.handleWorkflowsSubtree)
 	s.mux.HandleFunc("/v1/templates", s.handleTemplates)
 	s.mux.HandleFunc("/v1/targets", s.handleCollection("targets", targetCatalog(), "job:read"))
 	s.mux.HandleFunc("/v1/adapters", s.handleCollection("adapters", adapterCatalog(), "job:read"))
@@ -353,22 +374,23 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/sso/saml/acs", s.handleSSOSAMLACS)
 	s.mux.HandleFunc("/v1/sso/logout", s.handleSSOLogout)
 	s.mux.HandleFunc("/v1/scim/v2/Users", s.handleSCIMUsers)
-	s.mux.HandleFunc("/v1/scim/v2/Users/", s.handleSCIMUserByID)
+	s.mux.HandleFunc("/v1/scim/v2/Users/*", s.handleSCIMUserByID)
 	s.mux.HandleFunc("/v1/scim/v2/Groups", s.handleSCIMGroups)
-	s.mux.HandleFunc("/v1/scim/v2/Groups/", s.handleSCIMGroupByID)
+	s.mux.HandleFunc("/v1/scim/v2/Groups/*", s.handleSCIMGroupByID)
 	s.mux.HandleFunc("/v1/siem/config", s.handleSIEMConfig)
 	s.mux.HandleFunc("/v1/alerts", s.handleAlerts)
 	s.mux.HandleFunc("/v1/alerts/config", s.handleAlertsConfig)
-	s.mux.HandleFunc("/v1/alerts/", s.handleAlertsSubtree)
+	s.mux.HandleFunc("/v1/alerts/*", s.handleAlertsSubtree)
 	s.mux.HandleFunc("/v1/browser/instances", s.handleBrowserInstances)
 	s.mux.HandleFunc("/v1/browser/contexts", s.handleBrowserContexts)
 	s.mux.HandleFunc("/v1/browser/tabs", s.handleBrowserTabs)
 	s.mux.HandleFunc("/v1/browser/summary", s.handleBrowserSummary)
 	s.mux.HandleFunc("/v1/concurrency", s.handleConcurrency)
 	s.mux.HandleFunc("/v1/jobs", s.handleJobs)
-	s.mux.HandleFunc("/v1/jobs/", s.handleJobByID)
-	s.mux.HandleFunc("/v1/sse/jobs/", s.handleJobSSE)
-	s.mux.HandleFunc("/", s.handleNotFound)
+	s.mux.HandleFunc("/v1/jobs/batch", s.handleBatchJobs) // §10, §19.2: up to 100 jobs/request; chi resolves before wildcard
+	s.mux.HandleFunc("/v1/jobs/*", s.handleJobByID)       // chi wildcard: all /v1/jobs/{id}/... sub-paths
+	s.mux.HandleFunc("/v1/sse/jobs/*", s.handleJobSSE)
+	// Note: catch-all 404 is handled via s.mux.NotFound() registered above.
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -889,6 +911,145 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	default:
 		s.writeMethodNotAllowed(w, r, http.MethodGet, http.MethodPost)
 	}
+}
+
+// handleBatchJobs implements POST /v1/jobs/batch (blueprint §10, §19.2).
+// Accepts up to 100 job submissions in one HTTP round-trip and returns an
+// outcome for each one. Individual failures do not abort the batch — each
+// entry carries its own status and error.
+func (s *Server) handleBatchJobs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeMethodNotAllowed(w, r, http.MethodPost)
+		return
+	}
+
+	const maxBatchSize = 100
+	body, err := io.ReadAll(io.LimitReader(r.Body, s.maxBody))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-BODY-READ-001", "failed to read request body"))
+		return
+	}
+
+	var batchReq batchCreateJobRequest
+	if err := json.Unmarshal(body, &batchReq); err != nil {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-JSON-001", "request body is not valid JSON"))
+		return
+	}
+	if len(batchReq.Jobs) == 0 {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-BODY-LENGTH-001", "batch must contain at least one job"))
+		return
+	}
+	if len(batchReq.Jobs) > maxBatchSize {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-LIMIT-001",
+			fmt.Sprintf("batch size %d exceeds maximum %d", len(batchReq.Jobs), maxBatchSize)))
+		return
+	}
+
+	traceID := traceIDFromContext(r.Context())
+	principal, ok := principalFromContext(r.Context())
+	if !ok {
+		s.writeError(w, r, http.StatusUnauthorized, authError("UBAG-AUTH-MISSING-001", "authentication required"))
+		return
+	}
+	tenantID := principal.TenantID
+	appID := principal.AppID
+	// Use the batch-level api_version if supplied; fall back to the server default.
+	apiVersion := s.apiVersion
+	if v := strings.TrimSpace(batchReq.APIVersion); v != "" {
+		apiVersion = v
+	}
+
+	results := make([]batchJobOutcome, 0, len(batchReq.Jobs))
+	accepted, rejected := 0, 0
+
+	for i, req := range batchReq.Jobs {
+		outcome, httpStatus := s.processBatchEntry(r.Context(), i, apiVersion, tenantID, appID, traceID, req)
+		results = append(results, outcome)
+		if httpStatus == http.StatusAccepted || httpStatus == http.StatusOK {
+			accepted++
+		} else {
+			rejected++
+		}
+	}
+
+	resp := batchCreateJobResponse{
+		APIVersion: apiVersion,
+		Results:    results,
+		Accepted:   accepted,
+		Rejected:   rejected,
+		TraceID:    traceID,
+	}
+	status := http.StatusMultiStatus
+	if rejected == 0 {
+		status = http.StatusAccepted
+	}
+	s.writeJSON(w, status, resp)
+}
+
+// processBatchEntry creates and enqueues a single job within a batch.
+// Returns the outcome and the HTTP status that would have been returned for a
+// standalone request (used to categorise accepted vs rejected).
+func (s *Server) processBatchEntry(
+	ctx context.Context,
+	index int,
+	apiVersion, tenantID, appID, traceID string,
+	req createJobRequest,
+) (batchJobOutcome, int) {
+	// Basic validation mirrors createJob — inline here to avoid the full HTTP
+	// request/response cycle.
+	target := strings.TrimSpace(req.Job.Target)
+	if target == "" {
+		e := validationError("UBAG-VALIDATION-JOB-TARGET-001", "job.target is required")
+		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
+	}
+	cmdType := strings.TrimSpace(req.Job.CommandType)
+	if cmdType == "" {
+		e := validationError("UBAG-VALIDATION-JOB-COMMAND-001", "job.command_type is required")
+		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
+	}
+	if req.Job.Input == nil {
+		e := validationError("UBAG-VALIDATION-JOB-INPUT-001", "job.input must be a non-null JSON object")
+		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
+	}
+	if err := validateExecutableJobPayload(req); err != nil {
+		e := validationError("UBAG-VALIDATION-JOB-PAYLOAD-SAFETY-001", err.Error())
+		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
+	}
+
+	// Auto-generate idempotency key if absent.
+	idempKey := strings.TrimSpace(req.IdempotencyKey)
+	if idempKey == "" {
+		idempKey = generatedTraceID() // unique per entry
+	}
+
+	job, err := s.jobs.Create(ctx, jobstore.CreateRequest{
+		APIVersion:     apiVersion,
+		TenantID:       tenantID,
+		AppID:          appID,
+		IdempotencyKey: idempKey,
+		Target:         target,
+		CommandType:    cmdType,
+		Client:         clientToMap(req.Client),
+		ConversationID: strings.TrimSpace(req.Job.ConversationID),
+		TemplateID:     strings.TrimSpace(req.Job.TemplateID),
+		Input:          req.Job.Input,
+		Options:        req.Job.Options,
+		Callbacks:      req.Job.Callbacks,
+		Context:        req.Job.Context,
+		TraceID:        traceID,
+	})
+	if err != nil {
+		e := internalError("failed to create job")
+		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusInternalServerError
+	}
+
+	if _, err := s.executor.EnqueueJob(ctx, job); err != nil {
+		_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
+		e := queueError("UBAG-QUEUE-ENQUEUE-001", "failed to enqueue job", true)
+		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusServiceUnavailable
+	}
+
+	return batchJobOutcome{Index: index, Status: "accepted", JobID: job.ID}, http.StatusAccepted
 }
 
 func (s *Server) handleJobByID(w http.ResponseWriter, r *http.Request) {
@@ -1734,34 +1895,35 @@ func (s *Server) parseLimit(w http.ResponseWriter, r *http.Request, raw string, 
 }
 
 func jobToResponse(job jobstore.Job, replay bool, traceID string) jobResponse {
-	metadata := map[string]any{
-		"command_type": job.CommandType,
-		"app_id":       job.AppID,
-		"tenant_id":    job.TenantID,
-	}
-	if job.ConversationID != "" {
-		metadata["conversation_id"] = job.ConversationID
-	}
-	if job.TemplateID != "" {
-		metadata["template_id"] = job.TemplateID
-	}
-	if job.Client != nil {
-		metadata["client"] = job.Client
+	// Build the structured §6.2 result envelope from whatever the job store
+	// holds. If the worker has populated dedicated output fields we use them;
+	// if it returned an opaque map we attempt to project it into the envelope.
+	result := buildJobResultEnvelope(job)
+
+	// Build the structured §6.2 metadata envelope.
+	meta := JobMetadataEnvelope{
+		CommandType:    job.CommandType,
+		AppID:          job.AppID,
+		TenantID:       job.TenantID,
+		Retries:        0, // populated by Phase 2b when retry count is tracked in the job store
+		ConversationID: job.ConversationID,
+		TemplateID:     job.TemplateID,
+		Client:         job.Client,
 	}
 	if job.Input != nil {
-		metadata["input"] = job.Input
+		meta.Input = job.Input
 	}
 	if job.Options != nil {
-		metadata["options"] = job.Options
+		meta.Options = job.Options
 	}
 	if job.Callbacks != nil {
-		metadata["callbacks"] = webhooks.RedactCallbacks(job.Callbacks)
+		meta.Callbacks = webhooks.RedactCallbacks(job.Callbacks)
 	}
 	if job.Context != nil {
-		metadata["context"] = job.Context
+		meta.Context = job.Context
 	}
 	if job.RetryOf != "" {
-		metadata["retry_of"] = job.RetryOf
+		meta.RetryOf = job.RetryOf
 	}
 
 	return jobResponse{
@@ -1770,13 +1932,57 @@ func jobToResponse(job jobstore.Job, replay bool, traceID string) jobResponse {
 		IdempotentReplay: replay,
 		Status:           string(job.Status),
 		Target:           job.Target,
-		Result:           job.Result,
-		Metadata:         metadata,
+		Result:           result,
+		Metadata:         meta,
 		TraceID:          traceID,
 		EventsURL:        fmt.Sprintf("/v1/jobs/%s/events", job.ID),
 		CreatedAt:        job.CreatedAt,
 		UpdatedAt:        job.UpdatedAt,
 	}
+}
+
+// buildJobResultEnvelope converts the job store's opaque Result value into the
+// structured §6.2 result envelope. The worker populates Result as either a
+// map[string]any or nil; future workers may populate the dedicated output fields
+// in the blueprint §22 schema directly.
+func buildJobResultEnvelope(job jobstore.Job) *JobResultEnvelope {
+	env := &JobResultEnvelope{}
+
+	// Attempt to project a map-typed result into the structured envelope.
+	if m, ok := job.Result.(map[string]any); ok && m != nil {
+		if out, ok := m["output"].(map[string]any); ok {
+			o := &JobOutput{}
+			if v, ok := out["text"].(string); ok {
+				o.Text = v
+			}
+			if v, ok := out["markdown"].(string); ok {
+				o.Markdown = v
+			}
+			if v, ok := out["plain_text"].(string); ok {
+				o.PlainText = v
+			}
+			if v, ok := out["sections"].(map[string]any); ok {
+				o.Sections = v
+			}
+			if v, ok := out["html"].(string); ok {
+				o.HTML = v
+			}
+			env.Output = o
+		} else if text, ok := m["text"].(string); ok {
+			// Flat result from a simple worker — promote to output.text.
+			env.Output = &JobOutput{Text: text}
+		}
+		if cached, ok := m["cached"].(bool); ok {
+			env.Cached = cached
+		}
+		if src, ok := m["cache_source"].(string); ok {
+			env.CacheSource = &src
+		}
+	}
+
+	// Nil result is valid (job not yet completed); return a non-nil envelope
+	// so the response always has a "result" field.
+	return env
 }
 
 func jobEventToResponse(event jobstore.Event, traceID string) jobEventResponse {

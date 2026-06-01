@@ -667,13 +667,14 @@ func TestCreateJobPersistsExecutablePayload(t *testing.T) {
 	if err := json.Unmarshal(get.Body.Bytes(), &loaded); err != nil {
 		t.Fatalf("decode get response: %v", err)
 	}
-	if loaded.Metadata["conversation_id"] != "conv_1" || loaded.Metadata["template_id"] != "mock.echo.v1" {
-		t.Fatalf("metadata missing conversation/template: %#v", loaded.Metadata)
+	// Metadata is now a typed §6.2 envelope struct; access fields directly.
+	if loaded.Metadata.ConversationID != "conv_1" || loaded.Metadata.TemplateID != "mock.echo.v1" {
+		t.Fatalf("metadata missing conversation/template: conv=%q tmpl=%q", loaded.Metadata.ConversationID, loaded.Metadata.TemplateID)
 	}
-	if _, ok := loaded.Metadata["input"].(map[string]any); !ok {
+	if loaded.Metadata.Input == nil {
 		t.Fatalf("metadata missing input payload: %#v", loaded.Metadata)
 	}
-	if _, ok := loaded.Metadata["callbacks"].(map[string]any); !ok {
+	if loaded.Metadata.Callbacks == nil {
 		t.Fatalf("metadata missing callbacks payload: %#v", loaded.Metadata)
 	}
 }
