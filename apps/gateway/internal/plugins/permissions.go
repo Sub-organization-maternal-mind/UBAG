@@ -109,9 +109,8 @@ func hostAllowed(host string, allowed []string) bool {
 	for _, pattern := range allowed {
 		normalized := strings.ToLower(pattern)
 		if strings.HasPrefix(normalized, "*.") {
-			suffix := normalized[1:] // ".example.com"
-			base := normalized[2:]   // "example.com"
-			if host == base || strings.HasSuffix(host, suffix) {
+			suffix := normalized[1:] // ".example.com" — matches subdomains only, NOT the apex
+			if strings.HasSuffix(host, suffix) {
 				return true
 			}
 		} else if host == normalized {

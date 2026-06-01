@@ -10,7 +10,7 @@ use std::sync::Arc;
 use clap::Parser;
 
 use ubag_sidecar::{
-    run, EnvSecretProvider, SidecarConfig, SecretProvider, DEFAULT_HOST, DEFAULT_PORT,
+    EnvSecretProvider, SidecarConfig, SecretProvider, DEFAULT_HOST, DEFAULT_PORT,
 };
 
 /// Loopback-only localhost sidecar that proxies legacy UBAG clients to the
@@ -127,14 +127,39 @@ async fn main() {
             std::process::exit(1);
         }
     } else {
-        // TCP path (default).
-        // `offline_queue` and `secrets` are not wired into `run()` yet
-        // (run() uses EnvSecretProvider + no queue). For the full wiring,
-        // use `build_app_with_offline_queue` directly when both features are
-        // needed over TCP (future enhancement).
-        let _ = (offline_queue, secrets);
-        if let Err(error) = run(config).await {
-            eprintln!("ubag-sidecar: {error}");
+        // TCP path (default): wire secrets and offline queue.
+        if let Err(e) = ubag_sidecar::assert_loopback_host(&config.host, config.allow_non_loopback) {
+            eprintln!("ubag-sidecar: {e}");
+            std::process::exit(1);
+        }
+        let app = match ubag_sidecar::build_app_with_offline_queue(&config, secrets, offline_queue) {
+            Ok(a) => a,
+            Err(err) => {
+                eprintln!("ubag-sidecar: {err}");
+                std::process::exit(1);
+            }
+        };
+        let bind_addr = format!("{}:{}", config.host, config.port);
+        let listener = match tokio::net::TcpListener::bind(&bind_addr).await {
+            Ok(l) => l,
+            Err(err) => {
+                eprintln!("ubag-sidecar: failed to bind {bind_addr}: {err}");
+                std::process::exit(1);
+            }
+        };
+        let local = match listener.local_addr() {
+            Ok(addr) => addr,
+            Err(err) => {
+                eprintln!("ubag-sidecar: {err}");
+                std::process::exit(1);
+            }
+        };
+        eprintln!("ubag-sidecar listening on http://{local} -> {}", config.gateway_base_url);
+        if let Err(err) = axum::serve(listener, app)
+            .with_graceful_shutdown(async { let _ = tokio::signal::ctrl_c().await; })
+            .await
+        {
+            eprintln!("ubag-sidecar: server error: {err}");
             std::process::exit(1);
         }
     }

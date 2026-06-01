@@ -36,10 +36,17 @@ async fn uds_health_responds_200() {
             .ok();
     });
 
-    // Give the listener a moment to bind.
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    let mut stream = UnixStream::connect(&socket_path).await.unwrap();
+    // Wait up to 5 s for the listener to bind (avoids a fixed-sleep timing race).
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut stream = loop {
+        match UnixStream::connect(&socket_path).await {
+            Ok(s) => break s,
+            Err(_) if std::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(e) => panic!("socket never became ready within 5s: {e}"),
+        }
+    };
     stream
         .write_all(b"GET /health HTTP/1.0\r\nHost: localhost\r\n\r\n")
         .await

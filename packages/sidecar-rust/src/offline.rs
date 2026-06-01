@@ -114,7 +114,10 @@ impl OfflineStore for SledOfflineStore {
 /// both the in-memory and sled-backed stores.
 pub struct OfflineQueue<S: OfflineStore> {
     store: S,
-    counter: Mutex<u64>,
+    /// Serializes all store operations (enqueue, flush, size) so that
+    /// concurrent enqueues cannot lose entries via a read-then-write race.
+    /// Also doubles as the monotonic counter stored inside the lock.
+    mu: Mutex<u64>,
 }
 
 impl<S: OfflineStore> OfflineQueue<S> {
@@ -122,14 +125,16 @@ impl<S: OfflineStore> OfflineQueue<S> {
     pub fn new(store: S) -> Self {
         OfflineQueue {
             store,
-            counter: Mutex::new(0),
+            mu: Mutex::new(0),
         }
     }
 
     /// Appends `request` to the queue and returns the new entry.
     pub fn enqueue(&self, request: serde_json::Value) -> OfflineEntry {
+        // Acquire the lock BEFORE reading the store so the entire
+        // read-increment-push-write sequence is serialized under one lock.
+        let mut c = self.mu.lock().unwrap();
         let mut entries = self.store.read();
-        let mut c = self.counter.lock().unwrap();
         *c += 1;
         // Zero-pad to 20 digits so lexicographic order == insertion order in sled.
         let entry = OfflineEntry {
@@ -150,6 +155,9 @@ impl<S: OfflineStore> OfflineQueue<S> {
     where
         F: FnMut(&serde_json::Value) -> Result<(), String>,
     {
+        // Serialize flush with enqueue so a concurrent enqueue cannot observe
+        // a partially-flushed store.
+        let _guard = self.mu.lock().unwrap();
         let mut entries = self.store.read();
         while !entries.is_empty() {
             match sender(&entries[0].request) {
@@ -169,6 +177,7 @@ impl<S: OfflineStore> OfflineQueue<S> {
 
     /// Returns the number of entries currently in the queue.
     pub fn size(&self) -> usize {
+        let _guard = self.mu.lock().unwrap();
         self.store.read().len()
     }
 }
@@ -281,6 +290,9 @@ mod tests {
 
         assert_eq!(q.size(), 0);
         assert_eq!(received.len(), 2);
+        // Assert insertion order was preserved end-to-end through sled.
+        assert_eq!(received[0]["x"], 1);
+        assert_eq!(received[1]["x"], 2);
 
         // Cleanup.
         let _ = std::fs::remove_dir_all(&dir);

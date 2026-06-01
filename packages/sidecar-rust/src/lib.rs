@@ -321,6 +321,11 @@ pub fn build_app_with_offline_queue(
 
 /// Builds the app, binds the configured socket (enforcing the loopback guard),
 /// and serves until shutdown.
+///
+/// `main.rs` now uses [`build_app_with_offline_queue`] directly so that
+/// `--use-keychain` and `--offline-dir` take effect on the TCP path.  This
+/// convenience wrapper is kept for library users and integration tests.
+#[allow(dead_code)]
 pub async fn run(config: SidecarConfig) -> Result<(), Box<dyn std::error::Error>> {
     assert_loopback_host(&config.host, config.allow_non_loopback)?;
     let app = build_app(&config)?;
@@ -440,6 +445,21 @@ async fn proxy_gateway(
         }
     }
 
+    // Capture a replayable snapshot before consuming `target` / `out_headers`.
+    let snapshot_method = method.as_str().to_string();
+    let snapshot_path = target.path().to_string();
+    let snapshot_query = target.query().unwrap_or("").to_string();
+    let snapshot_headers: std::collections::HashMap<String, String> = out_headers
+        .iter()
+        .filter_map(|(k, v)| {
+            v.to_str()
+                .ok()
+                .map(|vs| (k.as_str().to_string(), vs.to_string()))
+        })
+        .collect();
+    // Encode the raw body as a JSON array of bytes so no extra dep is needed.
+    let snapshot_body: Vec<u8> = body_bytes.to_vec();
+
     let send_result = state
         .client
         .request(method, target)
@@ -455,8 +475,11 @@ async fn proxy_gateway(
         Err(err) => {
             if let Some(ref queue) = state.offline_queue {
                 let request_value = serde_json::json!({
-                    "path": uri.path(),
-                    "query": uri.query(),
+                    "method": snapshot_method,
+                    "path": snapshot_path,
+                    "query": snapshot_query,
+                    "headers": snapshot_headers,
+                    "body": snapshot_body,
                 });
                 let entry = queue.enqueue(request_value);
                 let payload = serde_json::json!({
