@@ -1,0 +1,4 @@
+# No external deps needed for unit tests — stdlib only
+# For integration mode:
+# chaostoolkit>=1.17.0
+# chaostoolkit-toxiproxy>=0.4.0
