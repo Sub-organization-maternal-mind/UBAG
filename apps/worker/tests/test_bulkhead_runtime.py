@@ -1,5 +1,9 @@
 """Tests for BulkheadRegistry admission control — Task 2.1."""
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import pytest
 from ubag_worker.orchestration.bulkhead import (
     BulkheadConfig,
@@ -192,3 +196,28 @@ def test_smoke_tab_crash_requeue_with_bulkhead():
     snap2 = reg.snapshot()
     assert snap2["tenant"]["tenant-x"] == 0
     assert snap2["target"]["target-y"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Test 8: Thread-safety — N threads racing to fill the last slot
+# ---------------------------------------------------------------------------
+
+def test_thread_safety_boundary():
+    """N threads racing to fill the last slot — exactly ceiling total successes."""
+    import concurrent.futures
+    config = BulkheadConfig(max_tabs_per_tenant=0, max_tabs_per_target=5)
+    registry = BulkheadRegistry(config)
+    results = []
+
+    def try_acquire_once():
+        return registry.try_acquire("tenant", "target")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        futures = [executor.submit(try_acquire_once) for _ in range(20)]
+        results = [f.result() for f in futures]
+
+    # Exactly 5 acquires should succeed (the target ceiling)
+    assert sum(results) == 5
+    # Snapshot should show exactly 5 in target counter
+    snap = registry.snapshot()
+    assert snap["target"]["target"] == 5

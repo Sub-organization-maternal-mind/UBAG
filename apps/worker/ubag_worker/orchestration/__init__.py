@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from .aimd import AIMDController, CapChange, NegativeSignal
 from .bulkhead import (
+    BulkheadConfig,
+    BulkheadRegistry,
     CrashLevel,
     RecoveryAction,
     RecoveryPlan,
@@ -90,6 +92,8 @@ __all__ = [
     "Job",
     "PoolConfig",
     # bulkhead
+    "BulkheadConfig",
+    "BulkheadRegistry",
     "CrashLevel",
     "RecoveryAction",
     "RecoveryPlan",

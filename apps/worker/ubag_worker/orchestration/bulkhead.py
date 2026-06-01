@@ -249,7 +249,12 @@ class BulkheadRegistry:
 
     def release(self, tenant_id: str, target_id: str) -> None:
         """Release a previously acquired slot. Safe to call even if the
-        slot was never acquired (no-op if counter is already 0)."""
+        slot was never acquired (no-op if counter is already 0).
+
+        Note: tenant_id and target_id must match the values used in the
+        corresponding try_acquire() call. A mismatched pair will produce
+        inconsistent counter state.
+        """
         with self._lock:
             tenant_count = self._tenant_counts.get(tenant_id, 0)
             if tenant_count > 0:
