@@ -7,8 +7,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/ubag/ubag/apps/gateway/internal/resilience"
 )
 
 const defaultMaxResponseBytes = 8 * 1024
@@ -24,6 +27,7 @@ type HTTPSender struct {
 	Now              func() time.Time
 	MaxResponseBytes int64
 	APIVersion       string
+	Breakers         *resilience.Registry // optional; nil disables breaker logic
 }
 
 func (s HTTPSender) Send(ctx context.Context, delivery Delivery) (AttemptResult, error) {
@@ -62,6 +66,23 @@ func (s HTTPSender) Send(ctx context.Context, delivery Delivery) (AttemptResult,
 		result.ErrorMessage = err.Error()
 		return result, nil
 	}
+	// Circuit breaker check (nil-safe: skip entirely when Breakers is not configured).
+	var breaker *resilience.Breaker
+	if s.Breakers != nil {
+		u, err := url.Parse(delivery.URL)
+		if err == nil {
+			host := u.Hostname() // strips port if present
+			breaker = s.Breakers.Get(resilience.KindWebhook, host)
+			if !breaker.Allow() {
+				result.ErrorClass = "circuit_open"
+				result.ErrorMessage = "webhook circuit breaker is open for host: " + host
+				result.Retryable = true
+				result.StatusCode = 0
+				return result, nil
+			}
+		}
+	}
+
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, delivery.URL, bytes.NewReader(delivery.Payload))
 	if err != nil {
 		result.ErrorClass = "request_invalid"
@@ -91,6 +112,9 @@ func (s HTTPSender) Send(ctx context.Context, delivery Delivery) (AttemptResult,
 		result.ErrorClass = "network"
 		result.ErrorMessage = sanitizeErrorMessage(err.Error())
 		result.Retryable = true
+		if breaker != nil {
+			breaker.RecordFailure()
+		}
 		return result, nil
 	}
 	defer response.Body.Close()
@@ -103,7 +127,13 @@ func (s HTTPSender) Send(ctx context.Context, delivery Delivery) (AttemptResult,
 	result.Retryable = retryableStatus(response.StatusCode)
 	if response.StatusCode >= 200 && response.StatusCode < 300 {
 		result.ErrorClass = "none"
+		if breaker != nil {
+			breaker.RecordSuccess()
+		}
 		return result, nil
+	}
+	if breaker != nil && response.StatusCode >= 500 {
+		breaker.RecordFailure()
 	}
 	result.ErrorClass = errorClassForStatus(response.StatusCode)
 	result.ErrorMessage = fmt.Sprintf("webhook endpoint returned HTTP %d", response.StatusCode)

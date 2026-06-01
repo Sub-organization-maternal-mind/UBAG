@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
+	"net/url"
 	"time"
+
+	"github.com/ubag/ubag/apps/gateway/internal/resilience"
 )
 
 type Sender interface {
@@ -28,6 +31,7 @@ type DeliveryWorker struct {
 	BatchSize    int
 	RetryPolicy  RetryPolicy
 	Now          func() time.Time
+	Breakers     *resilience.Registry // optional; nil disables circuit-breaker retry delay
 }
 
 func (w *DeliveryWorker) Ready(ctx context.Context) error {
@@ -95,6 +99,23 @@ func (w *DeliveryWorker) RunOnce(ctx context.Context) (bool, error) {
 		switch {
 		case result.StatusCode >= 200 && result.StatusCode < 300:
 			if err := w.Store.MarkDelivered(ctx, delivery.ID, delivery.LeaseID, result); err != nil {
+				return true, err
+			}
+		case result.ErrorClass == "circuit_open" && w.Breakers != nil:
+			// Use the breaker's cooldown as the retry delay to avoid DLQ churn.
+			var next time.Time
+			if u, parseErr := url.Parse(delivery.URL); parseErr == nil {
+				host := u.Hostname()
+				b := w.Breakers.Get(resilience.KindWebhook, host)
+				cooldown := b.CooldownRemaining()
+				if cooldown <= 0 {
+					cooldown = time.Second // fallback minimum
+				}
+				next = now().UTC().Add(cooldown)
+			} else {
+				next = NextRetryAt(now().UTC(), delivery.ID, delivery.AttemptCount+1, w.RetryPolicy)
+			}
+			if err := w.Store.MarkRetry(ctx, delivery.ID, delivery.LeaseID, next, result); err != nil {
 				return true, err
 			}
 		case result.Retryable && delivery.AttemptCount+1 < normalizeMaxAttempts(delivery.MaxAttempts):
