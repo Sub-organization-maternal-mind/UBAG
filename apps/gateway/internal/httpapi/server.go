@@ -34,6 +34,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	"github.com/ubag/ubag/apps/gateway/internal/appjwt"
 	"github.com/ubag/ubag/apps/gateway/internal/compliance"
+	"github.com/ubag/ubag/apps/gateway/internal/jitadmin"
 	"github.com/ubag/ubag/apps/gateway/internal/mfa"
 	"github.com/ubag/ubag/apps/gateway/internal/outbox"
 	"github.com/ubag/ubag/apps/gateway/internal/pat"
@@ -209,6 +210,10 @@ type Config struct {
 	// POST /v1/mfa/enroll and POST /v1/mfa/verify are active only when this is set.
 	// When nil, both routes return 501.
 	MFA *mfa.Service
+
+	// JITAdmin enables time-boxed privilege elevation (enterprise).
+	// When nil, the elevation routes return 501.
+	JITAdmin jitadmin.Store
 }
 
 type Server struct {
@@ -258,6 +263,7 @@ type Server struct {
 	killSwitch       *region.KillSwitch
 	mfaSvc           *mfa.Service
 	mfaSessions      mfaSessionSet // in-memory set of MFA-verified session IDs
+	jitAdmin         jitadmin.Store
 
 	// §18 contract counters (Task 2.3) — updated atomically on the hot path.
 	idempotencyReplays atomic.Int64 // ubag_idempotency_replays_total
@@ -409,6 +415,7 @@ func NewServer(config Config) *Server {
 		regionRouter:     config.RegionRouter,
 		killSwitch:       config.KillSwitch,
 		mfaSvc:           config.MFA,
+		jitAdmin:         config.JITAdmin,
 
 		metrics: &metricState{
 			requests:    make(map[string]int),
@@ -497,6 +504,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/admin/regions/{region}/state", s.handleSetRegionState)
 	s.mux.HandleFunc("/v1/mfa/enroll", s.handleMFAEnroll)
 	s.mux.HandleFunc("/v1/mfa/verify", s.handleMFAVerify)
+	s.mux.HandleFunc("/v1/admin/elevation", s.handleRequestElevation)
+	s.mux.HandleFunc("/v1/admin/elevation/{id}/approve", s.handleApproveElevation)
 	// Note: catch-all 404 is handled via s.mux.NotFound() registered above.
 }
 
@@ -3086,6 +3095,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 				TenantID: s.tenantID,
 				AppID:    s.appID,
 			}
+			principal = s.applyJITElevation(r.Context(), principal)
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
 			return
 		}
@@ -3099,6 +3109,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 						TenantID: claims.TenantID,
 						AppID:    claims.AppID,
 					}
+					principal = s.applyJITElevation(r.Context(), principal)
 					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
 					return
 				}
@@ -3115,6 +3126,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 						TenantID: token.TenantID,
 						AppID:    token.AppID,
 					}
+					principal = s.applyJITElevation(r.Context(), principal)
 					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
 					return
 				}
@@ -3136,6 +3148,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 						MFAVerified:  s.mfaSessions.Contains(token),
 						SessionBased: true,
 					}
+					principal = s.applyJITElevation(r.Context(), principal)
 					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
 					return
 				}
@@ -3144,6 +3157,24 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 
 		s.writeError(w, r, http.StatusUnauthorized, authError("UBAG-AUTH-MISSING-001", "missing or invalid credentials"))
 	})
+}
+
+// applyJITElevation checks whether there is an active JIT elevation grant for
+// the principal and, if so, returns a copy with an elevated Role. When
+// s.jitAdmin is nil (feature not enabled) the principal is returned unchanged.
+func (s *Server) applyJITElevation(ctx context.Context, p authenticatedPrincipal) authenticatedPrincipal {
+	if s.jitAdmin == nil {
+		return p
+	}
+	actor := p.Subject
+	if actor == "" {
+		actor = p.Role
+	}
+	elevated := jitadmin.ElevatedRole(ctx, s.jitAdmin, actor, p.TenantID, p.Role, time.Now())
+	if elevated != p.Role {
+		p.Role = elevated
+	}
+	return p
 }
 
 // sessionCookieName is the cookie that carries an opaque SSO session token.
@@ -3580,4 +3611,142 @@ func (s *Server) handleMFAVerify(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("X-MFA-Verified", "true")
 	s.writeJSON(w, http.StatusOK, map[string]any{"verified": true})
+}
+
+// elevationRequest is the body accepted by POST /v1/admin/elevation.
+type elevationRequest struct {
+	Role       string `json:"role"`
+	TTLSeconds int64  `json:"ttl_seconds"`
+	Reason     string `json:"reason"`
+}
+
+// handleRequestElevation implements POST /v1/admin/elevation.
+// RBAC: job:create (any authenticated user may request elevation).
+// Body: {"role": "admin", "ttl_seconds": 3600, "reason": "incident response"}
+// Returns 201 with the new Grant on success.
+func (s *Server) handleRequestElevation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeMethodNotAllowed(w, r, http.MethodPost)
+		return
+	}
+	if !s.authorizeGatewayAction(w, r, "job:create") {
+		return
+	}
+	if s.jitAdmin == nil {
+		s.writeError(w, r, http.StatusNotImplemented, validationError("UBAG-JITADMIN-NOT-ENABLED-001", "JIT admin elevation is not enabled on this gateway"))
+		return
+	}
+
+	var body elevationRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, s.maxBody)).Decode(&body); err != nil {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-BODY-001", "invalid request body"))
+		return
+	}
+	if strings.TrimSpace(body.Role) == "" {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-JITADMIN-ROLE-001", "role is required"))
+		return
+	}
+	if body.TTLSeconds <= 0 {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-JITADMIN-TTL-001", "ttl_seconds must be a positive integer"))
+		return
+	}
+
+	principal, _ := principalFromContext(r.Context())
+	actor := principal.Subject
+	if actor == "" {
+		actor = principal.Role
+	}
+	tenantID, appID := requestScope(r)
+	now := time.Now()
+	ttl := time.Duration(body.TTLSeconds) * time.Second
+
+	grant, err := s.jitAdmin.Create(r.Context(), jitadmin.Grant{
+		Actor:     actor,
+		TenantID:  tenantID,
+		AppID:     appID,
+		Role:      body.Role,
+		Reason:    body.Reason,
+		TTL:       ttl,
+		CreatedAt: now,
+	})
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to create elevation grant"))
+		return
+	}
+
+	_, _ = s.audit.Append(r.Context(), audit.Record{
+		TenantID:   tenantID,
+		AppID:      appID,
+		Actor:      actor,
+		Action:     "jitadmin:request",
+		Resource:   "/v1/admin/elevation",
+		Outcome:    "created",
+		OccurredAt: now,
+		Attributes: map[string]any{
+			"grant_id":    grant.ID,
+			"role":        grant.Role,
+			"ttl_seconds": body.TTLSeconds,
+			"reason":      grant.Reason,
+		},
+	})
+
+	s.writeJSON(w, http.StatusCreated, grant)
+}
+
+// handleApproveElevation implements POST /v1/admin/elevation/{id}/approve.
+// RBAC: role:manage (admin or superadmin only).
+// Returns 200 with the updated Grant on success.
+func (s *Server) handleApproveElevation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		s.writeMethodNotAllowed(w, r, http.MethodPost)
+		return
+	}
+	if !s.authorizeGatewayAction(w, r, "role:manage") {
+		return
+	}
+	if s.jitAdmin == nil {
+		s.writeError(w, r, http.StatusNotImplemented, validationError("UBAG-JITADMIN-NOT-ENABLED-001", "JIT admin elevation is not enabled on this gateway"))
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-JITADMIN-ID-001", "grant id is required"))
+		return
+	}
+
+	principal, _ := principalFromContext(r.Context())
+	approver := principal.Subject
+	if approver == "" {
+		approver = principal.Role
+	}
+	tenantID, appID := requestScope(r)
+	now := time.Now()
+
+	grant, err := s.jitAdmin.Approve(r.Context(), id, approver, now)
+	if err != nil {
+		if errors.Is(err, jitadmin.ErrGrantNotFound) {
+			s.writeError(w, r, http.StatusNotFound, validationError("UBAG-JITADMIN-NOT-FOUND-001", "elevation grant not found"))
+			return
+		}
+		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to approve elevation grant"))
+		return
+	}
+
+	_, _ = s.audit.Append(r.Context(), audit.Record{
+		TenantID:   tenantID,
+		AppID:      appID,
+		Actor:      approver,
+		Action:     "jitadmin:approve",
+		Resource:   "/v1/admin/elevation/" + id + "/approve",
+		Outcome:    "approved",
+		OccurredAt: now,
+		Attributes: map[string]any{
+			"grant_id":   grant.ID,
+			"grant_role": grant.Role,
+			"grantee":    grant.Actor,
+		},
+	})
+
+	s.writeJSON(w, http.StatusOK, grant)
 }
