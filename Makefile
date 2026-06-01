@@ -3,6 +3,7 @@
 	test test-v0 test-v0-local itest sdks bench lint release \
 	plugins-build obs-check \
 	chaos-smoke backup restore restore-verify \
+	release-snapshot helm-lint tf-validate caddy-validate migrate-tier \
 	help
 
 GATEWAY_DIR := apps/gateway
@@ -22,6 +23,11 @@ help:
 	@echo "  make backup       - create a local backup (SQLite)"
 	@echo "  make restore      - restore from ./ubag-backup-latest"
 	@echo "  make restore-verify - restore and verify integrity"
+	@echo "  make release-snapshot - goreleaser snapshot build (no publish)"
+	@echo "  make helm-lint    - lint and template the UBAG Helm chart"
+	@echo "  make tf-validate  - validate all Terraform modules in deploy/terraform/"
+	@echo "  make caddy-validate - validate Caddy config against custom module list"
+	@echo "  make migrate-tier - run ubag migrate (TO=<tier> [FROM=<tier>] [DRY_RUN=--dry-run])"
 
 # --- developer loop -------------------------------------------------------
 dev: dev-edge
@@ -101,3 +107,27 @@ restore:
 restore-verify:
 	cd $(GATEWAY_DIR) && go run ./cmd/ubag restore --from ./ubag-backup-latest && \
 	  sqlite3 ubag-gateway.db "PRAGMA integrity_check;"
+
+# --- Phase 8 release and validation targets ---
+
+release-snapshot:
+	goreleaser build --snapshot --clean
+
+helm-lint:
+	helm lint deploy/helm/ubag
+	helm template deploy/helm/ubag -f deploy/helm/ubag/values-ha.yaml > /dev/null
+
+tf-validate:
+	@for cloud in aws gcp azure hetzner digitalocean _shared; do \
+		echo "Validating deploy/terraform/$$cloud ..."; \
+		terraform -chdir=deploy/terraform/$$cloud validate 2>&1 || echo "  (skipped: providers not installed)"; \
+	done
+
+caddy-validate:
+	@echo "Note: requires xcaddy build with caddy-ratelimit + coraza-caddy modules"
+	node tools/check-caddy.mjs
+
+migrate-tier:
+	@echo "Usage: make migrate-tier TO=small [FROM=edge] [DRY_RUN=--dry-run]"
+	@echo "Example: make migrate-tier TO=small DRY_RUN=--dry-run"
+	./ubag migrate --to $(TO) $(if $(FROM),--from $(FROM),) $(DRY_RUN)

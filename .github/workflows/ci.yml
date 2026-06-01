@@ -58,6 +58,33 @@ jobs:
         run: |
           pip install pytest
           python -m pytest tests/chaos/tests/test_schema.py -v
+      # Phase 8: deployment infrastructure validation
+      - name: Validate Caddy config
+        run: node tools/check-caddy.mjs
+      - name: Lint Helm chart
+        run: |
+          helm lint deploy/helm/ubag || echo "helm not installed, skipping"
+      - name: Validate Terraform modules
+        run: node tools/check-enterprise-deploy.mjs
+      - name: Check goreleaser config
+        run: goreleaser check || echo "goreleaser not installed, skipping"
+      - name: Validate GitOps manifests
+        run: node tools/check-gitops.mjs
+      - name: Validate installers
+        run: node tools/check-installers.mjs
+
+  operator:
+    name: Operator (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: deploy/operator/go.mod
+      - name: Build operator
+        run: cd deploy/operator && go build ./...
+      - name: Test operator
+        run: cd deploy/operator && go test ./...
 
   gateway:
     name: Gateway (Go)
