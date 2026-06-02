@@ -18,5 +18,7 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // Exclude Playwright specs — they are run via `npx playwright test`, not Vitest
+    exclude: ['tests/**', '**/node_modules/**', '**/dist/**'],
   },
 });

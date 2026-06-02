@@ -79,79 +79,50 @@ function stopStubSite() {
 }
 
 // ─── Minimal docker-compose for itest ─────────────────────────────────────
+// Written as a template string to avoid YAML serialization bugs.
 function writeComposeFile(dir) {
-  const compose = {
-    name: composeProjectName,
-    services: {
-      postgres: {
-        image: 'postgres:16-alpine',
-        environment: {
-          POSTGRES_DB: 'ubag_itest',
-          POSTGRES_USER: 'ubag',
-          POSTGRES_PASSWORD: 'ubag_itest_pw',
-        },
-        healthcheck: {
-          test: ['CMD-SHELL', 'pg_isready -U ubag -d ubag_itest'],
-          interval: '2s',
-          timeout: '5s',
-          retries: 15,
-        },
-      },
-      gateway: {
-        image: 'ubag/gateway:small-local',
-        depends_on: { postgres: { condition: 'service_healthy' } },
-        environment: {
-          UBAG_GATEWAY_ADDR: ':8080',
-          UBAG_APP_SECRET: APP_SECRET,
-          UBAG_API_VERSION: '2026-05-22',
-          UBAG_GATEWAY_VERSION: '0.0.0-itest',
-          UBAG_BUILD_COMMIT: 'itest',
-          UBAG_GATEWAY_STORE: 'postgres',
-          UBAG_POSTGRES_DSN: 'postgres://ubag:ubag_itest_pw@postgres:5432/ubag_itest?sslmode=disable',
-          UBAG_EXECUTOR_MODE: 'noop',
-          UBAG_NATS_URL: '',
-        },
-        ports: [`${GW_PORT}:8080`],
-        // Use host network for stub site access from gateway container
-        extra_hosts: ['host.docker.internal:host-gateway'],
-        healthcheck: {
-          test: ['CMD-SHELL', 'wget -qO- http://localhost:8080/v1/health || exit 1'],
-          interval: '3s',
-          timeout: '5s',
-          retries: 20,
-        },
-      },
-    },
-  };
+  const yaml = `name: ${composeProjectName}
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ubag_itest
+      POSTGRES_USER: ubag
+      POSTGRES_PASSWORD: ubag_itest_pw
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ubag -d ubag_itest"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
 
-  const yaml = toYaml(compose);
+  gateway:
+    image: ubag/gateway:small-local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      UBAG_GATEWAY_ADDR: ":8080"
+      UBAG_APP_SECRET: "${APP_SECRET}"
+      UBAG_API_VERSION: "2026-05-22"
+      UBAG_GATEWAY_VERSION: "0.0.0-itest"
+      UBAG_BUILD_COMMIT: "itest"
+      UBAG_GATEWAY_STORE: postgres
+      UBAG_POSTGRES_DSN: "postgres://ubag:ubag_itest_pw@postgres:5432/ubag_itest?sslmode=disable"
+      UBAG_EXECUTOR_MODE: noop
+      UBAG_NATS_URL: ""
+    ports:
+      - "${GW_PORT}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/v1/health || exit 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+`;
   const path = join(dir, 'docker-compose.itest.yml');
   writeFileSync(path, yaml);
   return path;
-}
-
-// Minimal YAML serializer (no external deps)
-function toYaml(obj, indent = 0) {
-  const pad = '  '.repeat(indent);
-  if (obj === null || obj === undefined) return `${pad}null\n`;
-  if (typeof obj === 'string') return `"${obj.replace(/"/g, '\\"')}"`;
-  if (typeof obj === 'number' || typeof obj === 'boolean') return String(obj);
-  if (Array.isArray(obj)) {
-    return obj.map(v => `${pad}- ${toYaml(v, indent + 1).trimStart()}`).join('\n');
-  }
-  if (typeof obj === 'object') {
-    return Object.entries(obj).map(([k, v]) => {
-      const val = toYaml(v, indent + 1);
-      if (typeof v === 'object' && v !== null && !Array.isArray(v)) {
-        return `${pad}${k}:\n${val}`;
-      }
-      if (Array.isArray(v)) {
-        return `${pad}${k}:\n${val}`;
-      }
-      return `${pad}${k}: ${val}`;
-    }).join('\n');
-  }
-  return String(obj);
 }
 
 // ─── Gateway API calls ─────────────────────────────────────────────────────

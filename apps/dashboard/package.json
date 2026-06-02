@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "vite dev",
     "build": "vite build && node scripts/patch-csp.mjs",

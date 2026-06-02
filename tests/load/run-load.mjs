@@ -6,6 +6,7 @@
  */
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -24,7 +25,7 @@ const smokeEnv = mode === 'smoke' ? `K6_ITERATIONS=10 K6_VUS=2` : '';
 
 try {
   execSync(
-    `${smokeEnv} k6 run --env UBAG_GW_URL=${GW_URL} --env UBAG_APP_SECRET=${SECRET} tests/load/k6.js --summary-export=/tmp/k6-summary.json`,
+    `${smokeEnv} k6 run --env UBAG_GW_URL=${GW_URL} --env UBAG_APP_SECRET=${SECRET} tests/load/k6.js --summary-export=${join(tmpdir(), 'k6-summary.json')}`,
     { cwd: join(dir, '../..'), stdio: 'inherit' }
   );
 } catch {
@@ -33,7 +34,7 @@ try {
 
 // Parse k6 output and compare to baselines
 try {
-  const summary = JSON.parse(readFileSync('/tmp/k6-summary.json', 'utf8'));
+  const summary = JSON.parse(readFileSync(join(tmpdir(), 'k6-summary.json'), 'utf8'));
   const p95 = summary?.metrics?.job_create_duration?.values?.['p(95)'] ?? 0;
   const threshold = baselines.job_create_p95_ms * (1 + baselines.regression_threshold_pct / 100);
 

@@ -10,19 +10,25 @@
     failed: '#b04040',    // danger red
   };
 
-  // Compute layers (topological sort)
+  // Compute layers (topological sort with cycle guard)
   function computeLayers(steps: WorkflowStep[]): Map<string, number> {
     const stepMap = new Map(steps.map(s => [s.id, s]));
     const layers = new Map<string, number>();
+    const inProgress = new Set<string>(); // cycle detection
 
-    function getLayer(id: string): number {
+    function getLayer(id: string, depth = 0): number {
+      if (depth > steps.length) return 0; // cycle guard: bail out
       if (layers.has(id)) return layers.get(id)!;
+      if (inProgress.has(id)) return 0; // cycle detected — treat as root
+      inProgress.add(id);
       const step = stepMap.get(id);
       if (!step?.depends_on?.length) {
+        inProgress.delete(id);
         layers.set(id, 0);
         return 0;
       }
-      const maxDep = Math.max(...step.depends_on.map(d => getLayer(d)));
+      const maxDep = Math.max(...step.depends_on.map(d => getLayer(d, depth + 1)));
+      inProgress.delete(id);
       const layer = maxDep + 1;
       layers.set(id, layer);
       return layer;

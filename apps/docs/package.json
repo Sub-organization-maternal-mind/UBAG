@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "astro dev",
     "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true, maxRetries: 5, retryDelay: 250 })\" && astro check && astro build",

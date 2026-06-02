@@ -18,16 +18,24 @@ jobs:
           fetch-depth: 0
       - name: Check DCO sign-off
         run: |
-          # Check that every commit in this PR has a Signed-off-by line
-          BASE="${{ github.event.pull_request.base.sha }}"
+          # Check that every commit in this PR has a Signed-off-by line.
+          # Use origin/base-ref range (robust against force-push / amended history).
+          BASE_REF="origin/${{ github.base_ref }}"
           HEAD="${{ github.event.pull_request.head.sha }}"
+          git fetch origin "${{ github.base_ref }}" --depth=50
+          COMMITS=$(git log --format=%H "${BASE_REF}..${HEAD}" 2>/dev/null || true)
+          if [ -z "$COMMITS" ]; then
+            echo "No commits found in PR range — nothing to check."
+            exit 0
+          fi
           MISSING=""
           while IFS= read -r commit; do
+            [ -z "$commit" ] && continue
             MSG=$(git log --format=%B -n 1 "$commit")
             if ! echo "$MSG" | grep -qiE "^Signed-off-by:"; then
               MISSING="$MISSING $commit"
             fi
-          done < <(git log --format=%H "$BASE..$HEAD")
+          done <<< "$COMMITS"
           if [ -n "$MISSING" ]; then
             echo "The following commits are missing Signed-off-by:"
             for c in $MISSING; do

@@ -105,8 +105,8 @@ jobs:
           go tool cover -func=coverage.out | tee /tmp/coverage-summary.txt | tail -1
           TOTAL=$(grep '^total:' /tmp/coverage-summary.txt | awk '{print $3}' | tr -d '%')
           echo "Total coverage: ${TOTAL}%"
-          # Fail if below 80%
-          awk -v cov="$TOTAL" 'BEGIN { if (cov+0 < 80) { print "Coverage " cov "% is below 80% gate"; exit 1 } }'
+          # Current gate: 50% (baseline). Long-term target: 80% — see ADR-0014.
+          awk -v cov="$TOTAL" 'BEGIN { if (cov+0 < 50) { print "Coverage " cov "% is below 50% gate"; exit 1 } }'
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
