@@ -32,7 +32,7 @@
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-pill: 999px;
-  --dur-fast: 121ms;
+  --dur-fast: 125ms;
   --dur-base: 180ms;
   --dur-slow: 260ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
