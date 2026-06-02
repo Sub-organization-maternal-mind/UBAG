@@ -37,6 +37,12 @@ Thumbs.db
 .gotools/
 apps/gateway/ubag-gateway.db
 apps/gateway/ubag-gateway.db-*
+apps/gateway/coverage.out
+apps/gateway/coverage.html
+
+# Playwright reports (local only)
+playwright-report/
+test-results/
 *.db-shm
 *.db-wal
 
