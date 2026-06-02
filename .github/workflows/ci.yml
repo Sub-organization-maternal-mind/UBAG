@@ -59,8 +59,8 @@ jobs:
           pip install pytest
           python -m pytest tests/chaos/tests/test_schema.py -v
       # Phase 8: deployment infrastructure validation
-      - name: Validate Caddy config
-        run: node tools/check-caddy.mjs
+      - name: Validate nginx-dashboard config
+        run: node tools/check-nginx-dashboard.mjs
       - name: Lint Helm chart
         run: |
           helm lint deploy/helm/ubag || echo "helm not installed, skipping"

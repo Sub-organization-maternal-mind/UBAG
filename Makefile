@@ -3,7 +3,7 @@
 	test test-v0 test-v0-local itest e2e load test-all sdks bench lint release \
 	plugins-build obs-check \
 	chaos-smoke backup restore restore-verify \
-	release-snapshot helm-lint tf-validate caddy-validate migrate-tier \
+	release-snapshot helm-lint tf-validate nginx-validate migrate-tier \
 	help
 
 GATEWAY_DIR := apps/gateway
@@ -27,7 +27,7 @@ help:
 	@echo "  make release-snapshot - goreleaser snapshot build (no publish)"
 	@echo "  make helm-lint    - lint and template the UBAG Helm chart"
 	@echo "  make tf-validate  - validate all Terraform modules in deploy/terraform/"
-	@echo "  make caddy-validate - validate Caddy config against custom module list"
+	@echo "  make nginx-validate - validate nginx-dashboard config"
 	@echo "  make migrate-tier - run ubag migrate (TO=<tier> [FROM=<tier>] [DRY_RUN=--dry-run])"
 	@echo "  make cover        - go test with coverage report and 80% gate"
 	@echo "  make e2e          - run Playwright end-to-end tests (tests/e2e/)"
@@ -162,9 +162,9 @@ tf-validate:
 		terraform -chdir=deploy/terraform/$$cloud validate 2>&1 || echo "  (skipped: providers not installed)"; \
 	done
 
-caddy-validate:
-	@echo "Note: requires xcaddy build with caddy-ratelimit + coraza-caddy modules"
-	node tools/check-caddy.mjs
+nginx-validate:
+	@echo "Validating nginx-dashboard config..."
+	node tools/check-nginx-dashboard.mjs
 
 migrate-tier:
 	@echo "Usage: make migrate-tier TO=small [FROM=edge] [DRY_RUN=--dry-run]"

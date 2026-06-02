@@ -86,26 +86,23 @@ services:
     networks:
       - ubag-private
 
-  caddy:
-    image: caddy:2-alpine
+  nginx-dashboard:
+    image: nginx:alpine
     restart: unless-stopped
     depends_on:
       gateway:
         condition: service_healthy
     ports:
-      - "${UBAG_EDGE_BIND_HOST:-127.0.0.1}:${UBAG_CADDY_HTTP_PORT:-8081}:80"
-      - "${UBAG_EDGE_BIND_HOST:-127.0.0.1}:${UBAG_CADDY_HTTPS_PORT:-8443}:443"
+      - "${UBAG_EDGE_BIND_HOST:-127.0.0.1}:${UBAG_NGINX_HTTP_PORT:-8083}:80"
     volumes:
-      - "${UBAG_CADDYFILE:-./deploy/small/caddy/Caddyfile}:/etc/caddy/Caddyfile:ro"
+      - "./deploy/small/nginx-dashboard/nginx.conf:/etc/nginx/conf.d/ubag.conf:ro"
       - "./apps/dashboard/dist:/srv/dashboard:ro"
-      - caddy_data:/data
-      - caddy_config:/config
     networks:
       - ubag-public
       - ubag-private
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
-      interval: 15s
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 10s
       timeout: 5s
       retries: 3
       start_period: 5s
@@ -444,8 +441,6 @@ networks:
     internal: true
 
 volumes:
-  caddy_data:
-  caddy_config:
   postgres_data:
   dragonfly_data:
   minio_data:
