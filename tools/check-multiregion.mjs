@@ -224,6 +224,151 @@ checkContains(
 );
 
 // ---------------------------------------------------------------------------
+// Task 4.2 — Phase 9 Go packages: region, mfa, jitadmin, audit, siem
+// ---------------------------------------------------------------------------
+console.log("\nTask 4.2 — Phase 9 Go packages");
+
+checkExists(
+  "apps/gateway/internal/region/region.go",
+  "region/region.go exists"
+);
+
+checkExists(
+  "apps/gateway/internal/region/router.go",
+  "region/router.go exists"
+);
+
+checkExists(
+  "apps/gateway/internal/region/killswitch.go",
+  "region/killswitch.go exists"
+);
+
+checkExists(
+  "apps/gateway/internal/region/pin.go",
+  "region/pin.go exists"
+);
+
+checkExists(
+  "apps/gateway/internal/mfa/mfa.go",
+  "mfa/mfa.go exists"
+);
+
+checkExists(
+  "apps/gateway/internal/mfa/totp.go",
+  "mfa/totp.go exists"
+);
+
+checkExists(
+  "apps/gateway/internal/mfa/recovery.go",
+  "mfa/recovery.go exists"
+);
+
+checkExists(
+  "apps/gateway/internal/jitadmin/grant.go",
+  "jitadmin/grant.go exists"
+);
+
+checkExists(
+  "apps/gateway/internal/jitadmin/middleware.go",
+  "jitadmin/middleware.go exists"
+);
+
+checkExists(
+  "apps/gateway/internal/audit/audit.go",
+  "audit/audit.go exists"
+);
+
+checkExists(
+  "apps/gateway/internal/siem/exporter.go",
+  "siem/exporter.go exists"
+);
+
+checkExists(
+  "apps/gateway/internal/siem/sink.go",
+  "siem/sink.go exists"
+);
+
+// ---------------------------------------------------------------------------
+// Task 4.2 — Phase 9 ADR and operation docs
+// ---------------------------------------------------------------------------
+console.log("\nTask 4.2 — Phase 9 ADR and operation docs");
+
+checkExists(
+  "apps/docs/src/content/docs/adrs/0013-phase9-multiregion-enterprise.md",
+  "ADR 0013 exists"
+);
+
+checkContains(
+  "apps/docs/src/content/docs/adrs/0013-phase9-multiregion-enterprise.md",
+  "ubag.jobs.<region>.<lane>.<jobID>",
+  "ADR 0013 documents NATS subject scheme"
+);
+
+checkContains(
+  "apps/docs/src/content/docs/adrs/0013-phase9-multiregion-enterprise.md",
+  "home_region",
+  "ADR 0013 documents home_region pin"
+);
+
+checkContains(
+  "apps/docs/src/content/docs/adrs/0013-phase9-multiregion-enterprise.md",
+  /draining/,
+  "ADR 0013 documents draining kill-switch state"
+);
+
+checkExists(
+  "apps/docs/src/content/docs/operations/multi-region.md",
+  "multi-region.md operation doc exists"
+);
+
+checkContains(
+  "apps/docs/src/content/docs/operations/multi-region.md",
+  "deploy/multi-region/docker-compose.multiregion.yml",
+  "multi-region.md references docker-compose.multiregion.yml"
+);
+
+checkContains(
+  "apps/docs/src/content/docs/operations/multi-region.md",
+  "deploy/multi-region/geodns/",
+  "multi-region.md references geodns directory"
+);
+
+checkContains(
+  "apps/docs/src/content/docs/operations/multi-region.md",
+  "deploy/multi-region/garage/",
+  "multi-region.md references garage directory"
+);
+
+checkExists(
+  "apps/docs/src/content/docs/operations/enterprise-auth.md",
+  "enterprise-auth.md operation doc exists"
+);
+
+checkContains(
+  "apps/docs/src/content/docs/operations/enterprise-auth.md",
+  "/v1/mfa/enroll",
+  "enterprise-auth.md documents MFA enrollment endpoint"
+);
+
+checkContains(
+  "apps/docs/src/content/docs/operations/enterprise-auth.md",
+  "/v1/mfa/verify",
+  "enterprise-auth.md documents MFA verify endpoint"
+);
+
+checkContains(
+  "apps/docs/src/content/docs/operations/enterprise-auth.md",
+  "/v1/admin/elevation",
+  "enterprise-auth.md documents JIT elevation endpoint"
+);
+
+checkContains(
+  "apps/docs/src/content/docs/operations/enterprise-auth.md",
+  "UBAG_SIEM_SPLUNK",
+  "enterprise-auth.md documents SIEM Splunk config"
+);
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 console.log(`\n${"─".repeat(60)}`);

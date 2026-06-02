@@ -72,6 +72,8 @@ jobs:
         run: node tools/check-gitops.mjs
       - name: Validate installers
         run: node tools/check-installers.mjs
+      - name: Multi-region validator
+        run: node tools/check-multiregion.mjs
 
   operator:
     name: Operator (Go)
@@ -100,6 +102,9 @@ jobs:
       - name: Coverage summary
         working-directory: apps/gateway
         run: go tool cover -func=coverage.out | tail -1
+      - name: Phase 9 packages (region, mfa, jitadmin, audit, siem)
+        working-directory: apps/gateway
+        run: go test -race ./internal/region/... ./internal/mfa/... ./internal/jitadmin/... ./internal/audit/... ./internal/siem/...
 
   worker:
     name: Worker (Python)
@@ -115,6 +120,9 @@ jobs:
       - name: pytest (UBAG_ADAPTER_OFFLINE=1)
         env: { UBAG_ADAPTER_OFFLINE: "1" }
         run: node tools/run-python-worker-tests.mjs
+      - name: Worker region pinning tests
+        env: { UBAG_ADAPTER_OFFLINE: "1" }
+        run: python -m pytest apps/worker/tests/test_region.py -v
 
   node-suite:
     name: Node packages, SDKs, dashboard, docs
@@ -185,3 +193,21 @@ jobs:
       - name: Build and test Rust sidecar
         working-directory: packages/sidecar-rust
         run: cargo test --all-features
+
+  sso-integration:
+    name: SSO integration (Keycloak)
+    runs-on: ubuntu-latest
+    if: ${{ vars.UBAG_TEST_SSO == '1' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
+      - name: Start Keycloak
+        run: docker compose -f apps/gateway/tests/sso/docker-compose.yml up -d keycloak
+      - name: Wait for Keycloak
+        run: |
+          until curl -sf http://localhost:8180/health/ready; do sleep 2; done
+      - name: SSO integration tests
+        working-directory: apps/gateway
+        env: { UBAG_TEST_SSO: "1" }
+        run: go test -tags integration ./tests/sso/... -v -timeout 120s
