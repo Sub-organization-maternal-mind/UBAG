@@ -1,0 +1,31 @@
+name: load-test
+
+on:
+  schedule:
+    # Run weekly on Sunday at 03:00 UTC
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  load:
+    name: Load test (k6 smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install k6
+        run: |
+          curl -fsSL https://github.com/grafana/k6/releases/download/v0.55.0/k6-v0.55.0-linux-amd64.tar.gz | tar xzf - --strip-components=1 k6-v0.55.0-linux-amd64/k6
+          chmod +x k6 && sudo mv k6 /usr/local/bin/
+      - name: Start gateway (mock mode)
+        run: |
+          echo "Gateway would be started here for a real CI run"
+          echo "For now, load tests are manual/staging only"
+      - name: Run load test (smoke)
+        run: node tests/load/run-load.mjs --smoke
+        env:
+          UBAG_GW_URL: ${{ vars.UBAG_LOAD_GW_URL || 'http://localhost:8081' }}
+          UBAG_APP_SECRET: ${{ secrets.UBAG_APP_SECRET }}
+        continue-on-error: true

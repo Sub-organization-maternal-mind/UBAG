@@ -1,0 +1,11 @@
+{
+  "_description": "UBAG load test baseline thresholds. Update after deliberate performance improvements.",
+  "_updated": "2026-06-02",
+  "job_create_p50_ms": 150,
+  "job_create_p95_ms": 800,
+  "job_create_p99_ms": 2000,
+  "health_p50_ms": 20,
+  "health_p95_ms": 100,
+  "error_rate_max_pct": 5,
+  "regression_threshold_pct": 20
+}

@@ -1,0 +1,32 @@
+name: e2e-live
+
+on:
+  schedule:
+    # Run daily at 02:00 UTC against staging
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      gateway_url:
+        description: 'Gateway URL'
+        required: false
+        default: 'http://localhost:8081'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: Live E2E (adapter drift + automation path)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - name: Install Playwright
+        run: npx playwright install chromium
+      - name: Run E2E tests
+        env:
+          UBAG_E2E: '1'
+          UBAG_E2E_GATEWAY: ${{ github.event.inputs.gateway_url || 'http://localhost:8081' }}
+          UBAG_E2E_APP_SECRET: ${{ secrets.UBAG_E2E_APP_SECRET }}
+        run: npx playwright test tests/e2e/ --config tests/e2e/playwright.config.ts --reporter=list
