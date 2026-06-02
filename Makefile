@@ -1,4 +1,4 @@
-.PHONY: dev dev-edge gateway-build gateway-run gateway-test gateway-vet \
+.PHONY: dev dev-edge gateway-build gateway-run gateway-test gateway-vet cover \
 	ubag-build sidecar-build \
 	test test-v0 test-v0-local itest sdks bench lint release \
 	plugins-build obs-check \
@@ -28,6 +28,7 @@ help:
 	@echo "  make tf-validate  - validate all Terraform modules in deploy/terraform/"
 	@echo "  make caddy-validate - validate Caddy config against custom module list"
 	@echo "  make migrate-tier - run ubag migrate (TO=<tier> [FROM=<tier>] [DRY_RUN=--dry-run])"
+	@echo "  make cover        - go test with coverage report and 80% gate"
 
 # --- developer loop -------------------------------------------------------
 dev: dev-edge
@@ -47,6 +48,14 @@ gateway-run:
 
 gateway-test:
 	cd $(GATEWAY_DIR) && go test ./...
+
+cover:
+	@echo "Running gateway tests with coverage..."
+	cd $(GATEWAY_DIR) && go test -race -coverprofile=coverage.out ./...
+	cd $(GATEWAY_DIR) && go tool cover -func=coverage.out | tee /tmp/coverage-summary.txt | tail -1
+	@TOTAL=$$(grep '^total:' /tmp/coverage-summary.txt | awk '{print $$3}' | tr -d '%'); \
+	echo "Total coverage: $${TOTAL}%"; \
+	awk -v cov="$${TOTAL}" 'BEGIN { if (cov+0 < 80) { print "Coverage " cov "% is below 80% gate"; exit 1 } else { print "Gate passed: " cov "% >= 80%" } }'
 
 gateway-vet:
 	cd $(GATEWAY_DIR) && go vet ./...

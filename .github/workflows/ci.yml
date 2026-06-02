@@ -99,9 +99,19 @@ jobs:
         working-directory: apps/gateway
         env: { GOTOOLCHAIN: local }
         run: go test -race -coverprofile=coverage.out ./...
-      - name: Coverage summary
+      - name: Coverage summary + gate
         working-directory: apps/gateway
-        run: go tool cover -func=coverage.out | tail -1
+        run: |
+          go tool cover -func=coverage.out | tee /tmp/coverage-summary.txt | tail -1
+          TOTAL=$(grep '^total:' /tmp/coverage-summary.txt | awk '{print $3}' | tr -d '%')
+          echo "Total coverage: ${TOTAL}%"
+          # Fail if below 80%
+          awk -v cov="$TOTAL" 'BEGIN { if (cov+0 < 80) { print "Coverage " cov "% is below 80% gate"; exit 1 } }'
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-coverage
+          path: apps/gateway/coverage.out
       - name: Phase 9 packages (region, mfa, jitadmin, audit, siem)
         working-directory: apps/gateway
         run: go test -race ./internal/region/... ./internal/mfa/... ./internal/jitadmin/... ./internal/audit/... ./internal/siem/...
