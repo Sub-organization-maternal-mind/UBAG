@@ -34,7 +34,7 @@ export async function gw<T = unknown>(
     const response = await fetch(url, {
       method,
       headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: body != null ? JSON.stringify(body) : undefined,
     });
 
     const text = await response.text();
