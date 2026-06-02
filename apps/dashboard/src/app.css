@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* UBAG Hallmark design tokens — source of truth */
+/* UBAG Hallmark design tokens — source of truth — v2 */
 :root {
   --color-paper: oklch(96.5% 0.012 75);
   --color-paper-soft: oklch(99% 0.006 75);
@@ -32,7 +32,7 @@
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-pill: 999px;
-  --dur-fast: 120ms;
+  --dur-fast: 121ms;
   --dur-base: 180ms;
   --dur-slow: 260ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
