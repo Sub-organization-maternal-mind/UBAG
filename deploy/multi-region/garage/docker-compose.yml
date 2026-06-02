@@ -1,0 +1,80 @@
+version: '3.8'
+
+# Garage is a distributed S3-compatible object store designed for geo-distribution.
+# This compose file runs a 3-node Garage cluster for local development / testing.
+# In production, one cluster runs per region; site-replication is configured
+# separately via the Garage admin API.
+#
+# Ports:
+#   garage-node-0: S3 API :3900, admin :3903, RPC :3901
+#   garage-node-1: S3 API :3910, admin :3913, RPC :3911
+#   garage-node-2: S3 API :3920, admin :3923, RPC :3921
+
+services:
+  garage-node-0:
+    image: dxflrs/garage:v0.9.4
+    environment:
+      GARAGE_METADATA_DIR: /var/lib/garage/meta
+      GARAGE_DATA_DIR: /var/lib/garage/data
+      GARAGE_REPLICATION_FACTOR: "3"
+      GARAGE_RPC_BIND_ADDR: "0.0.0.0:3901"
+      GARAGE_API_S3_BIND_ADDR: "0.0.0.0:3900"
+      GARAGE_API_ADMIN_BIND_ADDR: "0.0.0.0:3903"
+      GARAGE_RPC_PUBLIC_ADDR: "garage-node-0:3901"
+      GARAGE_RPC_SECRET: "my-rpc-secret-replace-in-prod"
+      GARAGE_BOOTSTRAP_PEERS: "garage-node-1:3911,garage-node-2:3921"
+    volumes:
+      - garage-node-0-meta:/var/lib/garage/meta
+      - garage-node-0-data:/var/lib/garage/data
+    ports:
+      - "3900:3900"
+      - "3901:3901"
+      - "3903:3903"
+
+  garage-node-1:
+    image: dxflrs/garage:v0.9.4
+    environment:
+      GARAGE_METADATA_DIR: /var/lib/garage/meta
+      GARAGE_DATA_DIR: /var/lib/garage/data
+      GARAGE_REPLICATION_FACTOR: "3"
+      GARAGE_RPC_BIND_ADDR: "0.0.0.0:3911"
+      GARAGE_API_S3_BIND_ADDR: "0.0.0.0:3910"
+      GARAGE_API_ADMIN_BIND_ADDR: "0.0.0.0:3913"
+      GARAGE_RPC_PUBLIC_ADDR: "garage-node-1:3911"
+      GARAGE_RPC_SECRET: "my-rpc-secret-replace-in-prod"
+      GARAGE_BOOTSTRAP_PEERS: "garage-node-0:3901,garage-node-2:3921"
+    volumes:
+      - garage-node-1-meta:/var/lib/garage/meta
+      - garage-node-1-data:/var/lib/garage/data
+    ports:
+      - "3910:3910"
+      - "3911:3911"
+      - "3913:3913"
+
+  garage-node-2:
+    image: dxflrs/garage:v0.9.4
+    environment:
+      GARAGE_METADATA_DIR: /var/lib/garage/meta
+      GARAGE_DATA_DIR: /var/lib/garage/data
+      GARAGE_REPLICATION_FACTOR: "3"
+      GARAGE_RPC_BIND_ADDR: "0.0.0.0:3921"
+      GARAGE_API_S3_BIND_ADDR: "0.0.0.0:3920"
+      GARAGE_API_ADMIN_BIND_ADDR: "0.0.0.0:3923"
+      GARAGE_RPC_PUBLIC_ADDR: "garage-node-2:3921"
+      GARAGE_RPC_SECRET: "my-rpc-secret-replace-in-prod"
+      GARAGE_BOOTSTRAP_PEERS: "garage-node-0:3901,garage-node-1:3911"
+    volumes:
+      - garage-node-2-meta:/var/lib/garage/meta
+      - garage-node-2-data:/var/lib/garage/data
+    ports:
+      - "3920:3920"
+      - "3921:3921"
+      - "3923:3923"
+
+volumes:
+  garage-node-0-meta:
+  garage-node-0-data:
+  garage-node-1-meta:
+  garage-node-1-data:
+  garage-node-2-meta:
+  garage-node-2-data:
