@@ -159,6 +159,12 @@ jobs:
         run: npx playwright install chromium --with-deps || npx playwright install chromium
       - name: CLI, dashboard, docs
         run: pnpm test:cli && pnpm test:dashboard && pnpm test:docs
+      - name: Cookbook recipe count check
+        run: node tools/check-cookbook.mjs
+      - name: License posture check
+        run: node tools/check-licenses.mjs
+      - name: API reference freshness check
+        run: node tools/check-api-reference.mjs
       # Phase 6: metrics cardinality + Grafana dashboard validation
       - name: Check Grafana dashboards (Task 2.5)
         run: node tools/check-grafana-dashboards.mjs deploy/grafana/dashboards/

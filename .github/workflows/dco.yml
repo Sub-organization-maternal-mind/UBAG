@@ -1,0 +1,41 @@
+name: dco
+
+on:
+  pull_request:
+    branches: [master, "release/**"]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  dco:
+    name: Developer Certificate of Origin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check DCO sign-off
+        run: |
+          # Check that every commit in this PR has a Signed-off-by line
+          BASE="${{ github.event.pull_request.base.sha }}"
+          HEAD="${{ github.event.pull_request.head.sha }}"
+          MISSING=""
+          while IFS= read -r commit; do
+            MSG=$(git log --format=%B -n 1 "$commit")
+            if ! echo "$MSG" | grep -qiE "^Signed-off-by:"; then
+              MISSING="$MISSING $commit"
+            fi
+          done < <(git log --format=%H "$BASE..$HEAD")
+          if [ -n "$MISSING" ]; then
+            echo "The following commits are missing Signed-off-by:"
+            for c in $MISSING; do
+              echo "  $c: $(git log --format=%s -n 1 $c)"
+            done
+            echo ""
+            echo "Please add Signed-off-by using: git commit --amend -s"
+            echo "For multiple commits: git rebase --signoff HEAD~N"
+            exit 1
+          fi
+          echo "All commits have Signed-off-by ✓"

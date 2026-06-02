@@ -1,0 +1,24 @@
+# UBAG CODEOWNERS
+# Global fallback
+* @ubag/maintainers
+
+# Gateway (Go)
+/apps/gateway/ @ubag/gateway-team
+
+# Worker + Adapters (Python)
+/apps/worker/ @ubag/worker-team
+/adapters/ @ubag/worker-team
+
+# Dashboard (SvelteKit)
+/apps/dashboard/ @ubag/frontend-team
+
+# Docs (Starlight)
+/apps/docs/ @ubag/docs-team
+
+# Infrastructure
+/deploy/ @ubag/infra-team
+/.github/ @ubag/maintainers
+
+# Security-sensitive files
+/apps/gateway/internal/auth/ @ubag/security-team
+/apps/gateway/internal/audit/ @ubag/security-team

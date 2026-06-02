@@ -104,6 +104,29 @@ snapcrafts:
       ubag:
         command: ubag
 
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^chore:'
+      - '^test:'
+      - Merge pull request
+      - Merge branch
+  groups:
+    - title: Features
+      regexp: '^feat'
+      order: 0
+    - title: Bug Fixes
+      regexp: '^fix'
+      order: 1
+    - title: Refactors
+      regexp: '^refactor'
+      order: 2
+    - title: Others
+      order: 999
+
 release:
   github:
     owner: ubag

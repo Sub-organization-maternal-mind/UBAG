@@ -1,0 +1,11 @@
+UBAG — Universal Browser-Automation Gateway
+Copyright (C) 2024-2026 UBAG Contributors
+
+The server-side components (gateway, worker) are licensed under the
+GNU Affero General Public License v3.0 or later.
+See individual component LICENSE files and SPDX headers for details.
+
+For client-side components (SDKs, sidecar, dashboard, CLI, adapters),
+see licensing.md and the Apache-2.0 license in each component directory.
+
+SPDX-License-Identifier: AGPL-3.0-or-later
