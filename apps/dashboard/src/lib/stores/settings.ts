@@ -7,8 +7,19 @@ export interface Settings {
   apiVersion: string;
 }
 
+// Default gateway URL: use the page's own origin so production deployments
+// (e.g. https://ubag.polytronx.com) work without any manual configuration.
+// Falls back to 127.0.0.1:8081 for local development.
+function defaultGatewayUrl(): string {
+  if (!browser) return 'http://127.0.0.1:8081';
+  const stored = localStorage.getItem('ubag_gateway_url');
+  if (stored) return stored;
+  // In production the dashboard and gateway are on the same origin via nginx
+  return window.location.origin;
+}
+
 const DEFAULT_SETTINGS: Settings = {
-  gatewayUrl: (browser && localStorage.getItem('ubag_gateway_url')) || 'http://127.0.0.1:8081',
+  gatewayUrl: defaultGatewayUrl(),
   appSecret: (browser && localStorage.getItem('ubag_app_secret')) || '',
   apiVersion: '2026-05-22',
 };
