@@ -26,12 +26,20 @@ if (hashes.length === 0) {
   process.exit(0);
 }
 
-// Patch script-src in the CSP meta tag
+// Patch script-src in the CSP meta tag by parsing CSP directives correctly.
+// CSP directives are semicolon-separated — we must NOT match past the ';'.
 html = html.replace(
-  /(content="[^"]*script-src\s+)((?:'[^']*'\s*|[^\s"]+\s*)*)/,
-  (_, pre, existing) => {
-    const newHashes = hashes.filter(h => !existing.includes(h)).join(' ');
-    return `${pre}${existing.trimEnd()} ${newHashes} `;
+  /(<meta[^>]+Content-Security-Policy[^>]+content=")([^"]+)(")/i,
+  (_, pre, csp, post) => {
+    const directives = csp.split(';').map(d => d.trim());
+    const patched = directives.map(d => {
+      if (d.startsWith('script-src')) {
+        const extra = hashes.filter(h => !d.includes(h)).join(' ');
+        return extra ? `${d} ${extra}` : d;
+      }
+      return d;
+    });
+    return `${pre}${patched.join('; ')}${post}`;
   }
 );
 
