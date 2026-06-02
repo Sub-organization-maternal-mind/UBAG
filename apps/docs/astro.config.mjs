@@ -143,6 +143,37 @@ export default defineConfig({
         {
           label: 'ADRs',
           items: [{ autogenerate: { directory: 'adrs' } }]
+        },
+        {
+          label: 'API Reference',
+          items: [
+            { label: 'REST API', slug: 'reference/api' },
+            { label: 'Proto Reference', slug: 'reference/proto' }
+          ]
+        },
+        {
+          label: 'Cookbook',
+          items: [{ autogenerate: { directory: 'cookbook' } }]
+        },
+        {
+          label: 'Guides',
+          items: [
+            { label: 'App Developer', slug: 'guides/app-developer' },
+            { label: 'Adapter Author', slug: 'guides/adapter-author' },
+            { label: 'Plugin Author', slug: 'guides/plugin-author' },
+            { label: 'Operator', slug: 'guides/operator' },
+            { label: 'Security', slug: 'guides/security' },
+            { label: 'Contributor', slug: 'guides/contributor' }
+          ]
+        },
+        {
+          label: 'Threat Model & Compliance',
+          items: [
+            { label: 'Threat Model', slug: 'security/threat-model' },
+            { label: 'HIPAA Mapping', slug: 'compliance/hipaa' },
+            { label: 'GDPR Mapping', slug: 'compliance/gdpr' },
+            { label: 'SOC2 Mapping', slug: 'compliance/soc2' }
+          ]
         }
       ]
     })
