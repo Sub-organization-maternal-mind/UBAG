@@ -1,0 +1,49 @@
+version: '3.8'
+# pgactive bidirectional replication between postgres-a and postgres-b.
+# Apply ONLY if you need multi-master writes. The default (uni-directional
+# logical replication) is strongly recommended for most use cases.
+#
+# pgactive is not available in stock Postgres images; use a pgactive-enabled
+# image or the aurora-postgres-compat image.
+#
+# Write-fence policy: configure UBAG_POSTGRES_WRITE_REGION=region-a (or -b)
+# so the gateway routes writes to the home region and reads to replicas.
+
+services:
+  postgres-a:
+    image: postgres:16-pgactive  # replace with your pgactive-enabled image
+    environment:
+      POSTGRES_DB: ubag
+      POSTGRES_USER: ubag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      # pgactive extension must be pre-loaded
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command: >
+      postgres
+        -c shared_preload_libraries=pgactive
+        -c wal_level=logical
+        -c max_wal_senders=10
+        -c max_replication_slots=10
+    networks:
+      - ubag-net
+
+  postgres-b:
+    image: postgres:16-pgactive
+    environment:
+      POSTGRES_DB: ubag
+      POSTGRES_USER: ubag
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command: >
+      postgres
+        -c shared_preload_libraries=pgactive
+        -c wal_level=logical
+        -c max_wal_senders=10
+        -c max_replication_slots=10
+    networks:
+      - ubag-net
+
+networks:
+  ubag-net:
+    external: true
+    name: ubag-multiregion_ubag-net
