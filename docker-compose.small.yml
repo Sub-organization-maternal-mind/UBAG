@@ -97,7 +97,7 @@ services:
       - "${UBAG_EDGE_BIND_HOST:-127.0.0.1}:${UBAG_CADDY_HTTPS_PORT:-8443}:443"
     volumes:
       - "${UBAG_CADDYFILE:-./deploy/small/caddy/Caddyfile}:/etc/caddy/Caddyfile:ro"
-      - "./apps/dashboard/src:/srv/dashboard:ro"
+      - "./apps/dashboard/dist:/srv/dashboard:ro"
       - caddy_data:/data
       - caddy_config:/config
     networks:

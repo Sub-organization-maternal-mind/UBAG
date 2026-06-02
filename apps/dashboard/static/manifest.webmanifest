@@ -1,0 +1,12 @@
+{
+  "name": "UBAG Operator Dashboard",
+  "short_name": "UBAG",
+  "description": "Operator dashboard for the UBAG gateway — edge queue, browser sessions, targets, templates.",
+  "start_url": "/dashboard/",
+  "display": "standalone",
+  "background_color": "#f6f3ef",
+  "theme_color": "#7a3a28",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

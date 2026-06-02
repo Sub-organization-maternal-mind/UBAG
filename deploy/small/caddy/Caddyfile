@@ -42,6 +42,7 @@
   handle /dashboard/* {
     uri strip_prefix /dashboard
     root * /srv/dashboard
+    try_files {path} /index.html
     file_server
   }
 

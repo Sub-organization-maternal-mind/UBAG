@@ -62,6 +62,10 @@
     // Start health polling
     checkHealth();
     const interval = setInterval(checkHealth, 30_000);
+    // Register service worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
     return () => clearInterval(interval);
   });
 </script>

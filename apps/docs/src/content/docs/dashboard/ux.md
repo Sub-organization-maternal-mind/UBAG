@@ -3,6 +3,8 @@ title: Dashboard UX
 description: NAJM-styled operator dashboard information architecture.
 ---
 
+> **Dashboard v2 (SvelteKit)**: The dashboard was rewritten in SvelteKit 2 + Svelte 5 + Tailwind + Skeleton UI as part of §24.2. Build with `npm run build` in `apps/dashboard/`; the static output in `dist/` is served by Caddy at `/dashboard/`.
+
 ## Design system
 
 Dashboard and docs surfaces inherit `design.md`: warm cream paper, ink text, terracotta actions, saffron and marine accents, geometric display type, tactile patterns, compact operational UI, and no fabricated metrics.

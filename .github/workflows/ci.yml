@@ -144,6 +144,9 @@ jobs:
         run: pnpm test:sdk
       - name: Conformance + observability
         run: pnpm test:conformance && pnpm test:observability
+      - name: Install Playwright browsers
+        working-directory: apps/dashboard
+        run: npx playwright install chromium --with-deps || npx playwright install chromium
       - name: CLI, dashboard, docs
         run: pnpm test:cli && pnpm test:dashboard && pnpm test:docs
       # Phase 6: metrics cardinality + Grafana dashboard validation
