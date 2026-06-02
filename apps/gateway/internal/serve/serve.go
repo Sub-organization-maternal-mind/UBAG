@@ -26,10 +26,13 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/grpcapi"
 	"github.com/ubag/ubag/apps/gateway/internal/httpapi"
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
+	"github.com/ubag/ubag/apps/gateway/internal/jitadmin"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	"github.com/ubag/ubag/apps/gateway/internal/mfa"
 	"github.com/ubag/ubag/apps/gateway/internal/obs"
 	"github.com/ubag/ubag/apps/gateway/internal/profile"
 	"github.com/ubag/ubag/apps/gateway/internal/ratelimit"
+	"github.com/ubag/ubag/apps/gateway/internal/region"
 	"github.com/ubag/ubag/apps/gateway/internal/resilience"
 	"github.com/ubag/ubag/apps/gateway/internal/responsecache"
 	"github.com/ubag/ubag/apps/gateway/internal/scim"
@@ -175,6 +178,10 @@ func Run(ctx context.Context) error {
 		Alerts:            enterprise.alerts,
 		Topology:          enterprise.topology,
 		Concurrency:       enterprise.concurrency,
+		RegionRouter:      enterprise.regionRouter,
+		KillSwitch:        enterprise.killSwitch,
+		MFA:               enterprise.mfaService,
+		JITAdmin:          enterprise.jitAdmin,
 	})
 
 	if workerConsumerEnabled() {
@@ -502,6 +509,13 @@ type enterpriseStores struct {
 	alerts           *alerts.Manager
 	topology         topology.Store
 	concurrency      *topology.ConcurrencyRegistry
+
+	// Phase 9 — multi-region and enterprise auth (gated on GeoReplication=On or env override)
+	regionRegistry *region.Registry
+	regionRouter   *region.Router
+	killSwitch     *region.KillSwitch
+	mfaService     *mfa.Service
+	jitAdmin       jitadmin.Store
 }
 
 // newEnterpriseStoresFromEnv constructs the optional enterprise components.
@@ -744,6 +758,44 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 	// The concurrency registry is always available; it is populated by the
 	// worker-event ingestion path and never mutated via HTTP.
 	out.concurrency = topology.NewConcurrencyRegistry()
+
+	// Phase 9 — resolve the deployment profile to gate region and auth components.
+	prof, _ := profile.ParseOrDefault(os.Getenv("UBAG_PROFILE"))
+	feat := prof.Features()
+
+	// Region routing + kill switch (gated on GeoReplication=On or env override).
+	geoEnabled := feat.GeoReplication == profile.On ||
+		strings.EqualFold(strings.TrimSpace(os.Getenv("UBAG_ENABLE_GEO_REPLICATION")), "1")
+	if geoEnabled {
+		memStateStore := region.NewMemoryStateStore()
+		registry := region.NewRegistry(memStateStore)
+		pinResolver := region.NewMemoryResolver(nil)
+		router := region.NewRouter(pinResolver, registry, region.CurrentRegion)
+		ks := region.NewKillSwitch(registry, region.CurrentRegion, out.audit)
+		out.regionRegistry = registry
+		out.regionRouter = router
+		out.killSwitch = ks
+		slog.Info("phase9: region routing enabled", "region", string(region.CurrentRegion()))
+	}
+
+	// MFA + JIT admin elevation (gated on SSO.Enabled() or env override).
+	mfaEnabled := feat.SSO.Enabled() ||
+		strings.EqualFold(strings.TrimSpace(os.Getenv("UBAG_ENABLE_MFA")), "1")
+	if mfaEnabled {
+		mfaStore := mfa.NewMemoryStore()
+		out.mfaService = &mfa.Service{
+			Store: mfaStore,
+			Clock: time.Now,
+		}
+		out.jitAdmin = jitadmin.NewMemoryStore()
+		slog.Info("phase9: MFA and JIT admin elevation enabled")
+	}
+
+	// Wrap audit store with SIEM bridge when a SIEM exporter is configured so
+	// every appended audit record is also forwarded to the exporter in real-time.
+	if out.audit != nil && out.siemExporter != nil {
+		out.audit = audit.NewBridgeStore(out.audit, out.siemExporter.Enqueue)
+	}
 
 	return out, nil
 }
