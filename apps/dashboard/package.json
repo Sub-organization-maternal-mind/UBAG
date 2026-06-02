@@ -4,10 +4,30 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/dev.mjs",
-    "build": "node scripts/build.mjs",
-    "check": "node scripts/check.mjs",
-    "check:responsive": "node scripts/verify-responsive.mjs",
-    "preview": "node scripts/dev.mjs --root dist --port 4178"
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@skeletonlabs/skeleton": "^2.10.3",
+    "@skeletonlabs/tw-plugin": "^0.4.1",
+    "@sveltejs/adapter-static": "^3.0.8",
+    "@sveltejs/kit": "^2.15.1",
+    "@sveltejs/vite-plugin-svelte": "^4.0.4",
+    "@tanstack/svelte-table": "^8.21.2",
+    "@tsconfig/svelte": "^5.0.4",
+    "autoprefixer": "^10.4.20",
+    "chart.js": "^4.4.7",
+    "lucide-svelte": "^0.469.0",
+    "postcss": "^8.4.49",
+    "svelte": "^5.17.3",
+    "svelte-check": "^4.1.1",
+    "tailwindcss": "^3.4.17",
+    "tslib": "^2.8.1",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.11",
+    "vitest": "^2.1.8"
   }
 }
