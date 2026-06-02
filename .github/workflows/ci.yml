@@ -224,3 +224,18 @@ jobs:
         working-directory: apps/gateway
         env: { UBAG_TEST_SSO: "1" }
         run: go test -tags integration ./tests/sso/... -v -timeout 120s
+
+  itest:
+    name: Integration tests (gateway + worker + DB)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "${{ env.NODE_VERSION }}" }
+      - name: Build gateway image
+        run: docker build -t ubag/gateway:small-local -f deploy/small/gateway.Dockerfile .
+      - name: Run integration tests
+        run: node tools/run-integration-tests.mjs
+        env:
+          UBAG_ITEST_TIMEOUT: "30000"

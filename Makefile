@@ -1,6 +1,6 @@
 .PHONY: dev dev-edge gateway-build gateway-run gateway-test gateway-vet cover \
 	ubag-build sidecar-build \
-	test test-v0 test-v0-local itest sdks bench lint release \
+	test test-v0 test-v0-local itest e2e load test-all sdks bench lint release \
 	plugins-build obs-check \
 	chaos-smoke backup restore restore-verify \
 	release-snapshot helm-lint tf-validate caddy-validate migrate-tier \
@@ -29,6 +29,9 @@ help:
 	@echo "  make caddy-validate - validate Caddy config against custom module list"
 	@echo "  make migrate-tier - run ubag migrate (TO=<tier> [FROM=<tier>] [DRY_RUN=--dry-run])"
 	@echo "  make cover        - go test with coverage report and 80% gate"
+	@echo "  make e2e          - run Playwright end-to-end tests (tests/e2e/)"
+	@echo "  make load         - run load test suite (tests/load/run-load.mjs)"
+	@echo "  make test-all     - unit + coverage gate + pnpm suites (full local CI)"
 
 # --- developer loop -------------------------------------------------------
 dev: dev-edge
@@ -71,6 +74,19 @@ test-v0:
 # Stable entrypoint; the runner is added in the Phase 0/10 testing track.
 itest:
 	node tools/run-integration-tests.mjs
+
+# End-to-end browser tests via Playwright (Task B1.3).
+e2e:
+	UBAG_E2E=1 npx playwright test tests/e2e/ --reporter=list
+
+# Load / stress tests (Task B1.5).
+load:
+	node tests/load/run-load.mjs
+
+# Full local CI: unit tests + coverage gate + pnpm suites (Task B1.6).
+test-all: gateway-test cover
+	pnpm test:v0:local
+	@echo "test-all: unit + coverage gate + pnpm suites complete"
 
 # --- SDK generation pipeline (blueprint §8.1) -----------------------------
 sdks:
