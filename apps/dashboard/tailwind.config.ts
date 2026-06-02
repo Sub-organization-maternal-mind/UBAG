@@ -1,6 +1,9 @@
+import { createRequire } from 'node:module';
 import { join } from 'path';
 import type { Config } from 'tailwindcss';
 import { skeleton } from '@skeletonlabs/tw-plugin';
+
+const require = createRequire(import.meta.url);
 
 export default {
   darkMode: 'class',
@@ -30,6 +33,7 @@ export default {
         'success-soft': 'oklch(90% 0.04 145)',
         danger: 'oklch(52% 0.17 25)',
         'danger-soft': 'oklch(89% 0.055 32)',
+        'focus-ring': 'oklch(48% 0.2 32)',
       },
       fontFamily: {
         display: ['ui-rounded', 'Aptos Display', 'Segoe UI', 'system-ui', 'sans-serif'],
