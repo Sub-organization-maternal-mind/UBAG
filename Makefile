@@ -12,6 +12,7 @@ help:
 	@echo "UBAG make targets (blueprint §29, §31):"
 	@echo "  make dev          - bring up the edge profile end-to-end (alias: dev-edge)"
 	@echo "  make test         - full v0 validation suite (pnpm test:v0)"
+	@echo "  make test-all     - unit + coverage gate + pnpm suites (full local CI)"
 	@echo "  make itest        - integration tests (gateway+worker+DB+mock target)"
 	@echo "  make sdks         - regenerate all SDKs from the contract"
 	@echo "  make bench        - run the benchmark suite"
@@ -31,7 +32,6 @@ help:
 	@echo "  make cover        - go test with coverage report and 80% gate"
 	@echo "  make e2e          - run Playwright end-to-end tests (tests/e2e/)"
 	@echo "  make load         - run load test suite (tests/load/run-load.mjs)"
-	@echo "  make test-all     - unit + coverage gate + pnpm suites (full local CI)"
 
 # --- developer loop -------------------------------------------------------
 dev: dev-edge
@@ -83,10 +83,24 @@ e2e:
 load:
 	node tests/load/run-load.mjs
 
-# Full local CI: unit tests + coverage gate + pnpm suites (Task B1.6).
-test-all: gateway-test cover
+# ─── test-all: full local validation umbrella (blueprint §32) ─────────────────
+# Runs all gated CI signals locally:
+#   make cover       → go test ./... + 80% coverage gate
+#   pnpm test:v0:local → unit + conformance (250+) + observability + SDK + cli +
+#                       dashboard (vitest + playwright) + docs
+# Separate gated jobs (not in test-all):
+#   make itest       → integration test (gateway+postgres+stub; needs Docker)
+#   make chaos-smoke → chaos experiment schema validation
+#   make load        → load test with regression gate (needs k6)
+#   UBAG_E2E=1 make e2e → live E2E against real targets (staging only)
+test-all: cover
 	pnpm test:v0:local
-	@echo "test-all: unit + coverage gate + pnpm suites complete"
+	@echo "──────────────────────────────────────────"
+	@echo "test-all: unit + coverage gate (≥80%) + conformance + observability"
+	@echo "          + integration (make itest separately)"
+	@echo "          + visual regression (cd apps/dashboard && npx playwright test)"
+	@echo "Chaos, load, and E2E are separate gated jobs (make chaos-smoke / make load / UBAG_E2E=1 make e2e)"
+	@echo "──────────────────────────────────────────"
 
 # --- SDK generation pipeline (blueprint §8.1) -----------------------------
 sdks:
