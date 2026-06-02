@@ -39,10 +39,36 @@
     reverse_proxy browser-viewer:6080
   }
 
+  # SvelteKit dashboard — served at /dashboard/ with SPA fallback.
+  # All SvelteKit static assets (_app/, favicon, sw.js, manifest) are also served
+  # from the dashboard dist so absolute-path asset URLs resolve correctly when
+  # Nginx Proxy Manager forwards the whole domain to this Caddy instance.
   handle /dashboard/* {
     uri strip_prefix /dashboard
     root * /srv/dashboard
     try_files {path} /index.html
+    file_server
+  }
+
+  # SvelteKit hashed JS/CSS bundles — absolute paths baked into index.html.
+  handle /_app/* {
+    root * /srv/dashboard
+    file_server
+  }
+
+  # PWA + favicon static assets
+  handle /favicon.svg {
+    root * /srv/dashboard
+    file_server
+  }
+
+  handle /manifest.webmanifest {
+    root * /srv/dashboard
+    file_server
+  }
+
+  handle /sw.js {
+    root * /srv/dashboard
     file_server
   }
 
