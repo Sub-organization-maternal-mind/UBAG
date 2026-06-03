@@ -96,7 +96,22 @@ describe('gateway client', () => {
     const result = await gw('GET', '/v1/audit');
 
     expect(result.denied).toBe(true);
+    expect(result.unauthorized).toBe(false);
     expect(result.status).toBe(403);
+  });
+
+  it('returns unauthorized:true on 401 response', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: () => Promise.resolve(JSON.stringify({ error: 'missing credentials' })),
+    });
+
+    const result = await gw('GET', '/v1/jobs');
+
+    expect(result.unauthorized).toBe(true);
+    expect(result.denied).toBe(false);
+    expect(result.status).toBe(401);
   });
 
   it('returns error on network failure', async () => {

@@ -9,7 +9,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const configPath = resolve(root, 'deploy/small/nginx-dashboard/nginx.conf');
+const configPath = resolve(root, 'deploy/small/nginx-dashboard/default.conf.template');
 
 let config;
 try {
@@ -30,6 +30,8 @@ const REQUIRED = [
   { label: 'sw.js no-cache',         pattern: /sw\.js/                          },
   { label: 'healthz',                pattern: /\/healthz/                        },
   { label: 'metrics/ready blocked',   pattern: /metrics|ready/                   },
+  { label: 'Basic Auth gate',        pattern: /auth_basic\s+"UBAG/              },
+  { label: 'server-side Bearer inject', pattern: /Bearer \$\{UBAG_GATEWAY_SECRET\}/ },
 ];
 
 let passed = true;

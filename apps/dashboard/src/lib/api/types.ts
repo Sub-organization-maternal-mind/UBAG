@@ -3,6 +3,8 @@ export interface GwResponse<T = unknown> {
   status: number;
   data: T | null;
   denied: boolean;
+  /** True when the request failed because no/invalid credentials were supplied (401). */
+  unauthorized: boolean;
   error: string | null;
 }
 

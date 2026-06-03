@@ -92,10 +92,17 @@ services:
     depends_on:
       gateway:
         condition: service_healthy
+    environment:
+      # Gateway secret injected server-side into /v1/* Authorization headers.
+      # Never sent to the browser. Sourced from UBAG_APP_SECRET.
+      UBAG_GATEWAY_SECRET: ${UBAG_APP_SECRET:?Set UBAG_APP_SECRET in deploy/small/env.local}
+      # Restrict envsubst to UBAG_ vars so nginx $host/$uri/etc. are left intact.
+      NGINX_ENVSUBST_FILTER: "UBAG_"
     ports:
       - "${UBAG_EDGE_BIND_HOST:-127.0.0.1}:${UBAG_NGINX_HTTP_PORT:-8083}:80"
     volumes:
-      - "./deploy/small/nginx-dashboard/nginx.conf:/etc/nginx/conf.d/default.conf:ro"
+      - "./deploy/small/nginx-dashboard/default.conf.template:/etc/nginx/templates/default.conf.template:ro"
+      - "./deploy/small/nginx-dashboard/.htpasswd:/etc/nginx/.htpasswd:ro"
       - "./apps/dashboard/dist:/srv/dashboard:ro"
     networks:
       - ubag-public

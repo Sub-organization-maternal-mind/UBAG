@@ -12,7 +12,7 @@ export async function gw<T = unknown>(
   path: string,
   body?: unknown
 ): Promise<GwResponse<T>> {
-  if (!browser) return { status: 0, data: null, denied: false, error: 'SSR not supported' };
+  if (!browser) return { status: 0, data: null, denied: false, unauthorized: false, error: 'SSR not supported' };
 
   const s = getSettings();
   const url = s.gatewayUrl.replace(/\/+$/, '') + path;
@@ -44,6 +44,7 @@ export async function gw<T = unknown>(
       status: response.status,
       data,
       denied: response.status === 403,
+      unauthorized: response.status === 401,
       error: response.ok ? null : `HTTP ${response.status}`,
     };
   } catch (err) {
@@ -51,6 +52,7 @@ export async function gw<T = unknown>(
       status: -1,
       data: null,
       denied: false,
+      unauthorized: false,
       error: err instanceof Error ? err.message : String(err),
     };
   }

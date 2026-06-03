@@ -64,3 +64,6 @@ packages/sdk-kotlin/**/build/
 var/
 tmp/
 coverage/
+
+# nginx-dashboard Basic Auth secret (generated per-deployment)
+deploy/small/nginx-dashboard/.htpasswd
