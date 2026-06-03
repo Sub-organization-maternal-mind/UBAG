@@ -96,7 +96,12 @@ server {
         access_log off;
     }
 
+    # PWA manifest, favicon, and service worker are non-sensitive and are fetched
+    # by the browser WITHOUT credentials (manifest/favicon use no-cred mode per
+    # spec). They MUST be public, otherwise their 401 + WWW-Authenticate makes the
+    # browser re-show the Basic Auth dialog on every page load.
     location = /dashboard/sw.js {
+        auth_basic off;
         alias /srv/dashboard/sw.js;
         add_header Cache-Control          "no-cache" always;
         add_header Service-Worker-Allowed "/"        always;
@@ -104,12 +109,14 @@ server {
     }
 
     location = /dashboard/manifest.webmanifest {
+        auth_basic off;
         alias /srv/dashboard/manifest.webmanifest;
         add_header Cache-Control          "no-cache" always;
         add_header X-Content-Type-Options "nosniff"  always;
     }
 
     location = /dashboard/favicon.svg {
+        auth_basic off;
         alias /srv/dashboard/favicon.svg;
         add_header Cache-Control          "public, max-age=86400" always;
         add_header X-Content-Type-Options "nosniff"               always;
