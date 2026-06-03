@@ -101,6 +101,10 @@ func disallowedKeyReason(normalized string) (string, bool) {
 	if normalized == "manual_session" || normalized == "session_id" {
 		return "", false
 	}
+	// token_index is a streaming sequence number emitted by worker events, not a credential.
+	if normalized == "token_index" {
+		return "", false
+	}
 	if isSecretReferenceKey(normalized) {
 		return "", false
 	}
