@@ -197,6 +197,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 
 	events, err := c.runWorkerWithCancellation(ctx, envelope)
 	if err != nil {
+		slog.Error("worker execution error", "job_id", envelope.JobID, "error", err)
 		if ctx.Err() != nil {
 			_ = lease.Retry(ctx)
 			return true, err
@@ -260,6 +261,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			continue
 		}
 		if _, found, err := c.Jobs.ApplyWorkerEvent(ctx, normalized); err != nil {
+			slog.Error("ApplyWorkerEvent failed", "job_id", normalized.JobID, "event_type", normalized.Type, "error", err)
 			if applyErr := c.applyFailure(ctx, lease, envelope, err); applyErr != nil {
 				_ = lease.Retry(ctx)
 				return true, applyErr
