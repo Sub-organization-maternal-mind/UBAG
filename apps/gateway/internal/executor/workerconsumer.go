@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"reflect"
@@ -662,6 +663,7 @@ func (r ProcessWorkerRunner) RunWorker(ctx context.Context, envelope DispatchEnv
 		if runCtx.Err() == context.Canceled {
 			return nil, context.Canceled
 		}
+		slog.Error("worker process failed", "stderr", stderr.buf.String(), "stdout_bytes", stdout.buf.Len(), "error", err)
 		return nil, fmt.Errorf("worker process failed")
 	}
 	if stdout.truncated {
