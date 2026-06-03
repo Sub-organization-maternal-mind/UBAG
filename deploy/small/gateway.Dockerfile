@@ -16,7 +16,8 @@ FROM alpine:3.20
 
 RUN addgroup -S ubag \
   && adduser -S -G ubag ubag \
-  && apk add --no-cache ca-certificates python3 wget \
+  && apk add --no-cache ca-certificates python3 py3-pip wget \
+  && pip3 install --no-cache-dir "playwright>=1.49" "patchright>=1.49" \
   && mkdir -p /var/lib/ubag/executor-spool \
   && chown -R ubag:ubag /var/lib/ubag
 

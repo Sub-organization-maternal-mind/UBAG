@@ -299,8 +299,22 @@ class PlaywrightPageDriver(PageDriver):
         if plan.remote_endpoint:  # pragma: no cover - requires a remote grid
             # Remote browser grid (§13.11): attach over CDP/BiDi. No credential,
             # cookie, or storage-state material is ever sent to the endpoint.
-            browser = browser_type.connect(plan.remote_endpoint)
-            self._context = browser.new_context()
+            #
+            # UBAG_REMOTE_BROWSER_ENDPOINT is a Chrome DevTools Protocol HTTP
+            # endpoint (e.g. http://browser-viewer:9222). Playwright requires
+            # ``connect_over_cdp`` for CDP HTTP endpoints; ``connect`` is the
+            # Playwright server WebSocket protocol and will fail against a raw CDP
+            # endpoint. We detect CDP endpoints by their http(s):// scheme.
+            if plan.remote_endpoint.startswith(("http://", "https://")):
+                # CDP endpoint (e.g. http://browser-viewer:9222). Reuse the
+                # browser's existing default context so the operator's live
+                # login session is inherited. Creating a new_context() here
+                # would discard all cookies and force re-login every job.
+                browser = browser_type.connect_over_cdp(plan.remote_endpoint)
+                self._context = browser.contexts[0] if browser.contexts else browser.new_context()
+            else:
+                browser = browser_type.connect(plan.remote_endpoint)
+                self._context = browser.new_context()
         else:
             # User-owned persistent context. We do NOT inject storage_state,
             # cookies, or credentials - authentication lives entirely in the
