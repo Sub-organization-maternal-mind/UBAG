@@ -61,7 +61,7 @@
     denied = false;
 
     const [jobsRes, targetsRes, adaptersRes, browserRes] = await Promise.all([
-      api.get<{ jobs?: Array<{ status?: string }>; total?: number }>('/v1/jobs?limit=200'),
+      api.get<{ jobs?: Array<{ status?: string }>; total?: number }>('/v1/jobs?limit=100'),
       api.get('/v1/targets'),
       api.get('/v1/adapters'),
       api.get('/v1/browser/summary'),

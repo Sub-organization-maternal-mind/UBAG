@@ -29,7 +29,7 @@
     metricsDenied = false;
 
     const [jobsRes, targetsRes, browserRes] = await Promise.all([
-      api.get<{ jobs?: Job[]; total?: number }>('/v1/jobs?limit=200'),
+      api.get<{ jobs?: Job[]; total?: number }>('/v1/jobs?limit=100'),
       api.get('/v1/targets'),
       api.get('/v1/browser/summary'),
     ]);

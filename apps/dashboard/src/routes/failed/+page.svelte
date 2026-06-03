@@ -25,7 +25,7 @@
     loading = true;
     error = null;
     denied = false;
-    const res = await api.get<JobsResponse>('/v1/jobs?limit=200');
+    const res = await api.get<JobsResponse>('/v1/jobs?limit=100');
     loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }

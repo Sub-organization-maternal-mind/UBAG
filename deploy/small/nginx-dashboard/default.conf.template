@@ -118,8 +118,9 @@ server {
     location = /dashboard/favicon.svg {
         auth_basic off;
         alias /srv/dashboard/favicon.svg;
-        add_header Cache-Control          "public, max-age=86400" always;
-        add_header X-Content-Type-Options "nosniff"               always;
+        # no-cache so a CDN never caches an auth error for this public asset
+        add_header Cache-Control          "no-cache" always;
+        add_header X-Content-Type-Options "nosniff"  always;
         access_log off;
     }
 
