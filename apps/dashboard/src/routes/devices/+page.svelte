@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api/client';
+  import { api, listOf } from '$lib/api/client';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
-  import type { Device, ListResponse } from '$lib/api/types';
 
-  let items = $state<Device[]>([]);
+  type DeviceItem = Record<string, unknown>;
+
+  let items = $state<DeviceItem[]>([]);
   let loading = $state(true);
   let denied = $state(false);
   let error = $state<string | null>(null);
@@ -23,12 +24,17 @@
     loading = true;
     error = null;
     denied = false;
-    const res = await api.get<ListResponse<Device>>('/v1/devices');
+    const res = await api.get('/v1/devices');
     loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
-    const data = res.data as Record<string, unknown> | null;
-    items = (data?.['items'] ?? data?.['devices'] ?? []) as Device[];
+    items = listOf<DeviceItem>(res);
+  }
+
+  function str(v: unknown): string {
+    if (v == null) return '—';
+    if (typeof v === 'object') return JSON.stringify(v);
+    return String(v);
   }
 
   onMount(load);
@@ -67,12 +73,12 @@
           </tr>
         </thead>
         <tbody class="divide-y divide-rule">
-          {#each filtered as device (device.id)}
+          {#each filtered as device, i (device['id'] ?? i)}
             <tr class="hover:bg-paper-soft transition-colors">
-              <td class="px-4 py-2.5 font-mono text-ink-mute text-xs">{device.id.slice(0, 8)}…</td>
-              <td class="px-4 py-2.5 text-ink font-medium">{device.name}</td>
-              <td class="px-4 py-2.5 text-ink-soft">{device.type ?? '—'}</td>
-              <td class="px-4 py-2.5"><StatusBadge status={device.status ?? 'unknown'} /></td>
+              <td class="px-4 py-2.5 font-mono text-ink-mute text-xs">{str(device['id']).slice(0, 8)}…</td>
+              <td class="px-4 py-2.5 text-ink font-medium">{str(device['name'])}</td>
+              <td class="px-4 py-2.5 text-ink-soft">{str(device['type'])}</td>
+              <td class="px-4 py-2.5"><StatusBadge status={str(device['status'])} /></td>
             </tr>
           {/each}
         </tbody>

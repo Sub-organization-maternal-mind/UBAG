@@ -3,16 +3,25 @@
   import { api } from '$lib/api/client';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
+  import EmptyState from '$lib/components/EmptyState.svelte';
 
-  interface CacheStats {
-    hit_rate?: number;
-    total_entries?: number;
-    total_size?: number;
-    last_purge?: string;
+  // Real gateway shape: { profile, enabled, entries: [] }
+  interface CacheEntry {
+    key?: string;
+    size?: number;
+    expires_at?: string;
+    [k: string]: unknown;
+  }
+
+  interface CacheConfig {
+    profile?: string;
+    enabled?: boolean;
+    entries?: CacheEntry[];
+    // Legacy / extra fields passed through
     [key: string]: unknown;
   }
 
-  let stats = $state<CacheStats | null>(null);
+  let cacheConfig = $state<CacheConfig | null>(null);
   let loading = $state(true);
   let denied = $state(false);
   let error = $state<string | null>(null);
@@ -28,11 +37,12 @@
     loading = true;
     error = null;
     denied = false;
-    const res = await api.get<CacheStats>('/v1/cache');
+    const res = await api.get('/v1/cache');
     loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
-    stats = res.data;
+    // /v1/cache returns { profile, enabled, entries: [] } — not a list envelope
+    cacheConfig = (res.data as CacheConfig | null) ?? null;
   }
 
   function openPurgeConfirm() {
@@ -69,21 +79,16 @@
     }
   }
 
-  function fmtSize(bytes?: number): string {
-    if (bytes == null) return '—';
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  }
-
   function fmtDate(s?: string): string {
     if (!s) return '—';
     try { return new Date(s).toLocaleString(); } catch { return s; }
   }
 
-  function fmtHitRate(v?: number): string {
-    if (v == null) return '—';
-    return `${(v * 100).toFixed(1)}%`;
+  // Extra keys not shown in the primary cards
+  const PRIMARY_KEYS = new Set(['profile', 'enabled', 'entries']);
+
+  function extraKeys(cfg: CacheConfig): string[] {
+    return Object.keys(cfg).filter(k => !PRIMARY_KEYS.has(k));
   }
 
   onMount(() => load());
@@ -102,23 +107,25 @@
   {:else if error}
     <ErrorPanel message={error} retry={load} />
   {:else}
-    <!-- Stats grid -->
-    <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+    <!-- Summary cards -->
+    <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
       <div class="rounded-md border border-rule bg-paper-soft p-4">
-        <p class="text-xs font-mono text-ink-mute uppercase tracking-wider mb-1">Hit Rate</p>
-        <p class="text-2xl font-display font-bold text-ink">{fmtHitRate(stats?.hit_rate)}</p>
+        <p class="text-xs font-mono text-ink-mute uppercase tracking-wider mb-1">Status</p>
+        {#if cacheConfig?.enabled === true}
+          <p class="text-lg font-display font-bold text-success">Enabled</p>
+        {:else if cacheConfig?.enabled === false}
+          <p class="text-lg font-display font-bold text-danger">Disabled</p>
+        {:else}
+          <p class="text-lg font-display font-bold text-ink">—</p>
+        {/if}
       </div>
       <div class="rounded-md border border-rule bg-paper-soft p-4">
-        <p class="text-xs font-mono text-ink-mute uppercase tracking-wider mb-1">Total Entries</p>
-        <p class="text-2xl font-display font-bold text-ink">{stats?.total_entries ?? '—'}</p>
+        <p class="text-xs font-mono text-ink-mute uppercase tracking-wider mb-1">Profile</p>
+        <p class="text-lg font-display font-bold text-ink font-mono">{cacheConfig?.profile ?? '—'}</p>
       </div>
       <div class="rounded-md border border-rule bg-paper-soft p-4">
-        <p class="text-xs font-mono text-ink-mute uppercase tracking-wider mb-1">Total Size</p>
-        <p class="text-2xl font-display font-bold text-ink">{fmtSize(stats?.total_size)}</p>
-      </div>
-      <div class="rounded-md border border-rule bg-paper-soft p-4">
-        <p class="text-xs font-mono text-ink-mute uppercase tracking-wider mb-1">Last Purge</p>
-        <p class="text-sm font-mono text-ink">{fmtDate(stats?.last_purge)}</p>
+        <p class="text-xs font-mono text-ink-mute uppercase tracking-wider mb-1">Entries</p>
+        <p class="text-2xl font-display font-bold text-ink">{cacheConfig?.entries?.length ?? 0}</p>
       </div>
     </div>
 
@@ -140,17 +147,46 @@
       </button>
     </div>
 
-    <!-- Raw stats (extra keys) -->
-    {#if stats}
-      {@const extraKeys = Object.keys(stats).filter(k => !['hit_rate','total_entries','total_size','last_purge'].includes(k))}
-      {#if extraKeys.length > 0}
+    <!-- Entries table -->
+    {#if cacheConfig?.entries && cacheConfig.entries.length > 0}
+      <div>
+        <h2 class="text-base font-semibold text-ink mb-2">Cache Entries</h2>
+        <div class="rounded-md border border-rule overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-paper-soft border-b border-rule">
+              <tr>
+                <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Key</th>
+                <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Size</th>
+                <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Expires At</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-rule">
+              {#each cacheConfig.entries as entry, i (entry.key ?? i)}
+                <tr class="hover:bg-paper-soft transition-colors">
+                  <td class="px-4 py-2.5 font-mono text-xs text-ink">{entry.key ?? '—'}</td>
+                  <td class="px-4 py-2.5 text-xs text-ink-soft">{entry.size != null ? `${entry.size} B` : '—'}</td>
+                  <td class="px-4 py-2.5 text-xs text-ink-mute">{fmtDate(entry.expires_at)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {:else if cacheConfig}
+      <EmptyState message="Cache is empty." hint="No entries are currently cached." />
+    {/if}
+
+    <!-- Extra keys -->
+    {#if cacheConfig}
+      {@const extra = extraKeys(cacheConfig)}
+      {#if extra.length > 0}
         <div class="rounded-md border border-rule bg-paper-soft p-4">
-          <p class="text-xs font-mono text-ink-mute uppercase tracking-wider mb-2">Additional Stats</p>
+          <p class="text-xs font-mono text-ink-mute uppercase tracking-wider mb-2">Additional Fields</p>
           <dl class="space-y-1 text-sm">
-            {#each extraKeys as k}
+            {#each extra as k}
               <div class="flex gap-3">
                 <dt class="font-mono text-ink-mute w-40 shrink-0">{k}</dt>
-                <dd class="text-ink font-mono text-xs break-all">{JSON.stringify(stats![k])}</dd>
+                <dd class="text-ink font-mono text-xs break-all">{JSON.stringify(cacheConfig![k])}</dd>
               </div>
             {/each}
           </dl>

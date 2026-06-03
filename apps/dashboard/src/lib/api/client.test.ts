@@ -27,7 +27,7 @@ Object.defineProperty(global, 'crypto', {
   writable: true,
 });
 
-import { gw, api } from './client';
+import { gw, api, listOf } from './client';
 
 describe('gateway client', () => {
   beforeEach(() => {
@@ -133,5 +133,36 @@ describe('gateway client', () => {
 
     const result = await api.get('/v1/targets');
     expect(result.status).toBe(200);
+  });
+});
+
+describe('listOf helper', () => {
+  it('extracts data[] from standard gateway envelope', () => {
+    const res = { data: { api_version: '2026-05-22', kind: 'targets', data: [{ key: 'a' }] } };
+    expect(listOf(res)).toEqual([{ key: 'a' }]);
+  });
+
+  it('extracts extra named key (e.g. jobs)', () => {
+    const res = { data: { jobs: [{ id: '1' }], next_cursor: null } };
+    expect(listOf(res, 'jobs')).toEqual([{ id: '1' }]);
+  });
+
+  it('falls back to items[] if no data key', () => {
+    const res = { data: { items: [{ id: 'x' }] } };
+    expect(listOf(res)).toEqual([{ id: 'x' }]);
+  });
+
+  it('extracts deliveries with named key fallback', () => {
+    const res = { data: { deliveries: [{ id: 'd1' }] } };
+    expect(listOf(res, 'deliveries')).toEqual([{ id: 'd1' }]);
+  });
+
+  it('returns [] when data is null', () => {
+    expect(listOf({ data: null })).toEqual([]);
+  });
+
+  it('returns [] when no matching key', () => {
+    const res = { data: { foo: 'bar' } };
+    expect(listOf(res)).toEqual([]);
   });
 });

@@ -7,7 +7,6 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
 
   // SCIM user shape
-  interface ScimName { formatted?: string; givenName?: string; familyName?: string; }
   interface ScimEmail { value: string; primary?: boolean; }
   interface ScimUser {
     id: string;
@@ -34,11 +33,14 @@
   let usersLoading = $state(true);
   let usersDenied = $state(false);
   let usersError = $state<string | null>(null);
+  // SCIM 404 = not implemented on this deployment
+  let scimUsersUnavailable = $state(false);
 
   let groups = $state<ScimGroup[]>([]);
   let groupsLoading = $state(true);
   let groupsDenied = $state(false);
   let groupsError = $state<string | null>(null);
+  let scimGroupsUnavailable = $state(false);
 
   const ROLES: Role[] = [
     { name: 'viewer',    description: 'Read-only access to jobs, targets, and status endpoints.' },
@@ -52,10 +54,15 @@
     usersLoading = true;
     usersError = null;
     usersDenied = false;
+    scimUsersUnavailable = false;
     const res = await api.get<ScimUserList>('/v1/scim/users');
     usersLoading = false;
     if (res.denied) { usersDenied = true; return; }
-    if (res.error && res.status !== 404) { usersError = res.error; return; }
+    // 404 means SCIM is not implemented on this deployment — show a friendly message
+    if (res.status === 404 || (res.error && res.status !== 200)) {
+      scimUsersUnavailable = true;
+      return;
+    }
     users = res.data?.Resources ?? [];
   }
 
@@ -63,10 +70,15 @@
     groupsLoading = true;
     groupsError = null;
     groupsDenied = false;
+    scimGroupsUnavailable = false;
     const res = await api.get<ScimGroupList>('/v1/scim/groups');
     groupsLoading = false;
     if (res.denied) { groupsDenied = true; return; }
-    if (res.error && res.status !== 404) { groupsError = res.error; return; }
+    // 404 means SCIM is not implemented on this deployment
+    if (res.status === 404 || (res.error && res.status !== 200)) {
+      scimGroupsUnavailable = true;
+      return;
+    }
     groups = res.data?.Resources ?? [];
   }
 
@@ -101,6 +113,11 @@
       <div class="text-ink-mute text-sm">Loading users…</div>
     {:else if usersDenied}
       <DeniedPanel resource="SCIM users" />
+    {:else if scimUsersUnavailable}
+      <EmptyState
+        message="SCIM user provisioning is not enabled on this deployment."
+        hint="The gateway does not expose /v1/scim/users. Contact your administrator to enable SCIM."
+      />
     {:else if usersError}
       <ErrorPanel message={usersError} retry={loadUsers} />
     {:else if users.length === 0}
@@ -150,6 +167,11 @@
       <div class="text-ink-mute text-sm">Loading groups…</div>
     {:else if groupsDenied}
       <DeniedPanel resource="SCIM groups" />
+    {:else if scimGroupsUnavailable}
+      <EmptyState
+        message="SCIM group provisioning is not enabled on this deployment."
+        hint="The gateway does not expose /v1/scim/groups. Contact your administrator to enable SCIM."
+      />
     {:else if groupsError}
       <ErrorPanel message={groupsError} retry={loadGroups} />
     {:else if groups.length === 0}
@@ -178,7 +200,7 @@
     {/if}
   </section>
 
-  <!-- RBAC Roles Section -->
+  <!-- RBAC Roles Section (always visible) -->
   <section aria-labelledby="roles-heading">
     <h2 id="roles-heading" class="text-lg font-display font-semibold text-ink mb-3">RBAC Roles</h2>
     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

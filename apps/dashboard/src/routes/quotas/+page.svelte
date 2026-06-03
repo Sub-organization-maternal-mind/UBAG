@@ -5,13 +5,21 @@
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
 
-  interface RateLimit {
-    endpoint: string;
+  // Real gateway shape: { enabled, policies: [ { action, limit, window_seconds, burst? } ] }
+  interface RateLimitPolicy {
+    action: string;
     limit: number;
-    window: string;
-    current?: number;
+    window_seconds: number;
+    burst?: number;
   }
-  interface RateLimitsResponse { rate_limits?: RateLimit[]; limits?: RateLimit[]; [key: string]: unknown; }
+  interface RateLimitsResponse {
+    enabled?: boolean;
+    policies?: RateLimitPolicy[];
+    // Legacy fallback keys
+    rate_limits?: unknown[];
+    limits?: unknown[];
+    [key: string]: unknown;
+  }
 
   interface QuotaEntry {
     name: string;
@@ -21,7 +29,8 @@
   }
   interface QuotasResponse { quotas?: QuotaEntry[]; usage?: QuotaEntry[]; [key: string]: unknown; }
 
-  let rateLimits = $state<RateLimit[]>([]);
+  let policies = $state<RateLimitPolicy[]>([]);
+  let rateLimitsEnabled = $state<boolean | null>(null);
   let rateLimitsLoading = $state(true);
   let rateLimitsDenied = $state(false);
   let rateLimitsError = $state<string | null>(null);
@@ -51,22 +60,10 @@
     if (res.denied) { rateLimitsDenied = true; return; }
     if (res.error && res.status !== 404) { rateLimitsError = res.error; return; }
     const d = res.data;
-    rateLimits = d?.rate_limits ?? d?.limits ?? [];
-    // Attempt to normalise raw object if it's keyed by endpoint
-    if (!Array.isArray(rateLimits) && d) {
-      rateLimits = Object.entries(d).map(([endpoint, v]) => {
-        if (typeof v === 'object' && v !== null) {
-          const o = v as Record<string, unknown>;
-          return {
-            endpoint,
-            limit: Number(o.limit ?? o.max ?? 0),
-            window: String(o.window ?? o.period ?? '—'),
-            current: o.current != null ? Number(o.current) : undefined,
-          };
-        }
-        return { endpoint, limit: Number(v), window: '—' };
-      });
-    }
+    rateLimitsEnabled = d?.enabled ?? null;
+    // Real shape has policies[]; fall back to legacy rate_limits/limits arrays
+    policies = (d?.policies ?? d?.rate_limits ?? d?.limits ?? []) as RateLimitPolicy[];
+    if (!Array.isArray(policies)) policies = [];
   }
 
   async function loadQuotas() {
@@ -111,7 +108,14 @@
   <!-- Rate Limits -->
   <section aria-labelledby="rate-limits-heading">
     <div class="flex items-center justify-between mb-3">
-      <h2 id="rate-limits-heading" class="text-lg font-display font-semibold text-ink">Rate Limits</h2>
+      <div class="flex items-center gap-3">
+        <h2 id="rate-limits-heading" class="text-lg font-display font-semibold text-ink">Rate Limits</h2>
+        {#if rateLimitsEnabled === true}
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-success-soft text-success">Enabled</span>
+        {:else if rateLimitsEnabled === false}
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-paper-soft text-ink-mute">Disabled</span>
+        {/if}
+      </div>
       <button onclick={() => loadRateLimits()} class="text-sm text-accent-deep hover:underline">Refresh</button>
     </div>
 
@@ -121,44 +125,26 @@
       <DeniedPanel resource="rate limits" />
     {:else if rateLimitsError}
       <ErrorPanel message={rateLimitsError} retry={loadRateLimits} />
-    {:else if rateLimits.length === 0}
-      <EmptyState message="No rate limits configured." />
+    {:else if policies.length === 0}
+      <EmptyState message="No rate limit policies configured." />
     {:else}
       <div class="rounded-md border border-rule overflow-x-auto">
         <table class="w-full text-sm">
           <thead class="bg-paper-soft border-b border-rule">
             <tr>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Endpoint</th>
+              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Action</th>
               <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Limit</th>
               <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Window</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Current Usage</th>
+              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Burst</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-rule">
-            {#each rateLimits as rl, i (rl.endpoint ?? i)}
+            {#each policies as policy, i (policy.action ?? i)}
               <tr class="hover:bg-paper-soft transition-colors">
-                <td class="px-4 py-2.5 font-mono text-xs text-ink">{rl.endpoint}</td>
-                <td class="px-4 py-2.5 text-xs text-ink-soft">{rl.limit}</td>
-                <td class="px-4 py-2.5 text-xs text-ink-soft">{rl.window}</td>
-                <td class="px-4 py-2.5 text-xs">
-                  {#if rl.current != null}
-                    <div class="flex items-center gap-2">
-                      <div class="flex-1 max-w-32 h-1.5 rounded-full bg-rule overflow-hidden">
-                        <div
-                          class="h-full rounded-full transition-all {barColor(pct(rl.current, rl.limit))}"
-                          style="width: {pct(rl.current, rl.limit)}%"
-                          role="progressbar"
-                          aria-valuenow={rl.current}
-                          aria-valuemin={0}
-                          aria-valuemax={rl.limit}
-                        ></div>
-                      </div>
-                      <span class="text-ink-mute">{rl.current} / {rl.limit}</span>
-                    </div>
-                  {:else}
-                    <span class="text-ink-mute">—</span>
-                  {/if}
-                </td>
+                <td class="px-4 py-2.5 font-mono text-xs text-ink">{policy.action}</td>
+                <td class="px-4 py-2.5 text-xs text-ink-soft">{policy.limit}</td>
+                <td class="px-4 py-2.5 text-xs text-ink-soft">{policy.window_seconds}s</td>
+                <td class="px-4 py-2.5 text-xs text-ink-mute">{policy.burst ?? '—'}</td>
               </tr>
             {/each}
           </tbody>

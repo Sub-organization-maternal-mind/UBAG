@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api/client';
+  import { api, listOf } from '$lib/api/client';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
-  import type { Template, ListResponse } from '$lib/api/types';
+  import type { Template } from '$lib/api/types';
 
   let items = $state<Template[]>([]);
   let loading = $state(true);
@@ -23,7 +23,8 @@
   let filtered = $derived(
     filter
       ? items.filter(t =>
-          t.name.toLowerCase().includes(filter.toLowerCase()) ||
+          (t.command_type ?? '').toLowerCase().includes(filter.toLowerCase()) ||
+          (t.description ?? '').toLowerCase().includes(filter.toLowerCase()) ||
           t.id.toLowerCase().includes(filter.toLowerCase())
         )
       : items
@@ -33,11 +34,11 @@
     loading = true;
     error = null;
     denied = false;
-    const res = await api.get<ListResponse<Template>>('/v1/templates');
+    const res = await api.get('/v1/templates');
     loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
-    items = res.data?.items ?? [];
+    items = listOf<Template>(res);
   }
 
   async function previewRender(template: Template) {
@@ -64,6 +65,11 @@
     dialogEl?.close();
   }
 
+  function fmtDate(s?: string): string {
+    if (!s) return '—';
+    try { return new Date(s).toLocaleString(); } catch { return s; }
+  }
+
   onMount(() => load());
 </script>
 
@@ -76,7 +82,7 @@
   <input
     type="search"
     bind:value={filter}
-    placeholder="Filter by name or ID…"
+    placeholder="Filter by ID, command type, description…"
     class="w-full max-w-sm px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
   />
 
@@ -94,8 +100,9 @@
         <thead class="bg-paper-soft border-b border-rule">
           <tr>
             <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">ID</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Name</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Version</th>
+            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Command Type</th>
+            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Description</th>
+            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Created</th>
             <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Actions</th>
           </tr>
         </thead>
@@ -103,8 +110,9 @@
           {#each filtered as template (template.id)}
             <tr class="hover:bg-paper-soft transition-colors">
               <td class="px-4 py-2.5 font-mono text-ink-mute text-xs">{template.id.slice(0, 8)}…</td>
-              <td class="px-4 py-2.5 text-ink font-medium">{template.name}</td>
-              <td class="px-4 py-2.5 text-ink-soft font-mono text-xs">{template.version ?? '—'}</td>
+              <td class="px-4 py-2.5 text-ink font-medium font-mono text-xs">{template.command_type}</td>
+              <td class="px-4 py-2.5 text-ink-soft text-xs max-w-xs truncate" title={template.description}>{template.description ?? '—'}</td>
+              <td class="px-4 py-2.5 text-ink-mute text-xs">{fmtDate(template.created_at)}</td>
               <td class="px-4 py-2.5">
                 <button
                   onclick={() => previewRender(template)}

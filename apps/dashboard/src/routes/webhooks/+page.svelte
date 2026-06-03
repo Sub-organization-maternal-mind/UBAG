@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api/client';
+  import { api, listOf } from '$lib/api/client';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
@@ -13,10 +13,6 @@
     status: string;
     timestamp: string;
     response_code?: number;
-  }
-
-  interface DeliveriesResponse {
-    deliveries: Delivery[];
   }
 
   // --- Webhooks list state ---
@@ -38,11 +34,11 @@
     loading = true;
     error = null;
     denied = false;
-    const res = await api.get<{ webhooks: Webhook[] }>('/v1/webhooks');
+    const res = await api.get('/v1/webhooks');
     loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
-    webhooks = res.data?.webhooks ?? [];
+    webhooks = listOf<Webhook>(res);
   }
 
   async function loadDeliveries(webhookId: string) {
@@ -58,13 +54,13 @@
     deliveriesLoading = { ...deliveriesLoading, [webhookId]: true };
     deliveriesError = { ...deliveriesError, [webhookId]: null };
 
-    const res = await api.get<DeliveriesResponse>(`/v1/webhooks/${webhookId}/deliveries`);
+    const res = await api.get(`/v1/webhooks/${webhookId}/deliveries`);
 
     deliveriesLoading = { ...deliveriesLoading, [webhookId]: false };
     if (res.error) {
       deliveriesError = { ...deliveriesError, [webhookId]: res.error };
     } else {
-      deliveriesMap = { ...deliveriesMap, [webhookId]: res.data?.deliveries ?? [] };
+      deliveriesMap = { ...deliveriesMap, [webhookId]: listOf<Delivery>(res, 'deliveries') };
     }
   }
 
@@ -87,10 +83,10 @@
 
   async function loadDeliveriesSilent(webhookId: string) {
     deliveriesLoading = { ...deliveriesLoading, [webhookId]: true };
-    const res = await api.get<DeliveriesResponse>(`/v1/webhooks/${webhookId}/deliveries`);
+    const res = await api.get(`/v1/webhooks/${webhookId}/deliveries`);
     deliveriesLoading = { ...deliveriesLoading, [webhookId]: false };
     if (!res.error) {
-      deliveriesMap = { ...deliveriesMap, [webhookId]: res.data?.deliveries ?? [] };
+      deliveriesMap = { ...deliveriesMap, [webhookId]: listOf<Delivery>(res, 'deliveries') };
     }
   }
 

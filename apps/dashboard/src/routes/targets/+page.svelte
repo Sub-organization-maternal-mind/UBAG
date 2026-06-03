@@ -1,11 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api/client';
+  import { api, listOf } from '$lib/api/client';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
-  import StatusBadge from '$lib/components/StatusBadge.svelte';
-  import type { Target, ListResponse } from '$lib/api/types';
+  import type { Target } from '$lib/api/types';
 
   let items = $state<Target[]>([]);
   let loading = $state(true);
@@ -23,13 +22,11 @@
     loading = true;
     error = null;
     denied = false;
-    const res = await api.get<ListResponse<Target>>('/v1/targets');
+    const res = await api.get('/v1/targets');
     loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
-    // Support both {items:[]} and {targets:[]} shapes
-    const data = res.data as Record<string, unknown> | null;
-    items = (data?.['items'] ?? data?.['targets'] ?? []) as Target[];
+    items = listOf<Target>(res);
   }
 
   onMount(load);
@@ -44,7 +41,7 @@
   <input
     type="search"
     bind:value={filter}
-    placeholder="Filter by name, URL, adapter…"
+    placeholder="Filter by key, name, adapter…"
     class="w-full max-w-sm px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
   />
 
@@ -61,21 +58,33 @@
       <table class="w-full text-sm">
         <thead class="bg-paper-soft border-b border-rule">
           <tr>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">ID</th>
+            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Key</th>
             <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Name</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">URL</th>
             <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Adapter</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Status</th>
+            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Manual Login</th>
+            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Safe Mode</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-rule">
-          {#each filtered as target (target.id)}
+          {#each filtered as target (target.key)}
             <tr class="hover:bg-paper-soft transition-colors">
-              <td class="px-4 py-2.5 font-mono text-ink-mute text-xs">{target.id.slice(0, 8)}…</td>
-              <td class="px-4 py-2.5 text-ink font-medium">{target.name}</td>
-              <td class="px-4 py-2.5 text-ink-soft font-mono text-xs truncate max-w-xs">{target.url}</td>
-              <td class="px-4 py-2.5 text-ink-soft">{target.adapter}</td>
-              <td class="px-4 py-2.5"><StatusBadge status={target.status} /></td>
+              <td class="px-4 py-2.5 font-mono text-ink-mute text-xs">{target.key}</td>
+              <td class="px-4 py-2.5 text-ink font-medium">{target.display_name}</td>
+              <td class="px-4 py-2.5 text-ink-soft font-mono text-xs">{target.adapter_key}</td>
+              <td class="px-4 py-2.5">
+                {#if target.manual_login_required}
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-warning-soft text-warning">Yes</span>
+                {:else}
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-paper-soft text-ink-mute">No</span>
+                {/if}
+              </td>
+              <td class="px-4 py-2.5">
+                {#if target.safe_mode}
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-success-soft text-success">Yes</span>
+                {:else}
+                  <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-paper-soft text-ink-mute">No</span>
+                {/if}
+              </td>
             </tr>
           {/each}
         </tbody>

@@ -25,13 +25,19 @@ export interface JobsResponse {
   next_cursor?: string;
 }
 
-// Target types
+// Target types — real gateway shape from /v1/targets
 export interface Target {
-  id: string;
-  name: string;
-  url: string;
-  adapter: string;
-  status: string;
+  key: string;
+  display_name: string;
+  adapter_key: string;
+  manual_login_required: boolean;
+  safe_mode: boolean;
+  // Legacy / optional (kept to avoid breakage if referenced elsewhere)
+  id?: string;
+  name?: string;
+  url?: string;
+  adapter?: string;
+  status?: string;
 }
 
 export interface ListResponse<T> {
@@ -67,16 +73,29 @@ export interface BrowserTab {
   status?: string;
 }
 
+// BrowserSummary — real gateway shape from /v1/browser/summary
 export interface BrowserSummary {
-  instances: number;
-  contexts: number;
-  tabs: number;
+  total_instances: number;
+  total_contexts: number;
+  total_tabs: number;
+  instances_by_state: Record<string, number>;
+  contexts_by_login_state: Record<string, number>;
+  tabs_by_state: Record<string, number>;
+  // Legacy / optional
+  instances?: number;
+  contexts?: number;
+  tabs?: number;
 }
 
-// Adapter
+// Adapter — real gateway shape from /v1/adapters
 export interface Adapter {
-  id: string;
-  name: string;
+  key: string;
+  kind: string;
+  stage: string;
+  capabilities: string[];
+  // Legacy / optional
+  id?: string;
+  name?: string;
   version?: string;
   status?: string;
 }
@@ -97,10 +116,14 @@ export interface Device {
   status?: string;
 }
 
-// Template
+// Template — real gateway shape from /v1/templates
 export interface Template {
   id: string;
-  name: string;
+  command_type: string;
+  description: string;
+  created_at: string;
+  // Legacy / optional
+  name?: string;
   version?: string;
 }
 

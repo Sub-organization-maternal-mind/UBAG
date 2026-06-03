@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api/client';
+  import { api, listOf } from '$lib/api/client';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
-  import type { AuditEntry, ListResponse } from '$lib/api/types';
+  import type { AuditEntry } from '$lib/api/types';
 
   let items = $state<AuditEntry[]>([]);
   let loading = $state(true);
@@ -46,11 +46,11 @@
     loading = true;
     error = null;
     denied = false;
-    const res = await api.get<ListResponse<AuditEntry>>('/v1/audit');
+    const res = await api.get('/v1/audit');
     loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
-    items = res.data?.items ?? [];
+    items = listOf<AuditEntry>(res);
   }
 
   onMount(() => load());

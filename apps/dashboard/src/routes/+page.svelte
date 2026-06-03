@@ -30,8 +30,8 @@
 
     const [jobsRes, targetsRes, browserRes] = await Promise.all([
       api.get<{ jobs?: Job[]; total?: number }>('/v1/jobs?limit=200'),
-      api.get<{ data?: unknown[]; items?: unknown[] }>('/v1/targets'),
-      api.get<{ instances?: number; data?: { instances?: number } }>('/v1/browser/summary'),
+      api.get('/v1/targets'),
+      api.get('/v1/browser/summary'),
     ]);
 
     metricsLoading = false;
@@ -41,9 +41,12 @@
     if (jobsRes.unauthorized) { metricsError = 'Not authenticated — check your gateway login.'; return; }
 
     const jobs = jobsRes.data?.jobs ?? [];
-    const targets = (targetsRes.data?.data ?? targetsRes.data?.items ?? []) as unknown[];
-    const browserInstances =
-      browserRes.data?.instances ?? browserRes.data?.data?.instances ?? 0;
+    // targets uses real {data:[...]} envelope
+    const targetsData = targetsRes.data as Record<string, unknown> | null;
+    const targets = (Array.isArray(targetsData?.['data']) ? targetsData!['data'] : []) as unknown[];
+    // browser summary is a flat object: { total_instances, total_contexts, total_tabs, ... }
+    const browserSummary = browserRes.data as Record<string, unknown> | null;
+    const browserInstances = (browserSummary?.['total_instances'] ?? browserSummary?.['instances'] ?? 0) as number;
 
     metrics = {
       jobs_total: jobsRes.data?.total ?? jobs.length,

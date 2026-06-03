@@ -1,11 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api/client';
+  import { api, listOf } from '$lib/api/client';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
-  import StatusBadge from '$lib/components/StatusBadge.svelte';
-  import type { Adapter, ListResponse } from '$lib/api/types';
+  import type { Adapter } from '$lib/api/types';
 
   let items = $state<Adapter[]>([]);
   let loading = $state(true);
@@ -23,12 +22,11 @@
     loading = true;
     error = null;
     denied = false;
-    const res = await api.get<ListResponse<Adapter>>('/v1/adapters');
+    const res = await api.get('/v1/adapters');
     loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
-    const data = res.data as Record<string, unknown> | null;
-    items = (data?.['items'] ?? data?.['adapters'] ?? []) as Adapter[];
+    items = listOf<Adapter>(res);
   }
 
   onMount(load);
@@ -43,7 +41,7 @@
   <input
     type="search"
     bind:value={filter}
-    placeholder="Filter by name, version…"
+    placeholder="Filter by key, kind, stage…"
     class="w-full max-w-sm px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
   />
 
@@ -60,19 +58,21 @@
       <table class="w-full text-sm">
         <thead class="bg-paper-soft border-b border-rule">
           <tr>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">ID</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Name</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Version</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Status</th>
+            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Key</th>
+            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Kind</th>
+            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Stage</th>
+            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Capabilities</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-rule">
-          {#each filtered as adapter (adapter.id)}
+          {#each filtered as adapter (adapter.key)}
             <tr class="hover:bg-paper-soft transition-colors">
-              <td class="px-4 py-2.5 font-mono text-ink-mute text-xs">{adapter.id.slice(0, 8)}…</td>
-              <td class="px-4 py-2.5 text-ink font-medium">{adapter.name}</td>
-              <td class="px-4 py-2.5 text-ink-soft font-mono text-xs">{adapter.version ?? '—'}</td>
-              <td class="px-4 py-2.5"><StatusBadge status={adapter.status ?? 'unknown'} /></td>
+              <td class="px-4 py-2.5 font-mono text-ink-mute text-xs">{adapter.key}</td>
+              <td class="px-4 py-2.5 text-ink font-medium">{adapter.kind}</td>
+              <td class="px-4 py-2.5">
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-paper-soft border border-rule text-ink-soft font-mono">{adapter.stage}</span>
+              </td>
+              <td class="px-4 py-2.5 text-ink-soft text-xs">{adapter.capabilities?.join(', ') ?? '—'}</td>
             </tr>
           {/each}
         </tbody>

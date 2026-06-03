@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { api } from '$lib/api/client';
+  import { api, listOf } from '$lib/api/client';
   import { settings } from '$lib/stores/settings';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -51,9 +51,6 @@
     const gw = $settings.gatewayUrl.replace(/\/+$/, '');
     try {
       const u = new URL(gw);
-      // CSP allows frame-src 'self' http://localhost:3000 — the noVNC frame must
-      // be served from the same origin as gatewayUrl. If the gateway runs on a
-      // different port, update the frame-src in app.html.
       return `${gw}/novnc/vnc.html?autoconnect=true&host=${encodeURIComponent(u.hostname)}&port=${encodeURIComponent(u.port || '80')}`;
     } catch {
       return null;
@@ -67,10 +64,10 @@
     denied = false;
 
     const [sumRes, instRes, ctxRes, tabRes] = await Promise.all([
-      api.get<BrowserSummary>('/v1/browser/summary'),
-      api.get<{ instances: BrowserInstance[] }>('/v1/browser/instances'),
-      api.get<{ contexts: BrowserContext[] }>('/v1/browser/contexts'),
-      api.get<{ tabs: BrowserTab[] }>('/v1/browser/tabs'),
+      api.get('/v1/browser/summary'),
+      api.get('/v1/browser/instances'),
+      api.get('/v1/browser/contexts'),
+      api.get('/v1/browser/tabs'),
     ]);
 
     loading = false;
@@ -79,10 +76,11 @@
     if (instRes.denied) { denied = true; return; }
     if (instRes.error) { error = instRes.error; return; }
 
-    summary = sumRes.data ?? null;
-    instances = instRes.data?.instances ?? [];
-    contexts = ctxRes.data?.contexts ?? [];
-    tabs = tabRes.data?.tabs ?? [];
+    // /v1/browser/summary returns a flat object, not a list envelope
+    summary = (sumRes.data as BrowserSummary | null) ?? null;
+    instances = listOf<BrowserInstance>(instRes);
+    contexts = listOf<BrowserContext>(ctxRes);
+    tabs = listOf<BrowserTab>(tabRes);
   }
 
   // --- xterm init/cleanup ---
@@ -90,7 +88,6 @@
     if (!terminalEl || termReady) return;
     try {
       const { Terminal } = await import('@xterm/xterm');
-      // Dynamic CSS import — Vite will bundle this
       await import('@xterm/xterm/css/xterm.css');
       term = new Terminal({
         theme: { background: '#111418', foreground: '#d4d4d8' },
@@ -132,7 +129,6 @@
 
   function selectInstance(inst: BrowserInstance) {
     selectedInstance = inst;
-    // Re-draw terminal with new instance info
     if (termReady) refreshTerminal();
   }
 
@@ -146,14 +142,12 @@
     load();
   });
 
-  // When terminal element becomes available, initialise xterm
   $effect(() => {
     if (terminalEl && !termReady) {
       initTerminal();
     }
   });
 
-  // When selectedInstance changes after terminal is ready, refresh output
   $effect(() => {
     if (selectedInstance && termReady) {
       refreshTerminal();
@@ -182,13 +176,13 @@
   {:else if error}
     <ErrorPanel message={error} retry={load} />
   {:else}
-    <!-- Summary cards -->
+    <!-- Summary cards — real fields: total_instances, total_contexts, total_tabs -->
     {#if summary}
       <div class="grid grid-cols-3 gap-4">
         {#each [
-          { label: 'Instances', value: summary.instances, color: 'text-marine' },
-          { label: 'Contexts', value: summary.contexts, color: 'text-saffron' },
-          { label: 'Tabs', value: summary.tabs, color: 'text-success' },
+          { label: 'Instances', value: summary.total_instances ?? summary.instances ?? 0, color: 'text-marine' },
+          { label: 'Contexts', value: summary.total_contexts ?? summary.contexts ?? 0, color: 'text-saffron' },
+          { label: 'Tabs', value: summary.total_tabs ?? summary.tabs ?? 0, color: 'text-success' },
         ] as card}
           <div class="rounded-md border border-rule bg-paper-soft px-4 py-3 flex flex-col gap-1">
             <span class="text-xs text-ink-mute uppercase tracking-wider font-mono">{card.label}</span>
@@ -356,8 +350,6 @@
               <span class="text-xs text-ink-mute italic">Requires noVNC served by gateway</span>
             </div>
             {#if noVncSrc}
-              <!-- CSP note: frame-src in app.html allows 'self' and http://localhost:3000.
-                   If the gateway is on a different host/port, update frame-src in app.html. -->
               <iframe
                 src={noVncSrc}
                 class="w-full rounded-md border border-rule bg-paper-warm"

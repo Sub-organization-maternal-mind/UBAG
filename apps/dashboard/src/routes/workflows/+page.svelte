@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api/client';
+  import { api, listOf } from '$lib/api/client';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import WorkflowDag from '$lib/components/WorkflowDag.svelte';
-  import type { Workflow, ListResponse } from '$lib/api/types';
+  import type { Workflow } from '$lib/api/types';
 
   const fixtureWorkflow: Workflow = {
     id: 'wf-fixture',
@@ -32,11 +32,11 @@
     loading = true;
     error = null;
     denied = false;
-    const res = await api.get<ListResponse<Workflow>>('/v1/workflows');
+    const res = await api.get('/v1/workflows');
     loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
-    items = res.data?.items ?? [];
+    items = listOf<Workflow>(res);
     selectedWorkflow = null;
   }
 

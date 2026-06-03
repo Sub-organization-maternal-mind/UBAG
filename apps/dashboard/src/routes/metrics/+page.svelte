@@ -62,11 +62,9 @@
 
     const [jobsRes, targetsRes, adaptersRes, browserRes] = await Promise.all([
       api.get<{ jobs?: Array<{ status?: string }>; total?: number }>('/v1/jobs?limit=200'),
-      api.get<{ data?: unknown[]; items?: unknown[] }>('/v1/targets'),
-      api.get<{ data?: unknown[]; items?: unknown[] }>('/v1/adapters'),
-      api.get<{ instances?: number; contexts?: number; tabs?: number; data?: Record<string, number> }>(
-        '/v1/browser/summary',
-      ),
+      api.get('/v1/targets'),
+      api.get('/v1/adapters'),
+      api.get('/v1/browser/summary'),
     ]);
 
     loading = false;
@@ -76,18 +74,22 @@
     if (jobsRes.status < 0) { error = jobsRes.error ?? 'Failed to reach gateway'; return; }
 
     const jobs = jobsRes.data?.jobs ?? [];
-    const targets = (targetsRes.data?.data ?? targetsRes.data?.items ?? []) as unknown[];
-    const adapters = (adaptersRes.data?.data ?? adaptersRes.data?.items ?? []) as unknown[];
-    const b = browserRes.data ?? {};
+    // targets / adapters use real {data:[...]} envelope
+    const targetsData = targetsRes.data as Record<string, unknown> | null;
+    const targets = (Array.isArray(targetsData?.['data']) ? targetsData!['data'] : []) as unknown[];
+    const adaptersData = adaptersRes.data as Record<string, unknown> | null;
+    const adapters = (Array.isArray(adaptersData?.['data']) ? adaptersData!['data'] : []) as unknown[];
+    // browser summary is a flat object: { total_instances, total_contexts, total_tabs, ... }
+    const b = browserRes.data as Record<string, unknown> | null ?? {};
 
     metrics = {
       jobs_total: jobsRes.data?.total ?? jobs.length,
       jobs_failed: jobs.filter((j) => FAILED_STATES.has((j.status ?? '').toLowerCase())).length,
       targets_total: targets.length,
       adapters_total: adapters.length,
-      browser_instances: b.instances ?? b.data?.instances ?? 0,
-      browser_contexts: b.contexts ?? b.data?.contexts ?? 0,
-      browser_tabs: b.tabs ?? b.data?.tabs ?? 0,
+      browser_instances: (b['total_instances'] ?? b['instances'] ?? 0) as number,
+      browser_contexts: (b['total_contexts'] ?? b['contexts'] ?? 0) as number,
+      browser_tabs: (b['total_tabs'] ?? b['tabs'] ?? 0) as number,
     } as MetricsResponse;
 
     // Build chart data: pick top 5 numeric keys
