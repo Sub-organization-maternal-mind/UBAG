@@ -14,7 +14,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/ubag-ga
 
 FROM python:3.12-slim
 
-RUN groupadd -r ubag \
+RUN apt-get update -qq && apt-get install -y --no-install-recommends wget \
+  && rm -rf /var/lib/apt/lists/* \
+  && groupadd -r ubag \
   && useradd -r -g ubag ubag \
   && pip3 install --no-cache-dir "playwright>=1.49" "patchright>=1.49" \
   && mkdir -p /var/lib/ubag/executor-spool \
