@@ -38,14 +38,26 @@ export async function gw<T = unknown>(
     });
 
     const text = await response.text();
-    const data = text ? (JSON.parse(text) as T) : null;
+    let data: T | null = null;
+    let parseError = false;
+    if (text) {
+      try {
+        data = JSON.parse(text) as T;
+      } catch {
+        // Non-JSON body (e.g. an HTML error page from a proxy). Don't leak the
+        // raw "Unexpected token '<'" exception — surface a clean status-based error.
+        parseError = true;
+      }
+    }
 
     return {
       status: response.status,
       data,
       denied: response.status === 403,
       unauthorized: response.status === 401,
-      error: response.ok ? null : `HTTP ${response.status}`,
+      error: response.ok
+        ? (parseError ? 'Invalid response from gateway' : null)
+        : `HTTP ${response.status}`,
     };
   } catch (err) {
     return {

@@ -17,15 +17,40 @@
   let jobsDenied = $state(false);
   let jobsError = $state<string | null>(null);
 
+  // Terminal-failure states used to count failed jobs.
+  const FAILED_STATES = new Set(['failed', 'error', 'dead', 'dlq']);
+
   async function loadMetrics() {
+    // Derive overview metric cards from real JSON endpoints. The Prometheus
+    // /v1/metrics endpoint is intentionally blocked at the edge and is not JSON,
+    // so we aggregate counts from the resource endpoints instead.
     metricsLoading = true;
     metricsError = null;
     metricsDenied = false;
-    const res = await api.get<MetricsResponse>('/v1/metrics');
+
+    const [jobsRes, targetsRes, browserRes] = await Promise.all([
+      api.get<{ jobs?: Job[]; total?: number }>('/v1/jobs?limit=200'),
+      api.get<{ data?: unknown[]; items?: unknown[] }>('/v1/targets'),
+      api.get<{ instances?: number; data?: { instances?: number } }>('/v1/browser/summary'),
+    ]);
+
     metricsLoading = false;
-    if (res.denied) { metricsDenied = true; return; }
-    if (res.error) { metricsError = res.error; return; }
-    metrics = res.data;
+
+    // If the primary jobs call is denied/unauthorized, surface that state.
+    if (jobsRes.denied) { metricsDenied = true; return; }
+    if (jobsRes.unauthorized) { metricsError = 'Not authenticated — check your gateway login.'; return; }
+
+    const jobs = jobsRes.data?.jobs ?? [];
+    const targets = (targetsRes.data?.data ?? targetsRes.data?.items ?? []) as unknown[];
+    const browserInstances =
+      browserRes.data?.instances ?? browserRes.data?.data?.instances ?? 0;
+
+    metrics = {
+      jobs_total: jobsRes.data?.total ?? jobs.length,
+      jobs_failed: jobs.filter((j) => FAILED_STATES.has((j.status ?? '').toLowerCase())).length,
+      targets_total: targets.length,
+      browser_instances: browserInstances,
+    };
   }
 
   async function loadJobs() {

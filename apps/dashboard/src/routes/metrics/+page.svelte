@@ -51,21 +51,50 @@
     });
   }
 
+  const FAILED_STATES = new Set(['failed', 'error', 'dead', 'dlq']);
+
   async function load() {
+    // The Prometheus /v1/metrics endpoint is edge-blocked and is not JSON, so
+    // aggregate operator metrics from the resource endpoints instead.
     loading = true;
     error = null;
     denied = false;
-    const res = await api.get<MetricsResponse>('/v1/metrics');
+
+    const [jobsRes, targetsRes, adaptersRes, browserRes] = await Promise.all([
+      api.get<{ jobs?: Array<{ status?: string }>; total?: number }>('/v1/jobs?limit=200'),
+      api.get<{ data?: unknown[]; items?: unknown[] }>('/v1/targets'),
+      api.get<{ data?: unknown[]; items?: unknown[] }>('/v1/adapters'),
+      api.get<{ instances?: number; contexts?: number; tabs?: number; data?: Record<string, number> }>(
+        '/v1/browser/summary',
+      ),
+    ]);
+
     loading = false;
-    if (res.denied) { denied = true; return; }
-    if (res.error) { error = res.error; return; }
-    metrics = res.data;
+
+    if (jobsRes.denied) { denied = true; return; }
+    if (jobsRes.unauthorized) { error = 'Not authenticated — check your gateway login.'; return; }
+    if (jobsRes.status < 0) { error = jobsRes.error ?? 'Failed to reach gateway'; return; }
+
+    const jobs = jobsRes.data?.jobs ?? [];
+    const targets = (targetsRes.data?.data ?? targetsRes.data?.items ?? []) as unknown[];
+    const adapters = (adaptersRes.data?.data ?? adaptersRes.data?.items ?? []) as unknown[];
+    const b = browserRes.data ?? {};
+
+    metrics = {
+      jobs_total: jobsRes.data?.total ?? jobs.length,
+      jobs_failed: jobs.filter((j) => FAILED_STATES.has((j.status ?? '').toLowerCase())).length,
+      targets_total: targets.length,
+      adapters_total: adapters.length,
+      browser_instances: b.instances ?? b.data?.instances ?? 0,
+      browser_contexts: b.contexts ?? b.data?.contexts ?? 0,
+      browser_tabs: b.tabs ?? b.data?.tabs ?? 0,
+    } as MetricsResponse;
 
     // Build chart data: pick top 5 numeric keys
     if (metrics) {
       const numeric = Object.entries(metrics)
         .filter(([, v]) => typeof v === 'number' && Number.isFinite(v))
-        .sort(([, a], [, b]) => (b as number) - (a as number))
+        .sort(([, a], [, b2]) => (b2 as number) - (a as number))
         .slice(0, 5);
       chartLabels = numeric.map(([k]) => k.replace(/_/g, ' '));
       chartValues = numeric.map(([, v]) => v as number);
