@@ -93,15 +93,15 @@ func Run(ctx context.Context) error {
 	)
 
 	addr := getenv("UBAG_GATEWAY_ADDR", ":8080")
-	dispatcher, err := newDispatcherFromEnv()
+	rawDispatcher, err := newDispatcherFromEnv()
 	if err != nil {
 		return fmt.Errorf("invalid executor configuration: %w", err)
 	}
-	if closer, ok := dispatcher.(interface{ Close() }); ok {
+	if closer, ok := rawDispatcher.(interface{ Close() }); ok {
 		defer closer.Close()
 	}
 	breakerRegistry := resilience.NewRegistry(resilience.DefaultConfig())
-	dispatcher = resilience.DispatcherMiddleware(dispatcher, breakerRegistry)
+	dispatcher := resilience.DispatcherMiddleware(rawDispatcher, breakerRegistry)
 	jobs, idempotencyStore, db, storeKind, closeStores, err := newStoresFromEnv(ctx)
 	if err != nil {
 		return fmt.Errorf("invalid store configuration: %w", err)
@@ -185,7 +185,7 @@ func Run(ctx context.Context) error {
 	})
 
 	if workerConsumerEnabled() {
-		consumer, err := newWorkerConsumerFromEnv(dispatcher, jobs, webhookOutbox, enterprise.alerts, enterprise.concurrency, enterprise.topology)
+		consumer, err := newWorkerConsumerFromEnv(rawDispatcher, jobs, webhookOutbox, enterprise.alerts, enterprise.concurrency, enterprise.topology)
 		if err != nil {
 			return fmt.Errorf("invalid worker consumer configuration: %w", err)
 		}
