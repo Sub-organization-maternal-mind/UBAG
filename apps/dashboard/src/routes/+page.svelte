@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { base } from '$app/paths';
   import { api } from '$lib/api/client';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
@@ -135,7 +136,7 @@
         </table>
       </div>
       <div class="mt-2">
-        <a href="/jobs" class="text-sm text-accent-deep hover:underline">View all jobs →</a>
+        <a href="{base}/jobs" class="text-sm text-accent-deep hover:underline">View all jobs →</a>
       </div>
     {/if}
   </div>

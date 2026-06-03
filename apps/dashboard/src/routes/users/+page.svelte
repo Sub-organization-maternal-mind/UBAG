@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { base } from '$app/paths';
   import { api } from '$lib/api/client';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
@@ -190,7 +191,7 @@
     </div>
     <p class="text-xs text-ink-mute mt-3">
       Role is determined by the <code class="font-mono">UBAG_ACTOR_ROLE</code> environment variable on the gateway.
-      Set your App Secret on the <a href="/settings" class="text-accent-deep hover:underline">Settings</a> page.
+      Set your App Secret on the <a href="{base}/settings" class="text-accent-deep hover:underline">Settings</a> page.
     </p>
   </section>
 </div>

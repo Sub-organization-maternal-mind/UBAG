@@ -2,6 +2,7 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
+  import { base } from '$app/paths';
   import { api } from '$lib/api/client';
   import { settings } from '$lib/stores/settings';
   import type { HealthResponse } from '$lib/api/types';
@@ -62,9 +63,9 @@
     // Start health polling
     checkHealth();
     const interval = setInterval(checkHealth, 30_000);
-    // Register service worker
+    // Register service worker (path respects the deployment base)
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(() => {});
+      navigator.serviceWorker.register(`${base}/sw.js`).catch(() => {});
     }
     return () => clearInterval(interval);
   });
@@ -102,11 +103,12 @@
     <nav class="flex-1 overflow-y-auto py-3" aria-label="Dashboard sections">
       <ul class="space-y-0.5 px-2">
         {#each navItems as item}
+          {@const fullHref = base + item.href}
           {@const currentPath = $page.url.pathname}
-          {@const isActive = currentPath === item.href || (item.href !== '/' && currentPath.startsWith(item.href))}
+          {@const isActive = currentPath === fullHref || (item.href !== '/' && currentPath.startsWith(fullHref))}
           <li>
             <a
-              href={item.href}
+              href={fullHref}
               class="flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors duration-100"
               class:bg-accent-soft={isActive}
               class:text-accent-deep={isActive}
