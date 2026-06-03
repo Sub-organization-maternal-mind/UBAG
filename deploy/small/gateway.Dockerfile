@@ -12,12 +12,11 @@ RUN go mod download
 COPY apps/gateway ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/ubag-gateway ./cmd/gateway
 
-FROM alpine:3.20
+FROM python:3.12-slim
 
-RUN addgroup -S ubag \
-  && adduser -S -G ubag ubag \
-  && apk add --no-cache ca-certificates python3 py3-pip wget \
-  && pip3 install --no-cache-dir --break-system-packages "playwright>=1.49" "patchright>=1.49" \
+RUN groupadd -r ubag \
+  && useradd -r -g ubag ubag \
+  && pip3 install --no-cache-dir "playwright>=1.49" "patchright>=1.49" \
   && mkdir -p /var/lib/ubag/executor-spool \
   && chown -R ubag:ubag /var/lib/ubag
 
