@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { delimiter, resolve } from 'node:path';
 
 const smokePayload = JSON.stringify({
   api_version: '2026-05-22',
@@ -17,8 +18,15 @@ const commands = [
   ['python', ['-m', 'compileall', '-q', 'apps/worker', 'adapters/mock']]
 ];
 
+const pythonPath = [
+  resolve('apps/worker'),
+  resolve('adapters/mock'),
+  process.env.PYTHONPATH
+].filter(Boolean).join(delimiter);
+const env = { ...process.env, PYTHONPATH: pythonPath };
+
 for (const [command, args] of commands) {
-  const result = spawnSync(command, args, { stdio: 'inherit' });
+  const result = spawnSync(command, args, { stdio: 'inherit', env });
   if (result.error) {
     console.error(`Worker tests blocked: ${command} is not available on PATH.`);
     process.exit(1);
@@ -29,7 +37,8 @@ for (const [command, args] of commands) {
 }
 
 const smoke = spawnSync('python', ['apps/worker/run_mock_worker.py', '--payload', smokePayload], {
-  encoding: 'utf8'
+  encoding: 'utf8',
+  env
 });
 
 if (smoke.error) {

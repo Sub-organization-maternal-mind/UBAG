@@ -219,7 +219,7 @@ switch ($Action) {
     Invoke-SmallCompose ($ComposeArgs + @("--profile", "migrate", "run", "--rm", "postgres-migrate"))
   }
   "smoke" {
-    Invoke-SmallCompose ($ComposeArgs + @("up", "-d", "--build", "gateway", "caddy"))
+    Invoke-SmallCompose ($ComposeArgs + @("up", "-d", "--build", "gateway", "nginx-dashboard"))
 
     $hostName = Get-SmallEnvValue -Name "UBAG_BACKING_BIND_HOST" -Fallback (Get-SmallEnvValue -Name "UBAG_BIND_HOST" -Fallback "127.0.0.1")
     if ($hostName -eq "0.0.0.0") {
@@ -236,8 +236,8 @@ switch ($Action) {
     if ($edgeHostName -eq "0.0.0.0") {
       $edgeHostName = "127.0.0.1"
     }
-    $caddyPort = Get-SmallEnvValue -Name "UBAG_CADDY_HTTP_PORT" -Fallback "8081"
-    $ingressHealthUri = "http://${edgeHostName}:${caddyPort}/v1/health"
+    $nginxPort = Get-SmallEnvValue -Name "UBAG_NGINX_HTTP_PORT" -Fallback "8083"
+    $ingressHealthUri = "http://${edgeHostName}:${nginxPort}/v1/health"
     Invoke-RestMethod -Uri $ingressHealthUri -TimeoutSec 10 | ConvertTo-Json -Depth 8
 
     Invoke-SmallCompose ($ComposeArgs + @("--profile", "smoke", "run", "--rm", "mock-worker-smoke"))

@@ -16,7 +16,7 @@ description: Test layers across docs, contracts, services, workers, SDKs, and op
 - Queue/storage conformance tests for edge profile.
 - Worker mock target tests.
 - Adapter contract tests.
-- SDK smoke conformance for TypeScript, Python, and Go.
+- SDK smoke conformance for TypeScript and Go.
 
 ### v0 foundation command surface
 
@@ -42,7 +42,7 @@ cmd /c pnpm test:v0
 cmd /c pnpm check
 ```
 
-`test:schema` validates the documented schema, queue, migration, job, and error-contract anchors. `test:docs` runs the Starlight build and responsive docs gate. `test:worker` runs the Python safe-mode worker and adapter tests. `test:sdk` checks generated contract freshness and the TypeScript, Python, and Go SDK runners. `test:gateway` runs Go gateway tests with memory stores by default.
+`test:schema` validates the documented schema, queue, migration, job, and error-contract anchors. `test:docs` runs the Starlight build and responsive docs gate. `test:worker` runs the Python safe-mode worker and adapter tests. `test:sdk` checks generated contract freshness and the TypeScript and Go SDK runners. `test:gateway` runs Go gateway tests with memory stores by default.
 
 ### Optional Postgres integration tests
 
@@ -71,4 +71,4 @@ Remove-Item Env:\UBAG_TEST_POSTGRES_DSN
 - Multi-region failover tests.
 - Installer and Helm/Terraform smoke tests.
 - Plugin sandbox tests.
-- Full SDK conformance across all 11 SDKs.
+- Broader TypeScript and Go conformance for any newly claimed transports.

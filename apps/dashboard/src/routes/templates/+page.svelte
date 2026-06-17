@@ -20,6 +20,11 @@
   let previewTemplateId = $state<string>('');
   let dialogEl = $state<HTMLDialogElement | null>(null);
 
+  interface TemplateRenderResponse {
+    rendered?: string;
+    template_id?: string;
+  }
+
   let filtered = $derived(
     filter
       ? items.filter(t =>
@@ -49,15 +54,13 @@
     previewOpen = true;
     requestAnimationFrame(() => { dialogEl?.showModal(); });
 
-    const res = await api.post<unknown>(`/v1/templates/${template.id}/render`, {});
+    const res = await api.post<TemplateRenderResponse>(`/v1/templates/${template.id}/render`, { vars: {} });
     previewLoading = false;
     if (res.error) {
       previewError = res.error;
       return;
     }
-    previewContent = typeof res.data === 'string'
-      ? res.data
-      : JSON.stringify(res.data, null, 2);
+    previewContent = res.data?.rendered ?? '';
   }
 
   function closePreview() {

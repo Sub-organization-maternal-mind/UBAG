@@ -4,7 +4,7 @@ description: Docker Compose scaffolding for the UBAG small deployment profile.
 ---
 
 The small profile is a single-node Docker Compose deployment scaffold. It builds
-the Go gateway from `apps/gateway`, runs Caddy ingress, and provides Postgres,
+the Go gateway from `apps/gateway`, runs nginx-dashboard ingress, and provides Postgres,
 Dragonfly, MinIO, Prometheus, Grafana, and optional NATS service definitions.
 
 The gateway defaults to in-memory job/idempotency/artifact stores for local
@@ -43,8 +43,7 @@ webhook delivery worker. The small-profile helper requires
 | `docker-compose.small.yml` | Root Compose file for the small stack. |
 | `deploy/small/env.example` | Placeholder-only environment template. |
 | `deploy/small/small.ps1` | PowerShell helper for config, lifecycle, migrations, logs, and smoke checks. |
-| `deploy/small/caddy/Caddyfile` | Caddy ingress for `/v1/*` gateway routes. |
-| `deploy/small/caddy/Caddyfile.tls.example` | Public-domain Caddy automatic HTTPS example. |
+| `deploy/small/nginx-dashboard/default.conf.template` | Local ingress for `/dashboard/*`, `/v1/*`, and `/novnc/*`. |
 | `deploy/small/prometheus/prometheus.yml` | Prometheus scrape config for Prometheus and gateway `/v1/metrics`. |
 | `deploy/small/grafana/provisioning` | Grafana Prometheus datasource provisioning. |
 
@@ -82,13 +81,13 @@ Check the gateway directly:
 Invoke-RestMethod http://127.0.0.1:8080/v1/health
 ```
 
-Check the same route through Caddy:
+Check the same route through nginx-dashboard:
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8081/v1/health
+Invoke-RestMethod http://127.0.0.1:8083/v1/health
 ```
 
-Run the direct gateway health/readiness, Caddy ingress health, and mock-worker
+Run the direct gateway health/readiness, nginx-dashboard ingress health, and mock-worker
 smoke path:
 
 ```powershell
@@ -176,17 +175,16 @@ Start observability:
 
 Prometheus is available on `http://127.0.0.1:9090`; Grafana is available on
 `http://127.0.0.1:3000`. The Prometheus config scrapes Prometheus and the
-gateway `/v1/metrics` endpoint; Caddy admin stays bound to localhost inside
-its container.
+gateway `/v1/metrics` endpoint.
 
-For public-domain Caddy automatic HTTPS, keep backing service ports on loopback,
-bind only the edge ingress externally, and point Caddy at the TLS example:
+For public-domain TLS, terminate HTTPS at an external reverse proxy or replace
+the edge service with the standard Caddy profile after the public-domain Caddy
+configuration is wired for the target host. Keep backing service ports on
+loopback and bind only the edge ingress externally:
 
 ```powershell
 UBAG_EDGE_BIND_HOST=0.0.0.0
-UBAG_CADDY_HTTP_PORT=80
-UBAG_CADDY_HTTPS_PORT=443
-UBAG_CADDYFILE=./deploy/small/caddy/Caddyfile.tls.example
+UBAG_NGINX_HTTP_PORT=80
 UBAG_PUBLIC_DOMAIN=ubag.example.com
 ```
 

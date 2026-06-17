@@ -19,9 +19,9 @@ Every major blueprint section is represented in the docs site and mapped to impl
 | AI provider adapters | M0 | v1 | DeepSeek, ChatGPT, Claude, Gemini, Mistral, Perplexity, generic chat/form, mock. |
 | Manual login and noVNC | M0 | v0-v1 | User-owned accounts and audited operator actions. |
 | SQLite edge profile | M0 | v0 contracted | SQLite/localfs contracts and migrations exist; runtime gateway persistence currently uses memory or opt-in Postgres/MinIO. |
-| Small compose profile | M0 | v0 | Postgres, MinIO, Caddy ingress, Dragonfly, Grafana/Prometheus, optional NATS profile. |
+| Small compose profile | M0 | v0 | Postgres, MinIO, nginx-dashboard ingress, Dragonfly, Grafana/Prometheus, optional NATS profile. |
 | Security and audit | M0 | v0-v1 | App-secret/idempotency, RBAC/ABAC contracts, audit, webhook signing, rate-limit contract. |
-| SDKs | M0 | v0-v2 | TypeScript, Python, Go first; all 11 by v2. |
+| SDKs | M0 | v0 | TypeScript and Go are the first-class supported SDK technologies for the active product scope. |
 | Dashboard | M0 | v0-v1 | Static NAJM-styled operator prototype now; live gateway-wired admin dashboard remains v1. |
 | Plugins and marketplace | M0 | v2 | WASM capability model. |
 | Enterprise and multi-region | M0 | v2 | SSO/SCIM, mTLS, HA, SIEM, DR. |

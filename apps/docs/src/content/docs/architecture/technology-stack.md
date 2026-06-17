@@ -10,13 +10,13 @@ description: Technology choices for UBAG and the phase where each becomes active
 | Sidecar | TypeScript/Node loopback proxy package | v0 |
 | CLI | TypeScript/Node command package | v0 |
 | Docs | Astro Starlight | M0 |
-| Dashboard | Static Node-built operator dashboard with Hallmark/NAJM CSS system | v0 |
-| Edge database | SQLite WAL contracts and migrations; gateway runtime wiring remains follow-up | v0 contracted |
+| Dashboard | SvelteKit gateway-wired operator dashboard with Hallmark/NAJM CSS system | v0-v1 |
+| Edge database | SQLite WAL runtime stores and localfs artifact mode | v0-v1 |
 | Small database | Postgres 16 gateway stores | v0 opt-in, v1 hardening |
 | Queue | local file-spool and NATS JetStream | v0 opt-in, v1 hardening |
-| Blob storage | in-memory default, MinIO opt-in, localfs contract boundary | v0 opt-in, v1 hardening |
+| Blob storage | in-memory default, MinIO opt-in, localfs runtime mode | v0 opt-in, v1 hardening |
 | Observability | Prometheus/Grafana scaffolding plus metric/event/log/probe contracts; Loki/Tempo/profiling later | v0 contracts, v1 hardening |
-| SDK contract generation | OpenAPI, Protobuf, JSON Schema, generated contract manifests, conformance fixtures | v0-v2 |
+| SDK contract generation | OpenAPI, Protobuf, JSON Schema, generated TypeScript/JavaScript and Go contract manifests, conformance fixtures | v0-v2 |
 
 ## Constraint
 

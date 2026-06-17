@@ -87,7 +87,7 @@ The standard `caddy` binary from the upstream Docker image or package manager is
 **Rationale:** The upstream Caddy binary does not include rate-limiting or WAF modules. Both capabilities are required for production edge and small-tier deployments where UBAG is exposed to the public internet. `xcaddy` is the official Caddy extension build tool and produces a standard Go binary with no runtime module loading; the resulting binary is statically linked and does not require the Caddy module system at runtime.
 
 **Consequences:**
-- `node tools/check-caddy.mjs` validates that the Caddy configuration file references only modules present in the expected custom build. This check runs in CI (`lint` job) and is exposed via `make caddy-validate`.
+- `node tools/check-nginx-dashboard.mjs` validates the small-profile nginx-dashboard ingress configuration. Standard Caddy production config remains a separate deployment artifact.
 - The `release-snapshot` and `release` targets produce the custom Caddy binary as part of the goreleaser build matrix.
 - Operators building Caddy locally must have `xcaddy` installed (`go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest`). The build command is documented in `docs/operations/deployment.md`.
 - The WAF CRS ruleset version is pinned in `.goreleaser.yaml` to prevent unintended rule updates from breaking existing deployments.
@@ -102,5 +102,5 @@ Summary of cross-cutting consequences for Phase 8:
 2. **Operator module** at `deploy/operator/` has an independent Go dependency graph. Gateway and operator upgrades are independently releasable.
 3. **goreleaser** is the single release mechanism. Manual release steps outside `.goreleaser.yaml` are not supported and will not be documented.
 4. **Tier migration** is upgrade-only. Downgrade requires a manual runbook. `ubag migrate` will refuse downgrade requests.
-5. **Custom Caddy** is required for all internet-facing deployments. The standard Caddy binary must not be substituted. A CI check (`node tools/check-caddy.mjs`) enforces configuration compatibility.
+5. **Custom Caddy** is required for standard internet-facing deployments. The standard Caddy binary must not be substituted; validate the currently active small-profile ingress with `make nginx-validate`.
 6. Phase 8 introduces no changes to the public REST API, job schema, plugin ABI, or SDK interfaces. All changes are infrastructure and packaging.

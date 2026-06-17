@@ -54,22 +54,37 @@ export interface HealthResponse {
 
 // Browser
 export interface BrowserInstance {
-  id: string;
-  status: string;
+  instance_id: string;
+  state: string;
   context_count?: number;
+  tab_count?: number;
+  engine?: string;
+  worker_id?: string;
+  remote_endpoint?: string;
+  novnc_url?: string;
+  // Legacy / optional
+  id?: string;
+  status?: string;
 }
 
 export interface BrowserContext {
-  id: string;
+  context_id: string;
   instance_id: string;
   tab_count?: number;
+  target_id?: string;
+  login_state?: string;
+  // Legacy / optional
+  id?: string;
 }
 
 export interface BrowserTab {
-  id: string;
+  tab_id: string;
   context_id: string;
   url?: string;
   title?: string;
+  state?: string;
+  // Legacy / optional
+  id?: string;
   status?: string;
 }
 
@@ -139,6 +154,8 @@ export interface Workflow {
   id: string;
   name: string;
   status?: string;
+  step_count?: number;
+  created_at?: string;
   steps?: WorkflowStep[];
 }
 

@@ -17,7 +17,7 @@ npm install @ubag/sdk
 Or use the Go SDK:
 
 ```bash
-go get github.com/ubag/sdk-go
+go get github.com/ubag/ubag-go
 ```
 
 ## Authentication

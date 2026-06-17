@@ -1,6 +1,6 @@
 //! Disk-backed offline queue for the UBAG sidecar.
 //!
-//! Mirrors the `OfflineQueue` API from `sdk-rust` but adds a [`SledOfflineStore`]
+//! Mirrors the SDK offline queue API shape but adds a [`SledOfflineStore`]
 //! (compiled in only with the `offline` feature) that persists entries to a
 //! `sled` embedded database so they survive process restarts.
 //!

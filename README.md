@@ -13,9 +13,9 @@ This repository has completed the docs-first Milestone 0 baseline and the curren
 - Security/compliance TypeScript contracts for app-secret auth, device tokens, RBAC/ABAC, audit events, and webhook signing.
 - Deterministic Python mock adapter and worker JSONL runner.
 - Safe-mode provider adapter manifests and stubs for DeepSeek, ChatGPT, Claude, Gemini, Mistral, Perplexity, generic chat, generic form, and mock.
-- TypeScript, Python, and Go SDKs with shared conformance fixtures for system, jobs, job events/SSE, artifacts, operator collections, webhook replay, workflow/template list, cache, apps/devices/audit, and metrics endpoints.
+- TypeScript and Go SDKs with shared conformance fixtures for system, jobs, job events/SSE, artifacts, operator collections, webhook replay, workflow/template list, cache, apps/devices/audit, and metrics endpoints.
 - CLI package for health/ready/version, jobs, events, apps/devices/audit collections, artifacts, cache, metrics, webhook replay, SSE snapshot reads, and local mock-worker runs.
-- Static NAJM/Hallmark dashboard prototype under `apps/dashboard` with local mock data, strict CSP, self-hosted/system fonts, and accessible state fixtures.
+- NAJM/Hallmark dashboard under `apps/dashboard` with gateway API wiring, strict CSP, self-hosted/system fonts, and accessible state fixtures.
 - Small Docker Compose profile under `deploy/small` and `docker-compose.small.yml`.
 - Observability/QA package for stable metrics, events, logs, smoke checklist, and health probes.
 - Astro Starlight docs site under `apps/docs`.

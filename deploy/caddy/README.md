@@ -67,19 +67,12 @@ process swaps routes atomically and keeps existing TLS sessions alive.
 
 ---
 
-## Profile switch (`UBAG_CADDY_PROFILE`)
+## Standard profile
 
-UBAG supports two Caddy profiles selected by the `UBAG_CADDY_PROFILE` environment
-variable (consumed by Docker Compose / Helm):
-
-| Value | Config file | Use case |
-|-------|------------|---------|
-| `small` *(default for local dev)* | `deploy/small/caddy/Caddyfile` | Loopback, `auto_https off`, plain HTTP `:80` |
-| `standard` | `deploy/caddy/Caddyfile.standard` | Production, `auto_https on`, HTTP/3, real TLS |
-
-The `small` profile intentionally disables TLS and rate limiting so the stack
-can run on a laptop without a public domain name.  The `standard` profile is the
-baseline for any internet-facing deployment.
+The small Docker Compose profile now uses `deploy/small/nginx-dashboard` for
+local dashboard/API/noVNC ingress. This Caddy directory tracks the production
+standard profile: automatic HTTPS, HTTP/3, rate limiting, and WAF-ready config
+for internet-facing deployments.
 
 ---
 

@@ -8,10 +8,8 @@ UBAG uses a dual-license model:
 |-----------|---------|-----------|
 | Gateway (`apps/gateway/`) | AGPL-3.0 | Server-side execution triggers copyleft |
 | Worker (`apps/worker/`) | AGPL-3.0 | Server-side, same rationale |
-| TypeScript SDK (`packages/sdk-ts/`) | Apache-2.0 | Client library; permissive |
-| Python SDK (`packages/sdk-python/`) | Apache-2.0 | Client library; permissive |
+| TypeScript SDK (`packages/sdk-typescript/`) | Apache-2.0 | Client library; permissive |
 | Go SDK (`packages/sdk-go/`) | Apache-2.0 | Client library; permissive |
-| Rust SDK (`packages/sdk-rust/`) | Apache-2.0 | Client library; permissive |
 | Sidecar (`packages/sidecar-rust/`) | Apache-2.0 | Agent runtime; permissive |
 | Dashboard (`apps/dashboard/`) | Apache-2.0 | Frontend; permissive |
 | Mobile (`apps/mobile/`) | Apache-2.0 | Frontend; permissive |

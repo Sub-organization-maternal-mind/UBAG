@@ -12,22 +12,20 @@ description: Staged delivery plan from docs baseline to enterprise ecosystem.
 ## v0: Edge MVP
 
 - REST jobs API, SSE, app-secret auth, idempotency, stable errors.
-- SQLite/localfs edge contracts; runtime gateway persistence wiring follows after the memory/Postgres/MinIO v0 slice.
+- SQLite/localfs edge runtime, memory/Postgres gateway stores, MinIO/localfs artifacts, and small-profile deployment scaffolding.
 - Mock target, generic adapter manifests, adapter SDK contract, and provider-safe manual-session stubs for DeepSeek, ChatGPT, Claude, Gemini, Mistral, and Perplexity.
 - Basic worker safe-mode dispatch and manual login handoff events.
-- Minimal CLI, sidecar, static dashboard prototype, guarded WebSocket baseline, built-in template catalog/application, cache status, and opt-in small-profile Postgres, NATS, MinIO, signed webhook outbox, observability, and TypeScript/Python/Go SDK wave.
+- CLI, sidecar, gateway-wired dashboard, guarded WebSocket baseline, built-in template catalog/application/rendering, workflow/cache foundations, opt-in small-profile Postgres, NATS, MinIO, signed webhook outbox, observability, and TypeScript/JavaScript plus Go SDK wave.
 
 ## v1: Production OSS platform
 
-- Production hardening for the implemented Docker Compose small profile, Postgres, MinIO, optional NATS, signed webhooks, observability, and first SDK wave.
-- Runtime SQLite/localfs persistence, native gRPC/gRPC-Web serving, and richer bidirectional WebSocket/dashboard semantics.
+- Production hardening for the implemented Docker Compose small profile, Postgres, MinIO, optional NATS, signed webhooks, observability, and TS/Go SDK wave.
 - Live user-owned provider adapters, expanded workflow/template/cache behavior, normalization, and semantic cache hardening.
-- RBAC/ABAC runtime hardening, audit export, rate limits, and secret rotation.
-- Rust, .NET, Java, and additional SDK transport conformance.
+- Production deployment activation, live runtime smoke, and release governance evidence.
+- Compliance-mode activation after legal review and deployed control evidence.
 
 ## v2: Enterprise and ecosystem
 
-- Remaining SDKs.
 - WASM plugins and adapter marketplace.
 - Helm, Terraform, installers, GitOps.
 - SSO/SAML/SCIM, mTLS, multi-region, SIEM export, mobile monitor, DR.

@@ -1,10 +1,10 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-05-30
+Last updated: 2026-06-18
 
 ## Current Phase
 
-v0 edge platform baseline: contracts, gateway, gateway executor dispatch boundary with file-spool and NATS worker result ingestion, opt-in Postgres gateway stores, NATS JetStream executor, MinIO artifact storage with idempotent mutations, signed webhook outbox delivery, built-in template catalog/application, scoped cross-job events, paginated operator collections, hardened payload secret-key detection, edge queue/store contracts, worker/adapters, static dashboard prototype, CLI, SDK wave 1, security/compliance contracts, observability contracts, and small-profile deployment scaffolding.
+v0/v2.1 platform baseline: contracts, gateway, gateway executor dispatch boundary with file-spool and NATS worker result ingestion, memory/Postgres/SQLite gateway stores, NATS JetStream executor, MinIO/localfs artifact storage with idempotent mutations, signed webhook outbox delivery, built-in template catalog/application/rendering, scoped cross-job events, paginated operator collections, hardened payload secret-key detection, edge queue/store contracts, worker/adapters, gateway-wired dashboard, CLI, TS/Go SDK wave, security/compliance contracts, observability contracts, and small-profile deployment scaffolding.
 
 ## Agent Continuation Handoff
 
@@ -54,14 +54,27 @@ Rendered docs-site counterpart: `operations/agent-handoff`.
 | Security contracts | Complete | `cmd /c pnpm test:security` tests and validates app-secret, device token, RBAC/ABAC, rate-limit, audit, and webhook signing contracts. |
 | Mock worker/adapter | Complete | `cmd /c pnpm test:worker` runs Python adapter and worker tests plus compileall and smoke output. |
 | Provider adapter registry | Complete | Safe-mode manifests exist for all listed v1 AI providers and generic adapters; worker dispatch enforces ownership/consent context and emits manual-session events. |
-| SDK wave 1 | Complete | `cmd /c pnpm test:sdk` validates generated operation-level contract manifest freshness plus TypeScript, Python, and Go SDKs against shared fixtures for system, job, event, artifact, operator collection, webhook replay, workflow/template, cache, apps/devices/audit, metrics, and stream entrypoint surfaces. |
+| SDK wave 1 | Complete | `cmd /c pnpm test:sdk` validates generated operation-level contract manifest freshness plus TypeScript/JavaScript and Go SDKs against shared fixtures for system, job, event, artifact, operator collection, webhook replay, workflow/template, cache, apps/devices/audit, metrics, and stream entrypoint surfaces. |
 | Sidecar | Complete | `cmd /c pnpm test:sidecar` validates the loopback `@ubag/sidecar` health/proxy runtime, mutating-route idempotency generation including artifact PUT/DELETE, public-binding guard, factory loopback enforcement, and absolute-form proxy target hardening. |
 | CLI | Complete | `cmd /c pnpm test:cli` builds/typechecks and tests health/ready/version/create/get/list/cancel/retry/SSE plus list-events/list-targets/list-adapters/list-apps/list-devices/list-audit-events/list-webhooks/list-artifacts/get-artifact/put-artifact/delete-artifact/replay-webhook/cache-status/metrics, help, diagnostics surface, adapter-test command, and mock-worker smoke. |
-| Dashboard prototype | Complete | `cmd /c pnpm test:dashboard` checks and builds the static NAJM/Hallmark dashboard prototype with CSP, no third-party font calls, responsive gates, and accessible state fixtures. |
-| Small deployment profile | Complete | `cmd /c pnpm test:deployment` validates Compose config for core and optional profiles, including Postgres migration runner, MinIO least-privilege bootstrap, and optional Caddy TLS ingress. |
+| Operator dashboard | Complete | `cmd /c pnpm test:dashboard` checks and builds the gateway-wired NAJM/Hallmark dashboard with CSP, no third-party font calls, responsive gates, accessible state fixtures, gateway-native browser topology fields, runtime-provided loopback noVNC embedding only, real template render output, and workflow metadata without fake fixture DAGs. |
+| Small deployment profile | Complete | `cmd /c pnpm test:deployment` validates the small-profile config/static checks, including Postgres migration runner, MinIO least-privilege bootstrap, nginx-dashboard ingress, and optional profiles. |
 | Observability contracts | Complete | `cmd /c pnpm test:observability` validates metrics, events, logs, smoke checklist, and health probes. |
 | v0 test chain | Complete | `cmd /c pnpm test:v0` passes end-to-end, including gateway Go tests. |
 | Plugin & adapter-registry checks | Complete | Root `test:plugins` (20/20) and `test:adapter-registry` (16/16) pass and are wired into `test:v0:local`. |
+
+## 2026-06-18 Dashboard Completion Pass
+
+Dashboard-only scope requested and completed. The SvelteKit dashboard now consumes the gateway browser topology response shape directly (`instance_id`, `context_id`, `tab_id`, `state`) instead of legacy `id/status` assumptions; noVNC iframes are only mounted when the selected browser instance exposes a runtime-generated loopback `http://` URL, and the dashboard no longer manufactures noVNC URLs from its configured gateway URL. Template preview renders the gateway `/v1/templates/{id}/render` `rendered` field rather than dumping the response envelope. The workflows page now uses real gateway workflow data only and displays a DAG only when the API response actually contains step details; the current list endpoint is shown honestly as workflow metadata and step count.
+
+Validated:
+
+```powershell
+cmd /c pnpm --filter @ubag/dashboard check
+cmd /c pnpm --filter @ubag/dashboard test
+cmd /c pnpm --filter @ubag/dashboard test:e2e
+cmd /c pnpm test:dashboard
+```
 
 ## 2026-05-29 Gateway Runtime Stores + Enterprise Surface Pass
 
@@ -89,14 +102,15 @@ Completed and locally validated:
 - Root `package.json` added `test:plugins` and `test:adapter-registry` and wired them into `test:v0:local`; both pass (plugins 20/20, adapter-registry 16/16).
 - Independent review PASSED with no Critical/High issues. Two hardening fixes were applied: cache purge now returns `501` when the cache is disabled, and SSO config `PUT` now rejects OIDC without an Issuer and SAML without an IdP certificate.
 
-Honest limitations / externally-blocked items (not yet done in this checkout):
-
-- SSO OIDC/SAML callbacks return a verified principal but do NOT yet mint real gateway sessions (follow-up).
-- SAML signature verification uses a pragmatic (non-full XML-C14N) check that fails closed; adopt exclusive C14N before production IdP onboarding.
-- For Postgres deployments, only the rate limiter has a native Postgres store; cache, workflow, SSO, SCIM, SIEM, and webhook-secret state persist via SQLite or fall back to in-memory (documented follow-up).
-- `POST /v1/audit/export` currently returns exporter status/stats; full record export is a follow-up because the audit record source is still a stub.
-- Non-TypeScript SDKs (rust/java/ruby/php/csharp/swift/kotlin/elixir) build and test in CI with their own toolchains and are not all locally validated (cargo/mvn/ruby/php/gradle/mix are absent on this dev machine; C# validated 10/10; the Swift Windows stdlib is broken).
-- Live provider adapters still require real accounts/sessions and remain externally-blocked.
+Superseded limitations from this checkpoint: later v2.1 slices added gateway
+SSO sessions, Exclusive XML-C14N SAML verification, native Postgres stores for
+response cache/workflow/SSO/SCIM/SIEM/webhook-secret/session/audit/alert/topology
+state, and real Merkle-chained audit export. SDK support is intentionally
+limited to TypeScript/JavaScript (`@ubag/sdk`) and Go
+(`github.com/ubag/ubag-go`). Prior non-TS/Go SDK package trees were removed
+from the active workspace; Git history is the archive if those ecosystems are
+revisited later. Live provider adapters still require real accounts/sessions
+and remain externally blocked.
 
 Gateway validation (Go 1.26 toolchain):
 
@@ -167,8 +181,8 @@ This pass closed concrete repo-local gaps reported by the 10 parallel continuati
 - SDK/CLI surfaces were expanded for apps, devices, audit, metrics, readiness/version, artifact get/put, cache status, and stream entrypoints.
 - Observability smoke and readiness checks now use the portable small-profile health probe and require template readiness evidence.
 - Dashboard security/state coverage now removes Google Fonts, adds strict CSP, sends matching local-preview security headers, and renders reachable loading, empty, partial, error, permission-denied, and stale/offline fixtures.
-- Small-profile Caddy ingress blocks unauthenticated public `/v1/metrics*` and `/v1/ready*` while keeping private-network Prometheus/gateway probes available.
-- Small-profile deployment hardening now includes an explicit rerunnable Postgres `migrate` action, a `minio-init` least-privilege artifact user/policy bootstrap, separate MinIO root and gateway credentials, and an optional `Caddyfile.tls.example` path for public-domain automatic HTTPS.
+- Small-profile edge ingress blocks unauthenticated public `/v1/metrics*` and `/v1/ready*` while keeping private-network Prometheus/gateway probes available.
+- Small-profile deployment hardening now includes an explicit rerunnable Postgres `migrate` action, a `minio-init` least-privilege artifact user/policy bootstrap, separate MinIO root and gateway credentials, and nginx-dashboard ingress for dashboard/API/noVNC routes.
 - Gateway startup now handles SIGINT/SIGTERM with graceful HTTP shutdown.
 - OpenAPI/conformance/proto drift was reduced with the `standard` cache profile enum, fixture-required readiness/version/job-list fields, and a protobuf error envelope.
 - Docs now distinguish implemented v0 runtime surfaces from contracted SQLite/localfs, full dashboard, additional SDKs, production auth/rate-limit/audit, and external activation work.
@@ -320,8 +334,8 @@ Implemented scope:
 - Edge queue/store TypeScript contracts plus SQLite migration files and conformance checks.
 - Security/compliance TypeScript contracts with tests and validation script, including rate-limit decisions.
 - Deterministic mock adapter, Python worker JSONL runner, safe-mode provider adapters, artifact policy validation, secret-material rejection, and manual-session required events.
-- TypeScript, Python, and Go SDKs for jobs, system endpoints, workflow/template list endpoints, cache status, apps/devices/audit, metrics, artifact get/put/delete, and SSE helpers with generated contract-manifest freshness checks.
-- CLI, loopback sidecar with idempotency auto-generation for mutating proxy routes, static dashboard prototype, observability package, and small-profile deployment scaffolding.
+- TypeScript/JavaScript and Go SDKs for jobs, system endpoints, workflow/template list endpoints, cache status, apps/devices/audit, metrics, artifact get/put/delete, and SSE helpers with generated contract-manifest freshness checks.
+- CLI, loopback sidecar with idempotency auto-generation for mutating proxy routes, gateway-wired dashboard, observability package, and small-profile deployment scaffolding.
 - Root command surface for full v0 verification.
 
 Command surface:
@@ -350,7 +364,7 @@ Expected current state:
 - `test:security` validates app-secret, device token, RBAC/ABAC, rate-limit decisions, audit redaction/chaining, and webhook signing contracts.
 - `test:worker` validates Python mock adapter, worker behavior, safe provider manifests, artifact policies, secret rejection, and manual-session context enforcement.
 - `test:sidecar` validates loopback health, gateway proxying, idempotency auto-generation, and non-loopback binding rejection.
-- `test:sdk` validates generated contract freshness plus TypeScript, Python, and Go SDKs.
+- `test:sdk` validates generated contract freshness plus TypeScript/JavaScript and Go SDKs.
 - `test:conformance` validates shared SDK conformance fixtures.
 - `test:observability` validates metrics, event names, log shape, health probes, and smoke checklist contracts.
 - `test:cli` validates CLI typecheck/build/help/create/get/list/cancel/retry/SSE/mock-run plus the diagnostics and adapter-test command surface.
@@ -459,7 +473,7 @@ Expected current state:
 - Edge queue/store: `cmd /c pnpm test:edge-store` passed; 9 queue conformance checks and SQLite migration execution passed.
 - Security contracts: `cmd /c pnpm test:security` passed; 7 Node tests plus the contract validation script passed.
 - Mock worker/adapter: `cmd /c pnpm test:worker` passed; Python unittests, compileall, safe-mode manifest checks, manual-session event checks, gateway dispatch-envelope compatibility, and a 16-event JSONL smoke run passed.
-- SDK freshness: `cmd /c pnpm check:sdk-freshness` passed for TypeScript, Python, and Go generated contract manifests.
+- SDK freshness: `cmd /c pnpm check:sdk-freshness` passed for TypeScript/JavaScript and Go generated contract manifests.
 - Sidecar: `cmd /c pnpm test:sidecar` passed; typecheck/build plus loopback health, `/v1/*` proxy with idempotency auto-generation, and non-loopback guard tests passed.
 - SDK: `cmd /c pnpm test:sdk` passed; TypeScript typecheck/build, Python unittest conformance, and Go conformance tests completed.
 - Conformance fixtures: `cmd /c pnpm test:conformance` passed; 30 executable REST scenarios plus 12 named non-executable coverage scenarios validated, including executor dispatch, file-spool/NATS worker ingestion, and webhook outbox retry.
@@ -536,6 +550,46 @@ git diff --check
 
 Next coding queue is documented in `AGENT_HANDOFF.md`. Update this ledger and the handoff file whenever implementation scope, validation evidence, runtime status, or remaining work changes.
 
+### 2026-06-17 - TS+Go SDK-only completion
+
+Implemented the TS+Go-only SDK policy for the active repository. The supported
+SDK set is now TypeScript/JavaScript (`@ubag/sdk`) and Go
+(`github.com/ubag/ubag-go`) only. Prior Python, Rust, Java, Kotlin, Ruby, PHP,
+C#, Swift, and Elixir SDK package trees were removed from active source,
+scripts, CI, docs, packaging, and release claims; Git history remains the
+archive. `packages/sidecar-rust` remains active because it is the loopback
+sidecar, not an SDK.
+
+Completed changes:
+
+- Root SDK scripts now run generated-manifest freshness plus TypeScript and Go tests only.
+- `tools/make-sdks/generate-manifest.mjs` is the canonical TS+Go manifest generator and supports non-mutating `--check` mode.
+- `tools/check-contracts.mjs` uses the generator check mode instead of mutating generated files during contract validation.
+- Stale nested npm lockfiles were removed and `pnpm-lock.yaml` was refreshed for the current pnpm workspace.
+- Active docs, rendered docs, Superpowers SDK plan/spec notes, CI, Makefile, SDK/conformance docs, and licensing now describe TS+Go-only SDK support.
+- Dashboard, worker, and small-deployment validation blockers found during the pass were fixed without changing the product scope: dashboard SvelteKit sync/types and static-adapter nav assertions, worker test `PYTHONPATH`, and small-profile nginx-dashboard deployment checks/docs.
+
+Validation passed:
+
+```powershell
+cmd /c pnpm install --frozen-lockfile
+cmd /c pnpm check:sdk-freshness
+cmd /c pnpm test:sdk:typescript
+cmd /c pnpm test:sdk:go
+cmd /c pnpm test:sdk
+node packages/conformance/scripts/validate-fixtures.mjs
+cmd /c pnpm test:worker
+cmd /c pnpm test:dashboard
+cmd /c pnpm test:deployment
+cmd /c pnpm test:v0
+cmd /c pnpm check
+git diff --check
+```
+
+Runtime note: Docker Compose is not installed on this host, so
+`cmd /c pnpm test:deployment` explicitly skipped compose rendering and passed
+the static small-deployment checks.
+
 ### 2026-06-02 — Live-browser viewer (noVNC) admin login stack
 
 Added an opt-in `live-browser` Compose profile so a super-admin can complete the **manual, human** login/CAPTCHA/2FA flow for AI providers inside a real, persistent Chromium streamed to the dashboard over noVNC. This is the ToS-safe substrate for activating live web adapters: UBAG never captures credentials, cookies, or storage state, and never solves challenges — the operator logs in by hand and the worker attaches to the already-authenticated profile over CDP.
@@ -544,7 +598,7 @@ Completed and locally validated (additive, opt-in, default path unchanged):
 
 - **`deploy/small/browser-viewer/Dockerfile` + `entrypoint.sh` (new).** `debian:bookworm-slim` running `Xvfb` + `fluxbox` + `chromium` (`--remote-debugging-port=9222`, `--user-data-dir=/profiles/default`) + `x11vnc` (`-localhost -rfbauth`) + `websockify`/`noVNC` on `6080`. Entrypoint requires `UBAG_BROWSER_VNC_PASSWORD` (fails closed), uses LF line endings, and runs under `tini`.
 - **`docker-compose.small.yml`.** New `browser-viewer` service under `profiles: ["live-browser"]` on the internal `ubag-private` network; only loopback noVNC (`${UBAG_NOVNC_PORT:-7900}:6080`) is published — CDP `9222` stays internal. Persistent `browser_profiles` volume. Gateway gains `UBAG_REMOTE_BROWSER_ENDPOINT`, `UBAG_BROWSER_HEADED`, `UBAG_BROWSER_ENGINE`, `UBAG_BROWSER_PROTOCOL`, `UBAG_NOVNC_BASE_URL` passthrough.
-- **`deploy/small/caddy/Caddyfile`.** New `/novnc/*` reverse proxy to `browser-viewer:6080` with `X-Frame-Options: SAMEORIGIN` override so the dashboard can embed the viewer iframe (global header default is `DENY`).
+- **Small-profile edge ingress.** New `/novnc/*` reverse proxy to `browser-viewer:6080` with `X-Frame-Options: SAMEORIGIN` override so the dashboard can embed the viewer iframe (global header default is `DENY`).
 - **Worker noVNC URL is now operator-configurable (`apps/worker/ubag_worker/live/engine.py`).** `_novnc_url` reads `UBAG_NOVNC_BASE_URL` and only honors **loopback** `http://host:port` bases via the new `_is_loopback_novnc_base` guard; any non-loopback/scheme/path value falls back to the default `http://127.0.0.1:7900`, so the gateway's loopback-only forwarding contract holds and existing tests keep their exact URL.
 - **Dashboard Take-control viewer (`apps/dashboard/src`).** Browser panel gains a `.live-viewer` region with **Take control** / **Open in new tab** / **Release** controls; the noVNC iframe is lazily mounted (sandboxed `allow-scripts allow-same-origin allow-forms`) only on demand. CSP gains `frame-src 'self'`. No credential/cookie/storage-state surface is added — storage stays a boolean indicator.
 - **Config + docs.** `deploy/small/env.example` documents the new vars; `deploy/small/README.md` adds a "Live-browser viewer (noVNC)" section covering the loopback/password posture; `tools/check-small-deployment.mjs` asserts the compose service, Dockerfile, entrypoint, Caddy route, and env keys.

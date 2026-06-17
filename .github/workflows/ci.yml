@@ -145,12 +145,10 @@ jobs:
         with: { node-version: "${{ env.NODE_VERSION }}", cache: pnpm }
       - uses: actions/setup-go@v5
         with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
-      - uses: actions/setup-python@v5
-        with: { python-version: "${{ env.PYTHON_VERSION }}" }
       - run: pnpm install --frozen-lockfile
       - name: Edge store, plugins, adapter-registry, security, sidecar
         run: pnpm test:edge-store && pnpm test:plugins && pnpm test:adapter-registry && pnpm test:security && pnpm test:sidecar
-      - name: SDK suite (TS + Python + Go)
+      - name: SDK suite (TypeScript + Go)
         run: pnpm test:sdk
       - name: Conformance + observability
         run: pnpm test:conformance && pnpm test:observability
@@ -192,16 +190,6 @@ jobs:
         with: { format: spdx-json, output-file: ubag.sbom.spdx.json }
       - uses: actions/upload-artifact@v4
         with: { name: sbom, path: ubag.sbom.spdx.json }
-
-  sdk-rust:
-    name: SDK (Rust)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Build and test Rust SDK
-        working-directory: packages/sdk-rust
-        run: cargo test --all-features
 
   sidecar-rust:
     name: Sidecar (Rust)

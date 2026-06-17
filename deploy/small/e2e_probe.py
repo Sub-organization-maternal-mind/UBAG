@@ -2,7 +2,7 @@
 """UBAG gateway role-based E2E probe.
 
 Runs INSIDE the gateway container (python3 present) against the local
-gateway on 127.0.0.1:8080, bypassing the caddy edge so internal routes
+gateway on 127.0.0.1:8080, bypassing the edge ingress so internal routes
 (/v1/ready, /v1/metrics) are also reachable.
 
 Usage:

@@ -29,6 +29,11 @@ const ALL_ROUTES = [
   { path: '/metrics', name: 'metrics' },
 ];
 
+function navHrefSelector(path: string) {
+  const staticHref = path === '/' ? './' : `.${path}`;
+  return `aside nav a[href="${path}"], aside nav a[href="${staticHref}"]`;
+}
+
 test.describe('Shell navigation', () => {
   test('nav lists all §24.2 pages', async ({ page }) => {
     await page.goto('/');
@@ -40,7 +45,7 @@ test.describe('Shell navigation', () => {
 
     // Verify key hrefs are present
     for (const route of ALL_ROUTES) {
-      const link = page.locator(`aside nav a[href="${route.path}"]`);
+      const link = page.locator(navHrefSelector(route.path));
       await expect(link).toBeVisible();
     }
   });
@@ -144,7 +149,7 @@ test.describe('§24.2 page set completeness', () => {
     const expectedHrefs = ALL_ROUTES.map((r) => r.path);
     for (const href of expectedHrefs) {
       await expect(
-        page.locator(`aside nav a[href="${href}"]`),
+        page.locator(navHrefSelector(href)),
         `Missing nav link: ${href}`
       ).toBeVisible();
     }

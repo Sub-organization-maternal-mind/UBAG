@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Validates the nginx-dashboard config (replaces check-caddy.mjs).
+ * Validates the nginx-dashboard config.
  * Checks that deploy/small/nginx-dashboard/nginx.conf exists and contains
  * the required routing directives for the UBAG small profile.
  */

@@ -36,7 +36,7 @@ import (
     "fmt"
     "os"
     "log"
-    ubag "github.com/ubag/sdk-go"
+    ubag "github.com/ubag/ubag-go"
 )
 
 func main() {

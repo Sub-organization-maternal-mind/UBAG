@@ -37,8 +37,7 @@ before enabling it in shared small-profile environments.
 - `docker-compose.small.yml`: root Compose file for the small stack.
 - `deploy/small/env.example`: placeholder environment template with no secrets.
 - `deploy/small/small.ps1`: PowerShell helper for config, up, down, logs, and smoke checks.
-- `deploy/small/caddy/Caddyfile`: local Caddy ingress for `/v1/*`.
-- `deploy/small/caddy/Caddyfile.tls.example`: public-domain TLS ingress example for Caddy automatic HTTPS.
+- `deploy/small/nginx-dashboard/default.conf.template`: local nginx ingress for `/dashboard/*`, `/v1/*`, and `/novnc/*`.
 - `deploy/small/prometheus/prometheus.yml`: Prometheus and gateway `/v1/metrics` scrape config.
 - `deploy/small/grafana/provisioning`: Grafana datasource provisioning.
 - `deploy/small/*Dockerfile`: gateway and mock-worker build contexts. The gateway image carries the mock worker code so the embedded consumer can be enabled for local file-spool runs.
@@ -77,13 +76,13 @@ Check gateway health directly:
 Invoke-RestMethod http://127.0.0.1:8080/v1/health
 ```
 
-Check Caddy ingress:
+Check nginx-dashboard ingress:
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8081/v1/health
+Invoke-RestMethod http://127.0.0.1:8083/v1/health
 ```
 
-Run the direct gateway health/readiness, Caddy ingress health, and mock-worker
+Run the direct gateway health/readiness, nginx-dashboard ingress health, and mock-worker
 smoke path:
 
 ```powershell
@@ -189,24 +188,24 @@ Start observability services:
 
 Grafana listens on `http://127.0.0.1:3000` and Prometheus listens on
 `http://127.0.0.1:9090` by default. Prometheus scrapes itself and gateway
-`/v1/metrics`; Caddy admin stays bound to localhost inside its container.
+`/v1/metrics`.
 
-`UBAG_EDGE_BIND_HOST` controls Caddy ingress. `UBAG_BACKING_BIND_HOST` controls
+`UBAG_EDGE_BIND_HOST` controls nginx-dashboard ingress. `UBAG_BACKING_BIND_HOST` controls
 gateway, Postgres, Dragonfly, MinIO, Prometheus, Grafana, and NATS host ports
 and defaults to loopback. Keep `UBAG_BACKING_BIND_HOST` on loopback unless a
 firewall review explicitly approves public backing-service ports. For public
 deployments, bind only the edge ingress externally and keep backing services
 private.
 
-To use Caddy automatic HTTPS for a public domain, copy or reference the TLS
-example Caddyfile and bind the edge ports intentionally:
+For public-domain TLS, terminate HTTPS at an external reverse proxy or replace
+the edge service with the standard Caddy profile after the public-domain Caddy
+configuration is wired for the target host. Keep backing service ports on
+loopback and bind only the edge ingress externally:
 
 ```powershell
 # in deploy\small\env.local
 UBAG_EDGE_BIND_HOST=0.0.0.0
-UBAG_CADDY_HTTP_PORT=80
-UBAG_CADDY_HTTPS_PORT=443
-UBAG_CADDYFILE=./deploy/small/caddy/Caddyfile.tls.example
+UBAG_NGINX_HTTP_PORT=80
 UBAG_PUBLIC_DOMAIN=ubag.example.com
 ```
 

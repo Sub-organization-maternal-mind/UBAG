@@ -136,8 +136,8 @@ The resulting `caddy` binary should be placed at `deploy/caddy/caddy` or baked i
 **Validate the Caddy config:**
 
 ```sh
-make caddy-validate
-# or: node tools/check-caddy.mjs
+make nginx-validate
+# or: node tools/check-nginx-dashboard.mjs
 ```
 
 ### Configuration

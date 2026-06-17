@@ -104,7 +104,7 @@ test-all: cover
 
 # --- SDK generation pipeline (blueprint §8.1) -----------------------------
 sdks:
-	node tools/make-sdks/generate.mjs
+	node tools/make-sdks/generate-manifest.mjs
 
 # --- benchmarks (blueprint §19.5, §36.3) ----------------------------------
 bench:

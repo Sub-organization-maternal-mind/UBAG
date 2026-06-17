@@ -5,11 +5,11 @@ description: Edge, small, standard, and enterprise deployment targets.
 
 ## Edge
 
-Single-machine profile for developer laptops, Raspberry Pi, NUC, or a small VPS. SQLite/localfs contracts and migrations exist in the repository, but the current gateway runtime uses in-memory stores by default and Postgres/MinIO when explicitly configured. Runtime SQLite/localfs persistence remains follow-up work.
+Single-machine profile for developer laptops, Raspberry Pi, NUC, or a small VPS. The gateway can run with in-memory defaults or SQLite/localfs persistence through `UBAG_GATEWAY_STORE=sqlite` and `UBAG_ARTIFACT_STORE=localfs`.
 
 ## Small
 
-Docker Compose profile with gateway, worker, Postgres, MinIO, Caddy, Grafana, Prometheus, Dragonfly/Valkey, and optional NATS.
+Docker Compose profile with gateway, worker, Postgres, MinIO, nginx-dashboard ingress, Grafana, Prometheus, Dragonfly/Valkey, and optional NATS.
 
 The first small-profile scaffold lives in `docker-compose.small.yml` with service
 configuration under `deploy/small`. The gateway defaults to in-memory job and
@@ -31,8 +31,8 @@ deliveries, and `UBAG_WEBHOOK_WORKER_ENABLED=true` runs the retry worker when
 settings are configured. The small profile also includes a rerunnable Postgres
 `migrate` action for existing volumes, a `minio-init` bootstrap that creates the
 artifact bucket and least-privilege gateway policy, separate MinIO root and
-gateway credentials, and an optional `Caddyfile.tls.example` for public-domain
-automatic HTTPS.
+gateway credentials, and a local nginx-dashboard ingress that can sit behind a
+public TLS reverse proxy.
 See [Small Compose Profile](/deployment/small-profile/) for local startup
 commands and the current wiring boundary.
 

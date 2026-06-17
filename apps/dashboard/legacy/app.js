@@ -27,7 +27,7 @@ if (config.isConfigured) {
     renderPanels();
   });
 } else {
-  sourcePill.textContent = 'Local mock data';
+  sourcePill.textContent = 'Archived local data';
 }
 
 lastSync.textContent = `Last sync ${dashboardData.lastSync}`;

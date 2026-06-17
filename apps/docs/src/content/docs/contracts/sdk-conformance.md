@@ -12,16 +12,7 @@ UBAG SDKs are schema-driven. Generated contract manifests pin OpenAPI, Protobuf,
 | Language or runtime | Package | Target ecosystems |
 | --- | --- | --- |
 | TypeScript / JavaScript | `@ubag/sdk` | Node, Bun, Deno, browser, Electron, Tauri, extensions |
-| Python 3.10+ | `ubag` | PySide, Tk, Django, FastAPI, scripts |
 | Go 1.21+ | `github.com/ubag/ubag-go` | Microservices, CLIs |
-| Rust 1.78+ | `ubag` | Tauri, embedded, performance-sensitive clients |
-| .NET 8 | `Ubag.Sdk` | WPF, WinForms, MAUI, Avalonia, ASP.NET |
-| Java 17+ / Kotlin | `dev.ubag:ubag-sdk` | JavaFX, Spring, Android |
-| Swift 5.9+ | `Ubag` | macOS, iOS, server-side Swift |
-| Ruby 3.2+ | `ubag` | Rails, scripts |
-| PHP 8.2+ | `ubag/ubag-sdk` | Laravel, WordPress plugins |
-| Dart / Flutter | `ubag` | Flutter mobile and desktop |
-| Elixir | `ubag` | Phoenix, BEAM systems |
 
 ## Required Feature Parity
 
@@ -41,7 +32,7 @@ Every SDK must support:
 
 ## Conformance Suite
 
-The conformance suite is a shared JSON-defined test plan executed against each SDK and a mock gateway. The long-term suite targets 250 or more scenarios. The current v0 baseline contains 30 executable REST scenarios wired through TypeScript, Python, and Go SDK runners, generated operation-level contract freshness checks for all three packages, and 12 named non-executable coverage scenarios for retries, streaming, timeouts, Unicode, large payloads, malformed responses, webhook helpers, sidecar discovery, executor dispatch, file-spool/NATS worker ingestion, and webhook outbox retry.
+The conformance suite is a shared JSON-defined test plan executed against each supported SDK and a mock gateway. The current baseline contains 41 executable REST scenarios wired through TypeScript and Go SDK runners, generated contract freshness checks for both packages, and 272 named non-executable coverage scenarios for retries, streaming, timeouts, Unicode, large payloads, malformed responses, webhook helpers, sidecar discovery, executor dispatch, file-spool/NATS worker ingestion, webhook outbox retry, browser topology, alerts, audit export, and SSO logout.
 
 Baseline categories:
 

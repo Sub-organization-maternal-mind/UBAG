@@ -25,4 +25,4 @@ UBAG is a single self-hostable gateway that lets any application drive web-based
 
 ## First implementation boundary
 
-The docs-first Milestone 0 baseline is complete. The repository now includes the current v0 edge foundation slice: gateway contracts/runtime, worker/mock adapter, TypeScript/Python/Go SDK wave, CLI/sidecar, static dashboard prototype, observability/security contracts, and small-profile scaffolding. Live provider execution, runtime SQLite/localfs gateway persistence, full live admin dashboard, production deployment, and compliance activation remain follow-up or external-activation work.
+The docs-first Milestone 0 baseline is complete. The repository now includes the current v0/v2.1 foundation: gateway contracts/runtime, worker/mock adapter, TypeScript/JavaScript and Go SDKs, CLI/sidecar, gateway-wired operator dashboard, observability/security contracts, SQLite/Postgres runtime stores, localfs/MinIO artifact storage, workflow/cache/template foundations, and small-profile scaffolding. Live provider execution, production deployment, and compliance activation remain external-activation work.

@@ -26,8 +26,8 @@ git diff --check
 
 ## Current State
 
-- Git is initialized on `master`, but there is no first commit yet.
-- The current repository contents are untracked until an initial commit is made.
+- Git is initialized on `master`, tracking `origin/master`.
+- The current workspace contains intentional TS+Go-only SDK completion edits until reviewed or committed.
 - Milestone 0 docs-first baseline is complete.
 - Current v0 edge foundation is implemented and validateable.
 - Small-profile deployment scaffolding is present and compose-validated.
@@ -37,7 +37,7 @@ git diff --check
 - MinIO artifact storage is implemented with `UBAG_ARTIFACT_STORE=minio`, `UBAG_MINIO_ENDPOINT`, `UBAG_MINIO_ACCESS_KEY`, `UBAG_MINIO_SECRET_KEY`, `UBAG_MINIO_BUCKET`, and `UBAG_MINIO_USE_SSL`, with Postgres metadata in `migrations/postgres/0002_artifact_metadata.sql` when Postgres stores are active.
 - Signed webhook outbox delivery is implemented with per-job callbacks, `UBAG_WEBHOOK_OUTBOX`, `UBAG_WEBHOOK_WORKER_ENABLED`, environment-backed signing secrets, strict callback URL policy, replay hardening, and Postgres migration `migrations/postgres/0003_webhook_outbox.sql`.
 - Built-in template catalog/runtime foundation is implemented: `/v1/templates` lists built-ins, readiness checks the template store, and job creation applies template defaults before payload validation, storage, idempotency hashing, and executor enqueue.
-- Latest hardening covers template-default job creation, callback secret-reference handling, manual-session event data preservation, sidecar artifact idempotency, SDK/CLI endpoint parity, dashboard CSP/state coverage, small-profile public ingress guards, Postgres migration reruns, MinIO least-privilege bootstrap, optional TLS ingress, gateway graceful shutdown, observability readiness/smoke probes, contract drift, and docs claim accuracy.
+- Latest hardening covers template-default job creation, callback secret-reference handling, manual-session event data preservation, sidecar artifact idempotency, SDK/CLI endpoint parity, dashboard CSP/state coverage, small-profile public ingress guards, Postgres migration reruns, MinIO least-privilege bootstrap, nginx-dashboard ingress, gateway graceful shutdown, observability readiness/smoke probes, contract drift, and docs claim accuracy.
 - Live provider execution and production deployment require external activation inputs.
 
 ## Implemented Surface
@@ -48,12 +48,43 @@ git diff --check
 | Gateway | Go `/v1` control plane with health, ready, version, metrics, jobs, events, SSE, WebSocket guard, workflows, built-in template catalog/application, targets/adapters, apps, devices, webhooks, cache status, audit, cancel, retry, auth, stable errors, idempotency, executable payload safety checks, executor dispatch, file-spool/NATS leasing, worker result ingestion, signed webhook outbox delivery, and opt-in Postgres jobs/events/idempotency/webhook stores. |
 | Contracts | OpenAPI, JSON Schemas, Protobuf seed, SDK fixtures, and contract validation. |
 | Worker/adapters | Python worker, mock adapter, safe-mode provider manifests, manual-session events, artifact policies, and secret rejection. |
-| SDK/CLI/sidecar | TypeScript, Python, and Go SDKs for system, jobs, job events/SSE, artifacts, operator collections, webhook replay, workflow/template list, cache, apps/devices/audit, and metrics endpoints; CLI; loopback sidecar; 30 executable REST conformance scenarios plus 12 named coverage scenarios; freshness checks. |
-| Dashboard | Static NAJM/Hallmark dashboard prototype with Overview, Apps, Targets, Jobs, Sessions, Templates, Runtime, Activation, CSP, no third-party font calls, and accessible state fixtures. |
+| SDK/CLI/sidecar | TypeScript and Go SDKs for system, jobs, job events/SSE, artifacts, operator collections, webhook replay, workflow/template list, cache, apps/devices/audit, metrics, and stream entrypoint endpoints; CLI; loopback sidecar; 41 executable REST conformance scenarios plus 272 named coverage scenarios; freshness checks. |
+| Dashboard | NAJM/Hallmark operator dashboard with gateway API wiring, Overview, Apps, Targets, Jobs, Sessions, Templates, Runtime, Activation, CSP, no third-party font calls, accessible state fixtures, gateway-native browser topology fields, runtime-provided loopback noVNC embedding only, real template render output, and workflow metadata without fake fixture DAGs. |
 | Security/ops | App-secret auth, device tokens, RBAC/ABAC, audit, webhook signing, rate-limit contracts, observability registries, and runbooks. |
-| Deployment | Edge profile and small Docker Compose profile with Caddy, Postgres, Dragonfly, MinIO, Prometheus/Grafana, optional NATS, Postgres gateway/artifact/webhook migrations, rerunnable `migrate` action, least-privilege `minio-init`, optional TLS ingress example, and durable-store env wiring. |
+| Deployment | Edge profile and small Docker Compose profile with nginx-dashboard ingress, Postgres, Dragonfly, MinIO, Prometheus/Grafana, optional NATS, Postgres gateway/artifact/webhook migrations, rerunnable `migrate` action, least-privilege `minio-init`, and durable-store env wiring. |
 
 ## Latest Green Baseline
+
+After the 2026-06-17 TS+Go-only SDK completion pass, the following validation passed:
+
+```powershell
+cmd /c pnpm install --frozen-lockfile
+cmd /c pnpm check:sdk-freshness
+cmd /c pnpm test:sdk:typescript
+cmd /c pnpm test:sdk:go
+cmd /c pnpm test:sdk
+node packages/conformance/scripts/validate-fixtures.mjs
+cmd /c pnpm test:worker
+cmd /c pnpm test:dashboard
+cmd /c pnpm test:deployment
+cmd /c pnpm test:v0
+cmd /c pnpm check
+git diff --check
+```
+
+Docker Compose was not installed on this host, so `test:deployment` used its
+static deployment checks after explicitly reporting the compose-render skip.
+The supported SDK set is TypeScript/JavaScript (`@ubag/sdk`) and Go
+(`github.com/ubag/ubag-go`) only.
+
+After the 2026-06-18 dashboard-only completion pass, the following validation passed:
+
+```powershell
+cmd /c pnpm --filter @ubag/dashboard check
+cmd /c pnpm --filter @ubag/dashboard test
+cmd /c pnpm --filter @ubag/dashboard test:e2e
+cmd /c pnpm test:dashboard
+```
 
 After the 2026-05-25 continuation hardening pass, the following sequential validation passed:
 
@@ -248,7 +279,7 @@ Continue from the green baseline with these tracks:
 
 1. Commit the current green baseline when the user approves.
 2. Convert safe-mode provider stubs into live manual-session browser adapters after user-owned account/session requirements are available; acceptance requires manual-session consent, no credential/session/token storage, no CAPTCHA bypass, runtime-generated noVNC URLs only, adapter allowlisting, tenant/app scoping, audit events, and artifact redaction.
-3. Expand workflow/cache execution and the template runtime beyond the current built-in/single-step foundation; acceptance requires idempotency, tenant/app scope, payload policy reuse, secret rejection, audit events, retention controls, and privacy-mode cache bypasses.
+3. Continue hardening workflow/cache/template runtime beyond the current validated foundation; acceptance requires durable template authoring, richer workflow DAG/saga semantics, retention controls, privacy-mode cache bypasses, and expanded SDK/conformance coverage.
 4. Add gRPC/gRPC-Web serving from the Protobuf contracts after stable service boundaries exist; acceptance requires the same authn/authz, idempotency, stable error model, body/message limits, streaming limits, and explicit TLS/origin/CORS policy as REST.
-5. Broaden SDK conformance beyond REST fixtures where runtime services exist, including event streaming and artifacts before new transports are claimed.
+5. Broaden TypeScript and Go SDK conformance beyond REST fixtures where runtime services exist, including event streaming and artifacts before new transports are claimed.
 6. Add CI after the repository has an initial commit and remote policy is known.

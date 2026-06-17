@@ -17,7 +17,7 @@ hero:
 
 ## Current phase
 
-UBAG has completed the docs-first Milestone 0 baseline and the current v0 edge foundation slice. The repository contains the planning pack, runnable Starlight docs site, gateway/control-plane slice, worker and adapter safe-mode baseline, SDK/CLI/sidecar packages, static dashboard prototype, security and observability contracts, and deployment profile evidence. Remaining full-blueprint items are explicitly tracked as follow-up or external activation work.
+UBAG has completed the docs-first Milestone 0 baseline and the current v0/v2.1 foundation slice. The repository contains the planning pack, runnable Starlight docs site, gateway/control-plane slice, worker and adapter safe-mode baseline, TS/Go SDKs, CLI/sidecar packages, gateway-wired dashboard, security and observability contracts, and deployment profile evidence. Remaining full-blueprint items are explicitly tracked as follow-up or external activation work.
 
 ## What this site covers
 

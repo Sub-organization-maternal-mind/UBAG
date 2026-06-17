@@ -1,6 +1,6 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-06-01
+Last updated: 2026-06-18
 
 This is the resume point for any future agentic AI working in `D:\Projects\UBAG`.
 Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
@@ -8,9 +8,8 @@ Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
 ## Current Repository State
 
 - Working directory: `D:\Projects\UBAG`.
-- Git is initialized, but there is no first commit yet.
-- Current branch is `master`.
-- All implementation files are currently untracked until the first commit is made.
+- Git is initialized on branch `master`, tracking `origin/master`.
+- The current workspace contains the intentional TS+Go-only SDK completion edits until this slice is reviewed or committed.
 - Preserve `AGENTS.md`, `design.md`, `.codex`, and all current workspace contents.
 - Do not run `git reset`, `git clean`, or destructive checkout commands unless the user explicitly asks.
 
@@ -23,39 +22,70 @@ Current implemented or validateable scope:
 - Astro Starlight documentation site under `apps/docs`.
 - Root planning and tracking docs: `PRD.md`, `PROGRESS.md`, `IMPLEMENTATION_COVERAGE.md`, and this handoff.
 - OpenAPI, shared JSON Schemas, Protobuf seed contracts, SDK fixtures, and contract checks.
-- Conformance fixtures currently include 30 executable REST scenarios plus 12 named non-executable coverage scenarios.
+- Conformance fixtures currently include 41 executable REST scenarios plus 272 named non-executable coverage scenarios.
 - Go gateway with `/v1` health, readiness, version, metrics, jobs, tenant/app-scoped cross-job events, SSE, WebSocket upgrade guard, workflows, built-in template catalog/application, targets/adapters, apps, devices, webhooks, cache status, audit, cancel, retry, stable errors, idempotency, idempotent artifact mutations, paginated operator collections, and app-secret auth.
 - Gateway-side executable payload safety checks, internal executor dispatch boundary, and optional embedded worker consumer/result ingestion for local file-spool and NATS JetStream leases.
 - Opt-in Postgres gateway stores for jobs, events, worker-event dedupe keys, and idempotency records via `UBAG_GATEWAY_STORE=postgres`.
 - Edge queue and SQLite/localfs-oriented storage contracts plus migrations and conformance checks; gateway runtime persistence is memory by default and Postgres/MinIO when configured.
 - Python worker, deterministic mock adapter, safe-mode provider manifests, manual-session events, artifact policies, and secret-material rejection.
 - Safe-mode adapter coverage for DeepSeek, ChatGPT, Claude, Gemini, Mistral, Perplexity, generic chat, generic form, and mock.
-- TypeScript, Python, and Go SDK wave with generated operation-level contract-manifest freshness checks for system, job, job-event, artifact list/upload/download/delete, operator collection, webhook replay, workflow/template list, cache, apps/devices/audit, metrics, and stream entrypoint endpoints.
+- TypeScript/JavaScript and Go SDK wave with generated operation-level contract-manifest freshness checks for system, job, job-event, artifact list/upload/download/delete, operator collection, webhook replay, workflow/template list, cache, apps/devices/audit, metrics, and stream entrypoint endpoints.
 - TypeScript CLI with health/ready/version, diagnose, create/get/list/cancel/retry, event/artifact/operator/webhook/cache/metrics commands, SSE streaming, mock-run, and adapter-test coverage.
 - Loopback sidecar with `/health`, `/v1/*` proxy, mutating-route idempotency generation including artifact PUT/DELETE, and public-binding guard.
-- Static NAJM/Hallmark dashboard prototype under `apps/dashboard`; live gateway-wired full admin dashboard remains a contracted v1 surface.
+- NAJM/Hallmark operator dashboard under `apps/dashboard`, wired to gateway APIs with local fixtures only for tests and empty/offline states. The dashboard consumes gateway-native browser topology fields, embeds only runtime-generated loopback noVNC URLs, renders template preview output from the gateway `rendered` field, and does not invent workflow DAGs when the list endpoint only returns metadata.
 - Security/compliance contracts for app-secret auth, device tokens, RBAC/ABAC, audit redaction/chaining, webhook signing, and rate-limit decisions.
 - Observability package with metric, event, log, health-probe, and smoke-check registries.
-- Small deployment profile with Docker Compose, Caddy, Postgres, Dragonfly, MinIO, Prometheus/Grafana, and optional NATS.
+- Small deployment profile with Docker Compose, nginx-dashboard ingress, Postgres, Dragonfly, MinIO, Prometheus/Grafana, and optional NATS.
 - NATS JetStream gateway dispatch and embedded durable worker consumption are implemented via `UBAG_EXECUTOR_MODE=nats`, `UBAG_NATS_URL`, `UBAG_NATS_STREAM`, `UBAG_NATS_SUBJECT`, and the `UBAG_NATS_WORKER_*` settings.
 - MinIO artifact storage is implemented via `UBAG_ARTIFACT_STORE=minio`, `UBAG_MINIO_ENDPOINT`, `UBAG_MINIO_ACCESS_KEY`, `UBAG_MINIO_SECRET_KEY`, `UBAG_MINIO_BUCKET`, and `UBAG_MINIO_USE_SSL`, with Postgres metadata in `migrations/postgres/0002_artifact_metadata.sql` when the gateway store is Postgres-backed.
 - Signed webhook outbox delivery is implemented via per-job callback config, `UBAG_WEBHOOK_OUTBOX`, Postgres migration `migrations/postgres/0003_webhook_outbox.sql`, HMAC signing secrets from environment, strict callback URL policy, and an opt-in retry worker controlled by `UBAG_WEBHOOK_WORKER_ENABLED`.
 - Built-in template catalog/runtime foundation is implemented in memory: `/v1/templates` lists built-ins, readiness verifies the template store, and job creation applies template defaults before payload policy validation, storage, idempotency hashing, and executor enqueue.
 - The latest gateway completion sweep hardened secret-like payload key detection, replaced the `/v1/events` placeholder with real scoped event listing, added collection pagination/AuthZ, required idempotency for artifact PUT/DELETE replay, aligned the Mistral adapter catalog key as `mistral_lechat`, and added proto/OpenAPI/schema lint command coverage.
-- The latest hardening pass closed repo-local audit gaps in template-default job creation, callback secret-reference handling, manual-session event data preservation, sidecar artifact idempotency, SDK/CLI endpoint parity, dashboard CSP/state coverage, small-profile public ingress guards, Postgres migration reruns, MinIO least-privilege bootstrap, optional TLS ingress, gateway graceful shutdown, observability readiness/smoke probes, contract drift, and docs claim accuracy.
+- The latest hardening pass closed repo-local audit gaps in template-default job creation, callback secret-reference handling, manual-session event data preservation, sidecar artifact idempotency, SDK/CLI endpoint parity, dashboard CSP/state coverage, small-profile public ingress guards, Postgres migration reruns, MinIO least-privilege bootstrap, nginx-dashboard ingress, gateway graceful shutdown, observability readiness/smoke probes, contract drift, and docs claim accuracy.
 - The 2026-05-29 pass added a runtime SQLite/localfs persistence path and six enterprise leaf packages to the gateway, all code-complete and locally validated with green `go build`/`vet`/`test ./...` (gRPC + grpc-web were completed in a previous slice):
   - Runtime stores: `UBAG_GATEWAY_STORE=sqlite` (WAL, `busy_timeout`, `foreign_keys`, single-writer), `UBAG_ARTIFACT_STORE=localfs` with `UBAG_ARTIFACT_DIR`, and a SQLite webhook outbox mode.
   - `internal/ratelimit` (memory + SQLite + Postgres stores, policy resolver), `internal/responsecache` (memory + SQLite, never exposes cached payload values), `internal/workflow` (memory + SQLite multi-step runs with payload policy on every step input), `internal/sso` (stdlib OIDC RS256 + SAML verification, memory + SQLite config store), `internal/scim` (SCIM v2 Users/Groups CRUD+Patch, memory + SQLite, passwords never stored), and `internal/siem` (redacted audit/event export via File/HTTP/Syslog sinks with a non-blocking exporter).
   - `internal/httpapi` wiring is nil-safe/optional so unconfigured subsystems leave existing behavior unchanged; new routes and RBAC actions are `GET /v1/cache` (`job:read`) and `DELETE /v1/cache` (`rate_limit:manage`), `GET /v1/rate-limits` (`rate_limit:manage`), `GET/POST /v1/workflows` + `POST /v1/workflows/{id}/runs` + `GET /v1/workflows/runs/{id}` (`job:read`/`job:create`), `GET/PUT /v1/sso/config` (`role:manage`) + `POST /v1/sso/oidc/callback` + `POST /v1/sso/saml/acs` (verification, no RBAC), `/v1/scim/v2/Users[/{id}]` and `/v1/scim/v2/Groups[/{id}]` (`role:manage`), `GET/PUT /v1/siem/config` (`role:manage`) + `POST /v1/audit/export` (`data:export`), `POST /v1/webhooks/secret:rotate` (`secret:rotate`), and a `withRateLimit` middleware that is pass-through when disabled.
   - New env vars: `UBAG_RATE_LIMIT_ENABLED` (default false), `UBAG_CACHE_ENABLED` (default false), `UBAG_CACHE_TTL_MS`, `UBAG_SIEM_FILE_PATH`.
   - Independent review PASSED with no Critical/High findings; two hardening fixes were applied (cache purge returns `501` when disabled; SSO config `PUT` rejects OIDC without an Issuer and SAML without an IdP certificate).
-  - Honest limitations: SSO callbacks verify a principal but do NOT yet mint gateway sessions; SAML verification is a pragmatic non-full-XML-C14N fails-closed check (adopt exclusive C14N before production IdP onboarding); only the rate limiter has a native Postgres store (cache/workflow/sso/scim/siem/webhook-secrets persist via SQLite or fall back to memory); `POST /v1/audit/export` returns exporter status/stats only because the audit record source is still a stub; non-TypeScript SDKs build/test in CI but are not all locally validated (C# validated 10/10, Swift Windows stdlib broken, cargo/mvn/ruby/php/gradle/mix absent locally).
+  - SDK limitation: active first-class SDK support is TypeScript/JavaScript and Go only. Prior Rust, Python, Java, Kotlin, Ruby, PHP, C#, Swift, and Elixir SDK package trees are no longer part of active CI, docs, packaging, or release claims.
 
 ## Subagent Audit Closure
 
 The initial v0 baseline closed six parallel review workstreams. Later implementation slices added further parallel reviews for Postgres gateway stores, NATS/MinIO, NATS worker consumption, signed webhook outbox delivery, and the 2026-05-24 completion sweep. The detailed evidence chain and subagent counts are tracked in `PROGRESS.md`; this handoff records only the current resume state.
 
 ## Latest Known Green Validation
+
+After the 2026-06-17 TS+Go-only SDK completion pass, the following validation passed:
+
+```powershell
+cmd /c pnpm install --frozen-lockfile
+cmd /c pnpm check:sdk-freshness
+cmd /c pnpm test:sdk:typescript
+cmd /c pnpm test:sdk:go
+cmd /c pnpm test:sdk
+node packages/conformance/scripts/validate-fixtures.mjs
+cmd /c pnpm test:worker
+cmd /c pnpm test:dashboard
+cmd /c pnpm test:deployment
+cmd /c pnpm test:v0
+cmd /c pnpm check
+git diff --check
+```
+
+Docker Compose was not installed on this host, so `test:deployment` used its
+static deployment checks after explicitly reporting the compose-render skip.
+The supported SDK set is TypeScript/JavaScript (`@ubag/sdk`) and Go
+(`github.com/ubag/ubag-go`) only.
+
+After the 2026-06-18 dashboard-only completion pass, the following validation passed:
+
+```powershell
+cmd /c pnpm --filter @ubag/dashboard check
+cmd /c pnpm --filter @ubag/dashboard test
+cmd /c pnpm --filter @ubag/dashboard test:e2e
+cmd /c pnpm test:dashboard
+```
 
 After the 2026-06-01 worker runtime orchestration integration (Option A, full), the following validation was green (all exit 0):
 
@@ -119,7 +149,7 @@ git diff --check
 
 `cmd /c pnpm test:v0` includes schema, edge-store, security, worker, sidecar, SDK, conformance, observability, CLI, dashboard, deployment, docs, responsive docs, and gateway Go tests.
 
-SDK/conformance coverage currently validates 30 executable REST scenarios plus 12 named non-executable coverage scenarios, including executor dispatch, file-spool/NATS worker ingestion, and webhook outbox retry.
+SDK/conformance coverage currently validates 41 executable REST scenarios plus 272 named non-executable coverage scenarios, including executor dispatch, file-spool/NATS worker ingestion, and webhook outbox retry.
 
 After this handoff documentation was added, the following validation passed again:
 
@@ -327,9 +357,9 @@ Pick up from these implementation tracks after preserving the current green base
 4. Replace the pragmatic SAML check with exclusive XML-C14N signature verification before onboarding a production IdP. PARTIAL (v2.1): `internal/sso/canonicalize.go` applies exclusive XML-C14N (`xml-exc-c14n#`) before digest/signature verification and fails closed; harden against a real production IdP before claiming full conformance.
 5. DONE (v2.1): Native Postgres stores added for response-cache, workflow, SSO, SCIM, SIEM, and webhook-secret subsystems (migrations `0005_enterprise_stores.sql`, `0006_audit_sessions.sql`); each fails fast via `Ready()`/`to_regclass` so Postgres deployments no longer silently fall back. Round-trip tests are env-gated on `UBAG_TEST_POSTGRES_DSN`.
 6. DONE (v2.1): `POST /v1/audit/export` exports real Merkle-chained audit records from `internal/audit` (memory + SQLite + Postgres), accepts the SDK request body (`idempotency_key` ignored read field, optional `range.{from_sequence,to_sequence}` post-filter), and verifies the chain over the full result before windowing.
-7. Expand workflow/cache execution and the template runtime beyond the current built-in/single-step foundation; acceptance requires idempotency, tenant/app scope, payload policy reuse, secret rejection, audit events, retention controls, and privacy-mode cache bypasses.
-8. Locally validate the non-TypeScript SDKs (rust/java/ruby/php/csharp/swift/kotlin/elixir) once their toolchains are available; C# is validated 10/10 and the Swift Windows stdlib is currently broken.
-9. Broaden SDK conformance beyond REST fixtures where runtime services exist, including event streaming and live binary artifact smoke before new transports are claimed.
+7. Continue hardening workflow/cache/template runtime beyond the current validated foundation; acceptance requires durable template authoring, richer workflow DAG/saga semantics, retention controls, privacy-mode cache bypasses, and expanded SDK/conformance coverage.
+8. Keep SDK release work scoped to TypeScript/JavaScript (`@ubag/sdk`) and Go (`github.com/ubag/ubag-go`); do not reintroduce other SDK package trees without an explicit product decision.
+9. Broaden TypeScript/JavaScript and Go SDK conformance beyond REST fixtures where runtime services exist, including event streaming and live binary artifact smoke before new transports are claimed.
 10. DONE (v2.1): Worker-side `ConcurrencyRegistry.Report` is wired to AIMD cap-change events. The worker emits `concurrency.cap_changed` telemetry (`orchestration/telemetry.py`); the gateway intercepts it in the `WorkerConsumer` ingest loop and routes it to `topology.ConcurrencyRegistry.Report`, so `/v1/concurrency` reflects live worker-reported lane concurrency. Covered by gateway and worker unit tests.
 11. Add CI after remote policy is known. The repository now has a baseline commit (`0364595`, v0 platform) and a v2.1 delta commit (`85d6eb0`); neither is pushed. Postgres round-trip tests can run in CI via `pnpm test:gateway:postgres` (needs `UBAG_TEST_POSTGRES_DSN`; see `docs/postgres-roundtrip-tests.md`).
 12. Onboard real live providers using `live_web_template(...)` / `generic_live_web` and `apps/worker/ubag_worker/live/ONBOARDING.md`; activation still requires user-owned provider accounts and manual login.

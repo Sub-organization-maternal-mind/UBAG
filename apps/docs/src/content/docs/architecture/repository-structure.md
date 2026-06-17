@@ -20,7 +20,6 @@ packages/observability/
 packages/openapi/
 packages/proto/
 packages/sdk-go/
-packages/sdk-python/
 packages/sdk-typescript/
 packages/security/
 packages/shared-schemas/
@@ -49,7 +48,6 @@ packages/
   openapi/
   shared-schemas/
   sdk-typescript/
-  sdk-python/
   sdk-go/
   security/
 adapters/

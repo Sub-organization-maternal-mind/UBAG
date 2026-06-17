@@ -2,7 +2,7 @@
 
 Go client for the UBAG v0 REST gateway, stable errors, idempotency, and shared conformance fixtures.
 
-The package is dependency-free and mirrors the current TypeScript and Python SDK baseline:
+The package is dependency-free and mirrors the current TypeScript SDK baseline:
 
 - Health, readiness, and version helpers.
 - Job create, get, list, cancel, and retry helpers.

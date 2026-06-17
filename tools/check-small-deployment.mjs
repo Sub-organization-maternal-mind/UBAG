@@ -36,8 +36,9 @@ requireTerms('docker-compose.small.yml', [
   'UBAG_WEBHOOK_MAX_ATTEMPTS',
   'UBAG_WEBHOOK_ALLOWED_HOSTS',
   'UBAG_WEBHOOK_ALLOW_ANY_PUBLIC_HOST',
-  'UBAG_CADDYFILE',
-  'UBAG_CADDY_HTTPS_PORT',
+  'nginx-dashboard',
+  'UBAG_NGINX_HTTP_PORT',
+  'nginx-dashboard/default.conf.template',
   'postgres-migrate',
   'minio-init',
   'ubag-artifacts-rw',
@@ -72,20 +73,25 @@ requireTerms('deploy/small/browser-viewer/entrypoint.sh', [
   'websockify'
 ]);
 
-requireTerms('deploy/small/caddy/Caddyfile', [
-  '/novnc/*',
-  'browser-viewer:6080'
+requireTerms('deploy/small/nginx-dashboard/default.conf.template', [
+  'upstream ubag_gateway',
+  'upstream ubag_browser_viewer',
+  'server browser-viewer:6080',
+  'auth_basic "UBAG Operator"',
+  'proxy_set_header   Authorization',
+  'location /novnc/',
+  'X-Frame-Options        "SAMEORIGIN"',
+  'location /dashboard/'
 ]);
 
 requireTerms('deploy/small/env.example', [
   'UBAG_EXECUTOR_MODE=noop',
+  'UBAG_NGINX_HTTP_PORT=8083',
   'UBAG_NATS_URL=nats://nats:4222',
   'UBAG_NATS_WORKER_DURABLE=ubag-worker',
   'UBAG_NATS_WORKER_MAX_DELIVER=5',
   'UBAG_ARTIFACT_STORE=memory',
   'UBAG_MINIO_ENDPOINT=minio:9000',
-  'UBAG_CADDYFILE=./deploy/small/caddy/Caddyfile',
-  'UBAG_CADDY_HTTPS_PORT=8443',
   'UBAG_PUBLIC_DOMAIN=ubag.example.com',
   'UBAG_MINIO_ACCESS_KEY=ubag-gateway',
   'UBAG_MINIO_SECRET_KEY=replace-with-local-minio-gateway-password',
@@ -120,7 +126,7 @@ requireTerms('deploy/small/small.ps1', [
 requireTerms('deploy/small/README.md', [
   '0002_artifact_metadata.sql',
   '0003_webhook_outbox.sql',
-  'Caddyfile.tls.example',
+  'nginx-dashboard',
   'minio-init',
   'least-privilege',
   'MINIO_ROOT_USER',
@@ -128,15 +134,8 @@ requireTerms('deploy/small/README.md', [
   'UBAG_EXECUTOR_MODE=nats',
   'UBAG_NATS_WORKER_DURABLE',
   'UBAG_ARTIFACT_STORE=minio',
-  'UBAG_WEBHOOK_WORKER_ENABLED=true'
-]);
-
-requireTerms('deploy/small/caddy/Caddyfile.tls.example', [
-  '{$UBAG_PUBLIC_DOMAIN}',
-  'Strict-Transport-Security',
-  '/v1/metrics*',
-  '/v1/ready*',
-  'reverse_proxy gateway:8080'
+  'UBAG_WEBHOOK_WORKER_ENABLED=true',
+  '/novnc/'
 ]);
 
 if (failures.length > 0) {

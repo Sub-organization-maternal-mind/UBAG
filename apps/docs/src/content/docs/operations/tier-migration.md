@@ -125,8 +125,8 @@ This produces a `caddy` binary in the current directory.
 **Validate the build:**
 
 ```sh
-make caddy-validate
-# or: node tools/check-caddy.mjs
+make nginx-validate
+# or: node tools/check-nginx-dashboard.mjs
 ```
 
 The validator checks that the Caddy configuration file (`deploy/caddy/Caddyfile` or equivalent) only references directives and modules present in the expected custom build.

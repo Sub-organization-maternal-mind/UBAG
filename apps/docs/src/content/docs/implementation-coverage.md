@@ -3,7 +3,7 @@ title: A-Z Implementation Coverage
 description: Exact implementation coverage for the UBAG blueprint, with local evidence and external activation requirements.
 ---
 
-Last updated: 2026-06-02
+Last updated: 2026-06-18
 
 This ledger maps the UBAG A-Z plan to the current repository implementation. It is intentionally evidence-based: a row is marked **implemented** only when code, docs, configuration, and a validation command exist in this repo.
 
@@ -43,7 +43,7 @@ Honest limitations / externally-blocked:
 - SAML signature verification uses Exclusive XML Canonicalization (`http://www.w3.org/2001/10/xml-exc-c14n#`, `internal/sso/canonicalize.go`) and fails closed.
 - Native Postgres stores exist for rate-limiter, response cache, workflow, SSO config, SCIM, sessions, audit, alerts, and topology; in-memory remains an opt-in fallback.
 - `POST /v1/audit/export` streams the persisted Merkle-chained audit records (`records[]`, `head_hash`, `count`) with a `chain_valid` integrity proof.
-- Non-TypeScript SDKs (rust/java/ruby/php/csharp/swift/kotlin/elixir) build/test in CI but are not all locally validated (C# 10/10, Swift Windows stdlib broken, cargo/mvn/ruby/php/gradle/mix absent locally).
+- TypeScript/JavaScript and Go are the only active first-class SDKs. Older non-TS/Go SDK package trees were removed from the active repo and remain recoverable from Git history if the product scope changes.
 - Live provider adapters remain externally-blocked.
 
 ## Coverage States
@@ -65,12 +65,12 @@ Honest limitations / externally-blocked:
 | Mock worker and adapter | Implemented | `apps/worker`, `adapters/mock`, Python worker tests and smoke output. |
 | Built-in provider adapter list | Contracted | Manifests and safe-mode stubs for DeepSeek, ChatGPT, Claude, Gemini, Mistral, Perplexity, generic chat, generic form, and mock. |
 | User-owned manual login stance | Contracted | Adapter manifests block network automation until manual session runtime is available; docs prohibit credential scraping and bundled CAPTCHA solving. |
-| Dashboard prototype | Implemented | `apps/dashboard`, static NAJM/Hallmark tokenized UI, tabs for Overview, Apps, Targets, Jobs, Sessions, Templates, Runtime, Activation, strict CSP, no external font calls, accessible state fixtures, and responsive check/build scripts. |
+| Operator dashboard | Implemented | `apps/dashboard`, gateway-wired NAJM/Hallmark SvelteKit UI, tabs for Overview, Apps, Targets, Jobs, Sessions, Templates, Runtime, Activation, strict CSP, no external font calls, accessible state fixtures, and responsive check/build scripts. |
 | CLI and sidecar path | Implemented | `packages/cli`, `packages/sidecar`, health/ready/version/job/event/artifact/operator/webhook/cache/metrics/SSE/mock-run commands, CLI option parsing regression tests, loopback sidecar health/proxy tests, artifact PUT/DELETE idempotency, factory loopback enforcement, and absolute-form proxy target hardening. |
-| SDK wave 1 | Implemented | TypeScript, Python, and Go SDKs validated against shared conformance fixtures for system, jobs, job events, artifacts, operator collections, webhook replay, workflow/template list endpoints, cache status, apps/devices/audit, metrics, and stream entrypoint surfaces. |
+| SDK wave 1 | Implemented | TypeScript and Go SDKs validated against shared conformance fixtures for system, jobs, job events, artifacts, operator collections, webhook replay, workflow/template list endpoints, cache status, apps/devices/audit, metrics, and stream entrypoint surfaces. |
 | Security and compliance contracts | Implemented | `packages/security`, app-secret, device token, RBAC/ABAC, audit redaction/chaining, webhook signing tests. |
 | Observability and ops contracts | Implemented | `packages/observability`, stable metric/event/log/checklist/probe registries, and gateway readiness probe contracts for jobs, idempotency, queue, executor, artifacts, templates, and webhooks. |
-| Small deployment profile | Implemented | `docker-compose.small.yml`, `deploy/small`, Caddy/Postgres/Dragonfly/MinIO/Grafana/Prometheus/NATS optional profiles, opt-in Postgres gateway store environment, NATS dispatcher env, MinIO artifact env with least-privilege `minio-init`, webhook worker env, rerunnable Postgres `migrate` action, optional Caddy TLS example, and Postgres migrations `0001`, `0002`, and `0003`. |
+| Small deployment profile | Implemented | `docker-compose.small.yml`, `deploy/small`, nginx-dashboard/Postgres/Dragonfly/MinIO/Grafana/Prometheus/NATS optional profiles, opt-in Postgres gateway store environment, NATS dispatcher env, MinIO artifact env with least-privilege `minio-init`, webhook worker env, rerunnable Postgres `migrate` action, and Postgres migrations. |
 | Release/governance/runbook docs | Implemented | Release governance, operator runbook, observability, testing, and compliance docs in `apps/docs`. |
 | v1 real provider runtime | Contracted | Provider adapter manifests and safe-mode packages exist. Live browser automation requires user-owned accounts and manual noVNC/browser session runtime activation. |
 | v2 enterprise/ecosystem | Contracted | Architecture, deployment, plugin, governance, security, and compliance docs exist; the gateway also ships code-complete & locally validated enterprise leaf packages for rate limiting, response cache, workflow runs, SSO (OIDC/SAML verification with revocable session minting), SCIM v2, and SIEM export (see the 2026-05-29 update). SSO session minting, native Postgres stores for non-rate-limiter subsystems, and the Merkle-chained audit-export source are now implemented; production enterprise integrations still require deployment environment and identity provider activation. |
@@ -95,16 +95,16 @@ Honest limitations / externally-blocked:
 | Tenant registry | Contracted | Tenant headers and security model docs; live tenant DB requires deployment activation. |
 | Command validator | Implemented | Gateway create-job validation plus shared schemas. |
 | Job orchestrator | Implemented | In-memory v0 job lifecycle, opt-in Postgres job/event store, cancel, retry, scoped job and cross-job events, SSE, internal executor dispatch with no-op default plus optional file spool, atomic file-spool leases, terminal finalization, and worker result ingestion. |
-| Prompt template engine | Implemented | Built-in memory-backed template catalog, `/v1/templates`, readiness checks, and create-job template application before payload validation/storage/enqueue; versioned durable template storage, render dry-runs, and A/B tests remain future runtime work. |
+| Prompt template engine | Implemented | Built-in template catalog, `/v1/templates`, scoped template reads, Pongo2-compatible render dry-runs, readiness checks, and create-job template application before payload validation/storage/enqueue; versioned durable template authoring and A/B tests remain future runtime work. |
 | Semantic cache | Contracted | `internal/responsecache` provides a privacy-aware exact-match response cache (memory + SQLite) behind `/v1/cache` that never exposes cached payload values; the semantic/vector backend still requires a deployed cache/vector service. |
 | Webhook dispatcher | Implemented | Gateway terminal-job callback projection, signed delivery sender, URL policy validation, memory/Postgres outbox stores, retry/dead-letter worker, replay hardening, observability metrics/events, and `contracts/webhooks`; live delivery still needs operator-owned callback targets and signing secrets. |
 | Browser worker fleet | Implemented | Python worker runner, mock adapter, file-spool/NATS consumer bridge, gateway dispatch-envelope compatibility, session docs. |
-| Admin dashboard | Contracted | `apps/dashboard` static prototype covers Overview, Apps, Targets, Jobs, Sessions, Templates, Runtime, Activation, and state fixtures; live SvelteKit/API-wired admin dashboard remains v1. |
+| Admin dashboard | Implemented | `apps/dashboard` covers Overview, Apps, Targets, Jobs, Sessions, Templates, Runtime, Activation, and state fixtures with gateway API wiring and no fake workflow fixture fallback. |
 | Local sidecar | Implemented | `packages/sidecar` loopback runtime, `/health`, `/v1/*` proxy, non-loopback guard, factory loopback enforcement, absolute-form proxy target hardening, and tests. |
 | CLI | Implemented | `packages/cli`, health/job/SSE/mock/cancel/retry commands. |
 | Plugin system | Contracted | Plugin docs, capability model, governance path. |
-| SDK strategy | Implemented | TypeScript, Python, Go SDK wave and conformance fixtures. |
-| Integration methods | Implemented | REST, SSE, WebSocket upgrade, CLI, SDKs; gRPC proto contracts. |
+| SDK strategy | Implemented | TypeScript and Go SDK wave and conformance fixtures. |
+| Integration methods | Implemented | REST, SSE, WebSocket upgrade, CLI, TS/Go SDKs, gRPC, and gRPC-Web. |
 | Rate limiting | Implemented | `internal/ratelimit` sliding-window limiter with memory + SQLite + Postgres stores, a policy resolver, `GET /v1/rate-limits`, and a `withRateLimit` middleware that is pass-through when disabled (`UBAG_RATE_LIMIT_ENABLED`, default false); code-complete & locally validated. Live tuning still needs deployment config. |
 | Browser sessions | Contracted | Safe manual-login manifests and noVNC/session docs; live sessions require user-owned login. |
 | Adapter SDK | Implemented | Adapter manifest contract, mock adapter, registry tests. |
@@ -170,4 +170,4 @@ cmd /c pnpm test:v0
 cmd /c pnpm check
 ```
 
-The full `test:v0` chain includes contracts, edge queue/storage with typechecking and SQLite migration execution, security, worker/adapters, TypeScript/Python/Go SDKs, conformance fixtures, observability contracts, CLI, dashboard, deployment config, docs, responsive docs checks, and gateway Go tests. Latest 2026-05-25 continuation validation also passed `cmd /c pnpm install --frozen-lockfile`, `cmd /c pnpm check`, `cmd /c pnpm --package=@redocly/cli dlx redocly lint packages/openapi/openapi.yaml`, `git --no-pager diff --check`, and focused gateway, SDK, conformance, schema, deployment, observability, CLI, sidecar, dashboard, contract, and SDK freshness checks.
+The full `test:v0` chain includes contracts, edge queue/storage with typechecking and SQLite migration execution, security, worker/adapters, TypeScript/Go SDKs, conformance fixtures, observability contracts, CLI, dashboard, deployment config, docs, responsive docs checks, and gateway Go tests. Latest continuation validation also passes focused gateway, SDK, conformance, schema, deployment, observability, CLI, sidecar, dashboard, contract, and SDK freshness checks.
