@@ -75,8 +75,8 @@ requireTerms('deploy/small/browser-viewer/entrypoint.sh', [
 
 requireTerms('deploy/small/nginx-dashboard/default.conf.template', [
   'upstream ubag_gateway',
-  'upstream ubag_browser_viewer',
-  'server browser-viewer:6080',
+  'resolver 127.0.0.11',
+  'set                $ubag_browser_viewer http://browser-viewer:6080',
   'auth_basic "UBAG Operator"',
   'proxy_set_header   Authorization',
   'location /novnc/',

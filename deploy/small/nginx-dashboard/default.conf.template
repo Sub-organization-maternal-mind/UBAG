@@ -13,13 +13,9 @@ upstream ubag_gateway {
     keepalive 32;
 }
 
-upstream ubag_browser_viewer {
-    server browser-viewer:6080;
-    keepalive 8;
-}
-
 server {
     listen 80 default_server;
+    resolver 127.0.0.11 valid=10s ipv6=off;
 
     gzip on;
     gzip_vary on;
@@ -65,8 +61,9 @@ server {
 
     # ── noVNC live-browser viewer (WebSocket + SAMEORIGIN embed) ─────────────
     location /novnc/ {
+        set                $ubag_browser_viewer http://browser-viewer:6080;
         rewrite            ^/novnc/(.*) /$1 break;
-        proxy_pass         http://ubag_browser_viewer;
+        proxy_pass         $ubag_browser_viewer;
         proxy_http_version 1.1;
         proxy_set_header   Upgrade    $http_upgrade;
         proxy_set_header   Connection "upgrade";

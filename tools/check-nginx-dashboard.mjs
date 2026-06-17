@@ -21,8 +21,10 @@ try {
 
 const REQUIRED = [
   { label: 'gateway upstream',       pattern: /upstream\s+ubag_gateway/         },
+  { label: 'docker DNS resolver',     pattern: /resolver\s+127\.0\.0\.11/       },
   { label: '/v1/ proxy',             pattern: /location\s+\/v1\//               },
   { label: '/novnc/ proxy',          pattern: /location\s+\/novnc\//            },
+  { label: 'dynamic noVNC proxy',     pattern: /set\s+\$ubag_browser_viewer\s+http:\/\/browser-viewer:6080/ },
   { label: '/_app/immutable/ cache', pattern: /location\s+\/dashboard\/_app\/immutable\//  },
   { label: '/_app/ static',          pattern: /location\s+\/dashboard\/_app\//             },
   { label: '/dashboard/ SPA',        pattern: /location\s+\/dashboard\//        },
