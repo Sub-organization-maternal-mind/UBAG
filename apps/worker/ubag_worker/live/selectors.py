@@ -222,6 +222,8 @@ DEEPSEEK_WEB = ProviderSelectors(
         "submit_button",
         (
             "div[role='button'][aria-disabled='false']",
+            "div[role='button'].ds-button--primary.ds-button--circle:not([class*='disabled'])",
+            "div[role='button'].ds-button--primary.ds-button--circle",
             "button[type='submit']",
             "button[aria-label*='Send']",
         ),
@@ -238,6 +240,7 @@ DEEPSEEK_WEB = ProviderSelectors(
         "authenticated_signal",
         (
             "textarea#chat-input",
+            "textarea[placeholder*='Message']",
             "div[class*='sidebar']",
             "img[alt*='avatar']",
         ),
@@ -265,7 +268,7 @@ GEMINI_WEB = ProviderSelectors(
     provider_id="gemini_web",
     display_name="Gemini Web",
     target_url="https://gemini.google.com/app",
-    selector_version="2026-05-22-baseline-unverified",
+    selector_version="2026-06-22-response-verified",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
@@ -285,6 +288,17 @@ GEMINI_WEB = ProviderSelectors(
     response_container=SelectorGroup(
         "response_container",
         (
+            # Verified 2026-06-22 against live gemini.google.com/app: a model reply
+            # renders inside a <model-response> custom element; <message-content>
+            # and .markdown hold the answer text. The previous
+            # *.model-response-text* / data-response-index selectors had drifted and
+            # matched zero nodes, so the worker hung waiting for a response that — by
+            # its selectors — never appeared, hitting the 2-minute hard timeout.
+            "message-content",
+            "div.markdown",
+            ".markdown",
+            "model-response",
+            # legacy fallbacks (pre-2026-06 Gemini DOM):
             "message-content.model-response-text",
             "div.model-response-text",
             "div[data-response-index]",

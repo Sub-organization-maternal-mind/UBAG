@@ -48,6 +48,14 @@ class ManualLoginTimeout(RuntimeError):
     """Raised when a user-owned session is not authenticated within the window."""
 
 
+class ManualActionRequired(RuntimeError):
+    """Raised when provider UI needs human consent/verification before automation."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
 class DriftDetectedError(RuntimeError):
     """Raised when every fallback selector for a required group fails.
 
@@ -237,6 +245,7 @@ class PlaywrightPageDriver(PageDriver):
         self._engine_spec = engine_spec
         self._playwright = None
         self._context = None
+        self._owns_context = True
         self._page = None
         self._artifacts_dir: Optional[str] = None
 
@@ -311,10 +320,16 @@ class PlaywrightPageDriver(PageDriver):
                 # login session is inherited. Creating a new_context() here
                 # would discard all cookies and force re-login every job.
                 browser = browser_type.connect_over_cdp(plan.remote_endpoint)
-                self._context = browser.contexts[0] if browser.contexts else browser.new_context()
+                if browser.contexts:
+                    self._context = browser.contexts[0]
+                    self._owns_context = False
+                else:
+                    self._context = browser.new_context()
+                    self._owns_context = True
             else:
                 browser = browser_type.connect(plan.remote_endpoint)
                 self._context = browser.new_context()
+                self._owns_context = True
         else:
             # User-owned persistent context. We do NOT inject storage_state,
             # cookies, or credentials - authentication lives entirely in the
@@ -323,12 +338,21 @@ class PlaywrightPageDriver(PageDriver):
                 user_data_dir=user_data_dir,
                 headless=plan.headless,
             )
+            self._owns_context = True
         self._page = (
             self._context.pages[0]
             if self._context.pages
             else self._context.new_page()
         )
-        self._page.goto(target_url, wait_until="domcontentloaded")
+        try:
+            self._page.goto(target_url, wait_until="domcontentloaded")
+        except Exception as exc:  # pragma: no cover - requires real browser
+            # Provider SPAs can abort the initial document navigation after
+            # restoring an already-authenticated tab or redirecting within the
+            # same app. Keep that narrow case non-fatal; selector/login checks
+            # below still decide whether the session is usable.
+            if not _is_tolerable_navigation_abort(exc, self._page.url, target_url):
+                raise
 
     def current_url(self) -> str:  # pragma: no cover - requires real browser
         return self._page.url if self._page else ""
@@ -380,7 +404,16 @@ class PlaywrightPageDriver(PageDriver):
     # -- interaction -----------------------------------------------------
     def submit_prompt(self, selectors: ProviderSelectors, prompt: str) -> None:  # pragma: no cover
         field = self._first_visible(selectors.prompt_input)
-        field.click()
+        try:
+            field.click()
+        except Exception as exc:  # noqa: BLE001 - classify provider overlays.
+            if _looks_like_manual_overlay(exc):
+                raise ManualActionRequired(
+                    "manual_consent_or_overlay_required",
+                    "Provider UI is blocking the prompt field with a consent, "
+                    "verification, or overlay prompt. Clear it manually in noVNC.",
+                ) from exc
+            raise
         field.fill(prompt)
         try:
             button = self._first_visible(selectors.submit_button, timeout_ms=3000)
@@ -397,7 +430,15 @@ class PlaywrightPageDriver(PageDriver):
         container = self._first_visible(selectors.response_container, timeout_ms=int(timeout_s * 1000))
         deadline = time.monotonic() + timeout_s
         seen = ""
-        # Poll the container text and yield only the new suffix as a delta.
+        last_growth = time.monotonic()
+        # Poll the container text and yield only the new suffix as a delta. The
+        # response is treated as complete once it is non-empty AND has stopped
+        # growing for `_response_settle_s` AND the provider is not signalling active
+        # streaming. The settle window (rather than relying solely on the streaming
+        # indicator) is essential for providers such as Gemini Web that expose no
+        # detectable streaming indicator: without it the loop would satisfy the old
+        # `current == seen` condition on the very first read and capture a partial,
+        # label-only response (e.g. just "Gemini said").
         while time.monotonic() < deadline:
             try:
                 current = container.inner_text(timeout=2000)
@@ -406,9 +447,10 @@ class PlaywrightPageDriver(PageDriver):
             if len(current) > len(seen):
                 yield current[len(seen):]
                 seen = current
+                last_growth = time.monotonic()
             still_streaming = self._present(selectors.streaming_indicator, timeout_ms=500)
-            if not still_streaming and current == seen:
-                time.sleep(self._response_settle_s)
+            settled = (time.monotonic() - last_growth) >= self._response_settle_s
+            if seen.strip() and settled and not still_streaming:
                 break
             time.sleep(0.4)
 
@@ -445,12 +487,13 @@ class PlaywrightPageDriver(PageDriver):
 
     def close(self) -> None:  # pragma: no cover - requires real browser
         try:
-            if self._context is not None:
+            if self._context is not None and self._owns_context:
                 self._context.close()
         finally:
             if self._playwright is not None:
                 self._playwright.stop()
             self._context = None
+            self._owns_context = True
             self._page = None
             self._playwright = None
 
@@ -497,15 +540,55 @@ def create_default_driver(options: Optional[Mapping[str, object]] = None) -> Pag
     return PlaywrightPageDriver(engine_spec=engine_spec_from_env())
 
 
+def _is_tolerable_navigation_abort(exc: Exception, current_url: str, target_url: str) -> bool:
+    message = str(exc)
+    if "net::ERR_ABORTED" not in message and "NS_BINDING_ABORTED" not in message:
+        return False
+    return _same_origin(current_url, target_url)
+
+
+def _looks_like_manual_overlay(exc: Exception) -> bool:
+    message = str(exc).lower()
+    if "intercepts pointer events" not in message:
+        return False
+    overlay_markers = (
+        "cookie",
+        "consent",
+        "captcha",
+        "verification",
+        "cdk-overlay",
+        "overlay-backdrop",
+    )
+    return any(marker in message for marker in overlay_markers)
+
+
+def _same_origin(left: str, right: str) -> bool:
+    try:
+        from urllib.parse import urlparse
+
+        left_url = urlparse(left)
+        right_url = urlparse(right)
+        return bool(
+            left_url.scheme
+            and left_url.netloc
+            and left_url.scheme == right_url.scheme
+            and left_url.netloc == right_url.netloc
+        )
+    except Exception:
+        return False
+
+
 __all__ = [
     "AUTHENTICATED",
     "LOGIN_REQUIRED",
     "UNKNOWN",
     "DriftDetectedError",
+    "ManualActionRequired",
     "ManualLoginTimeout",
     "MockPageDriver",
     "PageDriver",
     "PlaywrightPageDriver",
+    "_is_tolerable_navigation_abort",
     "create_default_driver",
     "offline_mode_enabled",
 ]
