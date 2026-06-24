@@ -2,7 +2,7 @@ name: chaos
 
 on:
   pull_request:
-    branches: [master]
+    branches: [main]
     paths:
       - "tests/chaos/**"
       - "apps/gateway/internal/resilience/**"
