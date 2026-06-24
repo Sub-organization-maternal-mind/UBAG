@@ -106,7 +106,6 @@ func InitTracer(ctx context.Context) (shutdown func(context.Context) error, err 
 	return tp.Shutdown, nil
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 // HTTP instrumentation helper
 // ─────────────────────────────────────────────────────────────────────────────

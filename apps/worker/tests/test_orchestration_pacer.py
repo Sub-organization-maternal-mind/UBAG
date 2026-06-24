@@ -56,7 +56,7 @@ class PacerTests(unittest.TestCase):
         gaps_a = []
         gaps_b = []
         for _ in range(5):
-            before = pacer_a.next_allowed
+            _before = pacer_a.next_allowed
             pacer_a.acquire(now=10_000.0)  # large now so each acquire advances gate
             gaps_a.append(round(pacer_a.next_allowed - 10_000.0, 9))
         for _ in range(5):
@@ -69,7 +69,7 @@ class PacerTests(unittest.TestCase):
         pacer = SubmitPacer(
             base_gap=0.8, jitter=0.4, rng=random.Random(7), clock=clock
         )
-        prev = 0.0
+        _prev = 0.0
         pacer.acquire(now=0.0)
         for _ in range(50):
             now = pacer.next_allowed

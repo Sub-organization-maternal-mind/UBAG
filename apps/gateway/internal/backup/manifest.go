@@ -19,8 +19,8 @@ const (
 // ComponentEntry describes one backed-up component.
 type ComponentEntry struct {
 	Name      string `json:"name"`
-	Path      string `json:"path"`       // relative path inside the backup
-	Checksum  string `json:"checksum"`   // hex SHA-256 of the file
+	Path      string `json:"path"`     // relative path inside the backup
+	Checksum  string `json:"checksum"` // hex SHA-256 of the file
 	SizeBytes int64  `json:"size_bytes"`
 }
 

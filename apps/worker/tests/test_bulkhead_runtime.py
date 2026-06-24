@@ -2,9 +2,9 @@
 
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import pytest
 from ubag_worker.orchestration.bulkhead import (
     BulkheadConfig,
     BulkheadRegistry,
@@ -13,7 +13,6 @@ from ubag_worker.orchestration.bulkhead import (
     compute_recovery,
 )
 from ubag_worker.orchestration.topology import ChannelTab
-
 
 # ---------------------------------------------------------------------------
 # Test 1: try_acquire succeeds under ceiling

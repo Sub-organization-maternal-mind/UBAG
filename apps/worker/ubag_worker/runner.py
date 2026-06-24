@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Mapping, TextIO
 
 from .adapter_registry import events_for_payload as _events_for_payload
 
-
 JsonObject = Dict[str, Any]
 
 

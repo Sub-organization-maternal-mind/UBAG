@@ -25,7 +25,6 @@ from ubag_worker.live import (  # noqa: E402
     create_default_driver,
     offline_mode_enabled,
 )
-from ubag_worker.live.page_driver import AUTHENTICATED, LOGIN_REQUIRED  # noqa: E402
 from ubag_worker.live.selectors import (  # noqa: E402
     PROVIDER_SELECTORS,
     SelectorGroup,

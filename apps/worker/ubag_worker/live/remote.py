@@ -23,8 +23,7 @@ from .engines import (
     EngineSpec,
     default_protocol_for,
 )
-from .page_driver import PlaywrightPageDriver, PageDriver
-
+from .page_driver import PageDriver, PlaywrightPageDriver
 
 # Endpoint schemes we consider safe for a browser grid connection.
 _ALLOWED_SCHEMES = ("ws", "wss", "http", "https")

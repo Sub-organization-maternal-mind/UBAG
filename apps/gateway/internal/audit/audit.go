@@ -174,7 +174,7 @@ func VerifyChain(records []Record) bool {
 
 // MemoryStore is an in-memory Store, primarily for development and tests.
 type MemoryStore struct {
-	mu      sync.Mutex
+	mu       sync.Mutex
 	byTenant map[string][]Record
 }
 

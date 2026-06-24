@@ -21,9 +21,9 @@ import (
 // tests to inject a fake reader without touching os.Stdin).
 func CmdMigrate(args []string, input *bufio.Reader) (string, error) {
 	fs := flag.NewFlagSet("migrate", flag.ContinueOnError)
-	toTier     := fs.String("to", "", "Target tier (small|standard|enterprise)")
-	fromTier   := fs.String("from", "", "Source tier (default: current UBAG_PROFILE)")
-	dryRun     := fs.Bool("dry-run", false, "Print plan without executing")
+	toTier := fs.String("to", "", "Target tier (small|standard|enterprise)")
+	fromTier := fs.String("from", "", "Source tier (default: current UBAG_PROFILE)")
+	dryRun := fs.Bool("dry-run", false, "Print plan without executing")
 	postgresDSN := fs.String("postgres-dsn", "", "Postgres DSN (required for DB migration steps)")
 
 	if err := fs.Parse(args); err != nil {

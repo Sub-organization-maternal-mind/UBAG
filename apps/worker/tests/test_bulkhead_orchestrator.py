@@ -5,16 +5,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import pytest
 
 from ubag_worker.live.orchestrator import LiveOrchestrator
 from ubag_worker.orchestration.bulkhead import (
     BulkheadConfig,
     BulkheadRegistry,
     CrashLevel,
-    RecoveryAction,
 )
-from ubag_worker.orchestration.topology import ChannelTab, TabState
 
 
 class _FakeClock:

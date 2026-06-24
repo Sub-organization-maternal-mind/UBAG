@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Sequence
 
 # Boilerplate phrases commonly prepended/appended by providers.
 _BOILERPLATE_PATTERNS = [

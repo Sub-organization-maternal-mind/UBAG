@@ -12,10 +12,9 @@ authorization headers.  ``HarEntry`` deliberately omits ``Cookie``,
 
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-import datetime
-
 
 # ---------------------------------------------------------------------------
 # Data types
@@ -183,8 +182,8 @@ def to_summary(session: RecordingSession) -> Dict[str, Any]:
             for s in session.dom_snapshots
         ],
         "console_logs": [
-            {"level": l.level, "text": l.text, "timestamp": l.timestamp}
-            for l in session.console_logs
+            {"level": entry.level, "text": entry.text, "timestamp": entry.timestamp}
+            for entry in session.console_logs
         ],
         "screenshots": list(session.screenshots),
     }

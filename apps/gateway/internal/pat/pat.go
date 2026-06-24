@@ -17,7 +17,7 @@ const tokenPrefix = "ubag_pat_"
 
 // Token is an issued personal-access token.
 type Token struct {
-	ID        string    // opaque formatted token string
+	ID        string // opaque formatted token string
 	TenantID  string
 	AppID     string
 	Role      string

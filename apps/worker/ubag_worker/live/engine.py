@@ -22,6 +22,9 @@ import os
 import re
 from typing import TYPE_CHECKING, Any, Iterator, List, Mapping, Optional
 
+# Reuse the canonical secret-material guard so the live path rejects exactly the
+# same disallowed credential/cookie/token material as the registry & mock paths.
+from ..adapter_registry import _contains_disallowed_secret_material  # noqa: E402
 from .events import JsonObject, canonical_json, digest, worker_event
 from .page_driver import (
     AUTHENTICATED,
@@ -31,10 +34,6 @@ from .page_driver import (
     create_default_driver,
 )
 from .selectors import ProviderSelectors
-
-# Reuse the canonical secret-material guard so the live path rejects exactly the
-# same disallowed credential/cookie/token material as the registry & mock paths.
-from ..adapter_registry import _contains_disallowed_secret_material  # noqa: E402
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .orchestrator import LiveOrchestrator

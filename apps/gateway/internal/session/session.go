@@ -99,7 +99,7 @@ func isLive(sess Session, now time.Time) bool {
 
 // MemoryStore is an in-memory Store keyed by token hash.
 type MemoryStore struct {
-	mu      sync.Mutex
+	mu     sync.Mutex
 	byHash map[string]Session
 }
 

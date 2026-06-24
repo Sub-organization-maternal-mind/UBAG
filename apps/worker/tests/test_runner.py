@@ -4,7 +4,6 @@ import sys
 import unittest
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "apps" / "worker"))
 sys.path.insert(0, str(REPO_ROOT / "adapters" / "mock"))

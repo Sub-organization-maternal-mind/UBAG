@@ -30,7 +30,13 @@ from .page_driver import (
     create_default_driver,
     offline_mode_enabled,
 )
-from .selectors import ProviderSelectors, SelectorGroup, get_provider_selectors, live_web_template, GENERIC_LIVE_WEB
+from .selectors import (
+    GENERIC_LIVE_WEB,
+    ProviderSelectors,
+    SelectorGroup,
+    get_provider_selectors,
+    live_web_template,
+)
 
 __all__ = [
     "ConcurrencyState",

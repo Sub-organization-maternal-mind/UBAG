@@ -35,7 +35,6 @@ from typing import Mapping, Optional
 from .page_driver import MockPageDriver, PageDriver, PlaywrightPageDriver
 from .selectors import SelectorGroup
 
-
 # ---------------------------------------------------------------------------
 # Engine + protocol enums
 # ---------------------------------------------------------------------------

@@ -1,8 +1,5 @@
 """Tests for humanized browser interaction helpers."""
-import math
 import random
-
-import pytest
 
 from ubag_worker.live.humanized import (
     HumanizedConfig,
@@ -122,10 +119,10 @@ class TestShouldBlockUrl:
 
 class TestPatchrightEngineImport:
     def test_patchright_engine_is_exported(self):
-        from ubag_worker.live.engines import PatchrightEngine, select_engine
-
         # Without env var, should return LocalPlaywrightEngine
         import os
+
+        from ubag_worker.live.engines import select_engine
         os.environ.pop("UBAG_USE_PATCHRIGHT", None)
         engine = select_engine()
         from ubag_worker.live.engines import LocalPlaywrightEngine
@@ -133,6 +130,7 @@ class TestPatchrightEngineImport:
 
     def test_patchright_engine_selected_when_env_set(self):
         import os
+
         from ubag_worker.live.engines import PatchrightEngine, select_engine
         os.environ["UBAG_USE_PATCHRIGHT"] = "1"
         try:

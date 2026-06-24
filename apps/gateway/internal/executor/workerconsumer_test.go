@@ -379,9 +379,9 @@ func TestWorkerConsumerProjectsTopologyReport(t *testing.T) {
 						"has_storage_state": true,
 					}},
 					"tabs": []any{map[string]any{
-						"tab_id":         "tab_0001",
-						"context_id":     "ctx_0001",
-						"state":          "busy",
+						"tab_id":          "tab_0001",
+						"context_id":      "ctx_0001",
+						"state":           "busy",
 						"conversation_id": "conv_1",
 						"current_job_id":  envelope.JobID,
 						"jobs_completed":  float64(0),

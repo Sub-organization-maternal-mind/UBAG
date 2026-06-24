@@ -115,7 +115,7 @@ type Store interface {
 }
 
 // TopologyIngestor is the optional write side used to project worker-reported
-// ``browser.topology_reported`` telemetry into an in-memory topology Store. Only
+// “browser.topology_reported“ telemetry into an in-memory topology Store. Only
 // *MemoryStore implements it; the SQLite/Postgres stores are populated by the
 // worker out-of-band and remain read-only from the gateway's perspective.
 type TopologyIngestor interface {

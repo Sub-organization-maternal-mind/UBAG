@@ -78,9 +78,9 @@ func TestBreaker_RejectsWhileOpen(t *testing.T) {
 func TestBreaker_TransitionsToHalfOpenAfterCooldown(t *testing.T) {
 	t.Parallel()
 	b, base := newTestBreaker(Config{
-		FailureThreshold:   1,
-		CooldownBase:       100 * time.Millisecond,
-		CooldownMax:        200 * time.Millisecond,
+		FailureThreshold:    1,
+		CooldownBase:        100 * time.Millisecond,
+		CooldownMax:         200 * time.Millisecond,
 		HalfOpenMaxInflight: 1,
 	})
 
@@ -234,8 +234,8 @@ func TestBreaker_CooldownGrowsWithConsecutiveOpens(t *testing.T) {
 
 	// Advance past first cooldown, probe, fail → second open.
 	advanceNow(b, base, 10*time.Second)
-	b.Allow()                    // → half-open
-	b.RecordFailure()            // → re-open (openCount = 2)
+	b.Allow()                              // → half-open
+	b.RecordFailure()                      // → re-open (openCount = 2)
 	advanceNow(b, base, 1*time.Nanosecond) // reset base reference
 	cd2 := b.CooldownRemaining()
 

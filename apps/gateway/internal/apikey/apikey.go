@@ -17,10 +17,10 @@ import (
 )
 
 const (
-	rawKeyLen      = 32 // random bytes
-	checksumLen    = 4  // CRC32C bytes appended before base58 encoding
-	payloadLen     = rawKeyLen + checksumLen
-	prefix         = "ubag_sk_"
+	rawKeyLen   = 32 // random bytes
+	checksumLen = 4  // CRC32C bytes appended before base58 encoding
+	payloadLen  = rawKeyLen + checksumLen
+	prefix      = "ubag_sk_"
 )
 
 // envPattern restricts the env segment to lowercase letters and digits.

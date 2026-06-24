@@ -130,8 +130,8 @@ type SLOStats struct {
 	Total               int
 	Failures            int
 	ErrorRate           float64
-	BurnRate            float64  // > 1 means burning faster than allowed
-	RemainingFraction   float64  // 0..1; 0 = budget exhausted
+	BurnRate            float64 // > 1 means burning faster than allowed
+	RemainingFraction   float64 // 0..1; 0 = budget exhausted
 	ConsecutiveFailures int
 	Healthy             bool
 }

@@ -11,12 +11,12 @@ import (
 
 // Enrollment stores an MFA enrollment for one user in one tenant.
 type Enrollment struct {
-	TenantID      string
-	UserID        string
-	Secret        string    // plaintext TOTP secret (base32); production would AES-GCM wrap
-	RecoveryHashes []string // argon2id hash of each recovery code
-	UsedCounters  map[uint64]struct{} // counters already consumed (replay protection)
-	CreatedAt     time.Time
+	TenantID       string
+	UserID         string
+	Secret         string              // plaintext TOTP secret (base32); production would AES-GCM wrap
+	RecoveryHashes []string            // argon2id hash of each recovery code
+	UsedCounters   map[uint64]struct{} // counters already consumed (replay protection)
+	CreatedAt      time.Time
 }
 
 // Store persists and retrieves MFA enrollments.

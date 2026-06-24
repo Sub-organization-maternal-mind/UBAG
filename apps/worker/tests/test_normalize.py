@@ -1,11 +1,9 @@
 """Tests for the output normalization pipeline."""
-import pytest
 
 from ubag_worker.normalize import (
     FormatKind,
     NormalizePipeline,
     NormalizeResult,
-    Section,
     check_forbidden_phrases,
     check_length,
     detect_format,

@@ -7,14 +7,10 @@ import threading
 import time
 from typing import List
 
-import pytest
-
 from ubag_worker.runtime.shutdown import (
     GracefulDrainer,
-    ShutdownSummary,
     install_shutdown_handler,
 )
-
 
 # ---------------------------------------------------------------------------
 # Mock orchestrator

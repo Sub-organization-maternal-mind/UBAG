@@ -17,17 +17,17 @@ var ErrDowngradeUnsupported = errors.New("tier migration: downgrades are not sup
 type StepKind string
 
 const (
-	StepMigrateDB       StepKind = "migrate-db"         // SQLite→Postgres (or Postgres→Postgres-HA)
-	StepEnableCache     StepKind = "enable-cache"        // Enable semantic cache
-	StepEnableRBAC      StepKind = "enable-rbac"         // Enable multi-tenant RBAC
-	StepEnableSSO       StepKind = "enable-sso"          // Enable SSO
-	StepEnableSCIM      StepKind = "enable-scim"         // Enable SCIM provisioning
-	StepSwitchAudit     StepKind = "switch-audit"        // Switch audit delivery
-	StepEnableGeoRepl   StepKind = "enable-geo-repl"    // Enable geo-replication
-	StepEnableCompliance StepKind = "enable-compliance"  // Enable compliance modes
-	StepSwitchExecutor  StepKind = "switch-executor"     // Switch job executor (NATS/file)
-	StepSwitchArtifacts StepKind = "switch-artifacts"    // Switch to MinIO
-	StepUpgradeBrowser  StepKind = "upgrade-browser"     // Increase browser session pool
+	StepMigrateDB        StepKind = "migrate-db"        // SQLite→Postgres (or Postgres→Postgres-HA)
+	StepEnableCache      StepKind = "enable-cache"      // Enable semantic cache
+	StepEnableRBAC       StepKind = "enable-rbac"       // Enable multi-tenant RBAC
+	StepEnableSSO        StepKind = "enable-sso"        // Enable SSO
+	StepEnableSCIM       StepKind = "enable-scim"       // Enable SCIM provisioning
+	StepSwitchAudit      StepKind = "switch-audit"      // Switch audit delivery
+	StepEnableGeoRepl    StepKind = "enable-geo-repl"   // Enable geo-replication
+	StepEnableCompliance StepKind = "enable-compliance" // Enable compliance modes
+	StepSwitchExecutor   StepKind = "switch-executor"   // Switch job executor (NATS/file)
+	StepSwitchArtifacts  StepKind = "switch-artifacts"  // Switch to MinIO
+	StepUpgradeBrowser   StepKind = "upgrade-browser"   // Increase browser session pool
 )
 
 // MigrationStep is a single actionable step in a migration plan.

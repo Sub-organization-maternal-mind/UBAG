@@ -15,7 +15,7 @@ pool queue); this module coordinates *across* pools.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
 from .topology import Lane

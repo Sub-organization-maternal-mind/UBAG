@@ -32,7 +32,6 @@ from ubag_worker.live.engines import (  # noqa: E402
 from ubag_worker.live.page_driver import MockPageDriver  # noqa: E402
 from ubag_worker.live.selectors import SelectorGroup  # noqa: E402
 
-
 _ENGINE_ENV_VARS = (
     "UBAG_BROWSER_ENGINE",
     "UBAG_BROWSER_PROTOCOL",

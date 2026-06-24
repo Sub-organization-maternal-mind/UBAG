@@ -100,9 +100,9 @@ func TestVerifyReplayRejected(t *testing.T) {
 	// Enroll a user.
 	ctx := t.Context()
 	err = store.Enroll(ctx, Enrollment{
-		TenantID: "t1",
-		UserID:   "u1",
-		Secret:   secret,
+		TenantID:  "t1",
+		UserID:    "u1",
+		Secret:    secret,
 		CreatedAt: now,
 	})
 	if err != nil {

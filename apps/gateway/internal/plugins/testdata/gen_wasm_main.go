@@ -34,9 +34,9 @@ func main() {
 		0x42, 0x20, // i64.const 32
 		0x86,       // i64.shl
 		0x20, 0x01, // local.get 1 (len)
-		0xad,       // i64.extend_i32_u
-		0x84,       // i64.or
-		0x0b,       // end
+		0xad, // i64.extend_i32_u
+		0x84, // i64.or
+		0x0b, // end
 	}
 
 	// infinite_loop.wasm — transform loops forever; alloc returns 0.
@@ -64,7 +64,7 @@ func main() {
 		0x0b,       // end (loop)
 		0x0b,       // end (block)
 		0x42, 0x00, // i64.const 0
-		0x0b,       // end
+		0x0b, // end
 	}
 
 	// import_denied.wasm — imports env.log; alloc and transform return 0.

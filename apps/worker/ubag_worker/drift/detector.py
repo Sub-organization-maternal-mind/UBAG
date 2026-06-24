@@ -13,8 +13,7 @@ from __future__ import annotations
 import enum
 import hashlib
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
-
+from typing import Dict, List
 
 # ---------------------------------------------------------------------------
 # Data types

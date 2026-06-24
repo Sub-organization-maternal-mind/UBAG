@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from .format_detect import FormatKind, detect_format
 from .guards import check_forbidden_phrases, check_length

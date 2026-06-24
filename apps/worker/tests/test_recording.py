@@ -1,11 +1,9 @@
 """Tests for the session recording module."""
-import pytest
 
 from ubag_worker.live.recording import (
     ConsoleLog,
     DomSnapshot,
     HarEntry,
-    RecordingSession,
     finish_session,
     new_session,
     record_console_log,

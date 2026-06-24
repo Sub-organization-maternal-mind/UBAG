@@ -56,7 +56,7 @@ func TestRegistry_SnapshotState(t *testing.T) {
 	t.Parallel()
 	r := NewRegistry(testRegistryCfg())
 
-	r.Get(KindAdapter, "closed-svc")              // stays closed
+	r.Get(KindAdapter, "closed-svc")               // stays closed
 	r.Get(KindWebhook, "open-svc").RecordFailure() // trips open (threshold = 1)
 
 	snaps := r.Snapshot()
