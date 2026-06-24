@@ -87,6 +87,45 @@ cmd /c pnpm --filter @ubag/dashboard test:e2e
 cmd /c pnpm test:dashboard
 ```
 
+After the 2026-06-18 production live-browser activation, `ubag.polytronx.com`
+uses the `live-browser` profile with a production `browser-topology-register`
+service. The registrar idempotently upserts one Chromium instance and three
+provider contexts/tabs (`chatgpt_web`, `gemini_web`, `deepseek_web`) for
+`tenant_edge`, so Browser Sessions should survive restarts/redeploys without
+manual database inserts. Production verification returned 1
+`gateway_browser_instances` row, 3 `gateway_provider_contexts` rows, and 3
+joined `gateway_browser_tabs` rows. Gemini and DeepSeek were operator-login
+checked; ChatGPT remains manual-login pending. Do not read provider cookies,
+storage state, credentials, or production secret files while validating this
+flow.
+
+After the 2026-06-18 production operator activation pass, production also runs
+`browser-topology-sync` under the `live-browser` profile. It reruns the same
+idempotent registration every `UBAG_TOPOLOGY_SYNC_INTERVAL_SECONDS` seconds, so
+Browser Sessions should repopulate automatically after restarts without manual
+DB inserts. The production dashboard bundle now includes:
+
+- Jobs page submitter for `chatgpt_web`, `gemini_web`, and `deepseek_web` using
+  the real `/v1/jobs` envelope.
+- Correct job cancel/retry routes (`/v1/jobs/{id}/cancel`,
+  `/v1/jobs/{id}/retry`).
+- Workflows page create/run controls using `/v1/workflows` and
+  `/v1/workflows/{id}/runs`.
+- Workflows page ordered-chain mode that creates steps in this provider order:
+  ChatGPT, Gemini, DeepSeek. It keeps single-provider mode available and shows
+  live provider readiness from `/v1/browser/contexts`.
+
+Production smoke evidence: `https://ubag.polytronx.com/dashboard/jobs/`,
+`/dashboard/workflows/`, and `/dashboard/browser/` rendered in headless Chrome;
+browser topology showed 1 instance, 3 contexts, 3 tabs; safe mock job
+`job_000000000001` was accepted/queued; safe mock workflow
+`wfd_6d78879ffd80099234a51848` ran successfully as
+`wfr_e198f2fa93daa73b20f1a810` with `job_000000000002`. No failed jobs existed
+at inspection time. A follow-up smoke confirmed the ordered workflow UI renders
+the requested chain and provider readiness states. External `/v1/ready` is
+intentionally blocked by nginx; use external `/v1/health` and internal container
+healthchecks for readiness.
+
 After the 2026-06-01 worker runtime orchestration integration (Option A, full), the following validation was green (all exit 0):
 
 ```powershell

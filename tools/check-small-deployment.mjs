@@ -54,6 +54,11 @@ requireTerms('docker-compose.small.yml', [
   'UBAG_BROWSER_VNC_PASSWORD',
   'UBAG_NOVNC_BASE_URL',
   'UBAG_REMOTE_BROWSER_ENDPOINT',
+  'browser-topology-register',
+  'browser-topology-sync',
+  'register-browser-topology.sh',
+  'sync-browser-topology.sh',
+  'UBAG_TOPOLOGY_SYNC_INTERVAL_SECONDS',
   'browser_profiles',
   'deploy/small/browser-viewer/Dockerfile'
 ]);
@@ -102,9 +107,28 @@ requireTerms('deploy/small/env.example', [
   'UBAG_WEBHOOK_SECRET=replace-with-local-webhook-secret',
   'UBAG_WEBHOOK_MAX_ATTEMPTS=8',
   'UBAG_WEBHOOK_ALLOW_ANY_PUBLIC_HOST=false',
+  'UBAG_WORKER_MAX_RUNTIME_MS=120000',
   'UBAG_BROWSER_VNC_PASSWORD=replace-with-local-vnc-password',
   'UBAG_NOVNC_BASE_URL=http://127.0.0.1:7900',
-  'UBAG_REMOTE_BROWSER_ENDPOINT=http://browser-viewer:9222'
+  'UBAG_REMOTE_BROWSER_ENDPOINT=http://172.31.0.5:9223',
+  'UBAG_BROWSER_PRIVATE_IP=172.31.0.5',
+  'UBAG_TOPOLOGY_TENANT_ID=tenant_edge',
+  'UBAG_TOPOLOGY_SYNC_INTERVAL_SECONDS=60'
+]);
+
+requireTerms('deploy/small/register-browser-topology.sh', [
+  'gateway_browser_instances',
+  'gateway_provider_contexts',
+  'gateway_browser_tabs',
+  'chatgpt_web',
+  'gemini_web',
+  'deepseek_web'
+]);
+
+requireTerms('deploy/small/sync-browser-topology.sh', [
+  'UBAG_TOPOLOGY_SYNC_INTERVAL_SECONDS',
+  'register-browser-topology.sh',
+  'while :'
 ]);
 
 requireTerms('deploy/small/small.ps1', [

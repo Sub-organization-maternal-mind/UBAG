@@ -907,6 +907,11 @@ func minimalWorkerEnv() []string {
 		"TMP":                          {},
 		"HOME":                         {},
 		"USERPROFILE":                  {},
+		"UBAG_BROWSER_ENGINE":          {},
+		"UBAG_BROWSER_HEADED":          {},
+		"UBAG_BROWSER_PROTOCOL":        {},
+		"UBAG_NOVNC_BASE_URL":          {},
+		"UBAG_REMOTE_BROWSER_ENDPOINT": {},
 		"UBAG_WORKER_SINGLE_USER_EDGE": {},
 	}
 	env := []string{}

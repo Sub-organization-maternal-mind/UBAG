@@ -19,6 +19,7 @@ from ubag_worker.live import (  # noqa: E402
     DriftDetectedError,
     LiveSessionEngine,
     LiveSessionError,
+    ManualActionRequired,
     MockPageDriver,
     PlaywrightPageDriver,
     create_default_driver,
@@ -90,6 +91,17 @@ class SelectorConfigTests(unittest.TestCase):
     def test_get_provider_selectors_unknown_raises(self):
         with self.assertRaises(KeyError):
             get_provider_selectors("nope_web")
+
+    def test_deepseek_send_button_includes_current_primary_circle_fallback(self):
+        candidates = get_provider_selectors("deepseek_web").submit_button.as_list()
+        self.assertIn(
+            "div[role='button'].ds-button--primary.ds-button--circle:not([class*='disabled'])",
+            candidates,
+        )
+
+    def test_deepseek_authenticated_signal_includes_current_composer_fallback(self):
+        candidates = get_provider_selectors("deepseek_web").authenticated_signal.as_list()
+        self.assertIn("textarea[placeholder*='Message']", candidates)
 
 
 class EngineHappyPathTests(unittest.TestCase):
@@ -186,6 +198,24 @@ class ManualLoginFlowTests(unittest.TestCase):
         self.assertEqual(blocked["data"]["reason"], "manual_login_required")
         self.assertTrue(blocked["data"]["retryable"])
         self.assertIsNone(driver.submitted_prompt)
+
+    def test_manual_overlay_blocks_retryable_without_clicking_consent(self):
+        class OverlayDriver(MockPageDriver):
+            def submit_prompt(self, selectors, prompt):
+                raise ManualActionRequired(
+                    "manual_consent_or_overlay_required",
+                    "Provider UI is blocking the prompt field with a consent prompt.",
+                )
+
+        engine = LiveSessionEngine(get_provider_selectors("gemini_web"))
+        events = engine.run(_payload("gemini_web"), driver=OverlayDriver())
+
+        types = _types(events)
+        self.assertIn("session.manual_action_required", types)
+        blocked = events[-1]
+        self.assertEqual(blocked["type"], "blocked")
+        self.assertEqual(blocked["data"]["reason"], "manual_consent_or_overlay_required")
+        self.assertTrue(blocked["data"]["retryable"])
 
     def test_session_id_rejects_path_confusing_values(self):
         engine = LiveSessionEngine(get_provider_selectors("mistral_lechat"))

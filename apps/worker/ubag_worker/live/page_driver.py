@@ -101,7 +101,9 @@ class PageDriver(ABC):
         """Yield response token deltas as they appear."""
 
     @abstractmethod
-    def read_final_response(self, selectors: ProviderSelectors) -> str:
+    def read_final_response(
+        self, selectors: ProviderSelectors, *, return_mode: str = "final"
+    ) -> str:
         ...
 
     @abstractmethod
@@ -190,7 +192,9 @@ class MockPageDriver(PageDriver):
         for token in self._resolved_tokens():
             yield token
 
-    def read_final_response(self, selectors: ProviderSelectors) -> str:
+    def read_final_response(
+        self, selectors: ProviderSelectors, *, return_mode: str = "final"
+    ) -> str:
         self._guard_drift(
             selectors.response_container.name, selectors.selector_version
         )
@@ -454,7 +458,20 @@ class PlaywrightPageDriver(PageDriver):
                 break
             time.sleep(0.4)
 
-    def read_final_response(self, selectors: ProviderSelectors) -> str:  # pragma: no cover
+    def read_final_response(  # pragma: no cover
+        self, selectors: ProviderSelectors, *, return_mode: str = "final"
+    ) -> str:
+        # Reasoning models (e.g. DeepSeek R1) render the chain-of-thought and the final
+        # answer as separate nodes; response_container (.first) can latch the thinking
+        # pane. When the job requested return_mode="final" and the provider declares an
+        # explicit final_answer_container, read that authoritative node; fall back to
+        # response_container only if the answer selector has drifted.
+        if return_mode == "final" and selectors.final_answer_container is not None:
+            try:
+                answer = self._first_visible(selectors.final_answer_container)
+                return answer.inner_text(timeout=4000)
+            except DriftDetectedError:
+                pass
         container = self._first_visible(selectors.response_container)
         return container.inner_text(timeout=4000)
 

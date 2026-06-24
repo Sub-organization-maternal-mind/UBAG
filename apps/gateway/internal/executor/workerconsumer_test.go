@@ -721,6 +721,38 @@ func TestProcessWorkerRunnerRunsPythonWorkerFromGatewayEnvelope(t *testing.T) {
 	}
 }
 
+func TestMinimalWorkerEnvIncludesBrowserRuntimeConfigOnly(t *testing.T) {
+	t.Setenv("UBAG_REMOTE_BROWSER_ENDPOINT", "http://browser-viewer:9223")
+	t.Setenv("UBAG_BROWSER_ENGINE", "chromium")
+	t.Setenv("UBAG_BROWSER_PROTOCOL", "cdp")
+	t.Setenv("UBAG_BROWSER_HEADED", "false")
+	t.Setenv("UBAG_NOVNC_BASE_URL", "http://127.0.0.1:7900")
+	t.Setenv("UBAG_BROWSER_VNC_PASSWORD", "must-not-pass")
+	t.Setenv("UBAG_POSTGRES_DSN", "must-not-pass")
+
+	env := minimalWorkerEnv()
+	values := map[string]string{}
+	for _, item := range env {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+
+	if values["UBAG_REMOTE_BROWSER_ENDPOINT"] != "http://browser-viewer:9223" {
+		t.Fatalf("remote browser endpoint was not propagated: %#v", values)
+	}
+	if values["UBAG_BROWSER_ENGINE"] != "chromium" || values["UBAG_BROWSER_PROTOCOL"] != "cdp" {
+		t.Fatalf("browser engine/protocol were not propagated: %#v", values)
+	}
+	if _, ok := values["UBAG_BROWSER_VNC_PASSWORD"]; ok {
+		t.Fatal("VNC password must not be propagated to worker subprocess")
+	}
+	if _, ok := values["UBAG_POSTGRES_DSN"]; ok {
+		t.Fatal("database DSN must not be propagated to worker subprocess")
+	}
+}
+
 type fakeWorkerQueue struct {
 	lease *fakeWorkerLease
 }

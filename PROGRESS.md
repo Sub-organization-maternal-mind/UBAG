@@ -22,6 +22,39 @@ The handoff now records:
 
 Rendered docs-site counterpart: `operations/agent-handoff`.
 
+## 2026-06-18 Production Operator Activation Pass
+
+Completed directly against production (`ubag.polytronx.com` / `/opt/ubag`) after the live-browser stack was already active:
+
+- Inspected production containers, logs, DB topology rows, and gateway operator APIs. All core containers are up/healthy: gateway, nginx-dashboard, postgres, minio, dragonfly, browser-viewer, and the new browser-topology-sync service. Host `/opt` disk is high at roughly 85% used and should be cleaned before larger deploys.
+- Fixed operator Jobs UX by adding a valid UBAG envelope submitter for ChatGPT, Gemini, and DeepSeek targets, with provider login-state badges from `/v1/browser/contexts`, template selection, prompt entry, and production job creation through `/v1/jobs`.
+- Fixed existing dashboard action bugs: cancel and retry now call the gateway's real `/v1/jobs/{id}/cancel` and `/v1/jobs/{id}/retry` routes instead of the old colon-style paths.
+- Wired Workflows UX so the operator can create a provider workflow and run an existing workflow through `/v1/workflows` and `/v1/workflows/{id}/runs`.
+- Continued the Workflows UX with an ordered chain mode that creates steps in the requested provider order: ChatGPT, then Gemini, then DeepSeek. The form still supports single-provider workflows, and it shows live provider readiness so the operator can see that ChatGPT is currently manual-login pending while Gemini and DeepSeek are authenticated.
+- Replaced one-shot/manual browser topology registration with `browser-topology-sync`, an idempotent recurring production service that reruns `register-browser-topology.sh` every `UBAG_TOPOLOGY_SYNC_INTERVAL_SECONDS` seconds. This keeps Browser Sessions repopulated after browser/gateway/database restarts without asking an agent to insert rows manually.
+- Deployed the rebuilt dashboard bundle with `UBAG_BASE_PATH=/dashboard`, updated production Compose/scripts/docs/checker files, recreated nginx-dashboard, and started `browser-topology-sync`.
+- Production DB verification after deploy: 1 browser instance (`br_prod_browser_viewer`), 3 provider contexts, 3 tabs; Gemini and DeepSeek authenticated, ChatGPT still unknown/warming pending the operator's manual ChatGPT login.
+- Production API/UI smoke: `/v1/health`, browser topology, targets, adapters, jobs, templates, and workflows returned through nginx; `/v1/ready` remains intentionally blocked at the edge by nginx. Jobs, Workflows, and Browser Sessions rendered successfully in a headless browser against `https://ubag.polytronx.com/dashboard/...`.
+- Follow-up production UI smoke verified the Workflows page renders `Ordered chain`, `Single provider`, `ChatGPT -> Gemini -> DeepSeek`, and provider readiness states.
+- Safe write-path smoke used only the built-in `mock` target: job `job_000000000001` was accepted/queued, workflow `wfd_6d78879ffd80099234a51848` was created, and workflow run `wfr_e198f2fa93daa73b20f1a810` succeeded with job `job_000000000002`.
+- Failed-job debug result: there were no failed jobs in `gateway_jobs` at inspection time.
+
+Validation run locally before deploy:
+
+```powershell
+cmd /c pnpm --filter @ubag/dashboard check
+cmd /c pnpm --filter @ubag/dashboard test
+$env:UBAG_BASE_PATH='/dashboard'; cmd /c pnpm --filter @ubag/dashboard build
+cmd /c pnpm test:deployment
+git diff --check
+```
+
+Operational notes:
+
+- Production nginx intentionally blocks `/v1/ready` and `/v1/metrics` at the public edge; use `/v1/health` externally and internal container healthchecks for readiness.
+- noVNC/browser automation remains manual-login only. Do not automate provider login, CAPTCHA, 2FA, credential collection, cookie extraction, or storage-state extraction.
+- Nginx access logs show noisy unauthenticated crawler hits to random `/shop/...` paths returning the ingress text response; not currently a gateway error, but it is a cleanup/hardening candidate if crawler noise matters.
+
 ## Status Summary
 
 | Area | Status | Evidence / Next Step |
@@ -75,6 +108,65 @@ cmd /c pnpm --filter @ubag/dashboard test
 cmd /c pnpm --filter @ubag/dashboard test:e2e
 cmd /c pnpm test:dashboard
 ```
+
+## 2026-06-18 Production Live-Browser Topology Activation
+
+Production-only live-browser activation was applied on `ubag.polytronx.com`.
+The noVNC websocket ingress now supports the stock `/websockify` path, the
+production VNC password was set by operator request, the browser viewer has
+public egress for provider sites plus private-network CDP reachability, and the
+small-profile deployment now includes an automatic `browser-topology-register`
+service under the `live-browser` profile. The registrar idempotently upserts the
+single production Chromium instance plus ChatGPT, Gemini, and DeepSeek provider
+contexts/tabs so the dashboard does not depend on one-off manual database rows
+after restarts or redeploys.
+
+Production verification:
+
+```text
+docker compose --env-file deploy/small/env.local -f docker-compose.small.yml --profile live-browser run --rm --no-deps browser-topology-register
+INSERT 0 1
+INSERT 0 3
+INSERT 0 3
+browser topology registered for tenant tenant_edge
+
+gateway_browser_instances count for tenant_edge = 1
+gateway_provider_contexts count for tenant_edge = 3
+gateway_browser_tabs joined count for tenant_edge = 3
+```
+
+Operational note: Gemini and DeepSeek were visually/login-state checked by the
+operator in the production browser. ChatGPT remains marked `unknown`/warming
+until the operator completes that login manually. UBAG must not automate
+provider login, CAPTCHA/2FA, consent, credential collection, cookie extraction,
+or storage-state exfiltration.
+
+## 2026-06-18 Production Browser Sessions Dashboard Fix
+
+Production Browser Sessions initially remained stuck on `Loading...` even after
+the topology rows existed. Browser-console verification showed the live static
+dashboard bundle was stale and still rendered `instance.id.slice(...)`, while
+the gateway correctly returns `instance_id`. The dashboard source was already
+partly aligned, and this pass tightened the browser page further for production:
+tabs now display `conversation_id` as the URL fallback, context tab counts are
+derived from the loaded tab list when the API omits `tab_count`, the first
+instance auto-selects after load, and the xterm welcome block no longer writes
+twice.
+
+Validated and deployed to production:
+
+```powershell
+cmd /c pnpm --filter @ubag/dashboard check
+cmd /c pnpm --filter @ubag/dashboard test
+$env:UBAG_BASE_PATH='/dashboard'; cmd /c pnpm --filter @ubag/dashboard build
+```
+
+Production verification with Chrome against
+`https://ubag.polytronx.com/dashboard/browser` returned HTTP 200 for all four
+browser API calls and rendered: 1 instance, 3 contexts, 3 tabs; context rows show
+1 tab each; ChatGPT is warming, DeepSeek and Gemini are ready. Cloudflare's
+injected beacon is blocked by the dashboard CSP, but that is unrelated to UBAG
+runtime and does not block the page.
 
 ## 2026-05-29 Gateway Runtime Stores + Enterprise Surface Pass
 

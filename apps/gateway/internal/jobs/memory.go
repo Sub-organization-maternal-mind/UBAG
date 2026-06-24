@@ -525,6 +525,8 @@ func knownWorkerEventType(eventType string) bool {
 		"assigned",
 		"running",
 		"browser_opened",
+		"session.opening",
+		"session.authenticated",
 		"session.manual_action_required",
 		"prompt_submitted",
 		"token",

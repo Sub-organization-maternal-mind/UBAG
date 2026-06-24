@@ -1,0 +1,8 @@
+[begin] (UBAG Browser)
+[exec] (Chromium) {/usr/local/bin/open-chromium about:blank}
+[exec] (Chromium - Gemini login) {/usr/local/bin/open-chromium https://gemini.google.com}
+[exec] (Chromium - DeepSeek) {/usr/local/bin/open-chromium https://chat.deepseek.com}
+[exec] (Re-maximize Chromium) {/usr/local/bin/open-chromium}
+[separator]
+[include] (/etc/X11/fluxbox/fluxbox-menu)
+[end]

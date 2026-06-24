@@ -22,6 +22,7 @@ from .engine import LiveSessionEngine, LiveSessionError
 from .orchestrator import ConcurrencyState, LiveLease, LiveOrchestrator
 from .page_driver import (
     DriftDetectedError,
+    ManualActionRequired,
     ManualLoginTimeout,
     MockPageDriver,
     PageDriver,
@@ -39,6 +40,7 @@ __all__ = [
     "LiveSessionEngine",
     "LiveSessionError",
     "ManualLoginTimeout",
+    "ManualActionRequired",
     "MockPageDriver",
     "PageDriver",
     "PlaywrightPageDriver",

@@ -73,6 +73,11 @@ class ProviderSelectors:
     streaming_indicator: SelectorGroup
     # Structural nodes sampled for the DOM drift signature (no text captured).
     drift_signature_nodes: Sequence[str] = field(default_factory=tuple)
+    # Optional explicit "final answer" container. For reasoning models (e.g. DeepSeek
+    # R1) the live DOM renders the chain-of-thought and the final answer as SEPARATE
+    # nodes; response_container alone (.first) can latch the thinking pane. When set,
+    # read_final_response uses this as the authoritative source for return_mode="final".
+    final_answer_container: Optional[SelectorGroup] = None
 
     def all_groups(self) -> List[SelectorGroup]:
         return [
@@ -209,7 +214,7 @@ DEEPSEEK_WEB = ProviderSelectors(
     provider_id="deepseek_web",
     display_name="DeepSeek Web",
     target_url="https://chat.deepseek.com/",
-    selector_version="2026-05-22-baseline-unverified",
+    selector_version="2026-06-22-thinking-pane-fix",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
@@ -231,9 +236,25 @@ DEEPSEEK_WEB = ProviderSelectors(
     response_container=SelectorGroup(
         "response_container",
         (
-            "div.ds-markdown",
+            # Verified 2026-06-22 against live chat.deepseek.com (R1 reasoning ON): the
+            # reply renders TWO div.ds-markdown nodes - the chain-of-thought inside
+            # div.ds-think-content, then the final answer in
+            # div.ds-markdown.ds-assistant-message-main-content. The old bare
+            # "div.ds-markdown" matched the thinking pane first (.first) and leaked the
+            # reasoner's chain-of-thought as the result. Target the answer node, with a
+            # structural xpath fallback that excludes anything inside a *think* pane.
+            "div.ds-markdown.ds-assistant-message-main-content",
+            "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' ds-markdown ')][not(ancestor::*[contains(@class, 'ds-think')])]",
             "div[class*='message'][class*='assistant']",
             "div.markdown-body",
+            "div.ds-markdown",
+        ),
+    ),
+    final_answer_container=SelectorGroup(
+        "final_answer_container",
+        (
+            "div.ds-markdown.ds-assistant-message-main-content",
+            "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' ds-markdown ')][not(ancestor::*[contains(@class, 'ds-think')])]",
         ),
     ),
     authenticated_signal=SelectorGroup(

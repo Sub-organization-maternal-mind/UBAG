@@ -229,6 +229,7 @@ machine only attaches to the already-logged-in profile over CDP to run jobs.
 UBAG_BROWSER_VNC_PASSWORD=choose-a-strong-vnc-password
 UBAG_REMOTE_BROWSER_ENDPOINT=http://browser-viewer:9222
 UBAG_NOVNC_BASE_URL=http://127.0.0.1:7900
+UBAG_TOPOLOGY_SYNC_INTERVAL_SECONDS=60
 ```
 
 ```powershell
@@ -246,6 +247,9 @@ Security posture:
   survive restarts. Place that volume on an encrypted disk for shared hosts.
 - The gateway only forwards `novnc_url` values that are loopback URLs, so keep
   `UBAG_NOVNC_BASE_URL` on `127.0.0.1`/`localhost`.
+- `browser-topology-sync` reruns the idempotent browser topology registration on
+  an interval, so the Browser Sessions page repopulates after gateway, database,
+  or browser-viewer restarts without a manual registration command.
 
 Run raw Compose commands without the helper:
 

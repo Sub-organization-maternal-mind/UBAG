@@ -5,12 +5,6 @@
 # machine — completes login, CAPTCHA, 2FA, and consent prompts in this session.
 # The worker attaches to the same Chromium over CDP (--remote-debugging-port) so
 # live jobs reuse the user-owned, already-logged-in profile.
-#
-# Security posture (small deployment):
-#   * noVNC is protected by a VNC password (UBAG_BROWSER_VNC_PASSWORD).
-#   * Only the noVNC port is published, bound to loopback by default.
-#   * CDP (9222) stays on the internal ubag-private network only.
-#   * The whole service is gated behind the "live-browser" compose profile.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -23,7 +17,10 @@ RUN apt-get update \
     x11vnc \
     fluxbox \
     novnc \
+    socat \
     websockify \
+    xdotool \
+    wmctrl \
     ca-certificates \
     tini \
     wget \
@@ -35,8 +32,14 @@ RUN ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 COPY deploy/small/browser-viewer/entrypoint.sh /usr/local/bin/ubag-browser-viewer
 RUN chmod +x /usr/local/bin/ubag-browser-viewer
 
-# 6080 = noVNC (websockify), 9222 = Chromium DevTools/CDP for the worker.
-EXPOSE 6080 9222
+# Operator convenience: a launchable Chromium on the shared profile + a fluxbox
+# right-click menu entry, so a human can (re)open the browser from the noVNC desktop.
+COPY deploy/small/browser-viewer/open-chromium /usr/local/bin/open-chromium
+RUN chmod +x /usr/local/bin/open-chromium
+COPY deploy/small/browser-viewer/fluxbox-menu /root/.fluxbox/menu
+
+# 6080 = noVNC (websockify), 9223 = private CDP proxy for the worker.
+EXPOSE 6080 9223
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/usr/local/bin/ubag-browser-viewer"]

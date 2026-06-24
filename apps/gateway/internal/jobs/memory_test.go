@@ -109,6 +109,25 @@ func TestMemoryStoreRejectsWorkerEventsWithoutProvenance(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreAcceptsLiveSessionLifecycleEvents(t *testing.T) {
+	store := NewMemoryStore()
+	job := createWorkerEventTestJob(t, store, "trace_live_session_events")
+
+	for index, eventType := range []string{"session.opening", "session.authenticated"} {
+		if _, found, err := store.ApplyWorkerEvent(context.Background(), WorkerEvent{
+			EventID:    "live_session_evt_" + eventType,
+			JobID:      job.ID,
+			APIVersion: job.APIVersion,
+			Type:       eventType,
+			Sequence:   index + 2,
+			TraceID:    job.TraceID,
+			Data:       map[string]any{"status": eventType},
+		}); err != nil || !found {
+			t.Fatalf("ApplyWorkerEvent(%s) found=%v err=%v", eventType, found, err)
+		}
+	}
+}
+
 func TestMemoryStoreRejectsMismatchedWorkerEvents(t *testing.T) {
 	store := NewMemoryStore()
 	job := createWorkerEventTestJob(t, store, "trace_mismatch")

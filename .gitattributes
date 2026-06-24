@@ -3,3 +3,10 @@
 # parse failures (e.g. the live-browser browser-viewer entrypoint).
 *.sh text eol=lf
 deploy/**/entrypoint.sh text eol=lf
+
+# Normalize all code to LF (server edits were introducing CRLF churn)
+* text=auto eol=lf
+*.go text eol=lf
+*.py text eol=lf
+*.yml text eol=lf
+*.mjs text eol=lf

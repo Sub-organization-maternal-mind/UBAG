@@ -11,8 +11,13 @@ set -eu
 
 DISPLAY_NUM="${UBAG_BROWSER_DISPLAY:-:99}"
 SCREEN_GEOMETRY="${UBAG_BROWSER_GEOMETRY:-1280x800x24}"
+# Parsed screen width/height (added) — used to keep Chromium full-screen.
+SCREEN_W="${SCREEN_GEOMETRY%%x*}"
+SCREEN_REST="${SCREEN_GEOMETRY#*x}"
+SCREEN_H="${SCREEN_REST%%x*}"
 PROFILE_DIR="${UBAG_BROWSER_PROFILE_DIR:-/profiles/default}"
 CDP_PORT="${UBAG_BROWSER_CDP_PORT:-9222}"
+CDP_PROXY_PORT="${UBAG_BROWSER_CDP_PROXY_PORT:-9223}"
 VNC_PORT="${UBAG_BROWSER_VNC_PORT:-5900}"
 NOVNC_PORT="${UBAG_BROWSER_NOVNC_PORT:-6080}"
 START_URL="${UBAG_BROWSER_START_URL:-about:blank}"
@@ -23,14 +28,18 @@ if [ -z "${UBAG_BROWSER_VNC_PASSWORD:-}" ]; then
   exit 1
 fi
 
-mkdir -p "$PROFILE_DIR" /run/ubag
+mkdir -p "$PROFILE_DIR" /run/ubag /root/.fluxbox
 x11vnc -storepasswd "$UBAG_BROWSER_VNC_PASSWORD" /run/ubag/vncpass >/dev/null 2>&1
 
 cleanup() {
-  # Best-effort teardown so a restarting container does not leak processes.
-  kill 0 2>/dev/null || true
+  trap - INT TERM EXIT
+  jobs -p | xargs -r kill 2>/dev/null || true
 }
-trap cleanup INT TERM EXIT
+trap cleanup INT TERM
+
+DISPLAY_ID="${DISPLAY_NUM#:}"
+rm -f "/tmp/.X${DISPLAY_ID}-lock" "/tmp/.X11-unix/X${DISPLAY_ID}"
+rm -f "$PROFILE_DIR"/SingletonLock "$PROFILE_DIR"/SingletonSocket "$PROFILE_DIR"/SingletonCookie
 
 # Virtual framebuffer (no TCP listener — display is local to the container).
 Xvfb "$DISPLAY_NUM" -screen 0 "$SCREEN_GEOMETRY" -nolisten tcp &
@@ -61,8 +70,33 @@ chromium \
   --disable-dev-shm-usage \
   --disable-gpu \
   --window-position=0,0 \
+  --window-size="$SCREEN_W,$SCREEN_H" \
   --start-maximized \
   "$START_URL" &
+
+# Defeat the fluxbox/Chromium startup race that can otherwise leave the window at
+# Chromium's 200x200 default: force every Chromium window to fill the screen once
+# it maps. One-shot (first ~20s of boot) so it never fights the worker later.
+( set +e
+  i=0
+  while [ "$i" -lt 20 ]; do
+    if xdotool search --class chromium >/dev/null 2>&1; then
+      for w in $(xdotool search --class chromium 2>/dev/null); do
+        xdotool windowsize "$w" "$SCREEN_W" "$SCREEN_H" 2>/dev/null
+        xdotool windowmove "$w" 0 0 2>/dev/null
+      done
+      break
+    fi
+    i=$((i + 1))
+    sleep 1
+  done ) &
+
+# Some Chromium builds keep DevTools on loopback even when
+# --remote-debugging-address is set. Keep the browser listener private and
+# expose a Docker-private proxy for the gateway/worker to attach through.
+socat \
+  "TCP-LISTEN:$CDP_PROXY_PORT,fork,reuseaddr,bind=0.0.0.0" \
+  "TCP:127.0.0.1:$CDP_PORT" &
 
 # Share the display over VNC on loopback only; websockify wraps it for noVNC.
 x11vnc \

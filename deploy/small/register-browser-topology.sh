@@ -1,0 +1,64 @@
+#!/bin/sh
+set -eu
+
+tenant_id="${UBAG_TOPOLOGY_TENANT_ID:-tenant_edge}"
+instance_id="${UBAG_TOPOLOGY_INSTANCE_ID:-br_prod_browser_viewer}"
+worker_id="${UBAG_TOPOLOGY_WORKER_ID:-browser-viewer}"
+browser_ip="${UBAG_BROWSER_PRIVATE_IP:-172.31.0.5}"
+remote_endpoint="${UBAG_REMOTE_BROWSER_ENDPOINT:-http://${browser_ip}:9223}"
+
+psql -v ON_ERROR_STOP=1 \
+  -v tenant_id="${tenant_id}" \
+  -v instance_id="${instance_id}" \
+  -v worker_id="${worker_id}" \
+  -v remote_endpoint="${remote_endpoint}" \
+  -h "${POSTGRES_HOST:-postgres}" \
+  -U "${POSTGRES_USER:-ubag}" \
+  -d "${POSTGRES_DB:-ubag}" <<SQL
+INSERT INTO gateway_browser_instances (
+  instance_id, worker_id, tenant_id, engine, remote_endpoint, state,
+  context_count, tab_count, created_at
+) VALUES (
+  :'instance_id', :'worker_id', :'tenant_id', 'chromium', :'remote_endpoint',
+  'ready', 3, 3, now()
+)
+ON CONFLICT (instance_id) DO UPDATE SET
+  worker_id = EXCLUDED.worker_id,
+  tenant_id = EXCLUDED.tenant_id,
+  engine = EXCLUDED.engine,
+  remote_endpoint = EXCLUDED.remote_endpoint,
+  state = EXCLUDED.state,
+  context_count = EXCLUDED.context_count,
+  tab_count = EXCLUDED.tab_count;
+
+INSERT INTO gateway_provider_contexts (
+  context_id, instance_id, tenant_id, target_id, identity_ref, login_state,
+  conversation_model, max_tabs, created_at, last_health_at
+) VALUES
+  ('ctx_prod_chatgpt', :'instance_id', :'tenant_id', 'chatgpt_web', 'production-manual-openai', 'unknown', 'spa-singleton', 2, now(), now()),
+  ('ctx_prod_gemini', :'instance_id', :'tenant_id', 'gemini_web', 'production-manual-google', 'authenticated', 'spa-singleton', 2, now(), now()),
+  ('ctx_prod_deepseek', :'instance_id', :'tenant_id', 'deepseek_web', 'production-manual-deepseek', 'authenticated', 'spa-singleton', 2, now(), now())
+ON CONFLICT (context_id) DO UPDATE SET
+  instance_id = EXCLUDED.instance_id,
+  tenant_id = EXCLUDED.tenant_id,
+  target_id = EXCLUDED.target_id,
+  identity_ref = EXCLUDED.identity_ref,
+  login_state = EXCLUDED.login_state,
+  conversation_model = EXCLUDED.conversation_model,
+  max_tabs = EXCLUDED.max_tabs,
+  last_health_at = EXCLUDED.last_health_at;
+
+INSERT INTO gateway_browser_tabs (
+  tab_id, context_id, state, conversation_id, jobs_completed, last_health_at, created_at
+) VALUES
+  ('tab_prod_chatgpt', 'ctx_prod_chatgpt', 'warming', 'https://chatgpt.com/', 0, now(), now()),
+  ('tab_prod_gemini', 'ctx_prod_gemini', 'ready', 'https://gemini.google.com/app', 0, now(), now()),
+  ('tab_prod_deepseek', 'ctx_prod_deepseek', 'ready', 'https://chat.deepseek.com/', 0, now(), now())
+ON CONFLICT (tab_id) DO UPDATE SET
+  context_id = EXCLUDED.context_id,
+  state = EXCLUDED.state,
+  conversation_id = EXCLUDED.conversation_id,
+  last_health_at = EXCLUDED.last_health_at;
+SQL
+
+echo "browser topology registered for tenant ${tenant_id}"

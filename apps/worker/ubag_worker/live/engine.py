@@ -26,6 +26,7 @@ from .events import JsonObject, canonical_json, digest, worker_event
 from .page_driver import (
     AUTHENTICATED,
     DriftDetectedError,
+    ManualActionRequired,
     PageDriver,
     create_default_driver,
 )
@@ -227,7 +228,10 @@ class LiveSessionEngine:
                 })
                 token_index += 1
 
-            result_text = driver.read_final_response(self._selectors)
+            return_mode = str((job.options or {}).get("return_mode") or "final")
+            result_text = driver.read_final_response(
+                self._selectors, return_mode=return_mode
+            )
             dom_signature = driver.dom_signature(self._selectors)
 
             yield emit("completed", {
@@ -268,6 +272,31 @@ class LiveSessionEngine:
                     "Selector drift detected; all fallbacks failed. The adapter "
                     "must be re-baselined before this target can run."
                 ),
+            })
+        except ManualActionRequired as exc:
+            orch_success = False
+            orch_signal = _manual_action_negative_signal()
+            session_id = job.session_id
+            yield emit("session.manual_action_required", {
+                "status": "manual_action_required",
+                "target": job.target,
+                "adapter": self._selectors.provider_id,
+                "session_id": session_id,
+                "novnc_url": _novnc_url(session_id),
+                "account_binding_id": job.account_binding_id,
+                "consent_ref": job.consent_ref,
+                "automation_scope": job.automation_scope,
+                "reason": exc.reason,
+                "message": str(exc),
+            })
+            yield emit("blocked", {
+                "status": "blocked",
+                "target": job.target,
+                "adapter": self._selectors.provider_id,
+                "session_id": session_id,
+                "reason": exc.reason,
+                "retryable": True,
+                "message": str(exc),
             })
         finally:
             # Release the orchestration lease and surface any AIMD cap change as
@@ -512,6 +541,14 @@ def _optional_string(value: Any) -> Optional[str]:
 
 def _drift_negative_signal():
     """Map selector drift to an AIMD negative signal (lazy import)."""
+
+    from ..orchestration.aimd import NegativeSignal
+
+    return NegativeSignal.ERROR_RATE_SPIKE
+
+
+def _manual_action_negative_signal():
+    """Map human-required provider UI blocks to an AIMD negative signal."""
 
     from ..orchestration.aimd import NegativeSignal
 

@@ -74,6 +74,25 @@ server {
         add_header X-Frame-Options        "SAMEORIGIN"  always;
     }
 
+    # noVNC's stock vnc.html opens the websocket at /websockify unless an
+    # explicit path query is supplied. Keep this edge route authenticated and
+    # proxy it to the private browser-viewer service.
+    location = /websockify {
+        auth_basic off;
+        set                $ubag_browser_viewer http://browser-viewer:6080;
+        proxy_pass         $ubag_browser_viewer;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade    $http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_set_header   Host       $host;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        proxy_buffering    off;
+        add_header X-Content-Type-Options "nosniff"    always;
+        add_header Referrer-Policy        "no-referrer" always;
+        add_header X-Frame-Options        "SAMEORIGIN"  always;
+    }
+
     # ── SvelteKit content-hashed bundles (immutable) — base path /dashboard ──
     # The dashboard is built with UBAG_BASE_PATH=/dashboard, so all hashed assets
     # are emitted under /dashboard/_app/immutable/.

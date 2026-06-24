@@ -148,8 +148,8 @@ def _emit_live_jsonl(payload: object, stream) -> int:
     for event in engine.iter_events(payload):
         stream.write(_dump_event(event))
         stream.write("\n")
+        stream.flush()
         count += 1
-    stream.flush()
     return count
 
 
