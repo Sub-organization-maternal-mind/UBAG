@@ -44,5 +44,11 @@
     "test:v0": "pnpm test:v0:local && pnpm test:gateway",
     "check": "pnpm check:blueprint && pnpm check:contracts && pnpm check:sdk-freshness && pnpm test:security && pnpm test:observability && pnpm test:dashboard && pnpm test:docs"
   },
-  "devDependencies": {}
+  "devDependencies": {},
+  "pnpm": {
+    "overrides": {
+      "cookie": ">=0.7.2",
+      "yaml": ">=2.8.3"
+    }
+  }
 }
