@@ -82,7 +82,7 @@ brews:
     repository:
       owner: ubag
       name: homebrew-tap
-    folder: Formula
+    directory: Formula
     homepage: https://github.com/ubag/ubag
     description: UBAG — Universal Bridge / Agent Gateway
     license: MIT

@@ -13,9 +13,10 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test test/manifest.test.mjs test/permissions.test.mjs test/host.test.mjs"
+    "test": "node --import tsx --test test/manifest.test.mjs test/permissions.test.mjs test/host.test.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "tsx": "^4.19.2"
   }
 }

@@ -645,6 +645,6 @@ export const UBAG_ERROR_CODES = {
   }
 } as const;
 export const UBAG_SCHEMA_FINGERPRINTS = {
-  "job-request": "a050140f860e505f3f175da4ace76c75629472feeda601f911413cd78ac50d34",
-  "job-response": "96c67e59af241968df9ca6d47182354df18a8db12145674c2660fffb7c1b38c9"
+  "job-request": "b489314eee1659deda168aaa34804ac10329215bd1c3c1e2192fa10c1c5c8f86",
+  "job-response": "23b36663886ac364f43d0642d22e49fe66502be8867d36b59d81d3f45dbd99d4"
 } as const;
