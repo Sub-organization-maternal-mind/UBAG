@@ -9,14 +9,11 @@ import json
 import logging
 import os
 
-import pytest
-
 # Ensure offline mode for all tests in this module.
 os.environ.setdefault("UBAG_ADAPTER_OFFLINE", "1")
 
 from ubag_worker.obs.logging import (
     UbagJsonHandler,
-    get_logger,
     is_forbidden_key,
 )
 from ubag_worker.obs.metrics import WorkerMetrics
@@ -26,7 +23,6 @@ from ubag_worker.obs.tracing import (
     make_child_traceparent,
     parse_traceparent,
 )
-
 
 # ── Logging tests ─────────────────────────────────────────────────────────────
 
@@ -46,7 +42,7 @@ class TestUbagJsonHandler:
 
     def _last_record(self, buf: io.StringIO) -> dict:
         buf.seek(0)
-        lines = [l for l in buf.getvalue().splitlines() if l.strip()]
+        lines = [ln for ln in buf.getvalue().splitlines() if ln.strip()]
         assert lines, "no log output produced"
         return json.loads(lines[-1])
 

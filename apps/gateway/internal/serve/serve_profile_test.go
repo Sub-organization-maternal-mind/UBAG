@@ -18,7 +18,7 @@ func TestProfileGating(t *testing.T) {
 	}{
 		{"edge-no-geo", "edge", "", false, false},
 		{"small-no-geo", "small", "", false, false},
-		{"standard-no-geo", "standard", "", false, true},  // SSO=On → MFA enabled
+		{"standard-no-geo", "standard", "", false, true}, // SSO=On → MFA enabled
 		{"enterprise-geo", "enterprise", "", true, true},
 		{"edge-override", "edge", "1", true, false}, // geo override, but SSO=Off → no MFA
 	}

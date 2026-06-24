@@ -109,7 +109,7 @@ func TestMemoryPerKeyIsolation(t *testing.T) {
 
 	mustAllow(t, limiter, ctx, "tenant-a", true)
 	mustAllow(t, limiter, ctx, "tenant-a", false) // a exhausted
-	mustAllow(t, limiter, ctx, "tenant-b", true)   // b independent
+	mustAllow(t, limiter, ctx, "tenant-b", true)  // b independent
 }
 
 func TestMemoryCostGreaterThanOne(t *testing.T) {

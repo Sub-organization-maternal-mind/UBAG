@@ -93,7 +93,7 @@ class TopologyTests(unittest.TestCase):
         )
         # 'first' already holds the lazily created context (ceiling 1 reached).
         self.assertEqual(first.context_count, 1)
-        extra = ProviderContextStub = ctx  # reuse same tenant context object
+        extra = ctx  # reuse same tenant context object
         with self.assertRaises(CeilingExceededError):
             fleet.place_context_on_browser(extra, first)
 

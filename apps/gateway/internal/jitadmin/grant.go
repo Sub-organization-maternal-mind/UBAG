@@ -12,10 +12,10 @@ import (
 // Grant represents a single JIT elevation request and its lifecycle state.
 type Grant struct {
 	ID         string        `json:"id"`
-	Actor      string        `json:"actor"`       // subject of the requesting principal
+	Actor      string        `json:"actor"` // subject of the requesting principal
 	TenantID   string        `json:"tenant_id"`
 	AppID      string        `json:"app_id"`
-	Role       string        `json:"role"`        // the elevated role being requested
+	Role       string        `json:"role"` // the elevated role being requested
 	Reason     string        `json:"reason"`
 	TTL        time.Duration `json:"ttl_seconds"` // duration requested
 	ExpiresAt  time.Time     `json:"expires_at"`

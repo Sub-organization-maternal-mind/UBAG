@@ -48,9 +48,9 @@ const keycloakBase = "http://localhost:8180"
 // Prerequisites (set up manually or via init container):
 //   - Realm "test" exists in Keycloak.
 //   - Client "ubag-test" exists in the "test" realm with:
-//     - Access Type: confidential
-//     - Valid Redirect URIs: http://localhost:8080/*
-//     - Client Secret: "test-client-secret"
+//   - Access Type: confidential
+//   - Valid Redirect URIs: http://localhost:8080/*
+//   - Client Secret: "test-client-secret"
 //   - User "testuser" exists in "test" realm with password "testpass".
 func TestOIDCAuthCodeFlowKeycloak(t *testing.T) {
 	// Step 1: obtain an authorization code via the Resource Owner Password grant

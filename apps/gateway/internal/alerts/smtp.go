@@ -35,8 +35,8 @@ type SMTPConfig struct {
 
 // SMTPEmailSink delivers alerts as email via net/smtp.
 type SMTPEmailSink struct {
-	config   SMTPConfig
-	logger   *slog.Logger
+	config      SMTPConfig
+	logger      *slog.Logger
 	dialTimeout time.Duration
 
 	// sendMail is injectable so tests can assert on the composed message and

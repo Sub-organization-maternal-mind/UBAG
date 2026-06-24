@@ -12,7 +12,7 @@ import (
 // HookResult is the value returned by a plugin's hook export and threaded
 // through the RunHooks pipeline.
 type HookResult struct {
-	Action  string          `json:"action"`           // "continue" or "reject"
+	Action  string          `json:"action"`            // "continue" or "reject"
 	Payload json.RawMessage `json:"payload,omitempty"` // updated payload for next plugin
 	Reason  string          `json:"reason,omitempty"`
 }

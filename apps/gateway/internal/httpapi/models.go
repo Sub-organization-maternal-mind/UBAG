@@ -93,10 +93,10 @@ type JobOptions struct {
 
 // JobRetryPolicy overrides the default retry behaviour (§14.2).
 type JobRetryPolicy struct {
-	MaxRetries  int    `json:"max_retries,omitempty"`  // 1–10; default 3
+	MaxRetries  int    `json:"max_retries,omitempty"`     // 1–10; default 3
 	BackoffBase int    `json:"backoff_base_ms,omitempty"` // base delay ms; default 1000
 	BackoffMax  int    `json:"backoff_max_ms,omitempty"`  // cap ms; default 60000
-	Category    string `json:"category,omitempty"` // "transient" | "permanent" | ""
+	Category    string `json:"category,omitempty"`        // "transient" | "permanent" | ""
 }
 
 // JobCallbacks carries the §6.1 callback block.
@@ -180,15 +180,15 @@ type JobCost struct {
 
 // JobMetadataEnvelope is the §6.2 metadata block in a job response.
 type JobMetadataEnvelope struct {
-	QueuedAt        *time.Time `json:"queued_at,omitempty"`
-	StartedAt       *time.Time `json:"started_at,omitempty"`
-	CompletedAt     *time.Time `json:"completed_at,omitempty"`
-	DurationMS      *int64     `json:"duration_ms,omitempty"`
-	BrowserSessionID string    `json:"browser_session_id,omitempty"`
-	Adapter         string     `json:"adapter,omitempty"`
-	Worker          string     `json:"worker,omitempty"`
-	Retries         int        `json:"retries"`
-	Cost            *JobCost   `json:"cost,omitempty"`
+	QueuedAt         *time.Time `json:"queued_at,omitempty"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+	DurationMS       *int64     `json:"duration_ms,omitempty"`
+	BrowserSessionID string     `json:"browser_session_id,omitempty"`
+	Adapter          string     `json:"adapter,omitempty"`
+	Worker           string     `json:"worker,omitempty"`
+	Retries          int        `json:"retries"`
+	Cost             *JobCost   `json:"cost,omitempty"`
 	// Carry-over fields from the v0 metadata map for backward compatibility.
 	CommandType    string         `json:"command_type,omitempty"`
 	AppID          string         `json:"app_id,omitempty"`
@@ -257,17 +257,17 @@ type jobEventsResponse struct {
 
 // batchCreateJobRequest carries up to 100 job submissions in one request (§10, §19.2).
 type batchCreateJobRequest struct {
-	APIVersion string              `json:"api_version"`
-	Jobs       []createJobRequest  `json:"jobs"`
+	APIVersion string             `json:"api_version"`
+	Jobs       []createJobRequest `json:"jobs"`
 }
 
 // batchCreateJobResponse lists the accepted/rejected outcomes per submission.
 type batchJobOutcome struct {
-	Index        int          `json:"index"`
-	Status       string       `json:"status"` // "accepted" | "rejected"
-	JobID        string       `json:"job_id,omitempty"`
-	IdempotentReplay bool     `json:"idempotent_replay,omitempty"`
-	Error        *apiError    `json:"error,omitempty"`
+	Index            int       `json:"index"`
+	Status           string    `json:"status"` // "accepted" | "rejected"
+	JobID            string    `json:"job_id,omitempty"`
+	IdempotentReplay bool      `json:"idempotent_replay,omitempty"`
+	Error            *apiError `json:"error,omitempty"`
 }
 
 type batchCreateJobResponse struct {

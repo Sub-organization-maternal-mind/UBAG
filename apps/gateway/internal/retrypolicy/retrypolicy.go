@@ -8,7 +8,7 @@ import (
 
 const (
 	DefaultMaxRetries  = 3
-	DefaultBackoffBase = 1000 // ms
+	DefaultBackoffBase = 1000  // ms
 	DefaultBackoffMax  = 60000 // ms (60s)
 	jitterFraction     = 0.30  // ±30% full jitter
 )

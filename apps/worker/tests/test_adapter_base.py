@@ -1,5 +1,4 @@
 """Tests for the formal TargetAdapter Protocol and MockAdapter."""
-import pytest
 
 from ubag_worker.adapters._common.base import (
     AdapterCapabilities,

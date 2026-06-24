@@ -7,7 +7,7 @@ browser or network connection.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List
 
 from .._common.base import AdapterCapabilities, AdapterResult
 

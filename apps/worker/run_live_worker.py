@@ -25,7 +25,6 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-
 # ---------------------------------------------------------------------------
 # sys.path bootstrap — must happen before any ubag_worker imports
 # ---------------------------------------------------------------------------
@@ -43,7 +42,6 @@ from ubag_worker.live.engine import LiveSessionEngine  # noqa: E402
 from ubag_worker.live.selectors import PROVIDER_SELECTORS  # noqa: E402
 from ubag_worker.runner import emit_jsonl, load_payload_from_text  # noqa: E402
 from ubag_worker.runtime.shutdown import GracefulDrainer, install_shutdown_handler  # noqa: E402
-
 
 # ---------------------------------------------------------------------------
 # Graceful shutdown — mirrors run_mock_worker.py pattern

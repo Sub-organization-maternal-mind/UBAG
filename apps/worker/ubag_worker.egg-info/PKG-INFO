@@ -1,0 +1,41 @@
+Metadata-Version: 2.4
+Name: ubag-worker
+Version: 2.1.0
+Summary: UBAG Universal Browser Automation Worker
+License: AGPL-3.0
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Provides-Extra: live
+Requires-Dist: playwright>=1.49; extra == "live"
+Requires-Dist: patchright>=1.49; extra == "live"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: ruff>=0.4; extra == "dev"
+
+# UBAG Worker
+
+This directory contains the first v0 worker implementation. UBAG's runtime
+target is Python 3.12, but this code intentionally stays compatible with local
+Python 3.10 and uses only the standard library.
+
+Run with an inline payload:
+
+```powershell
+python apps/worker/run_mock_worker.py --payload '{ "api_version": "v0", "idempotency_key": "demo", "job": { "target": "mock", "input": { "prompt": "hello" } } }'
+```
+
+Run with files:
+
+```powershell
+python apps/worker/run_mock_worker.py --input job.json --output events.jsonl
+```
+
+The worker writes JSON Lines to stdout by default. The `mock` target emits
+deterministic `queued`, `running`, `token`, and `completed` events.
+
+Other registered targets enter the safe manual-session path. The worker requires
+tenant ownership, account binding, consent, and automation-scope fields before it
+emits `session.manual_action_required` with a loopback noVNC session URL. Direct
+adapter calls still fail closed; the worker entrypoint does not collect
+credentials, scrape cookies, or solve CAPTCHA challenges.

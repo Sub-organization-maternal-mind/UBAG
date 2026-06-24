@@ -12,9 +12,10 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test test/json-schema.test.mjs test/checksum.test.mjs test/registry.test.mjs"
+    "test": "node --import tsx --test test/json-schema.test.mjs test/checksum.test.mjs test/registry.test.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "tsx": "^4.19.2"
   }
 }

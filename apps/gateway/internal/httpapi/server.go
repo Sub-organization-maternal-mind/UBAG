@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/rand"
 	crypto_rsa "crypto/rsa"
-	"os"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -19,6 +18,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -33,25 +33,25 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/abac"
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	"github.com/ubag/ubag/apps/gateway/internal/appjwt"
+	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
+	"github.com/ubag/ubag/apps/gateway/internal/audit"
 	"github.com/ubag/ubag/apps/gateway/internal/compliance"
+	"github.com/ubag/ubag/apps/gateway/internal/executor"
+	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
 	"github.com/ubag/ubag/apps/gateway/internal/jitadmin"
+	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
+	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/mfa"
+	mw "github.com/ubag/ubag/apps/gateway/internal/middleware"
 	"github.com/ubag/ubag/apps/gateway/internal/outbox"
 	"github.com/ubag/ubag/apps/gateway/internal/pat"
 	"github.com/ubag/ubag/apps/gateway/internal/plugins"
-	"github.com/ubag/ubag/apps/gateway/internal/resilience"
-	"github.com/ubag/ubag/apps/gateway/internal/semanticcache"
-	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
-	"github.com/ubag/ubag/apps/gateway/internal/audit"
-	"github.com/ubag/ubag/apps/gateway/internal/executor"
-	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
-	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
-	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
-	mw "github.com/ubag/ubag/apps/gateway/internal/middleware"
 	"github.com/ubag/ubag/apps/gateway/internal/ratelimit"
 	"github.com/ubag/ubag/apps/gateway/internal/region"
+	"github.com/ubag/ubag/apps/gateway/internal/resilience"
 	"github.com/ubag/ubag/apps/gateway/internal/responsecache"
 	"github.com/ubag/ubag/apps/gateway/internal/scim"
+	"github.com/ubag/ubag/apps/gateway/internal/semanticcache"
 	"github.com/ubag/ubag/apps/gateway/internal/session"
 	"github.com/ubag/ubag/apps/gateway/internal/siem"
 	"github.com/ubag/ubag/apps/gateway/internal/sso"
@@ -446,12 +446,12 @@ func (s *Server) routes() {
 	// Blueprint §7.2 middleware chain: trace → recover → log → auth → rate-limit → handle.
 	// Registered via chi.Use() so the chain is applied exactly once, at construction.
 	s.mux.Use(
-		s.withMetrics,              // outermost: always records request timing
-		s.withRecovery,             // catches panics before they propagate
-		mw.Trace,                   // injects/extracts W3C trace ID (§18.3)
-		mw.RequestLog(serviceName), // structured JSON request log line (§18.1)
-		s.withAuth,                 // authenticates bearer / device / SSO session
-		s.withRateLimit,            // IETF token-bucket rate-limiting (§10.6)
+		s.withMetrics,                     // outermost: always records request timing
+		s.withRecovery,                    // catches panics before they propagate
+		mw.Trace,                          // injects/extracts W3C trace ID (§18.3)
+		mw.RequestLog(serviceName),        // structured JSON request log line (§18.1)
+		s.withAuth,                        // authenticates bearer / device / SSO session
+		s.withRateLimit,                   // IETF token-bucket rate-limiting (§10.6)
 		mw.APIVersionHeader(s.apiVersion), // sets Ubag-Api-Version-Used (§6.5)
 	)
 

@@ -34,8 +34,8 @@ type CacheKey struct {
 type Entry struct {
 	Key         string
 	Output      any
-	CacheSource string    // "exact" | "vector" | ""
-	Tags        []string  // invalidation tags
+	CacheSource string   // "exact" | "vector" | ""
+	Tags        []string // invalidation tags
 	CreatedAt   time.Time
 	ExpiresAt   time.Time
 }
@@ -80,9 +80,9 @@ func writeField(h interface{ Write([]byte) (int, error) }, s string) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 type storedEntry struct {
-	entry     Entry
-	exactKey  string
-	tenantID  string
+	entry    Entry
+	exactKey string
+	tenantID string
 }
 
 // MemoryStore is an in-memory semantic cache using exact SHA-256 matching.

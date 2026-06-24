@@ -41,11 +41,11 @@ func Enroll(ctx context.Context, store Store, req EnrollRequest) (EnrollResult, 
 	}
 
 	e := Enrollment{
-		TenantID:      req.TenantID,
-		UserID:        req.UserID,
-		Secret:        secret,
+		TenantID:       req.TenantID,
+		UserID:         req.UserID,
+		Secret:         secret,
 		RecoveryHashes: hashes,
-		CreatedAt:     time.Now(),
+		CreatedAt:      time.Now(),
 	}
 	if err := store.Enroll(ctx, e); err != nil {
 		return EnrollResult{}, fmt.Errorf("mfa: persist enrollment: %w", err)

@@ -21,7 +21,7 @@
  */
 
 import { execSync, spawn } from 'node:child_process';
-import { writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync, rmSync, existsSync, readdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,16 +81,28 @@ function stopStubSite() {
 // ─── Minimal docker-compose for itest ─────────────────────────────────────
 // Written as a template string to avoid YAML serialization bugs.
 function writeComposeFile(dir) {
+  // Apply Postgres migrations at DB init, EXCLUDING the blueprint schema (0008),
+  // which needs the vector + pg_partman extensions absent from the stock image.
+  // The gateway Postgres store only requires the core/enterprise store tables.
+  const initDir = join(dir, 'pg-init');
+  mkdirSync(initDir, { recursive: true });
+  for (const mf of readdirSync(join(ROOT, 'migrations', 'postgres'))) {
+    if (mf.endsWith('.sql') && !mf.startsWith('0008')) {
+      copyFileSync(join(ROOT, 'migrations', 'postgres', mf), join(initDir, mf));
+    }
+  }
   const yaml = `name: ${composeProjectName}
 services:
   postgres:
     image: postgres:16-alpine
+    volumes:
+      - ${initDir}:/docker-entrypoint-initdb.d:ro
     environment:
       POSTGRES_DB: ubag_itest
       POSTGRES_USER: ubag
       POSTGRES_PASSWORD: ubag_itest_pw
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ubag -d ubag_itest"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ubag -d ubag_itest"]
       interval: 2s
       timeout: 5s
       retries: 15
@@ -141,7 +153,7 @@ async function gwPost(path, body) {
       'Ubag-Api-Version': '2026-05-22',
       'Authorization': `Bearer ${APP_SECRET}`,
       'Content-Type': 'application/json',
-      'Idempotency-Key': Math.random().toString(36).slice(2),
+      'Idempotency-Key': `itest-${Date.now()}-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`,
     },
     body: JSON.stringify(body),
   });
@@ -222,7 +234,7 @@ try {
   log('Test 2: POST /v1/jobs (noop executor)');
   const jobBody = {
     job: {
-      target: `http://host.docker.internal:${STUB_PORT}/`,
+      target: 'itest-stub',
       command_type: 'fetch',
       input: { url: `http://host.docker.internal:${STUB_PORT}/test` },
     },
@@ -232,7 +244,7 @@ try {
   if (createResult.status !== 200 && createResult.status !== 201 && createResult.status !== 202) {
     fail(`POST /v1/jobs returned ${createResult.status}: ${JSON.stringify(createResult.data)}`);
   }
-  const jobId = createResult.data?.job?.id ?? createResult.data?.id;
+  const jobId = createResult.data?.job_id ?? createResult.data?.job?.id ?? createResult.data?.id;
   if (!jobId) fail('Job created but no ID returned');
   log(`  Created job ${jobId}`);
 
@@ -252,7 +264,7 @@ try {
   const listResult = await gwGet('/v1/jobs');
   if (listResult.status !== 200) fail(`GET /v1/jobs returned ${listResult.status}`);
   const jobs = listResult.data?.jobs ?? listResult.data?.items ?? [];
-  if (!jobs.find(j => j.id === jobId)) fail(`Job ${jobId} not found in list`);
+  if (!jobs.find(j => (j.job_id ?? j.id) === jobId)) fail(`Job ${jobId} not found in list`);
   log(`  Found job in list (${jobs.length} total)`);
 
   log('\nIntegration tests PASSED');

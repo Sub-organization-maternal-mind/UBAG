@@ -94,11 +94,11 @@ def init_otlp_tracer(service_name: str = "ubag-worker") -> bool:
 
     try:
         from opentelemetry import trace  # type: ignore
-        from opentelemetry.sdk.trace import TracerProvider  # type: ignore
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor  # type: ignore
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (  # type: ignore
             OTLPSpanExporter,
         )
+        from opentelemetry.sdk.trace import TracerProvider  # type: ignore
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor  # type: ignore
 
         provider = TracerProvider()
         exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)

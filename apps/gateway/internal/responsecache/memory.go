@@ -11,11 +11,11 @@ import (
 // entries are evicted lazily on access. Hit and miss counters are tracked per
 // scope. It is safe for concurrent use.
 type MemoryStore struct {
-	mu      sync.Mutex
-	now     func() time.Time
-	items   map[scopeKey]Entry
-	hits    map[scope]int
-	misses  map[scope]int
+	mu     sync.Mutex
+	now    func() time.Time
+	items  map[scopeKey]Entry
+	hits   map[scope]int
+	misses map[scope]int
 }
 
 type scope struct {

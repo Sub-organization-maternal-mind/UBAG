@@ -1,7 +1,5 @@
 """Tests for worker region pinning — runs offline, no NATS needed."""
 import importlib
-import os
-import pytest
 
 
 def reload_region():

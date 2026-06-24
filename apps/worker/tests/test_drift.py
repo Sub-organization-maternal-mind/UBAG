@@ -2,8 +2,6 @@
 import pytest
 
 from ubag_worker.drift.detector import (
-    BaselineSnapshot,
-    DriftReport,
     DriftSignal,
     build_baseline,
     detect_drift,

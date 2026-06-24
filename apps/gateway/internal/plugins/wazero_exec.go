@@ -360,7 +360,7 @@ func hostLog(_ context.Context, mod api.Module, stack []uint64) {
 	ptr := api.DecodeU32(stack[0])
 	length := api.DecodeU32(stack[1])
 	if msg, ok := mod.Memory().Read(ptr, length); ok {
-		os.Stderr.Write(msg)          //nolint:errcheck
+		os.Stderr.Write(msg)        //nolint:errcheck
 		os.Stderr.WriteString("\n") //nolint:errcheck
 	}
 }

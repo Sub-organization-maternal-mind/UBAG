@@ -194,7 +194,7 @@ func ServiceLogger(ctx context.Context, w io.Writer) *slog.Logger {
 	lv.Set(parseLevel(raw))
 
 	jsonHandler := slog.NewJSONHandler(w, &slog.HandlerOptions{
-		Level: lv,
+		Level:       lv,
 		ReplaceAttr: replaceContractAttrs,
 	})
 

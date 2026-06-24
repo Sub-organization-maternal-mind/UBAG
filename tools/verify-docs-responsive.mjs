@@ -7,7 +7,10 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const chromePath =
-  process.env.CHROME_PATH ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
+  process.env.CHROME_PATH ??
+  (process.platform === 'win32'
+    ? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+    : 'google-chrome');
 const userProvidedBaseUrl = process.env.UBAG_DOCS_URL !== undefined;
 let baseUrl = process.env.UBAG_DOCS_URL;
 const cdpPortBase = process.env.UBAG_DOCS_CDP_PORT_BASE === undefined

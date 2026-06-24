@@ -26,19 +26,19 @@ type jobOptions struct {
 }
 
 type DispatchEnvelope struct {
-	APIVersion     string         `json:"api_version"`
-	JobID          string         `json:"job_id"`
-	TenantID       string         `json:"tenant_id"`
-	AppID          string         `json:"app_id"`
-	IdempotencyKey string         `json:"idempotency_key,omitempty"`
-	TraceID        string         `json:"trace_id"`
-	RetryOf        string         `json:"retry_of,omitempty"`
+	APIVersion     string `json:"api_version"`
+	JobID          string `json:"job_id"`
+	TenantID       string `json:"tenant_id"`
+	AppID          string `json:"app_id"`
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	TraceID        string `json:"trace_id"`
+	RetryOf        string `json:"retry_of,omitempty"`
 	// NotBefore, when set, instructs the consumer to nack+requeue the job
 	// until time.Now() >= NotBefore (§14.6 scheduling).
-	NotBefore      *time.Time     `json:"not_before,omitempty"`
-	Job            DispatchJob    `json:"job"`
-	Client         map[string]any `json:"client,omitempty"`
-	CreatedAt      time.Time      `json:"created_at"`
+	NotBefore *time.Time     `json:"not_before,omitempty"`
+	Job       DispatchJob    `json:"job"`
+	Client    map[string]any `json:"client,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
 }
 
 type DispatchJob struct {

@@ -17,14 +17,14 @@ type issuePatRequest struct {
 }
 
 type issuePatResponse struct {
-	APIVersion string    `json:"api_version"`
-	Token      string    `json:"token"`
-	TenantID   string    `json:"tenant_id"`
-	AppID      string    `json:"app_id"`
-	Role       string    `json:"role"`
-	IssuedAt   time.Time `json:"issued_at"`
+	APIVersion string     `json:"api_version"`
+	Token      string     `json:"token"`
+	TenantID   string     `json:"tenant_id"`
+	AppID      string     `json:"app_id"`
+	Role       string     `json:"role"`
+	IssuedAt   time.Time  `json:"issued_at"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
-	TraceID    string    `json:"trace_id"`
+	TraceID    string     `json:"trace_id"`
 }
 
 // handleIssuePAT handles POST /v1/auth/pat. The caller must be authenticated

@@ -75,7 +75,7 @@ func TestShouldRetry(t *testing.T) {
 func TestParseFromMap(t *testing.T) {
 	raw := map[string]any{
 		"retry_policy": map[string]any{
-			"max_retries":    float64(7),
+			"max_retries":     float64(7),
 			"backoff_base_ms": float64(500),
 			"backoff_max_ms":  float64(30000),
 		},

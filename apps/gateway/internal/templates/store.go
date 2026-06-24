@@ -14,13 +14,13 @@ import (
 var ErrNotFound = errors.New("template not found")
 
 type Template struct {
-	ID              string
-	TenantID        string
-	AppID           string
-	Name            string
-	Description     string
-	Target          string
-	CommandType     string
+	ID          string
+	TenantID    string
+	AppID       string
+	Name        string
+	Description string
+	Target      string
+	CommandType string
 	// Body is the Pongo2/Jinja2-compatible template source. When empty, Render
 	// returns an empty string without error (backward-compatible).
 	Body            string
