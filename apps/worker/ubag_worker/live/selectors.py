@@ -78,6 +78,13 @@ class ProviderSelectors:
     # nodes; response_container alone (.first) can latch the thinking pane. When set,
     # read_final_response uses this as the authoritative source for return_mode="final".
     final_answer_container: Optional[SelectorGroup] = None
+    # Optional hidden <input type=file> for targets that support uploading a file
+    # (e.g. dictation audio) into the chat before submitting the prompt. When None
+    # the target does not support file attachment and the engine emits
+    # ``audio_not_supported_by_target`` rather than silently transcribing nothing.
+    # Deliberately NOT part of all_groups(): an absent attach control must never
+    # fail the mandatory drift baseline for unrelated, text-only targets.
+    file_input: Optional[SelectorGroup] = None
 
     def all_groups(self) -> List[SelectorGroup]:
         return [
@@ -152,6 +159,16 @@ CHATGPT_WEB = ProviderSelectors(
         ),
     ),
     drift_signature_nodes=("main", "form", "#prompt-textarea"),
+    file_input=SelectorGroup(
+        "file_input",
+        (
+            # set_input_files targets the (often hidden) <input type=file>, not the
+            # visible "Attach" button. Order: most specific input first.
+            "input[type='file'][multiple]",
+            "input[type='file']",
+            "input[accept*='audio']",
+        ),
+    ),
 )
 
 CLAUDE_WEB = ProviderSelectors(
@@ -208,6 +225,14 @@ CLAUDE_WEB = ProviderSelectors(
         ),
     ),
     drift_signature_nodes=("main", "fieldset", "div.ProseMirror"),
+    file_input=SelectorGroup(
+        "file_input",
+        (
+            "input[data-testid='file-upload']",
+            "input[type='file']",
+            "input[accept*='audio']",
+        ),
+    ),
 )
 
 DEEPSEEK_WEB = ProviderSelectors(
@@ -283,6 +308,13 @@ DEEPSEEK_WEB = ProviderSelectors(
         ),
     ),
     drift_signature_nodes=("main", "textarea#chat-input"),
+    file_input=SelectorGroup(
+        "file_input",
+        (
+            "input[type='file']",
+            "input[accept*='audio']",
+        ),
+    ),
 )
 
 GEMINI_WEB = ProviderSelectors(
@@ -350,6 +382,16 @@ GEMINI_WEB = ProviderSelectors(
         ),
     ),
     drift_signature_nodes=("main", "rich-textarea"),
+    file_input=SelectorGroup(
+        "file_input",
+        (
+            # Gemini's visible affordance is an "Add files" button that injects a
+            # hidden <input type=file>; set_input_files targets the input directly.
+            "input[type='file']",
+            "input[name='Filedata']",
+            "input[accept*='audio']",
+        ),
+    ),
 )
 
 MISTRAL_LECHAT = ProviderSelectors(
@@ -406,6 +448,13 @@ MISTRAL_LECHAT = ProviderSelectors(
         ),
     ),
     drift_signature_nodes=("main", "textarea[name='message']"),
+    file_input=SelectorGroup(
+        "file_input",
+        (
+            "input[type='file']",
+            "input[accept*='audio']",
+        ),
+    ),
 )
 
 PERPLEXITY_WEB = ProviderSelectors(
@@ -462,6 +511,13 @@ PERPLEXITY_WEB = ProviderSelectors(
         ),
     ),
     drift_signature_nodes=("main", "textarea"),
+    file_input=SelectorGroup(
+        "file_input",
+        (
+            "input[type='file']",
+            "input[accept*='audio']",
+        ),
+    ),
 )
 
 

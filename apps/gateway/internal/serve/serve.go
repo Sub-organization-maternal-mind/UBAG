@@ -185,7 +185,7 @@ func Run(ctx context.Context) error {
 	})
 
 	if workerConsumerEnabled() {
-		consumer, err := newWorkerConsumerFromEnv(rawDispatcher, jobs, webhookOutbox, enterprise.alerts, enterprise.concurrency, enterprise.topology)
+		consumer, err := newWorkerConsumerFromEnv(rawDispatcher, jobs, webhookOutbox, enterprise.alerts, enterprise.concurrency, enterprise.topology, artifactStore)
 		if err != nil {
 			return fmt.Errorf("invalid worker consumer configuration: %w", err)
 		}
@@ -850,7 +850,7 @@ func workerConsumerEnabled() bool {
 	return value == "1" || value == "true" || value == "yes"
 }
 
-func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Store, notifier executor.TerminalJobNotifier, alertsMgr *alerts.Manager, concurrency *topology.ConcurrencyRegistry, topologyStore topology.Store) (*executor.WorkerConsumer, error) {
+func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Store, notifier executor.TerminalJobNotifier, alertsMgr *alerts.Manager, concurrency *topology.ConcurrencyRegistry, topologyStore topology.Store, artifactStore artifacts.ArtifactStore) (*executor.WorkerConsumer, error) {
 	pollInterval, err := durationFromMillisEnv("UBAG_WORKER_POLL_INTERVAL_MS", 500*time.Millisecond)
 	if err != nil {
 		return nil, err
@@ -887,6 +887,7 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 			Python:     python,
 			Script:     script,
 			MaxRuntime: maxRuntime,
+			Artifacts:  artifactStore,
 		},
 	}, nil
 }
