@@ -135,8 +135,18 @@ func TestVerifyIDToken_TamperedPayload(t *testing.T) {
 	key, pubPEM, _ := testKeypair(t)
 	now := time.Now().UTC()
 	token := signJWT(t, key, map[string]any{"alg": "RS256"}, validClaims(now))
-	// Flip a character in the payload segment.
-	tampered := token[:len(token)/2] + "X" + token[len(token)/2+1:]
+	// Flip a character in the token so its signature no longer verifies.
+	// Substitute a base64url char guaranteed to differ from the original at
+	// the midpoint; always substituting "X" is a no-op when the midpoint is
+	// already "X", which would let the token verify and make the test flaky.
+	b := []byte(token)
+	mid := len(b) / 2
+	if b[mid] == 'X' {
+		b[mid] = 'A'
+	} else {
+		b[mid] = 'X'
+	}
+	tampered := string(b)
 
 	if _, err := VerifyIDToken(context.Background(), tampered, baseOIDCConfig(pubPEM), now); err == nil {
 		t.Fatal("expected verification failure for tampered token")
