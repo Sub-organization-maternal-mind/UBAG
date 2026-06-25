@@ -7,14 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
+	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/plugins"
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
@@ -94,6 +97,10 @@ type ProcessWorkerRunner struct {
 	Python     string
 	Script     string
 	MaxRuntime time.Duration
+	// Artifacts lets the runner materialize a job's audio artifact to a local
+	// temp file (audio_local_path) for the worker to attach. Optional; when nil,
+	// audio materialization is skipped and text jobs are entirely unaffected.
+	Artifacts artifacts.ArtifactStore
 }
 
 func NewFileSpoolWorkerQueue(spool *FileSpoolDispatcher) WorkerQueue {
@@ -629,6 +636,54 @@ func (c *WorkerConsumer) runPostJobHook(ctx context.Context, job jobstore.Job) {
 	_, _ = c.Plugins.RunHooks(ctx, "job.post", hookPayload)
 }
 
+// materializeAudioArtifact writes a job's audio artifact (named by
+// input.audio_artifact_key) to a local temp file and sets input.audio_local_path
+// to its path, returning a cleanup func that removes the file. It is a no-op
+// (nil, nil) when the runner has no store, the job carries no audio_artifact_key,
+// or the key is blank — so text jobs are completely unaffected.
+func (r ProcessWorkerRunner) materializeAudioArtifact(ctx context.Context, envelope *DispatchEnvelope) (func(), error) {
+	if r.Artifacts == nil || envelope == nil || envelope.Job.Input == nil {
+		return nil, nil
+	}
+	keyVal, ok := envelope.Job.Input["audio_artifact_key"]
+	if !ok {
+		return nil, nil
+	}
+	key, ok := keyVal.(string)
+	if !ok {
+		return nil, nil
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return nil, nil
+	}
+
+	rc, _, err := r.Artifacts.GetArtifact(ctx, envelope.JobID, key)
+	if err != nil {
+		return nil, fmt.Errorf("materialize audio artifact %q: %w", key, err)
+	}
+	defer func() { _ = rc.Close() }()
+
+	tmp, err := os.CreateTemp("", "ubag-audio-*"+filepath.Ext(key))
+	if err != nil {
+		return nil, fmt.Errorf("create temp audio file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpPath) }
+	if _, err := io.Copy(tmp, rc); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return nil, fmt.Errorf("write audio artifact %q: %w", key, err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("close temp audio file: %w", err)
+	}
+
+	envelope.Job.Input["audio_local_path"] = tmpPath
+	return cleanup, nil
+}
+
 func (r ProcessWorkerRunner) RunWorker(ctx context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
 	python := strings.TrimSpace(r.Python)
 	if python == "" {
@@ -645,6 +700,18 @@ func (r ProcessWorkerRunner) RunWorker(ctx context.Context, envelope DispatchEnv
 
 	runCtx, cancel := context.WithTimeout(ctx, maxRuntime)
 	defer cancel()
+
+	// Materialize a dictation audio artifact (if any) to a local temp file that
+	// the worker subprocess can attach. The gateway already holds the bytes in
+	// its artifact store, so it writes them locally and injects audio_local_path
+	// — the worker never needs gateway credentials. No-op for text jobs.
+	cleanupAudio, err := r.materializeAudioArtifact(runCtx, &envelope)
+	if err != nil {
+		return nil, err
+	}
+	if cleanupAudio != nil {
+		defer cleanupAudio()
+	}
 
 	payload, err := json.Marshal(envelope)
 	if err != nil {
