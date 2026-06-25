@@ -79,6 +79,6 @@ func TestMaterializeAudioArtifactNilStore(t *testing.T) {
 	env := &DispatchEnvelope{JobID: "j", Job: DispatchJob{Input: map[string]any{"audio_artifact_key": "x.webm"}}}
 	cleanup, err := runner.materializeAudioArtifact(context.Background(), env)
 	if err != nil || cleanup != nil {
-		t.Fatalf("nil store should be a no-op, got cleanup=%v err=%v", cleanup, err)
+		t.Fatalf("nil store should be a no-op (cleanupSet=%v err=%v)", cleanup != nil, err)
 	}
 }
