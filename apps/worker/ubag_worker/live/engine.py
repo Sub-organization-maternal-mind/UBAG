@@ -213,6 +213,40 @@ class LiveSessionEngine:
                     "tabs": snapshot["tabs"],
                 })
 
+            # Audio/file attach phase (optional). When the job carries an audio
+            # artifact, attach the locally-materialized file to the provider's
+            # upload control BEFORE submitting the prompt. Text-only jobs (no
+            # audio_artifact_key) skip this branch entirely, so every existing
+            # live job is byte-for-byte unchanged.
+            if job.audio_artifact_key:
+                attach_supported = (
+                    self._selectors.file_input is not None
+                    and bool(job.audio_local_path)
+                )
+                if not attach_supported:
+                    yield emit("blocked", {
+                        "status": "blocked",
+                        "target": job.target,
+                        "adapter": self._selectors.provider_id,
+                        "reason": "audio_not_supported_by_target",
+                        "retryable": False,
+                        "message": (
+                            "This target cannot attach audio (no file-input selector, "
+                            "or the audio artifact was not materialized to a local "
+                            "file); refusing to transcribe nothing."
+                        ),
+                    })
+                    return
+                # A missing/drifted file input raises DriftDetectedError, caught by
+                # the existing drift handler — never a silent hang.
+                driver.attach_files(self._selectors, [job.audio_local_path])
+                yield emit("file.attached", {
+                    "status": "file_attached",
+                    "target": job.target,
+                    "adapter": self._selectors.provider_id,
+                    "artifact_key": job.audio_artifact_key,
+                })
+
             driver.submit_prompt(self._selectors, job.prompt)
 
             token_index = 0
@@ -346,6 +380,9 @@ class _NormalizedJob:
         "response_timeout_s",
         "tenant_id",
         "conversation_id",
+        "audio_artifact_key",
+        "audio_local_path",
+        "wait_for_artifacts",
     )
 
     def __init__(self, **kwargs: Any) -> None:
@@ -390,6 +427,16 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
         or job_payload.get("conversation_id")
     )
 
+    # Optional audio-transcription inputs. ``audio_artifact_key`` names the job
+    # artifact the caller uploaded; ``audio_local_path`` is the locally-materialized
+    # file the worker runner/gateway resolved that key to (the engine never fetches
+    # from the gateway itself). Text-only jobs leave all three empty.
+    audio_artifact_key = _audio_artifact_key(input_payload)
+    audio_local_path = _optional_string(
+        input_payload.get("audio_local_path") or options.get("audio_local_path")
+    )
+    wait_for_artifacts = _string_tuple(options.get("wait_for_artifacts"))
+
     return _NormalizedJob(
         api_version=api_version,
         job_id=job_id,
@@ -412,6 +459,9 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
         ),
         tenant_id=tenant_id,
         conversation_id=conversation_id,
+        audio_artifact_key=audio_artifact_key,
+        audio_local_path=audio_local_path,
+        wait_for_artifacts=wait_for_artifacts,
     )
 
 
@@ -536,6 +586,35 @@ def _optional_string(value: Any) -> Optional[str]:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _audio_artifact_key(input_payload: Mapping[str, Any]) -> Optional[str]:
+    """Extract + validate ``input.audio_artifact_key``.
+
+    Mirrors the gateway's artifact-key rule (a single path segment): rejects keys
+    containing ``/``, ``\\``, ``%`` or NUL so a payload can never coerce the worker
+    into reading outside the artifact namespace.
+    """
+
+    value = input_payload.get("audio_artifact_key")
+    if value is None:
+        return None
+    key = str(value).strip()
+    if not key:
+        return None
+    if any(ch in key for ch in ("/", "\\", "%", "\x00")):
+        raise LiveSessionError(
+            "audio_artifact_key must be a single path segment without '/', '\\', or '%'"
+        )
+    return key
+
+
+def _string_tuple(value: Any) -> tuple:
+    if isinstance(value, (list, tuple)):
+        return tuple(str(item).strip() for item in value if str(item).strip())
+    if isinstance(value, str) and value.strip():
+        return (value.strip(),)
+    return ()
 
 
 def _drift_negative_signal():

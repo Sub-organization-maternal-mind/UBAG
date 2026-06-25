@@ -118,6 +118,24 @@ class PageDriver(ABC):
     def close(self) -> None:
         ...
 
+    def attach_files(
+        self,
+        selectors: ProviderSelectors,
+        file_paths: Sequence[str],
+        *,
+        timeout_ms: int = 15000,
+    ) -> None:
+        """Attach local files to the provider's hidden ``<input type=file>``.
+
+        Concrete (NOT abstract) on purpose: existing drivers and the abstract
+        method set are untouched, so nothing that subclasses :class:`PageDriver`
+        breaks. Drivers that support uploads override this; the default refuses
+        loudly rather than silently transcribing nothing.
+        """
+        raise NotImplementedError(
+            "page driver %s does not support file attachment" % type(self).__name__
+        )
+
 
 # ---------------------------------------------------------------------------
 # Deterministic mock driver
@@ -155,6 +173,7 @@ class MockPageDriver(PageDriver):
     opened: bool = field(default=False, init=False)
     closed: bool = field(default=False, init=False)
     submitted_prompt: Optional[str] = field(default=None, init=False)
+    attached_files: List[str] = field(default_factory=list, init=False)
     _url: str = field(default="about:blank", init=False)
 
     def open(self, *, target_url: str, user_data_dir: str, headless: bool) -> None:
@@ -208,6 +227,19 @@ class MockPageDriver(PageDriver):
 
     def close(self) -> None:
         self.closed = True
+
+    def attach_files(
+        self,
+        selectors: ProviderSelectors,
+        file_paths: Sequence[str],
+        *,
+        timeout_ms: int = 15000,
+    ) -> None:
+        # Honor a configured drift on the file_input group so tests can assert the
+        # drift path; otherwise record the attach so unit tests can verify it.
+        if selectors.file_input is not None:
+            self._guard_drift(selectors.file_input.name, selectors.selector_version)
+        self.attached_files = list(file_paths)
 
     def _resolved_tokens(self) -> List[str]:
         if self.tokens is not None:
@@ -425,6 +457,31 @@ class PlaywrightPageDriver(PageDriver):
         except DriftDetectedError:
             # Fallback: many composers submit on Enter.
             field.press("Enter")
+
+    def attach_files(  # pragma: no cover - requires real browser
+        self,
+        selectors: ProviderSelectors,
+        file_paths: Sequence[str],
+        *,
+        timeout_ms: int = 15000,
+    ) -> None:
+        group = selectors.file_input
+        if group is None:
+            raise DriftDetectedError("file_input", selectors.selector_version)
+        paths = list(file_paths)
+        last_error: Optional[Exception] = None
+        for candidate in group.as_list():
+            try:
+                locator = self._page.locator(candidate).first
+                # set_input_files settles on the attached (often hidden) <input>,
+                # which is exactly how chat UIs expose their upload control — so we
+                # deliberately do NOT wait for visibility here.
+                locator.set_input_files(paths, timeout=timeout_ms)
+                return
+            except Exception as exc:  # noqa: BLE001 - try next fallback
+                last_error = exc
+                continue
+        raise DriftDetectedError(group.name, group.baseline_version) from last_error
 
     def stream_response(  # pragma: no cover - requires real browser
         self, selectors: ProviderSelectors, *, timeout_s: float

@@ -3516,9 +3516,14 @@ func safeArtifactContentType(raw string) string {
 		return "application/octet-stream"
 	}
 	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	// Audio types support dictation-audio artifacts attached into a chat UI for
+	// transcription. Storing the true MIME (vs coercing to octet-stream) matters
+	// because the worker derives the temp-file extension from it, and provider
+	// file pickers sniff the upload by extension/MIME.
 	switch mediaType {
 	case "application/json", "application/pdf", "application/octet-stream", "text/plain",
-		"image/gif", "image/jpeg", "image/png", "image/webp":
+		"image/gif", "image/jpeg", "image/png", "image/webp",
+		"audio/webm", "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/ogg":
 		return mediaType
 	default:
 		return "application/octet-stream"
