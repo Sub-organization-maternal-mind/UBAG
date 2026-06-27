@@ -149,12 +149,17 @@ services:
     networks:
       - ubag-public
       - ubag-private
+    # Health now reflects BOTH surfaces: the noVNC operator UI AND Chromium's CDP
+    # endpoint (the proxy the worker attaches through). The old check probed only
+    # noVNC, so a crashed/wedged Chromium stayed "healthy" and was never noticed.
+    # The in-container watchdog auto-restarts Chromium; this check surfaces the
+    # rare case where the browser is down to Docker/operators as well.
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:6080/"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6080/ >/dev/null 2>&1 && wget -qO- http://127.0.0.1:9223/json/version >/dev/null 2>&1"]
       interval: 20s
       timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 45s
 
   browser-topology-register:
     image: postgres:16-alpine

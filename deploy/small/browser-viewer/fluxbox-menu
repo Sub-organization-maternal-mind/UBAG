@@ -1,8 +1,10 @@
 [begin] (UBAG Browser)
-[exec] (Chromium) {/usr/local/bin/open-chromium about:blank}
-[exec] (Chromium - Gemini login) {/usr/local/bin/open-chromium https://gemini.google.com}
-[exec] (Chromium - DeepSeek) {/usr/local/bin/open-chromium https://chat.deepseek.com}
-[exec] (Re-maximize Chromium) {/usr/local/bin/open-chromium}
+[exec] (Chrome) {/usr/local/bin/open-chrome about:blank}
+[exec] (Chrome - Gemini login) {/usr/local/bin/open-chrome https://gemini.google.com}
+[exec] (Chrome - DeepSeek) {/usr/local/bin/open-chrome https://chat.deepseek.com}
+[exec] (Chrome - ChatGPT) {/usr/local/bin/open-chrome https://chatgpt.com}
+[exec] (Chrome - Perplexity) {/usr/local/bin/open-chrome https://www.perplexity.ai}
+[exec] (Re-maximize Chrome) {/usr/local/bin/open-chrome}
 [separator]
 [include] (/etc/X11/fluxbox/fluxbox-menu)
 [end]

@@ -283,7 +283,44 @@ class PlaywrightPageDriver(PageDriver):
         self._context = None
         self._owns_context = True
         self._page = None
+        # True when we created a dedicated page inside a context we do NOT own
+        # (the operator's shared CDP browser) and must close it ourselves.
+        self._owns_page = False
         self._artifacts_dir: Optional[str] = None
+
+    @staticmethod
+    def _cdp_attach_attempts() -> int:
+        """How many times to retry the CDP attach (rides out a watchdog restart)."""
+
+        raw = os.environ.get("UBAG_CDP_ATTACH_ATTEMPTS", "").strip()
+        if raw.isdigit() and int(raw) > 0:
+            return int(raw)
+        return 5
+
+    def _connect_over_cdp_resilient(self, browser_type, endpoint):  # pragma: no cover - requires browser
+        """Attach over CDP, retrying briefly if the browser is mid-restart.
+
+        The live browser-viewer supervises Chromium and relaunches it on crash;
+        during that ~few-second window a CDP attach fails. Retrying turns a
+        transient relaunch into a short delay instead of a hard job failure.
+        """
+
+        import time as _time
+
+        attempts = self._cdp_attach_attempts()
+        last_exc: Optional[Exception] = None
+        for index in range(attempts):
+            try:
+                return browser_type.connect_over_cdp(endpoint)
+            except Exception as exc:  # noqa: BLE001 - browser may be relaunching
+                last_exc = exc
+                if index == attempts - 1:
+                    break
+                _time.sleep(min(2.0, 0.5 * (index + 1)))
+        raise RuntimeError(
+            "could not attach to the live browser over CDP at %s after %d attempts; "
+            "the browser-viewer Chromium may be restarting" % (endpoint, attempts)
+        ) from last_exc
 
     @staticmethod
     def _resolve_launch_plan(
@@ -354,8 +391,10 @@ class PlaywrightPageDriver(PageDriver):
                 # CDP endpoint (e.g. http://browser-viewer:9222). Reuse the
                 # browser's existing default context so the operator's live
                 # login session is inherited. Creating a new_context() here
-                # would discard all cookies and force re-login every job.
-                browser = browser_type.connect_over_cdp(plan.remote_endpoint)
+                # would discard all cookies and force re-login every job. The
+                # attach is retried so a watchdog-driven Chromium relaunch is a
+                # short delay rather than a hard failure.
+                browser = self._connect_over_cdp_resilient(browser_type, plan.remote_endpoint)
                 if browser.contexts:
                     self._context = browser.contexts[0]
                     self._owns_context = False
@@ -369,17 +408,32 @@ class PlaywrightPageDriver(PageDriver):
         else:
             # User-owned persistent context. We do NOT inject storage_state,
             # cookies, or credentials - authentication lives entirely in the
-            # user profile.
-            self._context = browser_type.launch_persistent_context(
-                user_data_dir=user_data_dir,
-                headless=plan.headless,
-            )
+            # user profile. Chromium gets STEALTH flags that hide the automation
+            # fingerprint from the provider (not from UBAG) so interactive sign-in
+            # (especially Google) is not blocked as an "automated" browser. UBAG
+            # keeps full control over CDP and never types credentials.
+            launch_kwargs = {
+                "user_data_dir": user_data_dir,
+                "headless": plan.headless,
+            }
+            if plan.browser_type_name == "chromium":
+                launch_kwargs["args"] = ["--disable-blink-features=AutomationControlled"]
+                launch_kwargs["ignore_default_args"] = ["--enable-automation"]
+            self._context = browser_type.launch_persistent_context(**launch_kwargs)
             self._owns_context = True
-        self._page = (
-            self._context.pages[0]
-            if self._context.pages
-            else self._context.new_page()
-        )
+        if not self._owns_context:
+            # Reusing the operator's already-authenticated CDP context: open a
+            # DEDICATED page for this job instead of hijacking the human's login
+            # tab (pages[0]). We close it on teardown so pages never accumulate.
+            self._page = self._context.new_page()
+            self._owns_page = True
+        else:
+            self._page = (
+                self._context.pages[0]
+                if self._context.pages
+                else self._context.new_page()
+            )
+            self._owns_page = False
         try:
             self._page.goto(target_url, wait_until="domcontentloaded")
         except Exception as exc:  # pragma: no cover - requires real browser
@@ -443,13 +497,39 @@ class PlaywrightPageDriver(PageDriver):
         try:
             field.click()
         except Exception as exc:  # noqa: BLE001 - classify provider overlays.
-            if _looks_like_manual_overlay(exc):
+            if _is_human_verification_overlay(exc):
+                # CAPTCHA / "verify it's you" identity challenge — like the
+                # provider login, this is the ONE thing only the human can clear.
+                # Auto-solving bot-detection would risk the account and is out of
+                # scope; everything that is NOT identity verification is handled
+                # automatically below.
                 raise ManualActionRequired(
-                    "manual_consent_or_overlay_required",
-                    "Provider UI is blocking the prompt field with a consent, "
-                    "verification, or overlay prompt. Clear it manually in noVNC.",
+                    "human_verification_required",
+                    "Provider is showing a CAPTCHA / identity verification. Clear "
+                    "it once in the live (noVNC) session; UBAG never solves it.",
                 ) from exc
-            raise
+            if _looks_like_manual_overlay(exc):
+                # Benign cookie / consent / onboarding popup — the SYSTEM dismisses
+                # it automatically (full automation; the only manual step is login)
+                # and retries the field. Only if it truly cannot be cleared do we
+                # fall back to the human.
+                if not self._auto_dismiss_overlay():
+                    raise ManualActionRequired(
+                        "overlay_not_auto_dismissable",
+                        "An overlay is blocking the prompt and could not be "
+                        "dismissed automatically; clear it once in noVNC.",
+                    ) from exc
+                try:
+                    field = self._first_visible(selectors.prompt_input)
+                    field.click()
+                except Exception as exc2:  # noqa: BLE001 - still blocked after dismiss
+                    raise ManualActionRequired(
+                        "overlay_not_auto_dismissable",
+                        "An overlay kept blocking the prompt after an automatic "
+                        "dismiss attempt; clear it once in noVNC.",
+                    ) from exc2
+            else:
+                raise
         field.fill(prompt)
         try:
             button = self._first_visible(selectors.submit_button, timeout_ms=3000)
@@ -457,6 +537,38 @@ class PlaywrightPageDriver(PageDriver):
         except DriftDetectedError:
             # Fallback: many composers submit on Enter.
             field.press("Enter")
+
+    def _auto_dismiss_overlay(self) -> bool:  # pragma: no cover - requires real browser
+        """Best-effort: clear a benign cookie/consent/onboarding popup so the
+        system proceeds without a human (full automation; login is the only
+        manual step). Provider-agnostic, matched by the accessible name of common
+        accept/continue controls. CAPTCHA / identity verification is handled
+        separately and never auto-clicked here. Returns True if a control was
+        clicked or Escape pressed; the caller re-checks the prompt field, so a
+        wrong guess simply falls through to the manual path instead of proceeding
+        in a bad state.
+        """
+        consent_labels = (
+            "Accept all", "Accept All", "Accept", "I agree", "Agree",
+            "Allow all", "Allow", "Got it", "Continue", "OK", "Okay",
+            "No thanks", "Reject all", "Reject",
+        )
+        for label in consent_labels:
+            try:
+                button = self._page.get_by_role("button", name=label).first
+                button.wait_for(state="visible", timeout=800)
+                button.click(timeout=1500)
+                self._page.wait_for_timeout(300)
+                return True
+            except Exception:  # noqa: BLE001 - try the next candidate label
+                continue
+        # Many lightweight overlays close on Escape; harmless if nothing is open.
+        try:
+            self._page.keyboard.press("Escape")
+            self._page.wait_for_timeout(200)
+            return True
+        except Exception:  # noqa: BLE001
+            return False
 
     def attach_files(  # pragma: no cover - requires real browser
         self,
@@ -561,6 +673,14 @@ class PlaywrightPageDriver(PageDriver):
 
     def close(self) -> None:  # pragma: no cover - requires real browser
         try:
+            # Close our dedicated job page first when the context is the
+            # operator's shared CDP browser (which we must NOT close — that would
+            # tear down the user's logged-in session for every job).
+            if self._owns_page and self._page is not None and not self._owns_context:
+                try:
+                    self._page.close()
+                except Exception:  # noqa: BLE001 - best-effort page cleanup
+                    pass
             if self._context is not None and self._owns_context:
                 self._context.close()
         finally:
@@ -569,6 +689,7 @@ class PlaywrightPageDriver(PageDriver):
             self._context = None
             self._owns_context = True
             self._page = None
+            self._owns_page = False
             self._playwright = None
 
 
@@ -621,15 +742,39 @@ def _is_tolerable_navigation_abort(exc: Exception, current_url: str, target_url:
     return _same_origin(current_url, target_url)
 
 
+def _is_human_verification_overlay(exc: Exception) -> bool:
+    """True when the blocking overlay is a CAPTCHA / identity challenge — the one
+    thing (besides the initial provider login) that only a human may clear. UBAG
+    never attempts to solve these (bot-detection bypass is out of scope)."""
+    message = str(exc).lower()
+    if "intercepts pointer events" not in message:
+        return False
+    verification_markers = (
+        "captcha",
+        "recaptcha",
+        "hcaptcha",
+        "verification",
+        "verify you",
+        "verify it",
+        "challenge",
+        "are you human",
+        "not a robot",
+    )
+    return any(marker in message for marker in verification_markers)
+
+
 def _looks_like_manual_overlay(exc: Exception) -> bool:
+    """True for a benign, auto-dismissable overlay (cookie / consent / onboarding
+    popup). CAPTCHA / identity verification is classified separately by
+    :func:`_is_human_verification_overlay` and is intentionally NOT included, so
+    the system auto-dismisses benign popups but still defers real human
+    verification to the operator."""
     message = str(exc).lower()
     if "intercepts pointer events" not in message:
         return False
     overlay_markers = (
         "cookie",
         "consent",
-        "captcha",
-        "verification",
         "cdk-overlay",
         "overlay-backdrop",
     )
@@ -662,7 +807,9 @@ __all__ = [
     "MockPageDriver",
     "PageDriver",
     "PlaywrightPageDriver",
+    "_is_human_verification_overlay",
     "_is_tolerable_navigation_abort",
+    "_looks_like_manual_overlay",
     "create_default_driver",
     "offline_mode_enabled",
 ]

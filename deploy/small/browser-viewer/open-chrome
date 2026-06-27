@@ -1,0 +1,26 @@
+#!/bin/sh
+# Open (or focus) the UBAG Google Chrome on the shared /profiles/default profile,
+# maximized on display :99. Logins here persist (volume) and are what the UBAG
+# worker attaches to over CDP. Invoked from the fluxbox right-click menu.
+#
+# Branded Google Chrome (not Chromium) so Google trusts the browser at sign-in;
+# flags mirror the supervised launch in entrypoint.sh. When the watchdog already
+# has Chrome running, --new-window opens a window in that instance (flags then
+# inherited from the first launch).
+export DISPLAY=:99
+URL="${1:-about:blank}"
+if ! pgrep -x chrome >/dev/null 2>&1; then
+  rm -f /profiles/default/SingletonLock /profiles/default/SingletonSocket /profiles/default/SingletonCookie 2>/dev/null
+fi
+google-chrome-stable --no-sandbox --user-data-dir=/profiles/default \
+  --disable-blink-features=AutomationControlled --password-store=basic --use-mock-keychain \
+  --no-first-run --no-default-browser-check --disable-dev-shm-usage --disable-gpu \
+  --new-window "$URL" >/dev/null 2>&1 &
+sleep 2
+for w in $(xdotool search --class chrome 2>/dev/null); do
+  xdotool windowsize "$w" 1280 800 2>/dev/null
+  xdotool windowmove "$w" 0 0 2>/dev/null
+done
+w=$(xdotool search --class chrome 2>/dev/null | tail -1)
+[ -n "$w" ] && xdotool windowactivate "$w" 2>/dev/null
+exit 0

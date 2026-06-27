@@ -64,7 +64,7 @@ requireTerms('docker-compose.small.yml', [
 ]);
 
 requireTerms('deploy/small/browser-viewer/Dockerfile', [
-  'chromium',
+  'google-chrome-stable',
   'x11vnc',
   'novnc',
   'websockify',

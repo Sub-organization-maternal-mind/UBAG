@@ -1,17 +1,38 @@
 #!/bin/sh
 # UBAG live-browser viewer entrypoint.
 #
-# Boots a virtual display, a persistent Chromium with CDP enabled, and exposes
-# the display over noVNC. A human operator uses noVNC to log in manually; the
-# worker attaches to the same Chromium over CDP. UBAG never fills credentials,
+# Boots a virtual display, a SUPERVISED persistent Chrome with CDP enabled, and
+# exposes the display over noVNC. A human operator uses noVNC to log in manually;
+# the worker attaches to the same Chrome over CDP. UBAG never fills credentials,
 # captures cookies/storage-state, or solves CAPTCHAs.
+#
+# Resilience / autonomy (the operator-reported failures this fixes):
+#   * "the browsers close and relaunch whenever they desire" — Chrome now runs
+#     under a foreground WATCHDOG. If it crashes, OOMs, wedges, or the operator
+#     closes the last window, stale Singleton locks + crash-restore state are
+#     cleared and it is relaunched ON THE SAME profile, so the user-owned login
+#     session is continuously available instead of staying dead until a human
+#     re-opens it. (Previously Chrome was a fire-and-forget background process
+#     and the container healthcheck only probed noVNC, so a dead browser was
+#     never noticed or restarted.)
+#   * "cannot login to my Google account / cannot save the auth sessions" —
+#     Chrome is launched with STEALTH flags that hide the browser-automation
+#     fingerprint FROM THE PROVIDER (never from UBAG) so your one-time, manual
+#     Google / DeepSeek / ChatGPT / Perplexity sign-in is not blocked by "this
+#     browser or app may not be secure". UBAG keeps FULL CDP control and
+#     automates everything after that single login; the profile (cookies/login)
+#     persists on the mounted volume across restarts. UBAG never types creds.
+#
+# Automation policy: the ONLY manual step is logging in to the AI providers.
+# Everything else — launching, attaching, prompting, reading, recovering — is
+# automated. The flags below MAKE that possible; they do not restrict UBAG.
 #
 # This file MUST use LF line endings — CRLF breaks `sh` inside the container.
 set -eu
 
 DISPLAY_NUM="${UBAG_BROWSER_DISPLAY:-:99}"
 SCREEN_GEOMETRY="${UBAG_BROWSER_GEOMETRY:-1280x800x24}"
-# Parsed screen width/height (added) — used to keep Chromium full-screen.
+# Parsed screen width/height — used to keep Chrome full-screen.
 SCREEN_W="${SCREEN_GEOMETRY%%x*}"
 SCREEN_REST="${SCREEN_GEOMETRY#*x}"
 SCREEN_H="${SCREEN_REST%%x*}"
@@ -21,6 +42,10 @@ CDP_PROXY_PORT="${UBAG_BROWSER_CDP_PROXY_PORT:-9223}"
 VNC_PORT="${UBAG_BROWSER_VNC_PORT:-5900}"
 NOVNC_PORT="${UBAG_BROWSER_NOVNC_PORT:-6080}"
 START_URL="${UBAG_BROWSER_START_URL:-about:blank}"
+# Watchdog cadence (seconds) and how long Chrome's DevTools may be unresponsive
+# while the process is still alive before we force a restart (~ probes * cadence).
+WATCHDOG_INTERVAL="${UBAG_BROWSER_WATCHDOG_INTERVAL:-3}"
+CDP_GRACE_PROBES="${UBAG_BROWSER_CDP_GRACE_PROBES:-12}"
 
 # A VNC password is mandatory — never expose an unauthenticated remote display.
 if [ -z "${UBAG_BROWSER_VNC_PASSWORD:-}" ]; then
@@ -39,7 +64,6 @@ trap cleanup INT TERM
 
 DISPLAY_ID="${DISPLAY_NUM#:}"
 rm -f "/tmp/.X${DISPLAY_ID}-lock" "/tmp/.X11-unix/X${DISPLAY_ID}"
-rm -f "$PROFILE_DIR"/SingletonLock "$PROFILE_DIR"/SingletonSocket "$PROFILE_DIR"/SingletonCookie
 
 # Virtual framebuffer (no TCP listener — display is local to the container).
 Xvfb "$DISPLAY_NUM" -screen 0 "$SCREEN_GEOMETRY" -nolisten tcp &
@@ -58,42 +82,87 @@ done
 # Lightweight window manager so dialogs, focus, and inputs behave normally.
 fluxbox >/dev/null 2>&1 &
 
-# Persistent Chromium with CDP for the worker to attach to. The profile lives on
-# a mounted volume so manual logins survive restarts (user-owned session reuse).
-chromium \
-  --no-sandbox \
-  --user-data-dir="$PROFILE_DIR" \
-  --remote-debugging-address=0.0.0.0 \
-  --remote-debugging-port="$CDP_PORT" \
-  --no-first-run \
-  --no-default-browser-check \
-  --disable-dev-shm-usage \
-  --disable-gpu \
-  --window-position=0,0 \
-  --window-size="$SCREEN_W,$SCREEN_H" \
-  --start-maximized \
-  "$START_URL" &
+# Clear stale profile guards + crash-restore state WITHOUT touching cookies/login.
+# Removing only the Singleton* files lets a fresh Chrome reclaim a profile left
+# behind by a crashed/killed predecessor; normalizing exit_type/exited_cleanly
+# suppresses the "Chrome didn't shut down correctly / Restore pages?" interstitial
+# that would otherwise sit in front of the provider UI after an unclean exit. The
+# Cookies / "Login Data" stores are separate SQLite files and are never touched,
+# so the user-owned login survives every relaunch.
+reset_profile_guards() {
+  rm -f "$PROFILE_DIR"/SingletonLock "$PROFILE_DIR"/SingletonSocket "$PROFILE_DIR"/SingletonCookie 2>/dev/null || true
+  for prefs in "$PROFILE_DIR"/Default/Preferences "$PROFILE_DIR"/Preferences; do
+    if [ -f "$prefs" ]; then
+      sed -i 's/"exit_type":"[^"]*"/"exit_type":"Normal"/g; s/"exited_cleanly":false/"exited_cleanly":true/g' "$prefs" 2>/dev/null || true
+    fi
+  done
+}
 
-# Defeat the fluxbox/Chromium startup race that can otherwise leave the window at
-# Chromium's 200x200 default: force every Chromium window to fill the screen once
-# it maps. One-shot (first ~20s of boot) so it never fights the worker later.
-( set +e
+# Persistent Chrome with CDP for the worker to attach to. The profile lives on a
+# mounted volume so manual logins survive restarts (user-owned session reuse).
+#
+# Flag rationale (these ENABLE end-to-end automation by making the bot
+# undetectable to the provider and letting the worker attach — they never limit
+# what UBAG can drive):
+#   --disable-blink-features=AutomationControlled  drops navigator.webdriver, the
+#       primary signal Google/most providers use to block sign-in on "automated"
+#       browsers ("this browser or app may not be secure"). Hidden from the
+#       provider only; UBAG still fully controls the browser over CDP.
+#   --remote-allow-origins=*  modern Chrome (>=111) rejects CDP attaches whose
+#       Origin is not allow-listed; the worker's connect_over_cdp needs this.
+#   --password-store=basic --use-mock-keychain  avoid the gnome-keyring prompt
+#       that can stall sign-in and lose the saved session in a headless container.
+CHROMIUM_PID=""
+start_chromium() {
+  reset_profile_guards
+  # Branded Google Chrome (not Chrome): Google trusts genuine Chrome at sign-in
+  # and blocks plain Chrome as "less secure". Same Blink engine + same CDP, so
+  # UBAG drives it identically.
+  google-chrome-stable \
+    --no-sandbox \
+    --user-data-dir="$PROFILE_DIR" \
+    --remote-debugging-address=0.0.0.0 \
+    --remote-debugging-port="$CDP_PORT" \
+    --remote-allow-origins=* \
+    --disable-blink-features=AutomationControlled \
+    --password-store=basic \
+    --use-mock-keychain \
+    --no-first-run \
+    --no-default-browser-check \
+    --disable-dev-shm-usage \
+    --disable-gpu \
+    --disable-infobars \
+    --disable-features=Translate,OptimizationHints,InterestFeedContentSuggestions \
+    --window-position=0,0 \
+    --window-size="$SCREEN_W,$SCREEN_H" \
+    --start-maximized \
+    "$START_URL" >/run/ubag/chrome.log 2>&1 &
+  CHROMIUM_PID=$!
+}
+
+# Force the Chrome window full-screen once it maps (defeats the fluxbox/Chrome
+# startup race that can otherwise leave the window at Chrome's tiny default).
+maximize_chromium() {
   i=0
   while [ "$i" -lt 20 ]; do
-    if xdotool search --class chromium >/dev/null 2>&1; then
-      for w in $(xdotool search --class chromium 2>/dev/null); do
-        xdotool windowsize "$w" "$SCREEN_W" "$SCREEN_H" 2>/dev/null
-        xdotool windowmove "$w" 0 0 2>/dev/null
+    if xdotool search --class chrome >/dev/null 2>&1; then
+      for w in $(xdotool search --class chrome 2>/dev/null); do
+        xdotool windowsize "$w" "$SCREEN_W" "$SCREEN_H" 2>/dev/null || true
+        xdotool windowmove "$w" 0 0 2>/dev/null || true
       done
       break
     fi
     i=$((i + 1))
     sleep 1
-  done ) &
+  done
+}
 
-# Some Chromium builds keep DevTools on loopback even when
-# --remote-debugging-address is set. Keep the browser listener private and
-# expose a Docker-private proxy for the gateway/worker to attach through.
+start_chromium
+maximize_chromium &
+
+# Some Chrome builds keep DevTools on loopback even when
+# --remote-debugging-address is set. Keep the browser listener private and expose
+# a Docker-private proxy for the gateway/worker to attach through.
 socat \
   "TCP-LISTEN:$CDP_PROXY_PORT,fork,reuseaddr,bind=0.0.0.0" \
   "TCP:127.0.0.1:$CDP_PORT" &
@@ -108,6 +177,53 @@ x11vnc \
   -localhost \
   -bg
 
-# noVNC web client + websocket bridge. This is the only externally reachable
-# surface and it is still gated by the VNC password above.
-exec websockify --web=/usr/share/novnc "$NOVNC_PORT" "localhost:$VNC_PORT"
+# noVNC web client + websocket bridge. Backgrounded (previously the foreground
+# `exec`) so the watchdog below owns the foreground and keeps Chrome alive.
+websockify --web=/usr/share/novnc "$NOVNC_PORT" "localhost:$VNC_PORT" &
+
+# ---------------------------------------------------------------------------
+# Chrome watchdog (foreground = the container's main process).
+# ---------------------------------------------------------------------------
+# True when Chrome's DevTools endpoint answers — the real "the worker can
+# attach" signal (a bare process check can be true while DevTools is wedged).
+cdp_alive() {
+  wget -qO- "http://127.0.0.1:$CDP_PORT/json/version" >/dev/null 2>&1
+}
+
+restart_chromium() {
+  echo "browser-viewer: chromium unhealthy ($1); restarting on profile $PROFILE_DIR" >&2
+  if [ -n "$CHROMIUM_PID" ]; then
+    kill "$CHROMIUM_PID" 2>/dev/null || true
+    wait "$CHROMIUM_PID" 2>/dev/null || true
+  fi
+  # Sweep any orphaned Chrome processes (renderers / a non-exec wrapper child)
+  # that could still hold the profile's Singleton lock and make the relaunch
+  # attach to a half-dead instance. start_chromium's reset_profile_guards then
+  # clears the lock files before the fresh launch.
+  pkill -9 -x chrome 2>/dev/null || true
+  sleep 1
+  start_chromium
+  maximize_chromium &
+}
+
+cdp_fail=0
+while true; do
+  sleep "$WATCHDOG_INTERVAL"
+  # Dead process -> relaunch immediately.
+  if [ -z "$CHROMIUM_PID" ] || ! kill -0 "$CHROMIUM_PID" 2>/dev/null; then
+    restart_chromium "process exited"
+    cdp_fail=0
+    continue
+  fi
+  # Alive process: tolerate a slow/transient DevTools window (cold first boot
+  # initializes the profile) before forcing a restart.
+  if cdp_alive; then
+    cdp_fail=0
+    continue
+  fi
+  cdp_fail=$((cdp_fail + 1))
+  if [ "$cdp_fail" -ge "$CDP_GRACE_PROBES" ]; then
+    restart_chromium "DevTools unresponsive for ${cdp_fail} probes"
+    cdp_fail=0
+  fi
+done
