@@ -453,6 +453,57 @@ func TestWorkerConsumerProjectsTopologyReport(t *testing.T) {
 	}
 }
 
+func TestWorkerConsumerSkipsSessionInfoEvents(t *testing.T) {
+	// session.new_chat / session.configured are informational pre-submit events.
+	// They are not in the job-lifecycle allowlist, so the consumer must intercept
+	// them (like the orchestration telemetry) — otherwise ApplyWorkerEvent rejects
+	// the unknown type and the whole job fails. The terminal "completed" event
+	// must still drive the job to completion.
+	store := jobstore.NewMemoryStore()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	job, err := store.Create(context.Background(), jobstore.CreateRequest{
+		APIVersion:     "2026-05-22",
+		TenantID:       "tenant_a",
+		AppID:          "app_a",
+		IdempotencyKey: "idem_sessioninfo",
+		Target:         "deepseek_web",
+		CommandType:    "submit",
+		Input:          map[string]any{"prompt": "hello"},
+		TraceID:        "trace_sessioninfo",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+		t.Fatalf("EnqueueJob returned error: %v", err)
+	}
+
+	consumer := WorkerConsumer{
+		Spool: dispatcher,
+		Jobs:  store,
+		Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			return []jobstore.WorkerEvent{
+				{EventID: "evt_newchat", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "session.new_chat", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{"status": "new_chat", "started": true}},
+				{EventID: "evt_configured", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "session.configured", Sequence: 2, TraceID: envelope.TraceID, Data: map[string]any{"status": "configured", "settings": []any{map[string]any{"key": "mode", "desired": "Expert", "state": "set"}}}},
+				{EventID: "evt_done", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 3, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}},
+			}, nil
+		}),
+	}
+
+	processed, err := consumer.RunOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+
+	finished, found, err := store.Get(context.Background(), job.ID)
+	if err != nil || !found {
+		t.Fatalf("Get found=%v err=%v", found, err)
+	}
+	if finished.Status != jobstore.StatusCompleted {
+		t.Fatalf("job status = %q, want %q (session.* events must be intercepted, not poison the job)", finished.Status, jobstore.StatusCompleted)
+	}
+}
+
 func TestWorkerConsumerTopologyRecordingIsNilSafe(t *testing.T) {
 	store := jobstore.NewMemoryStore()
 	dispatcher := NewFileSpoolDispatcher(t.TempDir())

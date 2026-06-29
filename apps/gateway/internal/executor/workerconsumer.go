@@ -41,6 +41,15 @@ const concurrencyChangeEventType = "concurrency.cap_changed"
 // worker out-of-band and ignore this event.
 const topologyReportEventType = "browser.topology_reported"
 
+// newChatEventType / configuredEventType are informational worker events emitted
+// by the live engine before a prompt is submitted: the worker started a fresh
+// conversation and enforced the provider's model/option settings (e.g. DeepSeek
+// Expert + DeepThink, Gemini 3.5 Flash + Extended thinking). They are NOT
+// job-lifecycle transitions, so — like the orchestration telemetry above — they
+// are logged for audit and skipped so their type never poisons the job.
+const newChatEventType = "session.new_chat"
+const configuredEventType = "session.configured"
+
 const (
 	defaultWorkerPollInterval = 500 * time.Millisecond
 	defaultWorkerMaxRuntime   = 30 * time.Second
@@ -265,6 +274,15 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		// job-event application so the unknown type never poisons the job.
 		if normalized.Type == topologyReportEventType {
 			c.recordTopologyReport(job, normalized)
+			continue
+		}
+		// session.new_chat / session.configured are informational pre-submit events
+		// (fresh conversation + model/option enforcement), not lifecycle
+		// transitions: log for audit and skip application so the type never poisons
+		// the job (mirrors the orchestration-telemetry handling above).
+		if normalized.Type == newChatEventType || normalized.Type == configuredEventType {
+			slog.Info("worker session event",
+				"job_id", normalized.JobID, "event_type", normalized.Type)
 			continue
 		}
 		if _, found, err := c.Jobs.ApplyWorkerEvent(ctx, normalized); err != nil {
