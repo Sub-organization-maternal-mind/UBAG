@@ -54,7 +54,7 @@ _DEFAULT_LOGIN_READY_GRACE_S = 12.0
 _DEFAULT_LOGIN_READY_EXTENDED_S = 45.0
 # How many times to attempt the buffered interaction (config -> submit -> read)
 # before giving up, so a transient browser/CDP hiccup self-heals within the job.
-_DEFAULT_INTERACTION_ATTEMPTS = 2
+_DEFAULT_INTERACTION_ATTEMPTS = 3
 
 # Telemetry event types appended additively when an orchestrator is wired in.
 # The gateway worker-consumer intercepts both BEFORE applying the canonical

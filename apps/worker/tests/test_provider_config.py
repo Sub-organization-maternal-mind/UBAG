@@ -195,10 +195,18 @@ class NewChatAndConfigTests(unittest.TestCase):
 
     def test_transient_failure_exhausts_attempts_and_propagates(self):
         selectors = get_provider_selectors("deepseek_web")
-        driver = _FlakyDriver(fails=5, response_text="x")  # always fails
-        with self.assertRaises(RuntimeError):
-            LiveSessionEngine(selectors).run(_payload("deepseek_web"), driver=driver)
-        self.assertEqual(driver.reset_calls, 1)  # attempts=2 -> exactly one reset
+        driver = _FlakyDriver(fails=9, response_text="x")  # always fails
+        prior = os.environ.get("UBAG_INTERACTION_ATTEMPTS")
+        os.environ["UBAG_INTERACTION_ATTEMPTS"] = "2"  # pin for a deterministic count
+        try:
+            with self.assertRaises(RuntimeError):
+                LiveSessionEngine(selectors).run(_payload("deepseek_web"), driver=driver)
+        finally:
+            if prior is None:
+                os.environ.pop("UBAG_INTERACTION_ATTEMPTS", None)
+            else:
+                os.environ["UBAG_INTERACTION_ATTEMPTS"] = prior
+        self.assertEqual(driver.reset_calls, 1)  # 2 attempts -> exactly one reset
 
     def test_provider_without_new_chat_or_settings_unchanged(self):
         # mistral_lechat declares neither; the new phase must be a no-op.

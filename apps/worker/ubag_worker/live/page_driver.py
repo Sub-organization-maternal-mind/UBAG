@@ -623,6 +623,13 @@ class PlaywrightPageDriver(PageDriver):
         group = selectors.new_chat
         if group is None:
             return False
+        # Wait for the composer to be interactive before clicking New chat, so the
+        # click never lands on a half-loaded page (right after auth or a retry
+        # reset) — a common source of transient failures under load.
+        try:
+            self._first_visible(selectors.prompt_input, timeout_ms=10000)
+        except Exception:  # noqa: BLE001 - best-effort settle
+            pass
         clicked = self._click_any(group.as_list(), timeout_ms=4000)
         if clicked:
             try:
