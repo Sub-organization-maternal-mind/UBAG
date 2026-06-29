@@ -34,6 +34,12 @@ AUTHENTICATED = "authenticated"
 LOGIN_REQUIRED = "login_required"
 UNKNOWN = "unknown"
 
+# Settle window (seconds of no growth) before a response is considered complete.
+# Reasoning modes (DeepThink / Extended thinking) pause mid-thought for seconds
+# with no visible streaming indicator, so they need a wider window than a plain
+# reply to avoid latching a partial answer. Env-overridable for tuning.
+_REASONING_SETTLE_S = 4.0
+
 
 @dataclass(frozen=True)
 class _LaunchPlan:
@@ -92,6 +98,17 @@ class PageDriver(ABC):
     def await_manual_login(self, selectors: ProviderSelectors, *, timeout_s: float) -> str:
         """Block until the human completes login in the live session, or timeout."""
 
+    def wait_until_authenticated(
+        self, selectors: ProviderSelectors, *, timeout_s: float
+    ) -> str:
+        """Poll only the authenticated marker, WITHOUT simulating a human login.
+
+        Used as a short grace re-check so a slow cold page load is not mistaken
+        for a logged-out session. Concrete (NOT abstract) so existing drivers keep
+        working; the default is a single :meth:`detect_login_state` probe.
+        """
+        return self.detect_login_state(selectors)
+
     @abstractmethod
     def submit_prompt(self, selectors: ProviderSelectors, prompt: str) -> None:
         ...
@@ -136,6 +153,33 @@ class PageDriver(ABC):
             "page driver %s does not support file attachment" % type(self).__name__
         )
 
+    def start_new_chat(self, selectors: ProviderSelectors) -> bool:
+        """Start a fresh conversation, if the provider exposes a New-chat control.
+
+        Concrete (NOT abstract) so existing drivers keep working untouched.
+        Best-effort: returns ``True`` when a control was clicked, ``False`` when
+        the provider declares no ``new_chat`` group or the control could not be
+        found. A missing/renamed New-chat control must NOT fail an otherwise-good
+        job, so this never raises ``DriftDetectedError``.
+        """
+        return False
+
+    def ensure_provider_config(
+        self,
+        selectors: ProviderSelectors,
+        overrides: Optional[Mapping[str, object]] = None,
+    ) -> List[Mapping[str, object]]:
+        """Idempotently enforce the provider's pre-submit settings.
+
+        Reads the current UI state for each declared :class:`ProviderSetting`
+        (model picker, mode pills, reasoning toggles) and only acts when it
+        differs from the desired value, then re-verifies. Returns a list of
+        per-setting result dicts (``key`` / ``desired`` / ``state``). A required
+        setting that cannot be confirmed raises ``DriftDetectedError`` rather
+        than submitting into the wrong mode. The default applies nothing.
+        """
+        return []
+
 
 # ---------------------------------------------------------------------------
 # Deterministic mock driver
@@ -170,10 +214,15 @@ class MockPageDriver(PageDriver):
     tokens: Optional[Sequence[str]] = None
     drift_group: Optional[str] = None
     screenshot_path: Optional[str] = "artifacts/mock-screenshot.png"
+    # Setting keys reported as "already_set" (rest are reported "set"); lets a
+    # test assert idempotency without a browser.
+    config_already: Optional[Sequence[str]] = None
     opened: bool = field(default=False, init=False)
     closed: bool = field(default=False, init=False)
     submitted_prompt: Optional[str] = field(default=None, init=False)
     attached_files: List[str] = field(default_factory=list, init=False)
+    started_new_chat: bool = field(default=False, init=False)
+    ensured_settings: List[Mapping[str, object]] = field(default_factory=list, init=False)
     _url: str = field(default="about:blank", init=False)
 
     def open(self, *, target_url: str, user_data_dir: str, headless: bool) -> None:
@@ -198,6 +247,17 @@ class MockPageDriver(PageDriver):
             self.authenticated = True
             return AUTHENTICATED
         return LOGIN_REQUIRED
+
+    def wait_until_authenticated(
+        self, selectors: ProviderSelectors, *, timeout_s: float
+    ) -> str:
+        # Grace re-check reports the CURRENT state only — it never simulates a
+        # human login, so a not-yet-authenticated mock still routes to the manual
+        # flow (mirrors a genuinely logged-out live session).
+        self._guard_drift(
+            selectors.authenticated_signal.name, selectors.selector_version
+        )
+        return AUTHENTICATED if self.authenticated else LOGIN_REQUIRED
 
     def submit_prompt(self, selectors: ProviderSelectors, prompt: str) -> None:
         self._guard_drift(selectors.prompt_input.name, selectors.selector_version)
@@ -240,6 +300,32 @@ class MockPageDriver(PageDriver):
         if selectors.file_input is not None:
             self._guard_drift(selectors.file_input.name, selectors.selector_version)
         self.attached_files = list(file_paths)
+
+    def start_new_chat(self, selectors: ProviderSelectors) -> bool:
+        if selectors.new_chat is None:
+            return False
+        self._guard_drift(selectors.new_chat.name, selectors.selector_version)
+        self.started_new_chat = True
+        return True
+
+    def ensure_provider_config(
+        self,
+        selectors: ProviderSelectors,
+        overrides: Optional[Mapping[str, object]] = None,
+    ) -> List[Mapping[str, object]]:
+        overrides = overrides or {}
+        already = set(self.config_already or ())
+        results: List[Mapping[str, object]] = []
+        for setting in selectors.settings:
+            # A configured drift on "setting:<key>" lets tests assert the blocked
+            # path; otherwise the setting is reported set / already-set.
+            self._guard_drift("setting:" + setting.key, selectors.selector_version)
+            desired = overrides.get(setting.key, setting.desired)
+            state = "already_set" if setting.key in already else "set"
+            record = {"key": setting.key, "desired": desired, "state": state}
+            results.append(record)
+            self.ensured_settings.append(record)
+        return results
 
     def _resolved_tokens(self) -> List[str]:
         if self.tokens is not None:
@@ -471,6 +557,117 @@ class PlaywrightPageDriver(PageDriver):
                 continue
         return False
 
+    def _present_any(self, candidates: Sequence[str], *, timeout_ms: int = 2000) -> bool:  # pragma: no cover
+        for candidate in candidates:
+            try:
+                self._page.locator(candidate).first.wait_for(
+                    state="visible", timeout=timeout_ms
+                )
+                return True
+            except Exception:  # noqa: BLE001
+                continue
+        return False
+
+    def _click_any(self, candidates: Sequence[str], *, timeout_ms: int = 4000) -> bool:  # pragma: no cover
+        for candidate in candidates:
+            try:
+                locator = self._page.locator(candidate).first
+                locator.wait_for(state="visible", timeout=timeout_ms)
+                locator.click(timeout=timeout_ms)
+                return True
+            except Exception:  # noqa: BLE001 - try next fallback
+                continue
+        return False
+
+    def _dismiss_menus(self) -> None:  # pragma: no cover
+        """Close any open picker/menu so the next step starts from a clean state.
+
+        The prompt field is still empty at config time, so Escape can never drop a
+        partially-typed prompt; it just collapses an open Material/overlay menu.
+        """
+        try:
+            self._page.keyboard.press("Escape")
+            self._page.wait_for_timeout(200)
+            self._page.keyboard.press("Escape")
+            self._page.wait_for_timeout(150)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # -- pre-submit configuration (new chat + model/mode/reasoning) ------
+    def start_new_chat(self, selectors: ProviderSelectors) -> bool:  # pragma: no cover
+        group = selectors.new_chat
+        if group is None:
+            return False
+        clicked = self._click_any(group.as_list(), timeout_ms=4000)
+        if clicked:
+            try:
+                self._page.wait_for_timeout(900)
+            except Exception:  # noqa: BLE001
+                pass
+        return clicked
+
+    def ensure_provider_config(  # pragma: no cover
+        self,
+        selectors: ProviderSelectors,
+        overrides: Optional[Mapping[str, object]] = None,
+    ) -> List[Mapping[str, object]]:
+        overrides = overrides or {}
+        results: List[Mapping[str, object]] = []
+        for setting in selectors.settings:
+            desired = overrides.get(setting.key, setting.desired)
+            results.append(self._ensure_setting(selectors, setting, desired))
+        return results
+
+    def _open_control(self, open_steps: Sequence[Sequence[str]]) -> None:  # pragma: no cover
+        for step in open_steps:
+            if not self._click_any(list(step), timeout_ms=3500):
+                # The control to reveal the menu is not present; stop opening.
+                # The satisfied check then fails and the retry/drift path decides.
+                break
+            try:
+                self._page.wait_for_timeout(500)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _setting_satisfied(self, setting, desired) -> bool:  # pragma: no cover
+        if setting.kind == "toggle":
+            is_on = self._present_any(list(setting.on_when), timeout_ms=1500)
+            return is_on == bool(desired)
+        selector = setting.satisfied_when.format(value=desired)
+        return self._present_any([selector], timeout_ms=2000)
+
+    def _apply_setting(self, setting, desired) -> bool:  # pragma: no cover
+        if setting.kind == "toggle":
+            is_on = self._present_any(list(setting.on_when), timeout_ms=1200)
+            if is_on == bool(desired):
+                return True
+            return self._click_any(list(setting.toggle_click), timeout_ms=4000)
+        selector = setting.apply_click.format(value=desired)
+        return self._click_any([selector], timeout_ms=4000)
+
+    def _ensure_setting(self, selectors, setting, desired):  # pragma: no cover
+        # Read -> act-if-different -> re-verify. Two passes: the first detects an
+        # already-correct setting (no-op); the second confirms an applied change.
+        for attempt in (1, 2):
+            self._open_control(setting.open_steps)
+            if self._setting_satisfied(setting, desired):
+                self._dismiss_menus()
+                return {
+                    "key": setting.key,
+                    "desired": desired,
+                    "state": "already_set" if attempt == 1 else "set",
+                }
+            if attempt == 2:
+                self._dismiss_menus()
+                if setting.required:
+                    raise DriftDetectedError(
+                        "setting:" + setting.key, selectors.selector_version
+                    )
+                return {"key": setting.key, "desired": desired, "state": "unverified"}
+            self._apply_setting(setting, desired)
+            self._dismiss_menus()
+        return {"key": setting.key, "desired": desired, "state": "unknown"}
+
     # -- login state -----------------------------------------------------
     def detect_login_state(self, selectors: ProviderSelectors) -> str:  # pragma: no cover
         if self._present(selectors.authenticated_signal, timeout_ms=4000):
@@ -490,6 +687,15 @@ class PlaywrightPageDriver(PageDriver):
                 return AUTHENTICATED
             time.sleep(self._login_poll_interval_s)
         return LOGIN_REQUIRED
+
+    def wait_until_authenticated(  # pragma: no cover - requires real browser
+        self, selectors: ProviderSelectors, *, timeout_s: float
+    ) -> str:
+        # Identical mechanism to await_manual_login for the live driver: poll the
+        # authenticated marker only; no credentials are ever typed. Kept as a
+        # distinct method so the engine's intent (grace re-check vs. manual wait)
+        # is explicit and the mock can diverge.
+        return self.await_manual_login(selectors, timeout_s=timeout_s)
 
     # -- interaction -----------------------------------------------------
     def submit_prompt(self, selectors: ProviderSelectors, prompt: str) -> None:  # pragma: no cover
@@ -604,6 +810,12 @@ class PlaywrightPageDriver(PageDriver):
         deadline = time.monotonic() + timeout_s
         seen = ""
         last_growth = time.monotonic()
+        # Reasoning modes pause (often >1s) while "thinking" with no streaming
+        # indicator; widen the settle window so a mid-thought pause is not mistaken
+        # for completion and the partial answer captured.
+        settle_s = self._response_settle_s
+        if getattr(selectors, "reasoning", False):
+            settle_s = max(settle_s, _reasoning_settle_s())
         # Poll the container text and yield only the new suffix as a delta. The
         # response is treated as complete once it is non-empty AND has stopped
         # growing for `_response_settle_s` AND the provider is not signalling active
@@ -622,7 +834,7 @@ class PlaywrightPageDriver(PageDriver):
                 seen = current
                 last_growth = time.monotonic()
             still_streaming = self._present(selectors.streaming_indicator, timeout_ms=500)
-            settled = (time.monotonic() - last_growth) >= self._response_settle_s
+            settled = (time.monotonic() - last_growth) >= settle_s
             if seen.strip() and settled and not still_streaming:
                 break
             time.sleep(0.4)
@@ -691,6 +903,19 @@ class PlaywrightPageDriver(PageDriver):
             self._page = None
             self._owns_page = False
             self._playwright = None
+
+
+def _reasoning_settle_s() -> float:
+    """Settle window (s) for reasoning responses; env-overridable for tuning."""
+
+    raw = os.environ.get("UBAG_REASONING_SETTLE_S", "").strip()
+    try:
+        value = float(raw)
+        if value > 0:
+            return value
+    except (TypeError, ValueError):
+        pass
+    return _REASONING_SETTLE_S
 
 
 def offline_mode_enabled() -> bool:

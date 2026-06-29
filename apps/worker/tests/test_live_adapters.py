@@ -122,6 +122,9 @@ class EngineHappyPathTests(unittest.TestCase):
                 "session.opening",
                 "session.authenticated",
                 "running",
+                # ChatGPT declares a New-chat control (no model settings), so a
+                # fresh conversation is started before the prompt is submitted.
+                "session.new_chat",
                 "token",
                 "token",
                 "token",

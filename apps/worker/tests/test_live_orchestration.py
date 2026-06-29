@@ -251,6 +251,9 @@ class EngineWithOrchestratorTests(unittest.TestCase):
                 "session.authenticated",
                 "running",
                 "browser.topology_reported",
+                # ChatGPT declares a New-chat control; a fresh chat is started
+                # after the topology report and before the prompt is submitted.
+                "session.new_chat",
                 "token",
                 "token",
                 "completed",
@@ -313,6 +316,7 @@ class EngineWithOrchestratorTests(unittest.TestCase):
                 "session.opening",
                 "session.authenticated",
                 "running",
+                "session.new_chat",
                 "token",
                 "token",
                 "completed",

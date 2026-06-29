@@ -43,6 +43,45 @@ class SelectorGroup:
 
 
 @dataclass(frozen=True)
+class ProviderSetting:
+    """One idempotent UI setting enforced before a prompt is submitted.
+
+    UBAG reads the current UI state and only acts when it differs from the
+    desired value, so it is safe to run on every job (the operator's "always,
+    if it is not already set" requirement). Two kinds are supported:
+
+    * ``toggle`` — an on/off control (e.g. DeepSeek's *DeepThink*). ``on_when``
+      lists selectors that match ONLY when the control is currently ON;
+      ``toggle_click`` flips it.
+    * ``choice`` — pick a labelled option (e.g. DeepSeek mode *Expert*, the
+      Gemini model, the Gemini *Thinking level*). ``satisfied_when`` and
+      ``apply_click`` are templates with a ``{value}`` placeholder substituted
+      with the desired label; ``open_steps`` clicks open any menu first (each
+      step is its own ordered fallback list).
+
+    Selectors are plain strings (CSS / Playwright text engines); within a list
+    the first visible one wins and the rest are drift fallbacks. NO credentials,
+    NO storage state — pure UI configuration, same safe-mode posture as the rest
+    of this module. ``desired`` may be overridden per job / per env var without a
+    code change (see the engine's provider_config resolution).
+    """
+
+    key: str
+    kind: str  # "toggle" | "choice"
+    desired: object  # bool for toggle, str label for choice
+    open_steps: Sequence[Sequence[str]] = ()
+    # toggle
+    on_when: Sequence[str] = ()
+    toggle_click: Sequence[str] = ()
+    # choice (templates; "{value}" -> the desired label)
+    satisfied_when: str = ""
+    apply_click: str = ""
+    # When False, a setting that cannot be confirmed warns instead of blocking
+    # the job (keeps a renamed control from killing an otherwise-good answer).
+    required: bool = True
+
+
+@dataclass(frozen=True)
 class ProviderSelectors:
     """Provider-specific selector + navigation configuration.
 
@@ -85,6 +124,18 @@ class ProviderSelectors:
     # Deliberately NOT part of all_groups(): an absent attach control must never
     # fail the mandatory drift baseline for unrelated, text-only targets.
     file_input: Optional[SelectorGroup] = None
+    # Optional "New chat / new conversation" affordance. When set, the engine
+    # clicks it before configuring + submitting so each job starts a fresh
+    # conversation (no context bleed between unrelated Fix requests). Best-effort:
+    # a missing/renamed control warns rather than failing the job.
+    new_chat: Optional[SelectorGroup] = None
+    # Ordered, idempotent UI settings enforced before submit (model pickers, mode
+    # pills, reasoning toggles). Empty = submit in whatever mode is current.
+    settings: Sequence[ProviderSetting] = field(default_factory=tuple)
+    # True when any enforced setting turns on a slow "reasoning" mode (DeepThink,
+    # Extended thinking); the engine lengthens the response timeout accordingly so
+    # a long think is not mistaken for a hang.
+    reasoning: bool = False
 
     def all_groups(self) -> List[SelectorGroup]:
         return [
@@ -108,7 +159,7 @@ CHATGPT_WEB = ProviderSelectors(
     provider_id="chatgpt_web",
     display_name="ChatGPT Web",
     target_url="https://chatgpt.com/",
-    selector_version="2026-05-22-baseline-unverified",
+    selector_version="2026-06-29-newchat-verified",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
@@ -167,6 +218,16 @@ CHATGPT_WEB = ProviderSelectors(
             "input[type='file'][multiple]",
             "input[type='file']",
             "input[accept*='audio']",
+        ),
+    ),
+    # Verified 2026-06-29 against live chatgpt.com. Operator decision: no forced
+    # model/mode for ChatGPT (leave the account default); only start a fresh chat.
+    new_chat=SelectorGroup(
+        "new_chat",
+        (
+            "a[data-testid='create-new-chat-button']",
+            "a[href='/']:has-text('New chat')",
+            "button[aria-label*='New chat']",
         ),
     ),
 )
@@ -239,7 +300,7 @@ DEEPSEEK_WEB = ProviderSelectors(
     provider_id="deepseek_web",
     display_name="DeepSeek Web",
     target_url="https://chat.deepseek.com/",
-    selector_version="2026-06-22-thinking-pane-fix",
+    selector_version="2026-06-29-controls-verified",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
@@ -315,13 +376,51 @@ DEEPSEEK_WEB = ProviderSelectors(
             "input[accept*='audio']",
         ),
     ),
+    # Verified 2026-06-29 against live chat.deepseek.com: the composer sidebar
+    # exposes a "New chat" control whose label is a <span>New chat</span> inside a
+    # tabindex=0 wrapper; clicking the span bubbles to the wrapper.
+    new_chat=SelectorGroup(
+        "new_chat",
+        (
+            "div[tabindex='0']:has(> span:text-is('New chat'))",
+            "div:has(> span:text-is('New chat'))",
+            "span:text-is('New chat')",
+        ),
+    ),
+    # Operator default (always-on): Expert mode + DeepThink reasoning. Verified
+    # 2026-06-29: mode pills render as role=radio (active => aria-checked='true');
+    # DeepThink is a div.ds-toggle-button whose ON state adds
+    # 'ds-toggle-button--selected' (blue). Idempotent: only clicked when not set.
+    settings=(
+        ProviderSetting(
+            key="mode",
+            kind="choice",
+            desired="Expert",
+            satisfied_when="[role='radio'][aria-checked='true']:has-text(\"{value}\")",
+            apply_click="[role='radio']:has-text(\"{value}\")",
+        ),
+        ProviderSetting(
+            key="deepthink",
+            kind="toggle",
+            desired=True,
+            on_when=(
+                "div.ds-toggle-button--selected:has(span:text-is('DeepThink'))",
+                ".ds-toggle-button--selected:has-text('DeepThink')",
+            ),
+            toggle_click=(
+                "span:text-is('DeepThink')",
+                "div.ds-toggle-button:has(span:text-is('DeepThink'))",
+            ),
+        ),
+    ),
+    reasoning=True,
 )
 
 GEMINI_WEB = ProviderSelectors(
     provider_id="gemini_web",
     display_name="Gemini Web",
     target_url="https://gemini.google.com/app",
-    selector_version="2026-06-22-response-verified",
+    selector_version="2026-06-29-controls-verified",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
@@ -392,6 +491,53 @@ GEMINI_WEB = ProviderSelectors(
             "input[accept*='audio']",
         ),
     ),
+    # Verified 2026-06-29 against live gemini.google.com/app.
+    new_chat=SelectorGroup(
+        "new_chat",
+        (
+            "a[aria-label='New chat']",
+            ".side-nav-sparkle-button",
+            "[data-test-id='new-chat-button']",
+        ),
+    ),
+    # Operator default (always-on): the "3.5 Flash" model + "Extended" thinking
+    # level. Both live inside the mode picker opened by the
+    # data-test-id='bard-mode-menu-button' button; the selected item carries the
+    # 'selected' class. Thinking level is a nested gem-menu-item ("Thinking level")
+    # whose submenu offers Standard / Extended. Idempotent: the menu is opened,
+    # the desired item is clicked only if not already selected, then dismissed.
+    settings=(
+        ProviderSetting(
+            key="model",
+            kind="choice",
+            desired="3.5 Flash",
+            open_steps=(
+                (
+                    "button[data-test-id='bard-mode-menu-button']",
+                    "button[aria-label*='mode picker']",
+                    "button.input-area-switch",
+                ),
+            ),
+            satisfied_when="gem-menu-item.selected:has-text(\"{value}\")",
+            apply_click="gem-menu-item:has-text(\"{value}\")",
+        ),
+        ProviderSetting(
+            key="thinking",
+            kind="choice",
+            desired="Extended",
+            open_steps=(
+                (
+                    "button[data-test-id='bard-mode-menu-button']",
+                    "button[aria-label*='mode picker']",
+                    "button.input-area-switch",
+                ),
+                ("gem-menu-item:has-text('Thinking level')",),
+            ),
+            satisfied_when="gem-menu-item.selected:has-text(\"{value}\")",
+            apply_click="gem-menu-item:has-text(\"{value}\")",
+        ),
+    ),
+    reasoning=True,
 )
 
 MISTRAL_LECHAT = ProviderSelectors(
@@ -665,6 +811,7 @@ __all__ = [
     "PERPLEXITY_WEB",
     "PROVIDER_SELECTORS",
     "ProviderSelectors",
+    "ProviderSetting",
     "SelectorGroup",
     "get_provider_selectors",
     "live_web_template",

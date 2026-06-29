@@ -18,6 +18,7 @@ Selector drift surfaces as ``UBAG-ADAPTER-DRIFT-014`` blocked events.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from typing import TYPE_CHECKING, Any, Iterator, List, Mapping, Optional
@@ -40,6 +41,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 _DEFAULT_MANUAL_LOGIN_TIMEOUT_S = 300.0
 _DEFAULT_RESPONSE_TIMEOUT_S = 120.0
+# Reasoning modes (DeepSeek DeepThink, Gemini Extended thinking) routinely run
+# far longer than a plain reply; a short timeout would clip the answer or be
+# mistaken for a hang. Used as a floor only when the provider enables reasoning.
+_DEFAULT_REASONING_RESPONSE_TIMEOUT_S = 360.0
+# Grace window to let a freshly-opened, already-authenticated SPA page render its
+# auth markers before the engine concludes the user must log in. Env-overridable.
+_DEFAULT_LOGIN_READY_GRACE_S = 12.0
 
 # Telemetry event types appended additively when an orchestrator is wired in.
 # The gateway worker-consumer intercepts both BEFORE applying the canonical
@@ -139,6 +147,18 @@ class LiveSessionEngine:
 
             login_state = driver.detect_login_state(self._selectors)
             if login_state != AUTHENTICATED:
+                # A freshly-opened SPA page often has not rendered its authenticated
+                # markers within the first detection window. Poll briefly before
+                # declaring manual login so a slow cold load is not mis-reported as
+                # logged-out (which would emit a spurious manual_action_required for
+                # an already-authenticated user and can fail an otherwise-good job).
+                # This polls the authenticated marker only — it never simulates a
+                # human login, so a genuinely logged-out session still falls through
+                # to the manual flow below.
+                login_state = driver.wait_until_authenticated(
+                    self._selectors, timeout_s=_login_ready_grace_s()
+                )
+            if login_state != AUTHENTICATED:
                 session_id = job.session_id
                 yield emit("session.manual_action_required", {
                     "status": "manual_action_required",
@@ -213,6 +233,38 @@ class LiveSessionEngine:
                     "tabs": snapshot["tabs"],
                 })
 
+            # Pre-submit configuration phase: fresh chat + model/mode/reasoning.
+            # Every step is idempotent — the driver reads the live UI and only acts
+            # when it differs, so this is safe to run on every job ("always, if it
+            # is not already set"). A renamed New-chat control degrades to a logged
+            # warning; a model/mode/toggle that cannot be confirmed raises
+            # DriftDetectedError (handled below) rather than a silent no-op.
+            if job.new_chat_enabled and self._selectors.new_chat is not None:
+                started_new_chat = driver.start_new_chat(self._selectors)
+                yield emit("session.new_chat", {
+                    "status": "new_chat" if started_new_chat else "new_chat_skipped",
+                    "target": job.target,
+                    "adapter": self._selectors.provider_id,
+                    "started": started_new_chat,
+                    "message": (
+                        "started a fresh conversation before configuring"
+                        if started_new_chat
+                        else "no New-chat control found; continuing in the current chat"
+                    ),
+                })
+
+            if job.config_enabled and self._selectors.settings:
+                applied_settings = driver.ensure_provider_config(
+                    self._selectors, overrides=job.provider_config
+                )
+                yield emit("session.configured", {
+                    "status": "configured",
+                    "target": job.target,
+                    "adapter": self._selectors.provider_id,
+                    "settings": list(applied_settings),
+                    "message": "enforced provider model/option settings before submit",
+                })
+
             # Audio/file attach phase (optional). When the job carries an audio
             # artifact, attach the locally-materialized file to the provider's
             # upload control BEFORE submitting the prompt. Text-only jobs (no
@@ -249,9 +301,15 @@ class LiveSessionEngine:
 
             driver.submit_prompt(self._selectors, job.prompt)
 
+            # Reasoning modes need a longer ceiling; use the reasoning floor only
+            # when this provider enables a slow thinking mode and config is on.
+            stream_timeout_s = job.response_timeout_s
+            if self._selectors.reasoning and job.config_enabled:
+                stream_timeout_s = max(stream_timeout_s, _reasoning_response_timeout_s())
+
             token_index = 0
             for delta in driver.stream_response(
-                self._selectors, timeout_s=job.response_timeout_s
+                self._selectors, timeout_s=stream_timeout_s
             ):
                 yield emit("token", {
                     "status": "token_streaming",
@@ -383,6 +441,9 @@ class _NormalizedJob:
         "audio_artifact_key",
         "audio_local_path",
         "wait_for_artifacts",
+        "provider_config",
+        "new_chat_enabled",
+        "config_enabled",
     )
 
     def __init__(self, **kwargs: Any) -> None:
@@ -437,6 +498,20 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
     )
     wait_for_artifacts = _string_tuple(options.get("wait_for_artifacts"))
 
+    # Resolve the pre-submit configuration: per-provider UBAG defaults live in the
+    # selectors; an env var (UBAG_PROVIDER_CONFIG_<ID>) and the job options layer
+    # on top so the always-on settings can change without a code release. The
+    # reserved keys "_enabled" / "_new_chat" gate the whole phase.
+    provider_config = _resolve_provider_config(provider_id, options)
+    new_chat_enabled = _flag(
+        provider_config.get("_new_chat"),
+        _env_flag("UBAG_NEW_CHAT_ENABLED", True),
+    )
+    config_enabled = _flag(
+        provider_config.get("_enabled"),
+        _env_flag("UBAG_PROVIDER_CONFIG_ENABLED", True),
+    )
+
     return _NormalizedJob(
         api_version=api_version,
         job_id=job_id,
@@ -462,6 +537,9 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
         audio_artifact_key=audio_artifact_key,
         audio_local_path=audio_local_path,
         wait_for_artifacts=wait_for_artifacts,
+        provider_config=provider_config,
+        new_chat_enabled=new_chat_enabled,
+        config_enabled=config_enabled,
     )
 
 
@@ -646,6 +724,71 @@ def _float_or_default(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _resolve_provider_config(
+    provider_id: str, options: Mapping[str, Any]
+) -> dict:
+    """Merge per-provider config overrides from env + job options.
+
+    Layering (lowest -> highest precedence): the provider's hardcoded defaults
+    (applied later by the driver from the selectors), then an env var
+    ``UBAG_PROVIDER_CONFIG_<ID>`` holding a JSON object, then the job's
+    ``options.provider_config`` object. Reserved keys ``_enabled`` / ``_new_chat``
+    gate the phase; other keys override a setting's desired value by its key.
+    """
+
+    config: dict = {}
+    env_key = "UBAG_PROVIDER_CONFIG_" + re.sub(r"[^A-Z0-9]+", "_", provider_id.upper())
+    raw = os.environ.get(env_key, "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, Mapping):
+                config.update(parsed)
+        except (ValueError, TypeError):
+            pass
+    opt = options.get("provider_config")
+    if isinstance(opt, Mapping):
+        config.update(opt)
+    return config
+
+
+def _flag(value: Any, default: bool) -> bool:
+    """Coerce an optional JSON/string flag to bool, falling back to ``default``."""
+
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in ("0", "false", "no", "off", "")
+    return bool(value)
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in ("0", "false", "no", "off")
+
+
+def _reasoning_response_timeout_s() -> float:
+    """Response-timeout floor for reasoning modes (env-overridable)."""
+
+    return _float_or_default(
+        os.environ.get("UBAG_REASONING_RESPONSE_TIMEOUT_S"),
+        _DEFAULT_REASONING_RESPONSE_TIMEOUT_S,
+    )
+
+
+def _login_ready_grace_s() -> float:
+    """Grace window (s) to await auth markers on a cold page (env-overridable)."""
+
+    return _float_or_default(
+        os.environ.get("UBAG_LOGIN_READY_GRACE_S"),
+        _DEFAULT_LOGIN_READY_GRACE_S,
+    )
 
 
 __all__ = ["LiveSessionEngine", "LiveSessionError"]
