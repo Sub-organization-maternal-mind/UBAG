@@ -109,6 +109,17 @@ class PageDriver(ABC):
         """
         return self.detect_login_state(selectors)
 
+    def login_signal_present(self, selectors: ProviderSelectors) -> bool:
+        """True when a login form/prompt is actually on screen.
+
+        Distinguishes a *genuinely logged-out* session (a sign-in form is visible)
+        from a page that simply has not finished rendering its authenticated
+        markers yet (heavy account, slow cold load). The engine uses this to avoid
+        surfacing manual_action_required for an already-authenticated user.
+        Concrete; the default is derived from :meth:`detect_login_state`.
+        """
+        return self.detect_login_state(selectors) == LOGIN_REQUIRED
+
     @abstractmethod
     def submit_prompt(self, selectors: ProviderSelectors, prompt: str) -> None:
         ...
@@ -258,6 +269,11 @@ class MockPageDriver(PageDriver):
             selectors.authenticated_signal.name, selectors.selector_version
         )
         return AUTHENTICATED if self.authenticated else LOGIN_REQUIRED
+
+    def login_signal_present(self, selectors: ProviderSelectors) -> bool:
+        # A not-yet-authenticated mock models a genuinely logged-out session, so
+        # the manual flow still triggers (mirrors a visible sign-in form).
+        return not self.authenticated
 
     def submit_prompt(self, selectors: ProviderSelectors, prompt: str) -> None:
         self._guard_drift(selectors.prompt_input.name, selectors.selector_version)
@@ -696,6 +712,13 @@ class PlaywrightPageDriver(PageDriver):
         # distinct method so the engine's intent (grace re-check vs. manual wait)
         # is explicit and the mock can diverge.
         return self.await_manual_login(selectors, timeout_s=timeout_s)
+
+    def login_signal_present(  # pragma: no cover - requires real browser
+        self, selectors: ProviderSelectors
+    ) -> bool:
+        # A visible sign-in affordance means the session is genuinely logged out;
+        # its absence on a not-yet-authenticated page means it is still rendering.
+        return self._present(selectors.login_signal, timeout_ms=1500)
 
     # -- interaction -----------------------------------------------------
     def submit_prompt(self, selectors: ProviderSelectors, prompt: str) -> None:  # pragma: no cover

@@ -48,6 +48,10 @@ _DEFAULT_REASONING_RESPONSE_TIMEOUT_S = 360.0
 # Grace window to let a freshly-opened, already-authenticated SPA page render its
 # auth markers before the engine concludes the user must log in. Env-overridable.
 _DEFAULT_LOGIN_READY_GRACE_S = 12.0
+# Extended ceiling used ONLY when no sign-in form is on screen (a heavy account is
+# still rendering): keep polling the auth marker this long before surfacing
+# manual_action_required. Env-overridable.
+_DEFAULT_LOGIN_READY_EXTENDED_S = 45.0
 
 # Telemetry event types appended additively when an orchestrator is wired in.
 # The gateway worker-consumer intercepts both BEFORE applying the canonical
@@ -157,6 +161,14 @@ class LiveSessionEngine:
                 # to the manual flow below.
                 login_state = driver.wait_until_authenticated(
                     self._selectors, timeout_s=_login_ready_grace_s()
+                )
+            if login_state != AUTHENTICATED and not driver.login_signal_present(self._selectors):
+                # No sign-in form on screen — the session is authenticated but a
+                # heavy account is still rendering its markers. Keep polling up to
+                # the extended ceiling before ever surfacing manual_action_required,
+                # which would poison an already-authenticated job.
+                login_state = driver.wait_until_authenticated(
+                    self._selectors, timeout_s=_login_ready_extended_s()
                 )
             if login_state != AUTHENTICATED:
                 session_id = job.session_id
@@ -788,6 +800,15 @@ def _login_ready_grace_s() -> float:
     return _float_or_default(
         os.environ.get("UBAG_LOGIN_READY_GRACE_S"),
         _DEFAULT_LOGIN_READY_GRACE_S,
+    )
+
+
+def _login_ready_extended_s() -> float:
+    """Extended auth-marker poll (s) when no sign-in form is present."""
+
+    return _float_or_default(
+        os.environ.get("UBAG_LOGIN_READY_EXTENDED_S"),
+        _DEFAULT_LOGIN_READY_EXTENDED_S,
     )
 
 
