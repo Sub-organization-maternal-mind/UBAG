@@ -629,6 +629,14 @@ class PlaywrightPageDriver(PageDriver):
     ) -> List[Mapping[str, object]]:
         overrides = overrides or {}
         results: List[Mapping[str, object]] = []
+        # Wait for the composer to settle before touching any picker/menu: a
+        # New-chat click triggers an SPA route change, and interacting with a
+        # half-navigated page is the main source of transient config flakes.
+        try:
+            self._first_visible(selectors.prompt_input, timeout_ms=10000)
+            self._page.wait_for_timeout(400)
+        except Exception:  # noqa: BLE001 - best-effort settle; setting logic still guards
+            pass
         for setting in selectors.settings:
             desired = overrides.get(setting.key, setting.desired)
             results.append(self._ensure_setting(selectors, setting, desired))
@@ -636,12 +644,12 @@ class PlaywrightPageDriver(PageDriver):
 
     def _open_control(self, open_steps: Sequence[Sequence[str]]) -> None:  # pragma: no cover
         for step in open_steps:
-            if not self._click_any(list(step), timeout_ms=3500):
+            if not self._click_any(list(step), timeout_ms=4000):
                 # The control to reveal the menu is not present; stop opening.
                 # The satisfied check then fails and the retry/drift path decides.
                 break
             try:
-                self._page.wait_for_timeout(500)
+                self._page.wait_for_timeout(650)
             except Exception:  # noqa: BLE001
                 pass
 
@@ -662,9 +670,13 @@ class PlaywrightPageDriver(PageDriver):
         return self._click_any([selector], timeout_ms=4000)
 
     def _ensure_setting(self, selectors, setting, desired):  # pragma: no cover
-        # Read -> act-if-different -> re-verify. Two passes: the first detects an
-        # already-correct setting (no-op); the second confirms an applied change.
-        for attempt in (1, 2):
+        # Read -> act-if-different -> re-verify. The first pass detects an
+        # already-correct setting (no-op); later passes confirm an applied change.
+        # Three attempts (with a short escalating settle) absorb a transient menu
+        # race so a flaky open/click self-heals within the same job instead of
+        # failing it.
+        attempts = (1, 2, 3)
+        for attempt in attempts:
             self._open_control(setting.open_steps)
             if self._setting_satisfied(setting, desired):
                 self._dismiss_menus()
@@ -673,7 +685,7 @@ class PlaywrightPageDriver(PageDriver):
                     "desired": desired,
                     "state": "already_set" if attempt == 1 else "set",
                 }
-            if attempt == 2:
+            if attempt == attempts[-1]:
                 self._dismiss_menus()
                 if setting.required:
                     raise DriftDetectedError(
@@ -682,6 +694,10 @@ class PlaywrightPageDriver(PageDriver):
                 return {"key": setting.key, "desired": desired, "state": "unverified"}
             self._apply_setting(setting, desired)
             self._dismiss_menus()
+            try:
+                self._page.wait_for_timeout(300 * attempt)
+            except Exception:  # noqa: BLE001
+                pass
         return {"key": setting.key, "desired": desired, "state": "unknown"}
 
     # -- login state -----------------------------------------------------
