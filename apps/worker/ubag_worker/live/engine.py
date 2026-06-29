@@ -52,6 +52,9 @@ _DEFAULT_LOGIN_READY_GRACE_S = 12.0
 # still rendering): keep polling the auth marker this long before surfacing
 # manual_action_required. Env-overridable.
 _DEFAULT_LOGIN_READY_EXTENDED_S = 45.0
+# How many times to attempt the buffered interaction (config -> submit -> read)
+# before giving up, so a transient browser/CDP hiccup self-heals within the job.
+_DEFAULT_INTERACTION_ATTEMPTS = 2
 
 # Telemetry event types appended additively when an orchestrator is wired in.
 # The gateway worker-consumer intercepts both BEFORE applying the canonical
@@ -245,109 +248,39 @@ class LiveSessionEngine:
                     "tabs": snapshot["tabs"],
                 })
 
-            # Pre-submit configuration phase: fresh chat + model/mode/reasoning.
-            # Every step is idempotent — the driver reads the live UI and only acts
-            # when it differs, so this is safe to run on every job ("always, if it
-            # is not already set"). A renamed New-chat control degrades to a logged
-            # warning; a model/mode/toggle that cannot be confirmed raises
-            # DriftDetectedError (handled below) rather than a silent no-op.
-            if job.new_chat_enabled and self._selectors.new_chat is not None:
-                started_new_chat = driver.start_new_chat(self._selectors)
-                yield emit("session.new_chat", {
-                    "status": "new_chat" if started_new_chat else "new_chat_skipped",
+            # Pre-submit interaction (fresh chat -> model/option config -> optional
+            # audio attach -> submit -> stream -> read), buffered so a transient
+            # browser/CDP hiccup retries the WHOLE interaction from a clean page
+            # instead of crashing the worker (which the gateway would surface as a
+            # hard failure). Deterministic outcomes — selector drift, manual action,
+            # an audio-unsupported target — are NOT retried.
+            interaction = None
+            attempts = _interaction_attempts()
+            for attempt in range(1, attempts + 1):
+                try:
+                    interaction = self._run_interaction(driver, job)
+                    break
+                except (DriftDetectedError, ManualActionRequired, LiveSessionError):
+                    raise
+                except Exception:  # noqa: BLE001 - transient browser/CDP hiccup
+                    if attempt >= attempts:
+                        raise
+                    driver.reset(self._selectors.target_url)
+
+            blocked = interaction.get("blocked") if interaction else None
+            if blocked is not None:
+                yield emit("blocked", {
+                    "status": "blocked",
                     "target": job.target,
                     "adapter": self._selectors.provider_id,
-                    "started": started_new_chat,
-                    "message": (
-                        "started a fresh conversation before configuring"
-                        if started_new_chat
-                        else "no New-chat control found; continuing in the current chat"
-                    ),
+                    "reason": blocked["reason"],
+                    "retryable": blocked.get("retryable", False),
+                    "message": blocked["message"],
                 })
+                return
 
-            if job.config_enabled and self._selectors.settings:
-                applied_settings = driver.ensure_provider_config(
-                    self._selectors, overrides=job.provider_config
-                )
-                yield emit("session.configured", {
-                    "status": "configured",
-                    "target": job.target,
-                    "adapter": self._selectors.provider_id,
-                    "settings": list(applied_settings),
-                    "message": "enforced provider model/option settings before submit",
-                })
-
-            # Audio/file attach phase (optional). When the job carries an audio
-            # artifact, attach the locally-materialized file to the provider's
-            # upload control BEFORE submitting the prompt. Text-only jobs (no
-            # audio_artifact_key) skip this branch entirely, so every existing
-            # live job is byte-for-byte unchanged.
-            if job.audio_artifact_key:
-                attach_supported = (
-                    self._selectors.file_input is not None
-                    and bool(job.audio_local_path)
-                )
-                if not attach_supported:
-                    yield emit("blocked", {
-                        "status": "blocked",
-                        "target": job.target,
-                        "adapter": self._selectors.provider_id,
-                        "reason": "audio_not_supported_by_target",
-                        "retryable": False,
-                        "message": (
-                            "This target cannot attach audio (no file-input selector, "
-                            "or the audio artifact was not materialized to a local "
-                            "file); refusing to transcribe nothing."
-                        ),
-                    })
-                    return
-                # A missing/drifted file input raises DriftDetectedError, caught by
-                # the existing drift handler — never a silent hang.
-                driver.attach_files(self._selectors, [job.audio_local_path])
-                yield emit("file.attached", {
-                    "status": "file_attached",
-                    "target": job.target,
-                    "adapter": self._selectors.provider_id,
-                    "artifact_key": job.audio_artifact_key,
-                })
-
-            driver.submit_prompt(self._selectors, job.prompt)
-
-            # Reasoning modes need a longer ceiling; use the reasoning floor only
-            # when this provider enables a slow thinking mode and config is on.
-            stream_timeout_s = job.response_timeout_s
-            if self._selectors.reasoning and job.config_enabled:
-                stream_timeout_s = max(stream_timeout_s, _reasoning_response_timeout_s())
-
-            token_index = 0
-            for delta in driver.stream_response(
-                self._selectors, timeout_s=stream_timeout_s
-            ):
-                yield emit("token", {
-                    "status": "token_streaming",
-                    "target": job.target,
-                    "token_index": token_index,
-                    "delta": {"text": delta},
-                })
-                token_index += 1
-
-            return_mode = str((job.options or {}).get("return_mode") or "final")
-            result_text = driver.read_final_response(
-                self._selectors, return_mode=return_mode
-            )
-            dom_signature = driver.dom_signature(self._selectors)
-
-            yield emit("completed", {
-                "status": "completed",
-                "target": job.target,
-                "result": {"type": "text", "text": result_text},
-                "metadata": {
-                    "adapter": self._selectors.provider_id,
-                    "selector_version": self._selectors.selector_version,
-                    "token_count": token_index,
-                    "dom_signature": dom_signature,
-                },
-            })
+            for event_type, data in (interaction["events"] if interaction else []):
+                yield emit(event_type, data)
 
         except DriftDetectedError as exc:
             # Selector drift is an adverse runtime signal — feed AIMD so the
@@ -429,6 +362,103 @@ class LiveSessionEngine:
                     driver.close()
                 except Exception:  # noqa: BLE001 - never mask the primary error
                     pass
+
+    def _run_interaction(self, driver: PageDriver, job: "_NormalizedJob") -> JsonObject:
+        """Run the buffered pre-submit + submit + read interaction.
+
+        Returns ``{"events": [(type, data), ...], "blocked": {...} | None}``.
+        Buffering (rather than yielding) lets :meth:`iter_events` retry the whole
+        interaction on a transient browser/CDP hiccup without double-emitting
+        events. Tokens are collected and replayed in order; for the final-result
+        use case (Fix / Cross-Check) this is functionally identical to streaming.
+        """
+        events: List = []
+
+        if job.new_chat_enabled and self._selectors.new_chat is not None:
+            started_new_chat = driver.start_new_chat(self._selectors)
+            events.append(("session.new_chat", {
+                "status": "new_chat" if started_new_chat else "new_chat_skipped",
+                "target": job.target,
+                "adapter": self._selectors.provider_id,
+                "started": started_new_chat,
+                "message": (
+                    "started a fresh conversation before configuring"
+                    if started_new_chat
+                    else "no New-chat control found; continuing in the current chat"
+                ),
+            }))
+
+        if job.config_enabled and self._selectors.settings:
+            applied_settings = driver.ensure_provider_config(
+                self._selectors, overrides=job.provider_config
+            )
+            events.append(("session.configured", {
+                "status": "configured",
+                "target": job.target,
+                "adapter": self._selectors.provider_id,
+                "settings": list(applied_settings),
+                "message": "enforced provider model/option settings before submit",
+            }))
+
+        if job.audio_artifact_key:
+            attach_supported = (
+                self._selectors.file_input is not None
+                and bool(job.audio_local_path)
+            )
+            if not attach_supported:
+                return {"events": events, "blocked": {
+                    "reason": "audio_not_supported_by_target",
+                    "retryable": False,
+                    "message": (
+                        "This target cannot attach audio (no file-input selector, "
+                        "or the audio artifact was not materialized to a local "
+                        "file); refusing to transcribe nothing."
+                    ),
+                }}
+            # A missing/drifted file input raises DriftDetectedError, caught by the
+            # existing drift handler — never a silent hang.
+            driver.attach_files(self._selectors, [job.audio_local_path])
+            events.append(("file.attached", {
+                "status": "file_attached",
+                "target": job.target,
+                "adapter": self._selectors.provider_id,
+                "artifact_key": job.audio_artifact_key,
+            }))
+
+        driver.submit_prompt(self._selectors, job.prompt)
+
+        # Reasoning modes need a longer ceiling; use the reasoning floor only when
+        # this provider enables a slow thinking mode and config is on.
+        stream_timeout_s = job.response_timeout_s
+        if self._selectors.reasoning and job.config_enabled:
+            stream_timeout_s = max(stream_timeout_s, _reasoning_response_timeout_s())
+
+        token_index = 0
+        for delta in driver.stream_response(self._selectors, timeout_s=stream_timeout_s):
+            events.append(("token", {
+                "status": "token_streaming",
+                "target": job.target,
+                "token_index": token_index,
+                "delta": {"text": delta},
+            }))
+            token_index += 1
+
+        return_mode = str((job.options or {}).get("return_mode") or "final")
+        result_text = driver.read_final_response(self._selectors, return_mode=return_mode)
+        dom_signature = driver.dom_signature(self._selectors)
+
+        events.append(("completed", {
+            "status": "completed",
+            "target": job.target,
+            "result": {"type": "text", "text": result_text},
+            "metadata": {
+                "adapter": self._selectors.provider_id,
+                "selector_version": self._selectors.selector_version,
+                "token_count": token_index,
+                "dom_signature": dom_signature,
+            },
+        }))
+        return {"events": events, "blocked": None}
 
 
 class _NormalizedJob:
@@ -810,6 +840,15 @@ def _login_ready_extended_s() -> float:
         os.environ.get("UBAG_LOGIN_READY_EXTENDED_S"),
         _DEFAULT_LOGIN_READY_EXTENDED_S,
     )
+
+
+def _interaction_attempts() -> int:
+    """How many times to attempt the buffered interaction (env-overridable)."""
+
+    raw = os.environ.get("UBAG_INTERACTION_ATTEMPTS", "").strip()
+    if raw.isdigit() and int(raw) >= 1:
+        return int(raw)
+    return _DEFAULT_INTERACTION_ATTEMPTS
 
 
 __all__ = ["LiveSessionEngine", "LiveSessionError"]

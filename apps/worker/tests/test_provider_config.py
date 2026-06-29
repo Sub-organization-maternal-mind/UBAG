@@ -59,6 +59,25 @@ def _payload(target, *, prompt="Reply with the word ready.", provider_config=Non
     }
 
 
+class _FlakyDriver(MockPageDriver):
+    """A mock that raises a transient (non-drift) error on the first N submits and
+    counts reset() calls, to exercise the engine's interaction-retry path."""
+
+    def __init__(self, *, fails=1, **kwargs):
+        super().__init__(**kwargs)
+        self._fails = fails
+        self.reset_calls = 0
+
+    def reset(self, target_url):  # type: ignore[override]
+        self.reset_calls += 1
+
+    def submit_prompt(self, selectors, prompt):  # type: ignore[override]
+        if self._fails > 0:
+            self._fails -= 1
+            raise RuntimeError("transient CDP hiccup")
+        return super().submit_prompt(selectors, prompt)
+
+
 def _types(events):
     return [event["type"] for event in events]
 
@@ -159,6 +178,27 @@ class NewChatAndConfigTests(unittest.TestCase):
         self.assertIn("session.new_chat", types)
         self.assertNotIn("session.configured", types)
         self.assertIn("completed", types)
+
+    def test_transient_interaction_failure_retries_and_completes(self):
+        selectors = get_provider_selectors("deepseek_web")
+        driver = _FlakyDriver(fails=1, response_text="42")
+        events = LiveSessionEngine(selectors).run(_payload("deepseek_web"), driver=driver)
+        types = _types(events)
+
+        self.assertIn("completed", types)
+        self.assertEqual(driver.reset_calls, 1)  # one reset between the two attempts
+        self.assertEqual(_event(events, "completed")["data"]["result"]["text"], "42")
+        # Buffered retry must not double-emit pre-submit events.
+        self.assertEqual(types.count("completed"), 1)
+        self.assertEqual(types.count("session.new_chat"), 1)
+        self.assertEqual(types.count("session.configured"), 1)
+
+    def test_transient_failure_exhausts_attempts_and_propagates(self):
+        selectors = get_provider_selectors("deepseek_web")
+        driver = _FlakyDriver(fails=5, response_text="x")  # always fails
+        with self.assertRaises(RuntimeError):
+            LiveSessionEngine(selectors).run(_payload("deepseek_web"), driver=driver)
+        self.assertEqual(driver.reset_calls, 1)  # attempts=2 -> exactly one reset
 
     def test_provider_without_new_chat_or_settings_unchanged(self):
         # mistral_lechat declares neither; the new phase must be a no-op.

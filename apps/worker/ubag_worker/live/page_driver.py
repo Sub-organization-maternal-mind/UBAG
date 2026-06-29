@@ -120,6 +120,15 @@ class PageDriver(ABC):
         """
         return self.detect_login_state(selectors) == LOGIN_REQUIRED
 
+    def reset(self, target_url: str) -> None:
+        """Re-navigate to a clean target page before retrying the interaction.
+
+        Concrete no-op by default; the live driver reloads the page so a transient
+        mid-interaction browser/CDP hiccup retries from a fresh state instead of
+        failing the job. Never raises.
+        """
+        return None
+
     @abstractmethod
     def submit_prompt(self, selectors: ProviderSelectors, prompt: str) -> None:
         ...
@@ -735,6 +744,17 @@ class PlaywrightPageDriver(PageDriver):
         # A visible sign-in affordance means the session is genuinely logged out;
         # its absence on a not-yet-authenticated page means it is still rendering.
         return self._present(selectors.login_signal, timeout_ms=1500)
+
+    def reset(self, target_url: str) -> None:  # pragma: no cover - requires real browser
+        # Reload the page to a clean target before a retry. Stays within the same
+        # authenticated context (no credentials typed), so login persists.
+        if self._page is None:
+            return
+        try:
+            self._page.goto(target_url, wait_until="domcontentloaded")
+            self._page.wait_for_timeout(800)
+        except Exception:  # noqa: BLE001 - best-effort reset; the retry guards itself
+            pass
 
     # -- interaction -----------------------------------------------------
     def submit_prompt(self, selectors: ProviderSelectors, prompt: str) -> None:  # pragma: no cover
