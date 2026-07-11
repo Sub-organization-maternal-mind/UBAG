@@ -20,6 +20,7 @@ import (
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/plugins"
 	"github.com/ubag/ubag/apps/gateway/internal/templates"
+	"github.com/ubag/ubag/apps/gateway/internal/topology"
 	"github.com/ubag/ubag/apps/gateway/internal/webhooks"
 )
 
@@ -795,6 +796,70 @@ func TestCancelJobDelegatesToExecutorOnceWithReason(t *testing.T) {
 	}
 	if dispatcher.cancelled[0].ID != created.JobID || dispatcher.reasons[0] != "operator_requested" {
 		t.Fatalf("unexpected cancellation: jobs=%#v reasons=%#v", dispatcher.cancelled, dispatcher.reasons)
+	}
+}
+
+// TestCancelJobDoesNotDoubleReleaseConcurrencyTokenForAlreadyFailedJob guards the
+// cancel-side half of the concurrency-token fix (audit wf_66e70764-236). Once the
+// worker consumer has failed a job and released its token on that terminal
+// transition, a later client cancel of the same job must NOT release the token a
+// second time: UpdateStatus no-ops on the already-terminal job (returning its
+// existing failed status), so a broad TerminalStatus guard would double-release
+// and under-count the shared (tenant,target,app) in-flight lane, admitting past
+// the ceiling.
+func TestCancelJobDoesNotDoubleReleaseConcurrencyTokenForAlreadyFailedJob(t *testing.T) {
+	store := jobstore.NewMemoryStore()
+	dispatcher := &recordingExecutor{}
+	registry := topology.NewConcurrencyRegistry()
+	server := NewServer(Config{AppSecret: "dev-secret", Jobs: store, Executor: dispatcher, Concurrency: registry}).Handler()
+
+	createBody := `{"api_version":"2026-05-22","idempotency_key":"idem_double_release_create","client":{"app_id":"test","app_version":"0.0.0","sdk":{"name":"test","version":"0.0.0"}},"job":{"target":"mock","command_type":"submit","input":{"prompt":"hello"}}}`
+	create := doJSON(server, http.MethodPost, "/v1/jobs", createBody, authHeaders("idem_double_release_create"))
+	if create.Code != http.StatusAccepted {
+		t.Fatalf("create status = %d; body=%s", create.Code, create.Body.String())
+	}
+	var created jobResponse
+	if err := json.Unmarshal(create.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	// Read the exact lane key the gateway acquired against (tenant/app come from the
+	// auth principal, target from the request).
+	jobA, found, err := store.Get(context.Background(), created.JobID)
+	if err != nil || !found {
+		t.Fatalf("Get created job found=%v err=%v", found, err)
+	}
+	tenant, target, app := jobA.TenantID, jobA.Target, jobA.AppID
+
+	// Cap the lane at 2 so a stray release is observable — the registry clamps the
+	// in-flight count at 0, which would mask an over-release on a lane of 1.
+	registry.Report(tenant, topology.ConcurrencyView{Target: target, IdentityRef: app, CurrentCap: 2})
+	// A second, still-live job B on the same lane holds the other token.
+	if !registry.Acquire(tenant, target, app) {
+		t.Fatal("precondition: acquiring job B's token should succeed")
+	}
+	// The worker consumer fails job A and releases ITS token (the primary fix); the
+	// lane now holds exactly one in-flight token — job B's.
+	if _, _, err := store.UpdateStatus(context.Background(), created.JobID, jobstore.StatusFailedRetryable); err != nil {
+		t.Fatalf("force-fail job A: %v", err)
+	}
+	registry.Release(tenant, target, app)
+
+	// Cancelling the already-failed job A must be a no-op for the token.
+	cancelBody := `{"api_version":"2026-05-22","idempotency_key":"idem_double_release_cancel","reason":"operator_requested"}`
+	cancel := doJSON(server, http.MethodPost, "/v1/jobs/"+created.JobID+"/cancel", cancelBody, authHeaders("idem_double_release_cancel"))
+	if cancel.Code != http.StatusAccepted {
+		t.Fatalf("cancel status = %d; body=%s", cancel.Code, cancel.Body.String())
+	}
+
+	// Job B still holds one token, so exactly one acquire should refill the lane to
+	// its cap of 2 and the next must be rejected. A double-release would have driven
+	// the count to 0, letting two acquires through.
+	if !registry.Acquire(tenant, target, app) {
+		t.Fatal("lane should have exactly one free slot after cancel (job B still in flight)")
+	}
+	if registry.Acquire(tenant, target, app) {
+		t.Fatal("cancel double-released job A's token: lane admitted past its ceiling")
 	}
 }
 
