@@ -204,17 +204,25 @@ type JobMetadataEnvelope struct {
 }
 
 type jobResponse struct {
-	APIVersion       string              `json:"api_version"`
-	JobID            string              `json:"job_id"`
-	IdempotentReplay bool                `json:"idempotent_replay"`
-	Status           string              `json:"status"`
-	Target           string              `json:"target"`
-	Result           *JobResultEnvelope  `json:"result"`
-	Metadata         JobMetadataEnvelope `json:"metadata"`
-	TraceID          string              `json:"trace_id"`
-	EventsURL        string              `json:"events_url"`
-	CreatedAt        time.Time           `json:"created_at"`
-	UpdatedAt        time.Time           `json:"updated_at"`
+	APIVersion       string `json:"api_version"`
+	JobID            string `json:"job_id"`
+	IdempotentReplay bool   `json:"idempotent_replay"`
+	Status           string `json:"status"`
+	// Error/ErrorClass carry the last terminal-failure detail and ManualAction the
+	// pending human-intervention prompt, reconstructed on read from the recorded
+	// worker events (a failed job leaves Result nil). Emitted as top-level strings
+	// so consumers that read a flat error/manual_action can surface the real cause
+	// instead of a generic empty result. Omitted when absent.
+	Error        string              `json:"error,omitempty"`
+	ErrorClass   string              `json:"error_class,omitempty"`
+	ManualAction string              `json:"manual_action,omitempty"`
+	Target       string              `json:"target"`
+	Result       *JobResultEnvelope  `json:"result"`
+	Metadata     JobMetadataEnvelope `json:"metadata"`
+	TraceID      string              `json:"trace_id"`
+	EventsURL    string              `json:"events_url"`
+	CreatedAt    time.Time           `json:"created_at"`
+	UpdatedAt    time.Time           `json:"updated_at"`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

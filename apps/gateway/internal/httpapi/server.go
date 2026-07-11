@@ -1771,7 +1771,12 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, jobToResponse(job, false, traceIDFromContext(r.Context())))
+	response := jobToResponse(job, false, traceIDFromContext(r.Context()))
+	signals := s.deriveJobSignals(r.Context(), job)
+	response.Error = signals.ErrorMessage
+	response.ErrorClass = signals.ErrorClass
+	response.ManualAction = signals.ManualAction
+	s.writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) listJobEvents(w http.ResponseWriter, r *http.Request, id string) {
@@ -1869,8 +1874,17 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if jobstore.TerminalStatus(job.Status) {
-		// Release the concurrency token on hard cancel.
-		s.releaseConcurrencyToken(job.TenantID, job.Target, job.AppID)
+		// Release the concurrency token only when THIS cancel actually transitioned a
+		// still-active job to cancelled. UpdateStatus no-ops on an already-terminal
+		// job (it returns the existing status), so a job that already reached a
+		// terminal state — e.g. failed_retryable, which the worker consumer released
+		// on its own terminal transition — must NOT be released again here. Releasing
+		// it a second time under-counts the shared (tenant,target,app) in-flight lane
+		// and lets the gateway admit past its ceiling. The pre-status guard also
+		// covers a redundant cancel of an already-cancelled job.
+		if !jobstore.TerminalStatus(existing.Status) && job.Status == jobstore.StatusCanceled {
+			s.releaseConcurrencyToken(job.TenantID, job.Target, job.AppID)
+		}
 		notifier := webhooks.JobOutbox{Store: s.webhooks, URLPolicy: s.webhookURLs}
 		if err := notifier.EnqueueTerminalJob(r.Context(), job); err != nil {
 			_ = s.idempotency.Release(r.Context(), mutation.scope)
@@ -2411,6 +2425,80 @@ func buildJobResultEnvelope(job jobstore.Job) *JobResultEnvelope {
 	// Nil result is valid (job not yet completed); return a non-nil envelope
 	// so the response always has a "result" field.
 	return env
+}
+
+// maxJobSignalEvents bounds how many recorded worker events getJob scans when
+// reconstructing a job's last-error and manual-action signals. A failing or
+// paused job emits far fewer events than this; successful jobs are skipped
+// entirely (see deriveJobSignals), so the common token-streaming path never
+// pays for the scan.
+const maxJobSignalEvents = 10000
+
+// jobSignals holds the last-error (class + message) and any pending
+// manual-action prompt reconstructed from a job's recorded worker events.
+type jobSignals struct {
+	ErrorClass   string
+	ErrorMessage string
+	ManualAction string
+}
+
+// jobSignalsFromEvents reconstructs a job's last-error (class + message) and any
+// pending manual-action prompt from its recorded worker events. The gateway does
+// not persist these on the job row, so the job resource derives them on read from
+// the event stream the store already records. The most recent terminal-failure
+// event wins for the error; the most recent session.manual_action_required event
+// wins for the manual action.
+func jobSignalsFromEvents(events []jobstore.Event) jobSignals {
+	var signals jobSignals
+	for _, event := range events {
+		switch event.Type {
+		case "failed", "failed_retryable", "failed_terminal", "dead_letter", "timed_out", "timeout", "blocked":
+			class := eventDataString(event.Data, "error_class")
+			message := eventDataString(event.Data, "message")
+			if class != "" || message != "" {
+				signals.ErrorClass = class
+				signals.ErrorMessage = message
+			}
+		case "session.manual_action_required":
+			// Prefer the human-readable message; fall back to the reason code.
+			if message := eventDataString(event.Data, "message"); message != "" {
+				signals.ManualAction = message
+			} else if reason := eventDataString(event.Data, "reason"); reason != "" {
+				signals.ManualAction = reason
+			}
+		}
+	}
+	return signals
+}
+
+// eventDataString reads a trimmed string value from worker event data, returning
+// "" when the key is missing or not a string.
+func eventDataString(data map[string]any, key string) string {
+	value, _ := data[key].(string)
+	return strings.TrimSpace(value)
+}
+
+// deriveJobSignals loads a job's recorded worker events and reconstructs its
+// last-error / manual-action signals. A completed job carries neither, so it is
+// skipped to avoid scanning its full (potentially large, token-streamed) event
+// history on every poll.
+func (s *Server) deriveJobSignals(ctx context.Context, job jobstore.Job) jobSignals {
+	switch job.Status {
+	case jobstore.StatusCompleted, jobstore.StatusCompletedWithWarnings:
+		return jobSignals{}
+	}
+	events, found, err := s.jobs.ListEvents(ctx, job.ID, 0, maxJobSignalEvents)
+	if err != nil || !found {
+		return jobSignals{}
+	}
+	signals := jobSignalsFromEvents(events)
+	// A pending manual action only applies while the job is still waiting on the
+	// human. Once the job reaches any terminal state the prompt is moot, so don't
+	// surface a stale manual_action alongside (or instead of) the real outcome.
+	if jobstore.TerminalStatus(job.Status) {
+		signals.ManualAction = ""
+	}
+	return signals
 }
 
 func jobEventToResponse(event jobstore.Event, traceID string) jobEventResponse {
