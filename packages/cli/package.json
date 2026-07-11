@@ -24,7 +24,7 @@
     "@ubag/sdk": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^24.12.4",
+    "@types/node": "^26.1.1",
     "typescript": "^5.9.3"
   },
   "engines": {
