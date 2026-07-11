@@ -20,10 +20,13 @@ Paste this whole file into a fresh chat to execute the build with full context.
   ssh oet-dev "cd /opt/ubag && git stash 2>/dev/null; git fetch /tmp/ubag.bundle master && git merge FETCH_HEAD --ff-only"
   ```
 - **Compose:** `docker compose --env-file deploy/small/env.local -f docker-compose.small.yml ...`
-- **Dashboard:** https://ubag.polytronx.com/dashboard/ — Basic Auth `operator` / `GtIEv4fBYe5DApUHxGGrjK8A`
-- **noVNC viewer:** https://ubag.polytronx.com/novnc/vnc.html (same Basic Auth) → VNC password `b342c777916d6e2ccd05fd17b848b47f`
-- **Gateway app secret** (in `deploy/small/env.local`): `UBAG_APP_SECRET=dl6cv8a8XWc8DrKmJBPMf27SpGJ5hU0QCFEqhTRNjQM`
+- **Dashboard:** https://ubag.polytronx.com/dashboard/ — Basic Auth `operator` / `<see /opt/ubag/deploy/small/.htpasswd on the VPS>`
+- **noVNC viewer:** https://ubag.polytronx.com/novnc/vnc.html (same Basic Auth) → VNC password: `UBAG_BROWSER_VNC_PASSWORD` in `/opt/ubag/deploy/small/env.local`
+- **Gateway app secret:** `UBAG_APP_SECRET` in `/opt/ubag/deploy/small/env.local` on the VPS — NEVER commit the value
   (nginx injects this into `/v1/*` server-side; for direct API tests use Basic Auth + `Ubag-Api-Version: 2026-05-22`.)
+  <!-- SECURITY (2026-07-11): this doc previously committed the live UBAG_APP_SECRET,
+       VNC password, and dashboard Basic Auth password in plaintext. They were
+       redacted and MUST be treated as exposed — rotate all three on the VPS. -->
 
 ## 2. Current production state (verified)
 
