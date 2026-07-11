@@ -58,8 +58,8 @@ importers:
         specifier: ^29.1.1
         version: 29.1.1
       lucide-svelte:
-        specifier: ^0.469.0
-        version: 0.469.0(svelte@5.55.10)
+        specifier: ^1.0.1
+        version: 1.0.1(svelte@5.55.10)
       postcss:
         specifier: ^8.4.49
         version: 8.5.15
@@ -2272,8 +2272,8 @@ packages:
     resolution: {integrity: sha512-5YgH9UJd7wVb9hIouI2adWpgqrrICkt070Dnj8EUY1+B4B2P9eRLPAkAAo6NICA7CEhOIeBHl46u9zSNpNu7zA==}
     engines: {node: 20 || >=22}
 
-  lucide-svelte@0.469.0:
-    resolution: {integrity: sha512-PMIJ8jrFqVUsXJz4d1yfAQplaGhNOahwwkzbunha8DhpiD73xqX24n8dE1dPpUk3vcrdWVsHc1y/liHHotOnGQ==}
+  lucide-svelte@1.0.1:
+    resolution: {integrity: sha512-WvzZgk0pqzgda+AErLvgWxHkfg/+GgUwqKMRHvzt0IqyMdmyEDzDCk3Z+Wo/3y753oIgx8u9Q4eUbWkghFa8Jg==}
     deprecated: Package deprecated. Please use @lucide/svelte instead.
     peerDependencies:
       svelte: ^3 || ^4 || ^5.0.0-next.42
@@ -5531,7 +5531,7 @@ snapshots:
 
   lru-cache@11.5.0: {}
 
-  lucide-svelte@0.469.0(svelte@5.55.10):
+  lucide-svelte@1.0.1(svelte@5.55.10):
     dependencies:
       svelte: 5.55.10
 
