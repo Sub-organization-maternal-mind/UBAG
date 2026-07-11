@@ -1061,8 +1061,10 @@ func TestWorkerConsumerReleasesConcurrencyTokenOnTerminalFailure(t *testing.T) {
 		// Failure paths that funnel through notifyCurrentTerminalJob — these leaked
 		// before the fix.
 		{
-			name:       "runner_error",
-			runner:     func(context.Context, DispatchEnvelope) ([]jobstore.WorkerEvent, error) { return nil, errors.New("boom") },
+			name: "runner_error",
+			runner: func(context.Context, DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+				return nil, errors.New("boom")
+			},
 			wantStatus: jobstore.StatusFailedRetryable,
 		},
 		{
