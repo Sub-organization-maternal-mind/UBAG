@@ -198,6 +198,29 @@ WHERE c.tenant_id = $1`
 	return out, rows.Err()
 }
 
+// UpdateContextLoginState persists a worker-detected login state onto the
+// provider context(s) for a (tenant, target) pair and returns the number of rows
+// updated (0 when the target is not registered — a benign no-op, not an error).
+// The write is tenant-scoped so a worker event can never mutate another tenant's
+// topology. login_state has no CHECK constraint, so the caller owns the
+// vocabulary (authenticated / login_required / unknown).
+func (p *PostgresStore) UpdateContextLoginState(ctx context.Context, tenantID, targetID, loginState string, at time.Time) (int, error) {
+	if p == nil || p.db == nil {
+		return 0, fmt.Errorf("topology: postgres store is not configured")
+	}
+	result, err := p.db.ExecContext(ctx,
+		`UPDATE gateway_provider_contexts SET login_state = $3, last_health_at = $4 WHERE tenant_id = $1 AND target_id = $2`,
+		tenantID, targetID, loginState, at.UTC())
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(affected), nil
+}
+
 func (p *PostgresStore) Summary(ctx context.Context, tenantID string) (Summary, error) {
 	if p == nil || p.db == nil {
 		return Summary{}, fmt.Errorf("topology: postgres store is not configured")

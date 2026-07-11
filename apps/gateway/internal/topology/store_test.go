@@ -65,6 +65,90 @@ func TestMemoryStoreTenantIsolation(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreUpdateLoginState(t *testing.T) {
+	store := seededMemoryStore()
+	ctx := context.Background()
+	at := time.Now().UTC()
+
+	// Update the tenant-1 chatgpt_web context to authenticated.
+	updated, err := store.UpdateContextLoginState(ctx, "tenant-1", "chatgpt_web", "authenticated", at)
+	if err != nil {
+		t.Fatalf("update login state: %v", err)
+	}
+	if updated != 1 {
+		t.Fatalf("expected 1 row updated, got %d", updated)
+	}
+	contexts, _ := store.ListContexts(ctx, ContextFilter{TenantID: "tenant-1"})
+	if len(contexts) != 1 || contexts[0].LoginState != "authenticated" {
+		t.Fatalf("login state not applied: %+v", contexts)
+	}
+	if contexts[0].LastHealthAt == nil || !contexts[0].LastHealthAt.Equal(at) {
+		t.Fatalf("last_health_at not stamped: %+v", contexts[0].LastHealthAt)
+	}
+
+	// Tenant isolation: updating (tenant-1, claude_web) must not touch tenant-2's
+	// claude_web context.
+	updated, err = store.UpdateContextLoginState(ctx, "tenant-1", "claude_web", "login_required", at)
+	if err != nil {
+		t.Fatalf("update login state: %v", err)
+	}
+	if updated != 0 {
+		t.Fatalf("expected 0 rows updated for missing (tenant-1, claude_web), got %d", updated)
+	}
+	other, _ := store.ListContexts(ctx, ContextFilter{TenantID: "tenant-2"})
+	if len(other) != 1 || other[0].LoginState != "logged_out" {
+		t.Fatalf("tenant-2 context must be untouched: %+v", other)
+	}
+}
+
+func TestSQLiteStoreUpdateLoginState(t *testing.T) {
+	store, db := newSQLiteTopologyStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO gateway_provider_contexts (context_id, instance_id, tenant_id, target_id, identity_ref, login_state, conversation_model, max_tabs, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+		"ctx-1", "inst-1", "tenant-1", "gemini_web", "id-1", "authenticated", "spa-singleton", 2, now); err != nil {
+		t.Fatalf("seed ctx-1: %v", err)
+	}
+	// A different tenant, same target, must never be updated by a tenant-1 write.
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO gateway_provider_contexts (context_id, instance_id, tenant_id, target_id, identity_ref, login_state, conversation_model, max_tabs, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
+		"ctx-2", "inst-1", "tenant-2", "gemini_web", "id-2", "authenticated", "spa-singleton", 2, now); err != nil {
+		t.Fatalf("seed ctx-2: %v", err)
+	}
+
+	at := time.Now().UTC()
+	updated, err := store.UpdateContextLoginState(ctx, "tenant-1", "gemini_web", "login_required", at)
+	if err != nil {
+		t.Fatalf("update login state: %v", err)
+	}
+	if updated != 1 {
+		t.Fatalf("expected 1 row updated, got %d", updated)
+	}
+
+	one, _ := store.ListContexts(ctx, ContextFilter{TenantID: "tenant-1"})
+	if len(one) != 1 || one[0].LoginState != "login_required" {
+		t.Fatalf("tenant-1 login state not applied: %+v", one)
+	}
+	if one[0].LastHealthAt == nil {
+		t.Fatalf("last_health_at not stamped for tenant-1")
+	}
+	two, _ := store.ListContexts(ctx, ContextFilter{TenantID: "tenant-2"})
+	if len(two) != 1 || two[0].LoginState != "authenticated" {
+		t.Fatalf("tenant-2 context must be untouched, got: %+v", two)
+	}
+
+	// An unregistered target is a benign no-op (0 rows), not an error.
+	updated, err = store.UpdateContextLoginState(ctx, "tenant-1", "not_a_target", "authenticated", at)
+	if err != nil {
+		t.Fatalf("update login state: %v", err)
+	}
+	if updated != 0 {
+		t.Fatalf("expected 0 rows updated for unknown target, got %d", updated)
+	}
+}
+
 func TestMemoryStoreStateFilter(t *testing.T) {
 	store := seededMemoryStore()
 	instances, _ := store.ListInstances(context.Background(), InstanceFilter{TenantID: "tenant-1", State: "draining"})

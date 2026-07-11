@@ -25,7 +25,15 @@ import (
 
 // manualActionEventType is the worker event that signals a human must solve a
 // CAPTCHA, manual login, or verification challenge in the live browser session.
+// It also carries the live engine's real login state: a manual action means the
+// user-owned session is not authenticated (login_required).
 const manualActionEventType = "session.manual_action_required"
+
+// sessionAuthenticatedEventType is the worker event emitted once the live engine
+// has confirmed (via detect_login_state) that the user-owned browser session is
+// authenticated for the job's target. The gateway persists this real state onto
+// the served provider-context topology so /v1/browser/contexts reflects reality.
+const sessionAuthenticatedEventType = "session.authenticated"
 
 // concurrencyChangeEventType is the worker event that reports an AIMD
 // tab-ceiling change for a provider/target + identity pair. The worker owns the
@@ -67,8 +75,12 @@ type WorkerConsumer struct {
 	Alerts           *alerts.Manager
 	Concurrency      *topology.ConcurrencyRegistry
 	Topology         topology.TopologyIngestor
-	PollInterval     time.Duration
-	Plugins          *plugins.Host // optional; nil disables post-job hook
+	// LoginState persists the live engine's real detect_login_state result onto
+	// the SERVED topology store (Postgres/SQLite/in-memory), keyed by tenant +
+	// target. Optional; nil disables login-state projection.
+	LoginState   topology.LoginStateWriter
+	PollInterval time.Duration
+	Plugins      *plugins.Host // optional; nil disables post-job hook
 }
 
 type WorkerQueue interface {
@@ -300,6 +312,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			return true, fmt.Errorf("worker event referenced missing job %s", normalized.JobID)
 		}
 		c.raiseManualActionAlert(ctx, job, normalized)
+		c.recordLoginState(ctx, job, normalized)
 	}
 
 	finalJob, found, err := c.Jobs.Get(ctx, lease.JobID())
@@ -378,6 +391,44 @@ func (c *WorkerConsumer) raiseManualActionAlert(ctx context.Context, job jobstor
 	}
 	if _, err := c.Alerts.RaiseManualAction(ctx, alert); err != nil {
 		fmt.Fprintf(os.Stderr, "alerts: raise manual action for job %s failed: %v\n", job.ID, err)
+	}
+}
+
+// recordLoginState projects the live engine's real login state for a provider
+// context into the SERVED topology store so /v1/browser/contexts reflects the
+// user-owned session's actual auth state instead of the deploy-time seed. It maps
+// session.authenticated → "authenticated" and session.manual_action_required →
+// "login_required" (the worker's own detect_login_state vocabulary), keyed by the
+// job's tenant + the event's target — the same join consumers use to match a
+// context to a target. Events arrive in order, so a job that surfaces a manual
+// action and is then completed after the human logs in ends "authenticated".
+//
+// It is best-effort and nil-safe: a nil writer, a non-login event, a missing
+// target, or a write error never interrupts job ingestion. A zero-row update
+// (target not registered in this tenant's topology) is a benign no-op.
+func (c *WorkerConsumer) recordLoginState(ctx context.Context, job jobstore.Job, event jobstore.WorkerEvent) {
+	if c == nil || c.LoginState == nil {
+		return
+	}
+	var loginState string
+	switch event.Type {
+	case sessionAuthenticatedEventType:
+		loginState = "authenticated"
+	case manualActionEventType:
+		loginState = "login_required"
+	default:
+		return
+	}
+	target := firstNonEmpty(stringFromEventData(event.Data, "target"), job.Target)
+	if target == "" {
+		return
+	}
+	// last_health_at records when the gateway OBSERVED this login state, so it is
+	// stamped with wall-clock now — not event.CreatedAt, which the live worker
+	// derives from a deterministic synthetic clock (a fixed early-2026 value).
+	if _, err := c.LoginState.UpdateContextLoginState(ctx, job.TenantID, target, loginState, time.Now().UTC()); err != nil {
+		slog.Warn("topology login-state projection failed",
+			"job_id", job.ID, "target", target, "login_state", loginState, "error", err)
 	}
 }
 
@@ -624,6 +675,26 @@ func (c *WorkerConsumer) notifyCurrentTerminalJob(ctx context.Context, lease Wor
 	if !found {
 		_ = lease.Poison(ctx, "terminal notification referenced missing job")
 		return fmt.Errorf("terminal notification referenced missing job %s", lease.JobID())
+	}
+	// Release the in-flight concurrency token acquired for this job at creation.
+	// Every path that reaches this helper does so via applyFailure, which drives
+	// the job to a terminal *failure* status. Those worker-driven failure paths
+	// previously returned the lease without releasing, so repeated failures
+	// leaked tokens until the target's lane exhausted its ceiling, 429-bricked,
+	// and only a gateway restart cleared it.
+	//
+	// Only failure statuses are released here, and exactly once: a job is
+	// released on its first terminal transition, and any redelivery of an
+	// already-terminal job short-circuits at the early-terminal checks in
+	// RunOnce (which never reach this helper). Completed and cancelled jobs are
+	// released by their own terminal branches — RunOnce for completion, the
+	// cancel API / RunOnce cancel branch for cancellation — so releasing them
+	// here would double-release and corrupt the in-flight count. The only status
+	// that can arrive here already-terminal-and-already-released is a cancel that
+	// raced the worker, which this switch deliberately excludes.
+	switch job.Status {
+	case jobstore.StatusFailedRetryable, jobstore.StatusFailedTerminal, jobstore.StatusDeadLetter, jobstore.StatusTimedOut:
+		c.releaseConcurrencyToken(job)
 	}
 	c.runPostJobHook(ctx, job)
 	return c.notifyTerminalJob(ctx, lease, job)

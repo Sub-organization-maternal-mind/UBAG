@@ -124,6 +124,26 @@ type TopologyIngestor interface {
 	AddTab(tab BrowserTab)
 }
 
+// LoginStateWriter is the optional, narrowly-scoped write side that persists a
+// worker-detected login state onto the provider context(s) for a (tenant,
+// target) pair. The in-memory, SQLite, and Postgres stores all implement it.
+//
+// It exists so the live engine's real detect_login_state result — surfaced by
+// the worker's session.authenticated / session.manual_action_required events —
+// reaches the SAME store /v1/browser/contexts reads from, instead of that
+// surface reflecting a deploy-time seed. It is deliberately kept off the
+// read-only Store interface so the HTTP topology handlers can never mutate state;
+// only the worker-event ingestion path holds a LoginStateWriter.
+//
+// The (tenant, target) key mirrors how the topology is registered (the
+// tenant-scoped provider-context rows are unique per target/identity) and how
+// consumers join contexts to targets. UpdateContextLoginState reports how many
+// context rows matched so callers can log a no-op (unknown target) without
+// treating it as an error.
+type LoginStateWriter interface {
+	UpdateContextLoginState(ctx context.Context, tenantID, targetID, loginState string, at time.Time) (int, error)
+}
+
 func newSummary(tenantID string) Summary {
 	return Summary{
 		TenantID:             tenantID,
@@ -180,6 +200,25 @@ func (m *MemoryStore) AddTab(tab BrowserTab) {
 		}
 	}
 	m.tabs = append(m.tabs, memoryTab{tab: tab, tenantID: tenantID})
+}
+
+// UpdateContextLoginState sets the login state (and last-health timestamp) on
+// every context matching the (tenant, target) pair and returns how many matched.
+func (m *MemoryStore) UpdateContextLoginState(_ context.Context, tenantID, targetID, loginState string, at time.Time) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	updated := 0
+	stamp := at.UTC()
+	for i := range m.contexts {
+		if m.contexts[i].TenantID != tenantID || m.contexts[i].TargetID != targetID {
+			continue
+		}
+		m.contexts[i].LoginState = loginState
+		healthAt := stamp
+		m.contexts[i].LastHealthAt = &healthAt
+		updated++
+	}
+	return updated, nil
 }
 
 func (m *MemoryStore) ListInstances(_ context.Context, filter InstanceFilter) ([]BrowserInstance, error) {

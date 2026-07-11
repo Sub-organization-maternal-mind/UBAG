@@ -289,6 +289,134 @@ func TestWorkerConsumerRecordsConcurrencyCapChange(t *testing.T) {
 	}
 }
 
+func TestWorkerConsumerProjectsLoginState(t *testing.T) {
+	cases := []struct {
+		name      string
+		eventType string
+		want      string
+	}{
+		{name: "authenticated", eventType: "session.authenticated", want: "authenticated"},
+		{name: "manual_action", eventType: "session.manual_action_required", want: "login_required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := jobstore.NewMemoryStore()
+			dispatcher := NewFileSpoolDispatcher(t.TempDir())
+			job, err := store.Create(context.Background(), jobstore.CreateRequest{
+				APIVersion:     "2026-05-22",
+				TenantID:       "tenant_edge",
+				AppID:          "app_a",
+				IdempotencyKey: "idem_login_" + tc.name,
+				Target:         "gemini_web",
+				CommandType:    "submit",
+				Input:          map[string]any{"prompt": "hello"},
+				TraceID:        "trace_login_" + tc.name,
+			})
+			if err != nil {
+				t.Fatalf("Create returned error: %v", err)
+			}
+			if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+				t.Fatalf("EnqueueJob returned error: %v", err)
+			}
+
+			writer := &fakeLoginStateWriter{}
+			consumer := WorkerConsumer{
+				Spool:      dispatcher,
+				Jobs:       store,
+				LoginState: writer,
+				Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+					return []jobstore.WorkerEvent{
+						{EventID: "worker_evt_login", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: tc.eventType, Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{
+							"status": "state",
+							"target": "gemini_web",
+						}},
+						{EventID: "worker_evt_done", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 2, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}},
+					}, nil
+				}),
+			}
+
+			processed, err := consumer.RunOnce(context.Background())
+			if err != nil || !processed {
+				t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+			}
+
+			if len(writer.calls) != 1 {
+				t.Fatalf("expected exactly 1 login-state update, got %d: %+v", len(writer.calls), writer.calls)
+			}
+			call := writer.calls[0]
+			if call.tenantID != "tenant_edge" || call.targetID != "gemini_web" || call.loginState != tc.want {
+				t.Fatalf("login-state update = %+v, want tenant_edge/gemini_web/%s", call, tc.want)
+			}
+
+			// The job must still complete — login-state projection is a side effect.
+			finished, found, err := store.Get(context.Background(), job.ID)
+			if err != nil || !found {
+				t.Fatalf("Get found=%v err=%v", found, err)
+			}
+			if finished.Status != jobstore.StatusCompleted {
+				t.Fatalf("job status = %q, want %q", finished.Status, jobstore.StatusCompleted)
+			}
+		})
+	}
+}
+
+func TestWorkerConsumerLoginStateProjectionBestEffort(t *testing.T) {
+	// A nil writer AND a writer that errors must both leave ingestion intact: the
+	// job still completes and RunOnce returns cleanly.
+	for _, tc := range []struct {
+		name   string
+		writer topology.LoginStateWriter
+	}{
+		{name: "nil_writer", writer: nil},
+		{name: "erroring_writer", writer: &fakeLoginStateWriter{err: errors.New("db down")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := jobstore.NewMemoryStore()
+			dispatcher := NewFileSpoolDispatcher(t.TempDir())
+			job, err := store.Create(context.Background(), jobstore.CreateRequest{
+				APIVersion:     "2026-05-22",
+				TenantID:       "tenant_edge",
+				AppID:          "app_a",
+				IdempotencyKey: "idem_login_besteffort_" + tc.name,
+				Target:         "deepseek_web",
+				CommandType:    "submit",
+				Input:          map[string]any{"prompt": "hello"},
+				TraceID:        "trace_login_besteffort_" + tc.name,
+			})
+			if err != nil {
+				t.Fatalf("Create returned error: %v", err)
+			}
+			if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+				t.Fatalf("EnqueueJob returned error: %v", err)
+			}
+
+			consumer := WorkerConsumer{
+				Spool:      dispatcher,
+				Jobs:       store,
+				LoginState: tc.writer,
+				Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+					return []jobstore.WorkerEvent{
+						{EventID: "worker_evt_auth", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "session.authenticated", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{"status": "authenticated", "target": "deepseek_web"}},
+						{EventID: "worker_evt_done", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 2, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}},
+					}, nil
+				}),
+			}
+
+			processed, err := consumer.RunOnce(context.Background())
+			if err != nil || !processed {
+				t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+			}
+			loaded, found, err := store.Get(context.Background(), job.ID)
+			if err != nil || !found {
+				t.Fatalf("Get found=%v err=%v", found, err)
+			}
+			if loaded.Status != jobstore.StatusCompleted {
+				t.Fatalf("status = %s, want %s", loaded.Status, jobstore.StatusCompleted)
+			}
+		})
+	}
+}
+
 func TestWorkerConsumerConcurrencyRecordingIsNilSafe(t *testing.T) {
 	store := jobstore.NewMemoryStore()
 	dispatcher := NewFileSpoolDispatcher(t.TempDir())
@@ -812,6 +940,26 @@ type fakeTerminalNotifier struct {
 	jobs []jobstore.Job
 }
 
+type loginStateCall struct {
+	tenantID   string
+	targetID   string
+	loginState string
+	at         time.Time
+}
+
+type fakeLoginStateWriter struct {
+	calls []loginStateCall
+	err   error
+}
+
+func (w *fakeLoginStateWriter) UpdateContextLoginState(_ context.Context, tenantID, targetID, loginState string, at time.Time) (int, error) {
+	w.calls = append(w.calls, loginStateCall{tenantID: tenantID, targetID: targetID, loginState: loginState, at: at})
+	if w.err != nil {
+		return 0, w.err
+	}
+	return 1, nil
+}
+
 func (n *fakeTerminalNotifier) EnqueueTerminalJob(_ context.Context, job jobstore.Job) error {
 	n.jobs = append(n.jobs, job)
 	return nil
@@ -880,4 +1028,131 @@ func (l *fakeWorkerLease) Poison(_ context.Context, reason string) error {
 	l.poisoned = true
 	l.poisonReason = reason
 	return nil
+}
+
+// TestWorkerConsumerReleasesConcurrencyTokenOnTerminalFailure is a regression
+// guard for the in-flight concurrency-token leak (audit wf_66e70764-236). The
+// token acquired at job creation must be released on EVERY terminal path, not
+// just the completed/cancelled happy paths. Before the fix, worker-driven
+// failures (runner error, empty output, malformed events, missing terminal
+// event) returned the lease without releasing, so repeated failures exhausted
+// the target's lane until the gateway 429-bricked and only a restart cleared it.
+func TestWorkerConsumerReleasesConcurrencyTokenOnTerminalFailure(t *testing.T) {
+	const (
+		tenantID = "tenant_a"
+		appID    = "app_a"
+		target   = "mock"
+	)
+
+	terminalEvent := func(eventType string, data map[string]any) WorkerRunFunc {
+		return func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			return []jobstore.WorkerEvent{{
+				EventID: "evt_" + eventType, JobID: envelope.JobID, APIVersion: envelope.APIVersion,
+				Type: eventType, Sequence: 1, TraceID: envelope.TraceID, Data: data,
+			}}, nil
+		}
+	}
+
+	cases := []struct {
+		name       string
+		runner     WorkerRunFunc
+		wantStatus jobstore.Status
+	}{
+		// Failure paths that funnel through notifyCurrentTerminalJob — these leaked
+		// before the fix.
+		{
+			name:       "runner_error",
+			runner:     func(context.Context, DispatchEnvelope) ([]jobstore.WorkerEvent, error) { return nil, errors.New("boom") },
+			wantStatus: jobstore.StatusFailedRetryable,
+		},
+		{
+			name:       "no_events",
+			runner:     func(context.Context, DispatchEnvelope) ([]jobstore.WorkerEvent, error) { return nil, nil },
+			wantStatus: jobstore.StatusFailedRetryable,
+		},
+		{
+			name: "no_terminal_event",
+			runner: func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+				return []jobstore.WorkerEvent{{
+					EventID: "evt_running", JobID: envelope.JobID, APIVersion: envelope.APIVersion,
+					Type: "running", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{"status": "running"},
+				}}, nil
+			},
+			wantStatus: jobstore.StatusFailedRetryable,
+		},
+		// Worker-emitted terminal failure events (released by RunOnce's own terminal
+		// branch) — locks the "every terminal status releases" contract.
+		{
+			name:       "worker_failed_terminal",
+			runner:     terminalEvent("failed", map[string]any{"status": "failed_terminal", "retryable": false}),
+			wantStatus: jobstore.StatusFailedTerminal,
+		},
+		{
+			name:       "worker_dead_letter",
+			runner:     terminalEvent("dead_letter", map[string]any{"status": "dead_letter"}),
+			wantStatus: jobstore.StatusDeadLetter,
+		},
+		{
+			name:       "worker_timed_out",
+			runner:     terminalEvent("timed_out", map[string]any{"status": "timed_out"}),
+			wantStatus: jobstore.StatusTimedOut,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := jobstore.NewMemoryStore()
+			job, err := store.Create(context.Background(), jobstore.CreateRequest{
+				APIVersion:  "2026-05-22",
+				TenantID:    tenantID,
+				AppID:       appID,
+				Target:      target,
+				CommandType: "submit",
+				Input:       map[string]any{"prompt": "hello"},
+				TraceID:     "trace_" + tc.name,
+			})
+			if err != nil {
+				t.Fatalf("Create returned error: %v", err)
+			}
+
+			// A ceiling of 1 with one token already checked out models the gateway
+			// having acquired this job's token at creation: the lane is now full.
+			registry := topology.NewConcurrencyRegistry()
+			registry.Report(tenantID, topology.ConcurrencyView{Target: target, IdentityRef: appID, CurrentCap: 1})
+			if !registry.Acquire(tenantID, target, appID) {
+				t.Fatal("precondition: first acquire should succeed")
+			}
+			if registry.Acquire(tenantID, target, appID) {
+				t.Fatal("precondition: lane should be at capacity before the job fails")
+			}
+
+			lease := &fakeWorkerLease{jobID: job.ID, leaseID: "lease_" + tc.name, envelope: EnvelopeFromJob(job)}
+			consumer := WorkerConsumer{
+				Queue:       fakeWorkerQueue{lease: lease},
+				Jobs:        store,
+				Concurrency: registry,
+				Runner:      tc.runner,
+			}
+
+			processed, err := consumer.RunOnce(context.Background())
+			if err != nil || !processed {
+				t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+			}
+
+			loaded, found, err := store.Get(context.Background(), job.ID)
+			if err != nil || !found {
+				t.Fatalf("Get found=%v err=%v", found, err)
+			}
+			if loaded.Status != tc.wantStatus {
+				t.Fatalf("status = %s, want %s", loaded.Status, tc.wantStatus)
+			}
+			if !lease.failed {
+				t.Fatalf("expected lease to be failed on terminal status %s", tc.wantStatus)
+			}
+			// If the token leaked, the lane stays full and this acquire fails.
+			if !registry.Acquire(tenantID, target, appID) {
+				t.Fatalf("concurrency token leaked on terminal status %s: lane still at capacity", tc.wantStatus)
+			}
+		})
+	}
 }

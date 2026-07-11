@@ -875,6 +875,13 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 	// snapshots; SQLite/Postgres stores are populated by the worker out-of-band
 	// and the type assertion intentionally yields a nil ingestor for them.
 	topologyIngestor, _ := topologyStore.(topology.TopologyIngestor)
+	// Login-state projection, by contrast, targets whichever store is actually
+	// served: the in-memory, SQLite, and Postgres stores all implement
+	// LoginStateWriter, so the live engine's real detect_login_state result
+	// (session.authenticated / session.manual_action_required) is persisted onto
+	// the SAME rows /v1/browser/contexts reads — no longer masked by the
+	// deploy-time seed.
+	loginStateWriter, _ := topologyStore.(topology.LoginStateWriter)
 	return &executor.WorkerConsumer{
 		Queue:            queue,
 		Jobs:             jobs,
@@ -882,6 +889,7 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 		Alerts:           alertsMgr,
 		Concurrency:      concurrency,
 		Topology:         topologyIngestor,
+		LoginState:       loginStateWriter,
 		PollInterval:     pollInterval,
 		Runner: executor.ProcessWorkerRunner{
 			Python:     python,

@@ -247,6 +247,28 @@ WHERE c.tenant_id = ?`
 	return out, rows.Err()
 }
 
+// UpdateContextLoginState persists a worker-detected login state onto the
+// provider context(s) for a (tenant, target) pair and returns the number of rows
+// updated (0 when the target is not registered — a benign no-op, not an error).
+// The write is tenant-scoped so a worker event can never mutate another tenant's
+// topology. Timestamps are stored as RFC3339Nano text to match parseSQLiteTime.
+func (s *SQLiteStore) UpdateContextLoginState(ctx context.Context, tenantID, targetID, loginState string, at time.Time) (int, error) {
+	if s == nil || s.db == nil {
+		return 0, fmt.Errorf("topology: sqlite store is not configured")
+	}
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE gateway_provider_contexts SET login_state = ?, last_health_at = ? WHERE tenant_id = ? AND target_id = ?`,
+		loginState, at.UTC().Format(time.RFC3339Nano), tenantID, targetID)
+	if err != nil {
+		return 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(affected), nil
+}
+
 func (s *SQLiteStore) Summary(ctx context.Context, tenantID string) (Summary, error) {
 	if s == nil || s.db == nil {
 		return Summary{}, fmt.Errorf("topology: sqlite store is not configured")
