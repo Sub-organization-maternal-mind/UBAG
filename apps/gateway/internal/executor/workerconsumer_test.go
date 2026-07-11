@@ -1117,13 +1117,15 @@ func TestWorkerConsumerReleasesConcurrencyTokenOnTerminalFailure(t *testing.T) {
 				t.Fatalf("Create returned error: %v", err)
 			}
 
-			// A ceiling of 1 with one token already checked out models the gateway
-			// having acquired this job's token at creation: the lane is now full.
+			// A ceiling of 1 with one token already checked out and associated with
+			// the job models the gateway having acquired + marked this job's token at
+			// creation: the lane is now full and the token is released per-job.
 			registry := topology.NewConcurrencyRegistry()
 			registry.Report(tenantID, topology.ConcurrencyView{Target: target, IdentityRef: appID, CurrentCap: 1})
 			if !registry.Acquire(tenantID, target, appID) {
 				t.Fatal("precondition: first acquire should succeed")
 			}
+			registry.MarkAcquired(job.ID, tenantID, target, appID)
 			if registry.Acquire(tenantID, target, appID) {
 				t.Fatal("precondition: lane should be at capacity before the job fails")
 			}

@@ -1294,6 +1294,8 @@ func (s *Server) processBatchEntry(
 		e := internalError("failed to create job")
 		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusInternalServerError
 	}
+	// Associate the acquired token with the job before enqueue (see createJob).
+	s.markConcurrencyAcquired(job.ID, tenantID, target, appID)
 
 	// Region-aware routing: resolve the dispatch region before enqueue.
 	dispatchCtx := ctx
@@ -1301,7 +1303,7 @@ func (s *Server) processBatchEntry(
 		targetRegion, routeErr := s.regionRouter.Route(ctx, tenantID)
 		if routeErr != nil {
 			_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
-			s.releaseConcurrencyToken(tenantID, target, appID)
+			s.releaseConcurrencyTokenForJob(job.ID)
 			e := queueError("UBAG-REGION-MISMATCH-001", "tenant home region is unavailable for routing", true)
 			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusServiceUnavailable
 		}
@@ -1315,20 +1317,20 @@ func (s *Server) processBatchEntry(
 		envelopeBytes, err := json.Marshal(env)
 		if err != nil {
 			_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
-			s.releaseConcurrencyToken(tenantID, target, appID)
+			s.releaseConcurrencyTokenForJob(job.ID)
 			e := internalError("failed to marshal job envelope")
 			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusInternalServerError
 		}
 		if err := s.outbox.Append(dispatchCtx, job.ID, "jobs.dispatch", envelopeBytes); err != nil {
 			_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
-			s.releaseConcurrencyToken(tenantID, target, appID)
+			s.releaseConcurrencyTokenForJob(job.ID)
 			e := queueError("UBAG-QUEUE-ENQUEUE-001", "failed to write job to outbox", true)
 			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusServiceUnavailable
 		}
 	} else {
 		if _, err := s.executor.EnqueueJob(dispatchCtx, job); err != nil {
 			_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
-			s.releaseConcurrencyToken(tenantID, target, appID)
+			s.releaseConcurrencyTokenForJob(job.ID)
 			e := queueError("UBAG-QUEUE-ENQUEUE-001", "failed to enqueue job", true)
 			return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusServiceUnavailable
 		}
@@ -1640,6 +1642,10 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to create job"))
 		return
 	}
+	// Associate the acquired token with the job now that it has an ID and before
+	// it is enqueued (so a worker can never process it before the association
+	// exists). From here the token is released per-job and idempotently.
+	s.markConcurrencyAcquired(job.ID, tenantID, request.Job.Target, appID)
 
 	// Region-aware routing: resolve the dispatch region before enqueue.
 	dispatchCtx := r.Context()
@@ -1648,7 +1654,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		if routeErr != nil {
 			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
 			_ = s.idempotency.Release(r.Context(), scope)
-			s.releaseConcurrencyToken(tenantID, request.Job.Target, appID)
+			s.releaseConcurrencyTokenForJob(job.ID)
 			s.writeError(w, r, http.StatusServiceUnavailable,
 				queueError("UBAG-REGION-MISMATCH-001", "tenant home region is unavailable for routing", true))
 			return
@@ -1664,7 +1670,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
 			_ = s.idempotency.Release(r.Context(), scope)
-			s.releaseConcurrencyToken(tenantID, request.Job.Target, appID)
+			s.releaseConcurrencyTokenForJob(job.ID)
 			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to marshal job envelope"))
 			return
 		}
@@ -1674,7 +1680,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		if err := s.outbox.Append(r.Context(), job.ID, "jobs.dispatch", envelopeBytes); err != nil {
 			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
 			_ = s.idempotency.Release(r.Context(), scope)
-			s.releaseConcurrencyToken(tenantID, request.Job.Target, appID)
+			s.releaseConcurrencyTokenForJob(job.ID)
 			s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-ENQUEUE-001", "failed to write job to outbox", true))
 			return
 		}
@@ -1682,7 +1688,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.executor.EnqueueJob(dispatchCtx, job); err != nil {
 			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
 			_ = s.idempotency.Release(r.Context(), scope)
-			s.releaseConcurrencyToken(tenantID, request.Job.Target, appID)
+			s.releaseConcurrencyTokenForJob(job.ID)
 			var breakerErr *resilience.BreakerOpenError
 			if errors.As(err, &breakerErr) {
 				retryAfterSecs := int(math.Ceil(breakerErr.RetryAfter.Seconds()))
@@ -1874,17 +1880,11 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if jobstore.TerminalStatus(job.Status) {
-		// Release the concurrency token only when THIS cancel actually transitioned a
-		// still-active job to cancelled. UpdateStatus no-ops on an already-terminal
-		// job (it returns the existing status), so a job that already reached a
-		// terminal state — e.g. failed_retryable, which the worker consumer released
-		// on its own terminal transition — must NOT be released again here. Releasing
-		// it a second time under-counts the shared (tenant,target,app) in-flight lane
-		// and lets the gateway admit past its ceiling. The pre-status guard also
-		// covers a redundant cancel of an already-cancelled job.
-		if !jobstore.TerminalStatus(existing.Status) && job.Status == jobstore.StatusCanceled {
-			s.releaseConcurrencyToken(job.TenantID, job.Target, job.AppID)
-		}
+		// Return the job's in-flight token. ReleaseForJob is keyed by job ID and
+		// idempotent, so it is safe against every prior release of this job — a
+		// worker that already failed/completed it, or a concurrent/duplicate
+		// cancel — without ever under-counting the shared (tenant,target,app) lane.
+		s.releaseConcurrencyTokenForJob(job.ID)
 		notifier := webhooks.JobOutbox{Store: s.webhooks, URLPolicy: s.webhookURLs}
 		if err := notifier.EnqueueTerminalJob(r.Context(), job); err != nil {
 			_ = s.idempotency.Release(r.Context(), mutation.scope)
@@ -2213,8 +2213,27 @@ func (s *Server) writeJSON(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-// releaseConcurrencyToken releases a previously acquired concurrency token.
-// It is nil-safe and a no-op when concurrency enforcement is not configured.
+// markConcurrencyAcquired associates a just-acquired token with a created job so
+// it can later be released per-job and idempotently. Nil-safe.
+func (s *Server) markConcurrencyAcquired(jobID, tenantID, target, identityRef string) {
+	if s.concurrency != nil {
+		s.concurrency.MarkAcquired(jobID, tenantID, target, identityRef)
+	}
+}
+
+// releaseConcurrencyTokenForJob returns a created job's in-flight token exactly
+// once, regardless of how many terminal paths call it. Nil-safe.
+func (s *Server) releaseConcurrencyTokenForJob(jobID string) {
+	if s.concurrency != nil {
+		s.concurrency.ReleaseForJob(jobID)
+	}
+}
+
+// releaseConcurrencyToken releases a previously acquired concurrency token by
+// lane. It is nil-safe and a no-op when concurrency enforcement is not
+// configured. Use it only to undo a token acquired before a job ID exists (job
+// creation failed); every created-job release must go through
+// releaseConcurrencyTokenForJob so it is per-job and idempotent.
 func (s *Server) releaseConcurrencyToken(tenantID, target, identityRef string) {
 	if s.concurrency != nil {
 		s.concurrency.Release(tenantID, target, identityRef)
