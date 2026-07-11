@@ -1,0 +1,68 @@
+# Dependabot: version + security update PRs across every module.
+# Security-update PRs (for the open Dependabot alerts) are opened as soon as
+# "Dependabot security updates" is enabled on the repo — the schedule below only
+# paces routine version bumps. Minor/patch bumps are grouped to cut PR noise;
+# majors get individual PRs since they may need code changes. Every PR is gated
+# by the `ci` workflow before it can be merged.
+version: 2
+updates:
+  # --- Go modules (4 independent go.mod trees) ---
+  - package-ecosystem: gomod
+    directory: /apps/gateway
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      go-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: gomod
+    directory: /deploy/operator
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      go-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: gomod
+    directory: /packages/proto/gen/go
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      go-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: gomod
+    directory: /packages/sdk-go
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      go-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # --- npm / pnpm workspace (dashboard, mobile, SDKs, docs) ---
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # --- GitHub Actions workflows ---
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
