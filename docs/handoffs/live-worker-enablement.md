@@ -10,14 +10,14 @@ Paste this whole file into a fresh chat to execute the build with full context.
 
 ## 1. Production access & deploy flow
 
-- **VPS:** `ssh oet-dev` (root@68.183.32.122, key `~/.ssh/id_ed25519`). Project at `/opt/ubag`.
-- **Repo:** `https://github.com/Sub-organization-maternal-mind/UBAG.git`, branch `master`.
+- **VPS:** `ssh root@185.252.233.186` (key `~/.ssh/id_ed25519`; shared multi-app box that also hosts RadioPad). Project at `/opt/ubag`. The old `oet-dev` / `68.183.32.122` (DigitalOcean) host is **dead/unreachable** — do not use it.
+- **Repo:** `https://github.com/Sub-organization-maternal-mind/UBAG.git`, branch `main`.
   The VPS has **no GitHub auth** — deploy by git bundle over SSH:
   ```bash
   # from local repo after committing+pushing:
-  git bundle create /tmp/ubag.bundle master
-  scp -o StrictHostKeyChecking=no /tmp/ubag.bundle oet-dev:/tmp/
-  ssh oet-dev "cd /opt/ubag && git stash 2>/dev/null; git fetch /tmp/ubag.bundle master && git merge FETCH_HEAD --ff-only"
+  git bundle create /tmp/ubag.bundle main
+  scp -o StrictHostKeyChecking=no /tmp/ubag.bundle root@185.252.233.186:/tmp/
+  ssh root@185.252.233.186 "cd /opt/ubag && git stash 2>/dev/null; git fetch /tmp/ubag.bundle main && git merge FETCH_HEAD --ff-only"
   ```
 - **Compose:** `docker compose --env-file deploy/small/env.local -f docker-compose.small.yml ...`
 - **Dashboard:** https://ubag.polytronx.com/dashboard/ — Basic Auth `operator` / `<see /opt/ubag/deploy/small/.htpasswd on the VPS>`
@@ -93,7 +93,7 @@ UBAG_WORKER_MAX_RUNTIME_MS=120000     # raise from 30s — live runs are slower
 
 ### 5d. Rebuild + redeploy
 ```bash
-ssh oet-dev "cd /opt/ubag && docker compose --env-file deploy/small/env.local -f docker-compose.small.yml build gateway && \
+ssh root@185.252.233.186 "cd /opt/ubag && docker compose --env-file deploy/small/env.local -f docker-compose.small.yml build gateway && \
   docker compose --env-file deploy/small/env.local -f docker-compose.small.yml --profile live-browser up -d"
 ```
 
