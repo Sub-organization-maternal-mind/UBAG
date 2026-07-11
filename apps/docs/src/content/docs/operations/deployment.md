@@ -101,7 +101,15 @@ docker compose \
   up -d
 ```
 
-**Bring up with WAL archiving (opt-in backup profile):**
+**Bring up with off-host backups (opt-in backup profile):**
+
+The backup profile pg_dumps / pg_basebackups Postgres and uploads to an
+**off-host** S3 endpoint (backups must never live on the deployment host). It
+**refuses to start** unless `UBAG_BACKUP_S3_ENDPOINT` / `_ACCESS_KEY` /
+`_SECRET_KEY` are set to an off-host destination (Backblaze B2, Cloudflare R2,
+Wasabi, AWS S3, or a MinIO/Garage cluster on a different host). See
+`deploy/small/env.example` (Off-host backups section) for all `UBAG_BACKUP_S3_*`
+knobs, and `deploy/small/backup/pitr-restore.md` for the restore procedure.
 
 ```sh
 docker compose \

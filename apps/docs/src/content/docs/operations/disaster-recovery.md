@@ -9,7 +9,7 @@ description: Disaster recovery procedures for UBAG — RPO 5m / RTO 30m targets 
 
 | Target | Value | Notes |
 |--------|-------|-------|
-| RPO (Recovery Point Objective) | **5 minutes** | Maximum data loss. Achieved via WAL archiving every 5 minutes. |
+| RPO (Recovery Point Objective) | **~1 hour** | Maximum data loss with the current off-host backup profile: hourly logical `pg_dump`s plus a daily full base snapshot. These are snapshot-based recovery points, not continuous WAL replay — for a true ~5-minute RPO see "True WAL archiving" below. |
 | RTO (Recovery Time Objective) | **30 minutes** | Maximum downtime. Covers restore + restart + verification. |
 
 ## Components
@@ -55,63 +55,39 @@ ubag migrate --store sqlite
 ubag migrate --store postgres --dsn "$UBAG_POSTGRES_DSN"
 ```
 
-## PostgreSQL — Restore from WAL Archive
+## PostgreSQL — Restore from an off-host backup
 
 **Trigger:** Data loss, corruption, or a failed migration that needs rollback.
 
-**Prerequisites:** WAL archives in MinIO at `ubag-artifacts/wal-archive/`.
+**Prerequisites:** The `backup` profile is enabled and has been shipping backups
+to the **off-host** S3 bucket configured via `UBAG_BACKUP_S3_*`. Backups live
+under two prefixes: `<prefix>/dumps/` (hourly `pg_dump`, restore with
+`pg_restore`) and `<prefix>/base/` (periodic `pg_basebackup` tarballs, restore
+by replacing the data directory), where `<prefix>` is `UBAG_BACKUP_S3_PREFIX`
+(default `ubag-small`).
 
-### Steps
+The full step-by-step for both restore paths is in
+[`deploy/small/backup/pitr-restore.md`](https://github.com/) — including how to
+point `mc` at the off-host bucket (`mc alias set ubagbak …`). In short:
 
-1. Stop the gateway to prevent new writes:
-   ```bash
-   docker compose -f docker-compose.small.yml stop gateway
-   ```
-
-2. List available WAL archives:
-   ```bash
-   mc ls minio/ubag-artifacts/wal-archive/ | sort | tail -20
-   ```
-
-3. Identify the target point-in-time (the last archive before the incident).
-
-4. Stop Postgres:
-   ```bash
-   docker compose -f docker-compose.small.yml stop postgres
-   ```
-
-5. Extract the WAL archive:
-   ```bash
-   mc cp minio/ubag-artifacts/wal-archive/<TIMESTAMP>.tar.gz /tmp/
-   mkdir -p /tmp/pgdata
-   tar -xzf /tmp/<TIMESTAMP>.tar.gz -C /tmp/pgdata/
-   ```
-
-6. Replace the Postgres data directory:
-   ```bash
-   docker compose -f docker-compose.small.yml run --rm postgres \
-     bash -c "rm -rf /var/lib/postgresql/data/* && cp -r /tmp/pgdata/* /var/lib/postgresql/data/"
-   ```
-
-7. Start Postgres and verify:
-   ```bash
-   docker compose -f docker-compose.small.yml start postgres
-   docker compose -f docker-compose.small.yml exec postgres \
-     psql -U ubag -c "SELECT count(*) FROM jobs; SELECT now();"
-   ```
-
-8. Run migrations to ensure schema is current:
-   ```bash
-   ubag migrate --store postgres
-   ```
-
-9. Restart the gateway:
-   ```bash
-   docker compose -f docker-compose.small.yml start gateway
-   curl -s http://localhost:8080/v1/ready
-   ```
+1. Stop the gateway (`docker compose … stop gateway`).
+2. `mc alias set ubagbak "$SCHEME://$UBAG_BACKUP_S3_ENDPOINT" "$KEY" "$SECRET" --api S3v4`.
+3. Pick a restore point: `mc ls ubagbak/$UBAG_BACKUP_S3_BUCKET/ubag-small/dumps/ | sort | tail -20`.
+4. `mc cp` the chosen `.pgdump`, then `pg_restore --clean --if-exists --no-owner`
+   into the postgres container (or use a `base/` tarball to replace the data dir).
+5. Verify (`psql -c "SELECT count(*) FROM jobs;"`) and restart the gateway.
 
 **Expected RTO:** 20–25 minutes.
+
+### True WAL archiving (follow-up, not yet implemented)
+
+The `base/` snapshots give recovery points at the snapshot interval, not
+continuous point-in-time recovery. Real PITR requires continuous WAL shipping:
+set `archive_mode = on` and an `archive_command` on the postgres service that
+pushes each completed WAL segment to the off-host bucket, take one base backup,
+and replay WAL to an arbitrary target on restore. This changes the running
+postgres configuration, so it must be scheduled with the operator; it is
+deliberately out of scope for the current off-host-backup fix.
 
 ## MinIO — Re-sync Artifacts
 

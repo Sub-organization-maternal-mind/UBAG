@@ -454,53 +454,89 @@ services:
     networks:
       - ubag-private
 
-  # ── WAL archiving + PITR (Task 3.4) — opt-in via COMPOSE_PROFILES=backup ───
+  # ── Off-host backups (Task 3.4) — opt-in via COMPOSE_PROFILES=backup ────────
+  # Both services upload to an OFF-HOST S3 endpoint (UBAG_BACKUP_S3_*) using the
+  # mc client (SigV4). They REFUSE to run if UBAG_BACKUP_S3_ENDPOINT is unset —
+  # backups must never land on this VPS (no-backups-on-host rule). Postgres
+  # creds reuse the canonical POSTGRES_* vars so they can never drift from the
+  # postgres service. Failures are surfaced via a heartbeat + healthcheck.
 
   postgres-wal-archive:
-    image: postgres:16-alpine
+    build:
+      context: .
+      dockerfile: deploy/small/backup/backup.Dockerfile
+    image: ${UBAG_BACKUP_IMAGE:-ubag/backup:small-local}
     profiles: [backup]
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      - PGPASSWORD=${UBAG_POSTGRES_PASSWORD:-ubag}
-      - MINIO_ENDPOINT=${UBAG_MINIO_ENDPOINT:-minio:9000}
-      - MINIO_ACCESS_KEY=${UBAG_MINIO_ACCESS_KEY:-ubag-admin}
-      - MINIO_SECRET_KEY=${UBAG_MINIO_SECRET_KEY:-ubag-secret-key}
-      - MINIO_BUCKET=${UBAG_MINIO_BUCKET:-ubag-artifacts}
-      - POSTGRES_HOST=postgres
-      - POSTGRES_USER=${UBAG_POSTGRES_USER:-ubag}
-      - POSTGRES_DB=${UBAG_POSTGRES_DB:-ubag}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/small/env.local}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-ubag}
+      POSTGRES_DB: ${POSTGRES_DB:-ubag}
+      BACKUP_S3_ENDPOINT: ${UBAG_BACKUP_S3_ENDPOINT:?Set UBAG_BACKUP_S3_ENDPOINT to an OFF-HOST S3 endpoint (host[:port], no scheme) — never the on-host minio}
+      BACKUP_S3_ACCESS_KEY: ${UBAG_BACKUP_S3_ACCESS_KEY:?Set UBAG_BACKUP_S3_ACCESS_KEY}
+      BACKUP_S3_SECRET_KEY: ${UBAG_BACKUP_S3_SECRET_KEY:?Set UBAG_BACKUP_S3_SECRET_KEY}
+      BACKUP_S3_BUCKET: ${UBAG_BACKUP_S3_BUCKET:-ubag-backups}
+      BACKUP_S3_PREFIX: ${UBAG_BACKUP_S3_PREFIX:-ubag-small}
+      BACKUP_S3_USE_SSL: ${UBAG_BACKUP_S3_USE_SSL:-true}
+      BACKUP_RETENTION_DAYS: ${UBAG_BACKUP_RETENTION_DAYS:-30}
+      BACKUP_HEARTBEAT_FILE: /var/lib/backup/last-success-base
     volumes:
       - ./deploy/small/backup/wal-archive.sh:/scripts/wal-archive.sh:ro
-      - wal_archive_data:/var/lib/wal-archive
+      - backup_state:/var/lib/backup
     entrypoint: ["/bin/sh", "-c"]
     command: |
-      "apk add --no-cache curl && while true; do /scripts/wal-archive.sh; sleep 300; done"
+      "while true; do /scripts/wal-archive.sh || echo '[wal-archive] ERROR: base-backup cycle failed (healthcheck will flip unhealthy)'; sleep ${UBAG_BACKUP_BASE_INTERVAL_SECONDS:-86400}; done"
+    # Base backup runs daily; flag unhealthy only if a run is >26h late (a genuine
+    # miss), giving the daily cadence a couple of hours of grace.
+    healthcheck:
+      test: ["CMD-SHELL", "now=$$(date +%s); last=$$(cat /var/lib/backup/last-success-base 2>/dev/null || echo 0); [ $$((now - last)) -lt ${UBAG_BACKUP_BASE_STALE_SECONDS:-93600} ]"]
+      interval: 300s
+      timeout: 10s
+      retries: 2
+      start_period: 3600s
     networks:
       - ubag-private
     restart: unless-stopped
 
   backup-cron:
-    image: postgres:16-alpine
+    build:
+      context: .
+      dockerfile: deploy/small/backup/backup.Dockerfile
+    image: ${UBAG_BACKUP_IMAGE:-ubag/backup:small-local}
     profiles: [backup]
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      - PGPASSWORD=${UBAG_POSTGRES_PASSWORD:-ubag}
-      - MINIO_ENDPOINT=${UBAG_MINIO_ENDPOINT:-minio:9000}
-      - MINIO_ACCESS_KEY=${UBAG_MINIO_ACCESS_KEY:-ubag-admin}
-      - MINIO_SECRET_KEY=${UBAG_MINIO_SECRET_KEY:-ubag-secret-key}
-      - MINIO_BUCKET=${UBAG_MINIO_BUCKET:-ubag-artifacts}
-      - POSTGRES_HOST=postgres
-      - POSTGRES_USER=${UBAG_POSTGRES_USER:-ubag}
-      - POSTGRES_DB=${UBAG_POSTGRES_DB:-ubag}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/small/env.local}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-ubag}
+      POSTGRES_DB: ${POSTGRES_DB:-ubag}
+      BACKUP_S3_ENDPOINT: ${UBAG_BACKUP_S3_ENDPOINT:?Set UBAG_BACKUP_S3_ENDPOINT to an OFF-HOST S3 endpoint (host[:port], no scheme) — never the on-host minio}
+      BACKUP_S3_ACCESS_KEY: ${UBAG_BACKUP_S3_ACCESS_KEY:?Set UBAG_BACKUP_S3_ACCESS_KEY}
+      BACKUP_S3_SECRET_KEY: ${UBAG_BACKUP_S3_SECRET_KEY:?Set UBAG_BACKUP_S3_SECRET_KEY}
+      BACKUP_S3_BUCKET: ${UBAG_BACKUP_S3_BUCKET:-ubag-backups}
+      BACKUP_S3_PREFIX: ${UBAG_BACKUP_S3_PREFIX:-ubag-small}
+      BACKUP_S3_USE_SSL: ${UBAG_BACKUP_S3_USE_SSL:-true}
+      BACKUP_RETENTION_DAYS: ${UBAG_BACKUP_RETENTION_DAYS:-30}
+      BACKUP_HEARTBEAT_FILE: /var/lib/backup/last-success-dump
     volumes:
       - ./deploy/small/backup/backup-cron.sh:/scripts/backup-cron.sh:ro
+      - backup_state:/var/lib/backup
     entrypoint: ["/bin/sh", "-c"]
     command: |
-      "apk add --no-cache curl && while true; do /scripts/backup-cron.sh; sleep 3600; done"
+      "while true; do /scripts/backup-cron.sh || echo '[backup] ERROR: dump cycle failed (healthcheck will flip unhealthy)'; sleep ${UBAG_BACKUP_FULL_INTERVAL_SECONDS:-3600}; done"
+    healthcheck:
+      test: ["CMD-SHELL", "now=$$(date +%s); last=$$(cat /var/lib/backup/last-success-dump 2>/dev/null || echo 0); [ $$((now - last)) -lt ${UBAG_BACKUP_DUMP_STALE_SECONDS:-7200} ]"]
+      interval: 300s
+      timeout: 10s
+      retries: 2
+      start_period: 3600s
     networks:
       - ubag-private
     restart: unless-stopped
@@ -521,4 +557,6 @@ volumes:
   browser_profiles:
   pyroscope_data:
   glitchtip_data:
-  wal_archive_data: {}
+  # Persists backup heartbeat files (last-success-*) that the backup/wal-archive
+  # healthchecks read to detect stalled backups across container restarts.
+  backup_state:
