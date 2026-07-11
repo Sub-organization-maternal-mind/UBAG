@@ -201,6 +201,14 @@ func Run(ctx context.Context) error {
 			}
 		}()
 	}
+	if staleJobReaperEnabled() {
+		reaper := newStaleJobReaperFromEnv(jobs, enterprise.concurrency, webhookOutbox)
+		go func() {
+			if err := reaper.Run(ctx); err != nil && err != context.Canceled {
+				slog.Error("stale-job reaper stopped", "error", err)
+			}
+		}()
+	}
 	if webhookWorkerEnabled() {
 		worker, err := newWebhookWorkerFromEnv(webhookStore, webhookPolicy, breakerRegistry)
 		if err != nil {
@@ -848,6 +856,33 @@ func firstEnv(keys ...string) string {
 func workerConsumerEnabled() bool {
 	value := strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_WORKER_CONSUMER_ENABLED")))
 	return value == "1" || value == "true" || value == "yes"
+}
+
+func staleJobReaperEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_JOB_REAPER_ENABLED")))
+	return value == "1" || value == "true" || value == "yes"
+}
+
+// newStaleJobReaperFromEnv builds the reaper. It is opt-in (disabled unless
+// UBAG_JOB_REAPER_ENABLED is set). UBAG_JOB_MAX_LIFETIME_SECONDS is the fallback
+// idle deadline for jobs without an explicit options.timeout_seconds (default
+// 3600s); UBAG_JOB_REAPER_INTERVAL_SECONDS is the sweep cadence (default 60s).
+func newStaleJobReaperFromEnv(jobs jobstore.Store, concurrency *topology.ConcurrencyRegistry, notifier executor.TerminalJobNotifier) *executor.StaleJobReaper {
+	maxLifetimeSecs := positiveIntEnv("UBAG_JOB_MAX_LIFETIME_SECONDS")
+	if maxLifetimeSecs == 0 {
+		maxLifetimeSecs = 3600
+	}
+	intervalSecs := positiveIntEnv("UBAG_JOB_REAPER_INTERVAL_SECONDS")
+	if intervalSecs == 0 {
+		intervalSecs = 60
+	}
+	return &executor.StaleJobReaper{
+		Jobs:        jobs,
+		Concurrency: concurrency,
+		Notifier:    notifier,
+		MaxLifetime: time.Duration(maxLifetimeSecs) * time.Second,
+		Interval:    time.Duration(intervalSecs) * time.Second,
+	}
 }
 
 func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Store, notifier executor.TerminalJobNotifier, alertsMgr *alerts.Manager, concurrency *topology.ConcurrencyRegistry, topologyStore topology.Store, artifactStore artifacts.ArtifactStore) (*executor.WorkerConsumer, error) {
