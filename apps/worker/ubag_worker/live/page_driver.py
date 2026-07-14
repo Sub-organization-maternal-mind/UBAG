@@ -560,16 +560,32 @@ class PlaywrightPageDriver(PageDriver):
 
     # -- selector helpers ------------------------------------------------
     def _first_visible(self, group, *, timeout_ms: int = 4000):  # pragma: no cover
+        import time
+
+        candidates = group.as_list()
+        # Race every candidate selector against ONE overall deadline instead of
+        # paying the full timeout on each in series. Previously a drifted primary
+        # selector burned the entire budget before a working fallback was even
+        # tried — and stream_response passes the *full* response timeout here (up
+        # to the reasoning floor), so a single drifted response_container selector
+        # could stall a job for minutes. Probing each candidate briefly in a loop
+        # returns as soon as ANY becomes visible, bounded by the overall deadline.
+        # This only changes how the element is *found*; reading the response is
+        # unchanged, so response completeness is unaffected.
+        deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
+        probe_ms = 250 if timeout_ms > 250 else timeout_ms
         last_error: Optional[Exception] = None
-        for candidate in group.as_list():
-            try:
-                locator = self._page.locator(candidate).first
-                locator.wait_for(state="visible", timeout=timeout_ms)
-                return locator
-            except Exception as exc:  # noqa: BLE001 - try next fallback
-                last_error = exc
-                continue
-        raise DriftDetectedError(group.name, group.baseline_version) from last_error
+        while True:
+            for candidate in candidates:
+                try:
+                    locator = self._page.locator(candidate).first
+                    locator.wait_for(state="visible", timeout=probe_ms)
+                    return locator
+                except Exception as exc:  # noqa: BLE001 - try next fallback
+                    last_error = exc
+                    continue
+            if time.monotonic() >= deadline:
+                raise DriftDetectedError(group.name, group.baseline_version) from last_error
 
     def _present(self, group, *, timeout_ms: int = 3000) -> bool:  # pragma: no cover
         for candidate in group.as_list():
@@ -899,7 +915,13 @@ class PlaywrightPageDriver(PageDriver):
                 yield current[len(seen):]
                 seen = current
                 last_growth = time.monotonic()
-            still_streaming = self._present(selectors.streaming_indicator, timeout_ms=500)
+            # Short probe: the streaming indicator, when present, is already on
+            # screen, so a long timeout only wastes wall-clock every poll (and is
+            # pure waste for providers such as Gemini that expose no indicator).
+            # A false "not streaming" here is harmless — completion still requires
+            # `settled` (no text growth for settle_s), which stays false while the
+            # response is actively growing.
+            still_streaming = self._present(selectors.streaming_indicator, timeout_ms=150)
             settled = (time.monotonic() - last_growth) >= settle_s
             if seen.strip() and settled and not still_streaming:
                 break
