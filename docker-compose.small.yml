@@ -45,6 +45,12 @@ services:
       UBAG_WORKER_SCRIPT: ${UBAG_WORKER_SCRIPT:-/app/apps/worker/run_mock_worker.py}
       UBAG_WORKER_POLL_INTERVAL_MS: ${UBAG_WORKER_POLL_INTERVAL_MS:-500}
       UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-120000}
+      # Opt-in stale-job reaper: times out jobs stuck non-terminal (crashed
+      # worker) and releases their concurrency-lane token. Default MaxLifetime is
+      # idle-time since last update — a progressing job is never reaped.
+      UBAG_JOB_REAPER_ENABLED: ${UBAG_JOB_REAPER_ENABLED:-false}
+      UBAG_JOB_MAX_LIFETIME_SECONDS: ${UBAG_JOB_MAX_LIFETIME_SECONDS:-3600}
+      UBAG_JOB_REAPER_INTERVAL_SECONDS: ${UBAG_JOB_REAPER_INTERVAL_SECONDS:-60}
       # Live-browser bridge: when the "live-browser" profile is up, point the
       # worker at the shared Chromium (CDP) so live jobs reuse the user-owned,
       # manually-logged-in profile instead of launching a throwaway browser.
