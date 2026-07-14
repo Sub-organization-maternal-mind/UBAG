@@ -213,6 +213,29 @@ func (m *MemoryStore) WaitEvents(ctx context.Context, jobID string, afterSequenc
 	}
 }
 
+// RecentEvents returns the newest `limit` events for a job in ascending
+// sequence order (see jobs.RecentEventLister), bounding the hot-path signal
+// scan without re-reading the full event history.
+func (m *MemoryStore) RecentEvents(_ context.Context, jobID string, limit int) ([]Event, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.jobs[jobID]; !ok {
+		return nil, false, nil
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	items := m.events[jobID]
+	start := 0
+	if len(items) > limit {
+		start = len(items) - limit
+	}
+	tail := items[start:]
+	out := make([]Event, len(tail))
+	copy(out, tail)
+	return out, true, nil
+}
+
 func (m *MemoryStore) listEventsLocked(jobID string, afterSequence int, limit int) ([]Event, bool, error) {
 	if _, ok := m.jobs[jobID]; !ok {
 		return nil, false, nil

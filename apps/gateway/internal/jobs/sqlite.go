@@ -495,6 +495,38 @@ LIMIT ?`, jobID, afterSequence, limit)
 	return events, true, rows.Err()
 }
 
+// RecentEvents returns the newest `limit` events for a job in ascending
+// sequence order (see jobs.RecentEventLister). The caller has already loaded the
+// job, so this skips the existence pre-check and reports found=true.
+func (s *SQLiteStore) RecentEvents(ctx context.Context, jobID string, limit int) ([]Event, bool, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT id, job_id, api_version, type, sequence, data_json, trace_id, created_at
+FROM gateway_job_events
+WHERE job_id = ?
+ORDER BY sequence DESC
+LIMIT ?`, jobID, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	events := []Event{}
+	for rows.Next() {
+		event, err := scanSQLiteEvent(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	reverseEvents(events)
+	return events, true, nil
+}
+
 func (s *SQLiteStore) getJobForUpdate(ctx context.Context, tx *sql.Tx, id string) (Job, int, bool, error) {
 	row := tx.QueryRowContext(ctx, selectSQLiteJobSQL()+` WHERE id = ?`, id)
 	job, sequence, found, err := scanSQLiteJobWithSequence(row)

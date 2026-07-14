@@ -129,6 +129,26 @@ type EventLister interface {
 	ListAllEvents(ctx context.Context, filter EventListFilter) ([]Event, error)
 }
 
+// RecentEventLister is an optional Store capability returning the most recent
+// `limit` events for a job in ascending sequence order. It bounds the signal
+// reconstruction scan on hot status polls: a job's terminal-failure event and
+// any pending manual-action prompt are always among the latest events (a job
+// waiting on sign-in is not streaming tokens), so the tail is sufficient — and
+// a token-streaming job with thousands of recorded events is no longer re-read
+// from sequence 0 on every GET /jobs/{id} poll.
+type RecentEventLister interface {
+	RecentEvents(ctx context.Context, jobID string, limit int) ([]Event, bool, error)
+}
+
+// reverseEvents reverses an event slice in place. Store implementations fetch
+// the newest events with ORDER BY sequence DESC LIMIT N, then reverse so callers
+// receive them in the ascending order the signal reconstruction expects.
+func reverseEvents(events []Event) {
+	for i, j := 0, len(events)-1; i < j; i, j = i+1, j-1 {
+		events[i], events[j] = events[j], events[i]
+	}
+}
+
 func KnownStatus(status Status) bool {
 	switch status {
 	case StatusCreated,
