@@ -2442,6 +2442,63 @@ type jobSignals struct {
 	ManualAction string
 }
 
+// manualLoginRequiredReason is the reason code the live worker stamps on a
+// terminal event when a provider's browser session is logged out. It is emitted
+// on both session.manual_action_required and the terminal `blocked` event.
+const manualLoginRequiredReason = "manual_login_required"
+
+// loginRequiredErrorClass is the error_class surfaced to the report screen for a
+// logged-out provider session. It lets consumers (e.g. RadioPad) distinguish an
+// actionable "please sign in" stall from a genuine execution failure.
+const loginRequiredErrorClass = "provider_login_required"
+
+// providerDisplayNames maps internal provider/target ids to human-facing names.
+// Unlisted providers fall back to a title-cased form of the id (see
+// providerDisplayName), so a new adapter still renders a sensible name.
+var providerDisplayNames = map[string]string{
+	"gemini":     "Gemini",
+	"chatgpt":    "ChatGPT",
+	"claude":     "Claude",
+	"deepseek":   "DeepSeek",
+	"perplexity": "Perplexity",
+	"mistral":    "Mistral",
+}
+
+// providerDisplayName derives a human-facing provider name from a worker event's
+// target/adapter fields (e.g. "gemini_web" -> "Gemini"). Returns "" when neither
+// field is present so callers can omit the name gracefully.
+func providerDisplayName(data map[string]any) string {
+	raw := eventDataString(data, "target")
+	if raw == "" {
+		raw = eventDataString(data, "adapter")
+	}
+	if raw == "" {
+		return ""
+	}
+	base := strings.ReplaceAll(strings.TrimSuffix(raw, "_web"), "_", " ")
+	if name, ok := providerDisplayNames[base]; ok {
+		return name
+	}
+	fields := strings.Fields(base)
+	for i, word := range fields {
+		if word == "" {
+			continue
+		}
+		fields[i] = strings.ToUpper(word[:1]) + word[1:]
+	}
+	return strings.Join(fields, " ")
+}
+
+// signInRequiredMessage builds the actionable report-screen message for a
+// logged-out provider session, naming the provider when it is known.
+func signInRequiredMessage(data map[string]any) string {
+	provider := providerDisplayName(data)
+	if provider == "" {
+		return "Sign-in required. Open the live browser session and complete login."
+	}
+	return fmt.Sprintf("Sign-in required for %s. Open the live browser session and complete login.", provider)
+}
+
 // jobSignalsFromEvents reconstructs a job's last-error (class + message) and any
 // pending manual-action prompt from its recorded worker events. The gateway does
 // not persist these on the job row, so the job resource derives them on read from
@@ -2455,7 +2512,16 @@ func jobSignalsFromEvents(events []jobstore.Event) jobSignals {
 		case "failed", "failed_retryable", "failed_terminal", "dead_letter", "timed_out", "timeout", "blocked":
 			class := eventDataString(event.Data, "error_class")
 			message := eventDataString(event.Data, "message")
-			if class != "" || message != "" {
+			// A logged-out provider session is a distinct, human-actionable
+			// failure: the worker cannot fill credentials, so a stall that only a
+			// manual sign-in can clear must surface as "Sign-in required for
+			// <provider>" with a dedicated error_class instead of the generic
+			// sanitized "worker execution failed". The worker marks this case by
+			// tagging the terminal event with reason=manual_login_required.
+			if eventDataString(event.Data, "reason") == manualLoginRequiredReason || class == loginRequiredErrorClass {
+				signals.ErrorClass = loginRequiredErrorClass
+				signals.ErrorMessage = signInRequiredMessage(event.Data)
+			} else if class != "" || message != "" {
 				signals.ErrorClass = class
 				signals.ErrorMessage = message
 			}

@@ -6,11 +6,13 @@ services:
       context: .
       dockerfile: deploy/small/gateway.Dockerfile
     image: ${UBAG_GATEWAY_IMAGE:-ubag/gateway:small-local}
-    cpus: "1.0"
-    mem_limit: 1g
+    cpus: "3.0"
+    mem_limit: 2g
     restart: unless-stopped
     environment:
       UBAG_GATEWAY_ADDR: ":8080"
+      GOMAXPROCS: "3"
+      GOMEMLIMIT: "1800MiB"
       UBAG_APP_SECRET: ${UBAG_APP_SECRET:?Set UBAG_APP_SECRET in deploy/small/env.local}
       UBAG_API_VERSION: ${UBAG_API_VERSION:-2026-05-22}
       UBAG_GATEWAY_VERSION: ${UBAG_GATEWAY_VERSION:-0.0.0-small}
