@@ -53,6 +53,36 @@ func TestJobSignalsFromEvents(t *testing.T) {
 			},
 			wantManual: "captcha_required",
 		},
+		{
+			name: "login stall surfaces provider-named sign-in required",
+			events: []jobstore.Event{
+				{Type: "running", Data: map[string]any{"status": "running"}},
+				{Type: "blocked", Data: map[string]any{
+					"reason":  "manual_login_required",
+					"target":  "gemini_web",
+					"message": "Provider execution is paused until the user completes login in the live browser session.",
+				}},
+			},
+			wantClass:   "provider_login_required",
+			wantMessage: "Sign-in required for Gemini. Open the live browser session and complete login.",
+		},
+		{
+			name: "login stall wins over an earlier generic failure",
+			events: []jobstore.Event{
+				{Type: "failed_retryable", Data: map[string]any{"error_class": "worker_execution", "message": "boom"}},
+				{Type: "blocked", Data: map[string]any{"reason": "manual_login_required", "adapter": "chatgpt_web"}},
+			},
+			wantClass:   "provider_login_required",
+			wantMessage: "Sign-in required for ChatGPT. Open the live browser session and complete login.",
+		},
+		{
+			name: "login stall without a known provider omits the name",
+			events: []jobstore.Event{
+				{Type: "blocked", Data: map[string]any{"reason": "manual_login_required"}},
+			},
+			wantClass:   "provider_login_required",
+			wantMessage: "Sign-in required. Open the live browser session and complete login.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -122,6 +152,42 @@ func TestGetJobExposesManualActionFromWorkerEvents(t *testing.T) {
 	body := readJobJSON(t, server, id)
 	if body["manual_action"] != "Sign in to ChatGPT in the live browser" {
 		t.Fatalf("manual_action = %v, want %q", body["manual_action"], "Sign in to ChatGPT in the live browser")
+	}
+}
+
+func TestGetJobSurfacesSignInRequiredFromLoginStall(t *testing.T) {
+	store := jobstore.NewMemoryStore()
+	server := NewServer(Config{AppSecret: "dev-secret", Jobs: store}).Handler()
+	id := createSignalsJob(t, server, "idem_signal_login")
+
+	job := loadStoredJob(t, store, id)
+	// The live worker emits a terminal `blocked` event carrying the
+	// manual_login_required reason when the provider's browser session is
+	// logged out. The report screen must render an actionable, provider-named
+	// prompt rather than the generic sanitized worker-execution message.
+	applySignalsEvent(t, store, jobstore.WorkerEvent{
+		EventID:    "signal_login_1",
+		JobID:      job.ID,
+		APIVersion: job.APIVersion,
+		Type:       "blocked",
+		Sequence:   2,
+		TraceID:    job.TraceID,
+		Data: map[string]any{
+			"status":    "failed_retryable",
+			"retryable": true,
+			"reason":    "manual_login_required",
+			"target":    "gemini_web",
+			"message":   "Provider execution is paused until the user completes login in the live browser session.",
+		},
+	})
+
+	body := readJobJSON(t, server, id)
+	wantMsg := "Sign-in required for Gemini. Open the live browser session and complete login."
+	if body["error"] != wantMsg {
+		t.Fatalf("error = %v, want %q", body["error"], wantMsg)
+	}
+	if body["error_class"] != "provider_login_required" {
+		t.Fatalf("error_class = %v, want %q", body["error_class"], "provider_login_required")
 	}
 }
 
