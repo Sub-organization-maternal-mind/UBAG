@@ -1431,3 +1431,85 @@ func authHeaders(idempotencyKey string) map[string]string {
 
 	return headers
 }
+
+// optionsWithProviderConfig is the create-time seam that makes options.provider_config
+// a gateway-controlled worker channel: any client-supplied provider_config is
+// stripped (it is interpolated into a Playwright selector in the worker, so a
+// client value would bypass model-catalog validation), and the validated
+// model_settings are injected in its place so they reach the worker on every
+// dispatch path.
+func TestOptionsWithProviderConfig(t *testing.T) {
+	// (a) A client-supplied provider_config must be stripped, never passed through.
+	t.Run("strips client provider_config", func(t *testing.T) {
+		opts := map[string]any{"priority": "high", "provider_config": map[string]any{"model": "evil-injection"}}
+		got := optionsWithProviderConfig(opts, nil)
+		if _, ok := got["provider_config"]; ok {
+			t.Fatalf("client provider_config must be stripped, got %#v", got["provider_config"])
+		}
+		if got["priority"] != "high" {
+			t.Fatalf("priority = %v, want it preserved", got["priority"])
+		}
+		if _, ok := opts["provider_config"]; !ok {
+			t.Fatal("input map must not be mutated")
+		}
+	})
+
+	// (b) The validated model_settings are injected as options.provider_config;
+	// reserved control keys (leading "_") are dropped.
+	t.Run("injects model_settings", func(t *testing.T) {
+		opts := map[string]any{"priority": "normal"}
+		got := optionsWithProviderConfig(opts, map[string]any{"model": "mock-deep", "_new_chat": true})
+		pc, ok := got["provider_config"].(map[string]any)
+		if !ok {
+			t.Fatalf("options.provider_config missing or wrong type: %#v", got["provider_config"])
+		}
+		if pc["model"] != "mock-deep" {
+			t.Fatalf("provider_config.model = %v, want mock-deep", pc["model"])
+		}
+		if _, leaked := pc["_new_chat"]; leaked {
+			t.Fatal("reserved key _new_chat leaked into provider_config")
+		}
+		if got["priority"] != "normal" {
+			t.Fatalf("priority = %v, want preserved", got["priority"])
+		}
+		if _, ok := opts["provider_config"]; ok {
+			t.Fatal("input map must not be mutated")
+		}
+	})
+
+	// A client provider_config is stripped AND overwritten by the validated
+	// model_settings — the client value never survives.
+	t.Run("client provider_config overwritten by model_settings", func(t *testing.T) {
+		opts := map[string]any{"provider_config": map[string]any{"model": "evil-injection"}}
+		got := optionsWithProviderConfig(opts, map[string]any{"model": "mock-fast"})
+		pc, ok := got["provider_config"].(map[string]any)
+		if !ok {
+			t.Fatalf("options.provider_config missing: %#v", got)
+		}
+		if pc["model"] != "mock-fast" {
+			t.Fatalf("provider_config.model = %v, want the validated mock-fast (client value must not survive)", pc["model"])
+		}
+	})
+
+	// (c) With neither a client provider_config nor model settings, the options
+	// are returned unchanged so non-model callers are unaffected.
+	t.Run("identity when neither present", func(t *testing.T) {
+		opts := map[string]any{"priority": "low"}
+		got := optionsWithProviderConfig(opts, nil)
+		if _, ok := got["provider_config"]; ok {
+			t.Fatalf("provider_config must not be added: %#v", got)
+		}
+		if len(got) != 1 || got["priority"] != "low" {
+			t.Fatalf("options changed: %#v", got)
+		}
+	})
+
+	// nil options with model settings still yields a provider_config-only map.
+	t.Run("nil options with model_settings", func(t *testing.T) {
+		got := optionsWithProviderConfig(nil, map[string]any{"model": "mock-fast"})
+		pc, ok := got["provider_config"].(map[string]any)
+		if !ok || pc["model"] != "mock-fast" {
+			t.Fatalf("provider_config not injected into nil options: %#v", got)
+		}
+	})
+}

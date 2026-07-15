@@ -129,6 +129,13 @@ func (s *Server) CreateJob(ctx context.Context, req *ubagv1.CreateJobRequest) (*
 	if err != nil {
 		return nil, err
 	}
+	// provider_config is a gateway-internal worker channel, never client-settable
+	// (it is interpolated into a Playwright selector in the worker). Strip any
+	// client-supplied value so a gRPC caller cannot bypass model-catalog
+	// validation. Proto carries no model_settings, so nothing is injected here.
+	if options != nil {
+		delete(options, "provider_config")
+	}
 	callbacks, err := decodeJSONObject(spec.GetCallbacksJson(), "callbacks")
 	if err != nil {
 		return nil, err
@@ -157,6 +164,15 @@ func (s *Server) CreateJob(ctx context.Context, req *ubagv1.CreateJobRequest) (*
 		Context:        jobContext,
 	}
 	if err := jobcore.ValidatePayload(client, jobSpec); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	// The gRPC JobSpec carries no model_settings field today, so there is nothing
+	// to validate against the target's model catalog here. The guard is wired for
+	// parity with the HTTP create paths (createJob / processBatchEntry) — before
+	// idempotency, storage, and enqueue — so a bad setting can never reach a
+	// browser. If the proto gains model_settings, decode it into the map below
+	// and resolve the catalog exactly as httpapi does.
+	if err := jobcore.ValidateModelSettings(strings.TrimSpace(spec.GetTarget()), nil, jobcore.ModelCatalog{}); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 

@@ -23,6 +23,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/audit"
+	"github.com/ubag/ubag/apps/gateway/internal/conversations"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
 	"github.com/ubag/ubag/apps/gateway/internal/grpcapi"
 	"github.com/ubag/ubag/apps/gateway/internal/httpapi"
@@ -179,6 +180,7 @@ func Run(ctx context.Context) error {
 		Alerts:            enterprise.alerts,
 		Topology:          enterprise.topology,
 		Concurrency:       enterprise.concurrency,
+		Conversations:     enterprise.conversations,
 		RegionRouter:      enterprise.regionRouter,
 		KillSwitch:        enterprise.killSwitch,
 		MFA:               enterprise.mfaService,
@@ -187,7 +189,7 @@ func Run(ctx context.Context) error {
 	})
 
 	if workerConsumerEnabled() {
-		consumer, err := newWorkerConsumerFromEnv(rawDispatcher, jobs, webhookOutbox, enterprise.alerts, enterprise.concurrency, enterprise.topology, artifactStore)
+		consumer, err := newWorkerConsumerFromEnv(rawDispatcher, jobs, webhookOutbox, enterprise.alerts, enterprise.conversations, enterprise.concurrency, enterprise.topology, artifactStore)
 		if err != nil {
 			return fmt.Errorf("invalid worker consumer configuration: %w", err)
 		}
@@ -519,6 +521,7 @@ type enterpriseStores struct {
 	alerts           *alerts.Manager
 	topology         topology.Store
 	concurrency      *topology.ConcurrencyRegistry
+	conversations    *conversations.Manager
 
 	// abacEnforcer is nil unless an operator supplies UBAG_ABAC_BUNDLE. Nil means
 	// the HTTP server skips ABAC entirely, so wiring it in is an exact no-op for
@@ -753,6 +756,32 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 	}
 	out.alerts = alerts.NewManager(alertStore, sink, slog.Default(), summary)
 
+	// Conversation-affinity store (gated by UBAG_CONVERSATIONS_ENABLED, default
+	// off). Flag off ⇒ out.conversations stays nil ⇒ the /v1/conversations route
+	// returns 501 and no conversation block is ever injected into the worker
+	// envelope, so behavior is byte-identical to before the feature. When enabled
+	// the backend follows the same storeKind thread as alerts.
+	if envBool("UBAG_CONVERSATIONS_ENABLED") {
+		var conversationStore conversations.Store
+		switch {
+		case storeKind == "sqlite" && db != nil:
+			sqliteConversations := conversations.NewSQLiteStore(db)
+			if err := sqliteConversations.Ready(ctx); err != nil {
+				return enterpriseStores{}, fmt.Errorf("conversations sqlite schema: %w", err)
+			}
+			conversationStore = sqliteConversations
+		case storeKind == "postgres" && db != nil:
+			postgresConversations := conversations.NewPostgresStore(db)
+			if err := postgresConversations.Ready(ctx); err != nil {
+				return enterpriseStores{}, fmt.Errorf("conversations postgres schema: %w", err)
+			}
+			conversationStore = postgresConversations
+		default:
+			conversationStore = conversations.NewMemoryStore()
+		}
+		out.conversations = conversations.NewManager(conversationStore, slog.Default(), storeKind)
+	}
+
 	// Read-only v2.1 browser topology store + adaptive-concurrency view.
 	switch {
 	case storeKind == "sqlite" && db != nil:
@@ -960,7 +989,7 @@ func newStaleJobReaperFromEnv(jobs jobstore.Store, concurrency *topology.Concurr
 	}
 }
 
-func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Store, notifier executor.TerminalJobNotifier, alertsMgr *alerts.Manager, concurrency *topology.ConcurrencyRegistry, topologyStore topology.Store, artifactStore artifacts.ArtifactStore) (*executor.WorkerConsumer, error) {
+func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Store, notifier executor.TerminalJobNotifier, alertsMgr *alerts.Manager, conversationsMgr *conversations.Manager, concurrency *topology.ConcurrencyRegistry, topologyStore topology.Store, artifactStore artifacts.ArtifactStore) (*executor.WorkerConsumer, error) {
 	pollInterval, err := durationFromMillisEnv("UBAG_WORKER_POLL_INTERVAL_MS", 500*time.Millisecond)
 	if err != nil {
 		return nil, err
@@ -1001,6 +1030,7 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 		Jobs:             jobs,
 		TerminalNotifier: notifier,
 		Alerts:           alertsMgr,
+		Conversations:    conversationsMgr,
 		Concurrency:      concurrency,
 		Topology:         topologyIngestor,
 		LoginState:       loginStateWriter,

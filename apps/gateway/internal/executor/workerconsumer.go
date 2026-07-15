@@ -18,6 +18,7 @@ import (
 
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
+	"github.com/ubag/ubag/apps/gateway/internal/conversations"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/plugins"
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
@@ -58,6 +59,27 @@ const topologyReportEventType = "browser.topology_reported"
 const newChatEventType = "session.new_chat"
 const configuredEventType = "session.configured"
 
+// conversation.thread_bound / .thread_rebound / .thread_broken are
+// conversation-affinity telemetry emitted by the live engine after it binds,
+// rebinds, or loses a provider chat thread for a job that carries a conversation
+// key. Like the orchestration telemetry above they are NOT job-lifecycle
+// transitions: the gateway projects them into its conversations store (when
+// configured) and skips job-event application so the unknown type never poisons
+// the job. thread_bound/thread_rebound upsert the binding; thread_broken marks
+// it broken so a reused key fails fast instead of resuming a dead chat.
+const conversationThreadBoundEventType = "conversation.thread_bound"
+const conversationThreadReboundEventType = "conversation.thread_rebound"
+const conversationThreadBrokenEventType = "conversation.thread_broken"
+
+// conversationThreadRefField is the ONLY field the gateway reads from a
+// conversation.* event payload: the provider chat URL. Every identity field
+// (tenant, app, target, conversation key) is forced from the trusted job record,
+// never the worker payload — the redaction boundary that keeps a buggy or
+// compromised worker from binding another tenant's conversation or persisting
+// non-URL material (cookies, storage state, noVNC URLs). It mirrors the
+// thread_ref field the gateway sends down in the dispatch envelope.
+const conversationThreadRefField = "thread_ref"
+
 const (
 	defaultWorkerPollInterval = 500 * time.Millisecond
 	defaultWorkerMaxRuntime   = 30 * time.Second
@@ -75,6 +97,11 @@ type WorkerConsumer struct {
 	Alerts           *alerts.Manager
 	Concurrency      *topology.ConcurrencyRegistry
 	Topology         topology.TopologyIngestor
+	// Conversations projects worker-reported conversation.* events into the
+	// conversation-affinity store so a reused conversation key resumes the same
+	// provider chat thread. Optional; nil disables conversation projection (the
+	// events are still intercepted so they never poison the job).
+	Conversations *conversations.Manager
 	// LoginState persists the live engine's real detect_login_state result onto
 	// the SERVED topology store (Postgres/SQLite/in-memory), keyed by tenant +
 	// target. Optional; nil disables login-state projection.
@@ -192,7 +219,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		_ = lease.Poison(ctx, "lease envelope does not match persisted job")
 		return true, err
 	}
-	envelope := EnvelopeFromJob(job)
+	envelope := EnvelopeFromJobWithConversation(ctx, job, c.Conversations)
 	if jobstore.TerminalStatus(job.Status) {
 		c.runPostJobHook(ctx, job)
 		if err := c.notifyTerminalJob(ctx, lease, job); err != nil {
@@ -292,6 +319,12 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		// (fresh conversation + model/option enforcement), not lifecycle
 		// transitions: log for audit and skip application so the type never poisons
 		// the job (mirrors the orchestration-telemetry handling above).
+		if normalized.Type == conversationThreadBoundEventType ||
+			normalized.Type == conversationThreadReboundEventType ||
+			normalized.Type == conversationThreadBrokenEventType {
+			c.recordConversationEvent(ctx, job, normalized)
+			continue
+		}
 		if normalized.Type == newChatEventType || normalized.Type == configuredEventType {
 			slog.Info("worker session event",
 				"job_id", normalized.JobID, "event_type", normalized.Type)
@@ -501,6 +534,67 @@ func (c *WorkerConsumer) recordTopologyReport(job jobstore.Job, event jobstore.W
 			tabs[i].CreatedAt = createdAt
 			c.Topology.AddTab(tabs[i])
 		}
+	}
+}
+
+// recordConversationEvent projects a worker-reported conversation-affinity event
+// into the conversations store so a reused conversation key resumes the same
+// provider chat thread. It is best-effort and nil-safe: a nil manager (feature
+// disabled), a job that carries no conversation key, or a store error never
+// interrupts ingestion.
+//
+// Tenant, app, target, and the conversation key are ALWAYS taken from the
+// trusted job record — never the worker payload — so a buggy or compromised
+// worker cannot bind another tenant's conversation. The ONLY field read from the
+// payload is the provider chat URL (conversationThreadRefField); no other payload
+// field is ever persisted (redaction), keeping the store within the safe-mode
+// constraint (chat URLs only, never cookies/storage state/noVNC URLs).
+//
+// thread_bound / thread_rebound upsert the binding (idempotent by key, so the
+// engine's up-to-3x interaction retries never duplicate a row); thread_broken
+// marks it broken so a reused key fails fast instead of resuming a dead chat.
+func (c *WorkerConsumer) recordConversationEvent(ctx context.Context, job jobstore.Job, event jobstore.WorkerEvent) {
+	if c == nil || c.Conversations == nil {
+		return
+	}
+	conversationKey := strings.TrimSpace(job.ConversationID)
+	if conversationKey == "" {
+		return
+	}
+	key := conversations.Key{
+		TenantID:        job.TenantID,
+		AppID:           job.AppID,
+		Target:          job.Target,
+		ConversationKey: conversationKey,
+	}
+	at := event.CreatedAt
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+
+	if event.Type == conversationThreadBrokenEventType {
+		if _, _, err := c.Conversations.MarkBroken(ctx, key, at); err != nil {
+			slog.Warn("conversation thread-broken projection failed",
+				"job_id", job.ID, "error", err)
+		}
+		return
+	}
+
+	// thread_bound / thread_rebound → upsert. Only the thread URL comes from the
+	// payload; every identity field is forced from the job above.
+	if _, err := c.Conversations.Bind(ctx, conversations.Conversation{
+		TenantID:          job.TenantID,
+		AppID:             job.AppID,
+		Target:            job.Target,
+		ConversationKey:   conversationKey,
+		ProviderThreadRef: stringFromEventData(event.Data, conversationThreadRefField),
+		State:             conversations.StateActive,
+		CreatedAt:         at,
+		LastUsedAt:        at,
+		LastJobID:         job.ID,
+	}); err != nil {
+		slog.Warn("conversation thread-bound projection failed",
+			"job_id", job.ID, "error", err)
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -36,6 +37,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/audit"
 	"github.com/ubag/ubag/apps/gateway/internal/compliance"
+	"github.com/ubag/ubag/apps/gateway/internal/conversations"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
 	"github.com/ubag/ubag/apps/gateway/internal/jitadmin"
@@ -163,6 +165,13 @@ type Config struct {
 	// by the worker-event ingestion path; the gateway never mutates it via HTTP.
 	Concurrency *topology.ConcurrencyRegistry
 
+	// Conversations backs the read-only conversation-affinity route
+	// (/v1/conversations) and, when non-nil, is the store the executor resolves a
+	// job's bound provider thread from at dispatch. Like Alerts it is NOT
+	// defaulted by NewServer: when nil (UBAG_CONVERSATIONS_ENABLED off) the route
+	// returns 501 and no conversation block is ever injected into the envelope.
+	Conversations *conversations.Manager
+
 	// Outbox, when non-nil, receives job-dispatch events atomically with job
 	// creation. The relay delivers them to NATS independently. When nil,
 	// EnqueueJob is called directly (backward-compatible).
@@ -256,6 +265,7 @@ type Server struct {
 	alerts           *alerts.Manager
 	topology         topology.Store
 	concurrency      *topology.ConcurrencyRegistry
+	conversations    *conversations.Manager
 	outbox           outbox.Store
 	maxQueueDepth    int
 	patStore         pat.Store
@@ -410,6 +420,7 @@ func NewServer(config Config) *Server {
 		alerts:           config.Alerts,
 		topology:         config.Topology,
 		concurrency:      config.Concurrency,
+		conversations:    config.Conversations,
 		outbox:           config.Outbox,
 		maxQueueDepth:    config.MaxQueueDepth,
 		patStore:         config.PAT,
@@ -502,6 +513,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/browser/tabs", s.handleBrowserTabs)
 	s.mux.HandleFunc("/v1/browser/summary", s.handleBrowserSummary)
 	s.mux.HandleFunc("/v1/concurrency", s.handleConcurrency)
+	s.mux.HandleFunc("/v1/conversations", s.handleConversations)
 	s.mux.HandleFunc("/v1/jobs", s.handleJobs)
 	s.mux.HandleFunc("/v1/jobs/batch", s.handleBatchJobs) // §10, §19.2: up to 100 jobs/request; chi resolves before wildcard
 	s.mux.HandleFunc("/v1/jobs/*", s.handleJobByID)       // chi wildcard: all /v1/jobs/{id}/... sub-paths
@@ -568,6 +580,12 @@ func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	if s.alerts != nil {
 		if err := s.alerts.Ready(r.Context()); err != nil {
 			s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-ALERTS-READY-001", "alert store is not ready", true))
+			return
+		}
+	}
+	if s.conversations != nil {
+		if err := s.conversations.Ready(r.Context()); err != nil {
+			s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-CONVERSATIONS-READY-001", "conversation store is not ready", true))
 			return
 		}
 	}
@@ -1211,6 +1229,10 @@ func (s *Server) processBatchEntry(
 		e := validationError("UBAG-VALIDATION-JOB-PAYLOAD-SAFETY-001", err.Error())
 		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
 	}
+	if code, msg, ok := validateModelSettingsForCreate(req.Job.Target, req.Job.ModelSettings); !ok {
+		e := validationError(code, msg)
+		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
+	}
 
 	// Custom-validator plugin hook (matches createJob behaviour).
 	if s.plugins != nil {
@@ -1283,7 +1305,7 @@ func (s *Server) processBatchEntry(
 		ConversationID: strings.TrimSpace(req.Job.ConversationID),
 		TemplateID:     strings.TrimSpace(req.Job.TemplateID),
 		Input:          req.Job.Input,
-		Options:        req.Job.Options,
+		Options:        optionsWithProviderConfig(req.Job.Options, req.Job.ModelSettings),
 		Callbacks:      req.Job.Callbacks,
 		Context:        req.Job.Context,
 		TraceID:        traceID,
@@ -1313,7 +1335,7 @@ func (s *Server) processBatchEntry(
 	}
 
 	if s.outbox != nil {
-		env := executor.EnvelopeFromJob(job)
+		env := executor.EnvelopeFromJobWithConversation(dispatchCtx, job, s.conversations)
 		envelopeBytes, err := json.Marshal(env)
 		if err != nil {
 			_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
@@ -1528,6 +1550,10 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-JOB-PAYLOAD-SAFETY-001", err.Error()))
 		return
 	}
+	if code, msg, ok := validateModelSettingsForCreate(request.Job.Target, request.Job.ModelSettings); !ok {
+		s.writeError(w, r, http.StatusBadRequest, validationError(code, msg))
+		return
+	}
 
 	// Custom-validator plugin hook: validate job input before proceeding.
 	if s.plugins != nil {
@@ -1630,7 +1656,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		ConversationID: strings.TrimSpace(request.Job.ConversationID),
 		TemplateID:     strings.TrimSpace(request.Job.TemplateID),
 		Input:          request.Job.Input,
-		Options:        request.Job.Options,
+		Options:        optionsWithProviderConfig(request.Job.Options, request.Job.ModelSettings),
 		Callbacks:      request.Job.Callbacks,
 		Context:        request.Job.Context,
 		TraceID:        traceIDFromContext(r.Context()),
@@ -1665,7 +1691,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.outbox != nil {
-		env := executor.EnvelopeFromJob(job)
+		env := executor.EnvelopeFromJobWithConversation(dispatchCtx, job, s.conversations)
 		envelopeBytes, err := json.Marshal(env)
 		if err != nil {
 			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
@@ -2679,6 +2705,7 @@ func jobcoreSpec(job jobRequest) jobcore.Spec {
 		Options:        job.Options,
 		Callbacks:      job.Callbacks,
 		Context:        job.Context,
+		ModelSettings:  job.ModelSettings,
 	}
 }
 
@@ -3066,6 +3093,130 @@ func adapterCatalog() []map[string]any {
 		{"key": "generic_chat", "kind": "browser", "stage": "v0", "capabilities": []string{"manual_login", "submit", "extract", "normalize"}},
 		{"key": "generic_form", "kind": "browser", "stage": "v0", "capabilities": []string{"manual_login", "submit", "extract", "normalize"}},
 	}
+}
+
+// Model catalogs are declared in the adapter manifests (adapters/<target>/
+// manifest.json "model_catalog"), which the Go gateway does not otherwise read
+// — /v1/adapters is served from the hardcoded adapterCatalog() above. This is
+// the minimal loader that parses just the model_catalog block so createJob /
+// processBatchEntry can validate job.model_settings against it. Results are
+// cached per target; a missing manifest or absent block yields an empty catalog,
+// which makes any supplied model_settings fail closed (the chatgpt_web contract).
+var (
+	modelCatalogMu    sync.Mutex
+	modelCatalogCache = map[string]jobcore.ModelCatalog{}
+	adaptersDirOnce   sync.Once
+	adaptersDirCached string
+)
+
+// validateModelSettingsForCreate resolves the target adapter's model catalog
+// and validates the caller's job.model_settings against it. It returns an error
+// code + message suitable for the API error envelope when a setting is not
+// offered, or ok=true when the settings are acceptable (including the empty
+// case). Shared by createJob and processBatchEntry so both create paths accept
+// and reject the exact same settings.
+func validateModelSettingsForCreate(target string, settings map[string]any) (code, message string, ok bool) {
+	if len(settings) == 0 {
+		return "", "", true
+	}
+	if err := jobcore.ValidateModelSettings(strings.TrimSpace(target), settings, resolveModelCatalog(target)); err != nil {
+		var mse *jobcore.ModelSettingsError
+		if errors.As(err, &mse) {
+			return mse.Code, mse.Message, false
+		}
+		return "UBAG-VALIDATION-MODE-UNAVAILABLE-001", err.Error(), false
+	}
+	return "", "", true
+}
+
+// optionsWithProviderConfig returns the options to persist for a job. Any
+// client-supplied provider_config is removed — it is a gateway-internal worker
+// channel, never client-settable, and letting a client set it would bypass
+// model-catalog validation (the value is interpolated into a Playwright
+// selector in the worker). The validated model_settings are then injected as
+// options.provider_config so they reach the worker's _resolve_provider_config on
+// every dispatch path. Returns the input unchanged when there is no client
+// provider_config to strip and no model settings to inject, so behavior for
+// callers that use neither is identical.
+func optionsWithProviderConfig(options map[string]any, modelSettings map[string]any) map[string]any {
+	providerConfig := executor.ProviderConfigFromModelSettings(modelSettings)
+	_, hasClient := options["provider_config"]
+	if len(providerConfig) == 0 && !hasClient {
+		return options
+	}
+	out := cloneMap(options)
+	if out == nil {
+		out = map[string]any{}
+	}
+	delete(out, "provider_config")
+	if len(providerConfig) > 0 {
+		out["provider_config"] = providerConfig
+	}
+	return out
+}
+
+func resolveModelCatalog(target string) jobcore.ModelCatalog {
+	target = strings.TrimSpace(target)
+	modelCatalogMu.Lock()
+	defer modelCatalogMu.Unlock()
+	if cat, ok := modelCatalogCache[target]; ok {
+		return cat
+	}
+	cat := loadModelCatalogFromDisk(target)
+	modelCatalogCache[target] = cat
+	return cat
+}
+
+func loadModelCatalogFromDisk(target string) jobcore.ModelCatalog {
+	// isTargetKey enforces ^[a-z0-9][a-z0-9._-]*$, so the target can never carry
+	// a path separator — a defense-in-depth guard before filepath.Join.
+	if !isTargetKey(target) {
+		return jobcore.ModelCatalog{}
+	}
+	dir := adaptersDir()
+	if dir == "" {
+		return jobcore.ModelCatalog{}
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, target, "manifest.json"))
+	if err != nil {
+		return jobcore.ModelCatalog{}
+	}
+	var manifest struct {
+		ModelCatalog jobcore.ModelCatalog `json:"model_catalog"`
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return jobcore.ModelCatalog{}
+	}
+	return manifest.ModelCatalog
+}
+
+// adaptersDir resolves the repo's adapters/ directory: UBAG_ADAPTERS_DIR when
+// set, otherwise the nearest ancestor of the working directory that contains an
+// adapters/ subdirectory. Resolved once and memoized.
+func adaptersDir() string {
+	adaptersDirOnce.Do(func() {
+		if env := strings.TrimSpace(os.Getenv("UBAG_ADAPTERS_DIR")); env != "" {
+			adaptersDirCached = env
+			return
+		}
+		wd, err := os.Getwd()
+		if err != nil {
+			return
+		}
+		for dir := wd; ; {
+			candidate := filepath.Join(dir, "adapters")
+			if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+				adaptersDirCached = candidate
+				return
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				return
+			}
+			dir = parent
+		}
+	})
+	return adaptersDirCached
 }
 
 func promLabel(value string) string {

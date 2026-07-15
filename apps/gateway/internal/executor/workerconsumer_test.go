@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
+	"github.com/ubag/ubag/apps/gateway/internal/conversations"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
 )
@@ -670,6 +671,261 @@ func TestWorkerConsumerTopologyRecordingIsNilSafe(t *testing.T) {
 	processed, err := consumer.RunOnce(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+}
+
+func TestWorkerConsumerProjectsThreadBound(t *testing.T) {
+	// A bound thread ref must land in the conversations store keyed entirely by
+	// the trusted job record; only the thread URL is read from the worker payload.
+	// The telemetry event is intercepted, never appended to the job's lifecycle
+	// events (an unknown type reaching ApplyWorkerEvent would fail the job).
+	store := jobstore.NewMemoryStore()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	job, err := store.Create(context.Background(), jobstore.CreateRequest{
+		APIVersion:     "2026-05-22",
+		TenantID:       "tenant_a",
+		AppID:          "app_a",
+		IdempotencyKey: "idem_thread_bound",
+		Target:         "mock",
+		CommandType:    "submit",
+		ConversationID: "conv_1",
+		Input:          map[string]any{"prompt": "hello"},
+		TraceID:        "trace_thread_bound",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+		t.Fatalf("EnqueueJob returned error: %v", err)
+	}
+
+	convStore := conversations.NewMemoryStore()
+	manager := conversations.NewManager(convStore, nil, "memory")
+	consumer := WorkerConsumer{
+		Spool:         dispatcher,
+		Jobs:          store,
+		Conversations: manager,
+		Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			return []jobstore.WorkerEvent{
+				{EventID: "worker_evt_bound", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "conversation.thread_bound", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{
+					"thread_ref": "https://example/chat/abc",
+					// Redaction: a spoofed tenant/app and non-URL material must all be
+					// ignored — identity comes from the job, only the URL from the payload.
+					"tenant_id":     "spoofed_tenant",
+					"app_id":        "spoofed_app",
+					"storage_state": "cookie=secret",
+				}},
+				{EventID: "worker_evt_done", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 2, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}},
+			}, nil
+		}),
+	}
+
+	processed, err := consumer.RunOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+
+	got, found, err := manager.Resolve(context.Background(), conversations.Key{
+		TenantID: "tenant_a", AppID: "app_a", Target: "mock", ConversationKey: "conv_1",
+	})
+	if err != nil || !found {
+		t.Fatalf("Resolve found=%v err=%v", found, err)
+	}
+	if got.ProviderThreadRef != "https://example/chat/abc" {
+		t.Fatalf("thread ref = %q, want https://example/chat/abc", got.ProviderThreadRef)
+	}
+	if got.State != conversations.StateActive {
+		t.Fatalf("state = %q, want %q", got.State, conversations.StateActive)
+	}
+	if got.LastJobID != job.ID {
+		t.Fatalf("last job id = %q, want %q", got.LastJobID, job.ID)
+	}
+
+	// Redaction: the spoofed tenant/app must never see the binding.
+	if _, found, _ := manager.Resolve(context.Background(), conversations.Key{
+		TenantID: "spoofed_tenant", AppID: "spoofed_app", Target: "mock", ConversationKey: "conv_1",
+	}); found {
+		t.Fatal("tenant isolation breached: spoofed tenant resolved the binding")
+	}
+
+	// Interception check: the job must still complete. If the conversation event
+	// were forwarded to ApplyWorkerEvent, the unknown type would fail the job.
+	finished, found, err := store.Get(context.Background(), job.ID)
+	if err != nil || !found {
+		t.Fatalf("Get found=%v err=%v", found, err)
+	}
+	if finished.Status != jobstore.StatusCompleted {
+		t.Fatalf("job status = %q, want %q (conversation event must be intercepted)", finished.Status, jobstore.StatusCompleted)
+	}
+}
+
+func TestConsumerInjectsConversationBlockAtDispatch(t *testing.T) {
+	// The conversation-affinity block is resolved at dispatch-to-worker time from
+	// the trusted job record. With a bound thread for the job's
+	// (tenant,app,target,conversation), the envelope handed to the worker must
+	// carry the resolved thread_ref so the worker can resume the chat thread.
+	ctx := context.Background()
+	store := jobstore.NewMemoryStore()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	job, err := store.Create(ctx, jobstore.CreateRequest{
+		APIVersion:     "2026-05-22",
+		TenantID:       "tenant_a",
+		AppID:          "app_a",
+		IdempotencyKey: "idem_conv_dispatch",
+		Target:         "mock",
+		CommandType:    "submit",
+		ConversationID: "conv_1",
+		Input:          map[string]any{"prompt": "hello"},
+		TraceID:        "trace_conv_dispatch",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := dispatcher.EnqueueJob(ctx, job); err != nil {
+		t.Fatalf("EnqueueJob returned error: %v", err)
+	}
+
+	convStore := conversations.NewMemoryStore()
+	now := time.Unix(1, 0).UTC()
+	if _, err := convStore.Bind(ctx, conversations.Conversation{
+		TenantID: "tenant_a", AppID: "app_a", Target: "mock", ConversationKey: "conv_1",
+		ProviderThreadRef: "https://example/chat/resumed", State: conversations.StateActive,
+		CreatedAt: now, LastUsedAt: now,
+	}); err != nil {
+		t.Fatalf("Bind returned error: %v", err)
+	}
+	manager := conversations.NewManager(convStore, nil, "memory")
+
+	var captured DispatchEnvelope
+	consumer := WorkerConsumer{
+		Spool:         dispatcher,
+		Jobs:          store,
+		Conversations: manager,
+		Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			captured = envelope
+			return []jobstore.WorkerEvent{
+				{EventID: "worker_evt_done", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}},
+			}, nil
+		}),
+	}
+
+	processed, err := consumer.RunOnce(ctx)
+	if err != nil || !processed {
+		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+	if captured.Conversation == nil {
+		t.Fatal("envelope handed to the worker must carry a conversation block")
+	}
+	if captured.Conversation.Key != "conv_1" {
+		t.Fatalf("conversation.key = %q, want conv_1", captured.Conversation.Key)
+	}
+	if captured.Conversation.ThreadRef != "https://example/chat/resumed" {
+		t.Fatalf("conversation.thread_ref = %q, want the resolved chat URL", captured.Conversation.ThreadRef)
+	}
+}
+
+func TestWorkerConsumerThreadBoundIsIdempotent(t *testing.T) {
+	// engine.py retries an interaction up to 3x; duplicate thread_bound events
+	// must upsert by key, leaving exactly one binding row (never append).
+	store := jobstore.NewMemoryStore()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	job, err := store.Create(context.Background(), jobstore.CreateRequest{
+		APIVersion:     "2026-05-22",
+		TenantID:       "tenant_a",
+		AppID:          "app_a",
+		IdempotencyKey: "idem_thread_bound_dup",
+		Target:         "mock",
+		CommandType:    "submit",
+		ConversationID: "conv_dup",
+		Input:          map[string]any{"prompt": "hello"},
+		TraceID:        "trace_thread_bound_dup",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+		t.Fatalf("EnqueueJob returned error: %v", err)
+	}
+
+	convStore := conversations.NewMemoryStore()
+	manager := conversations.NewManager(convStore, nil, "memory")
+	consumer := WorkerConsumer{
+		Spool:         dispatcher,
+		Jobs:          store,
+		Conversations: manager,
+		Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			return []jobstore.WorkerEvent{
+				{EventID: "worker_evt_bound_1", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "conversation.thread_bound", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{"thread_ref": "https://example/chat/1"}},
+				{EventID: "worker_evt_bound_2", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "conversation.thread_bound", Sequence: 2, TraceID: envelope.TraceID, Data: map[string]any{"thread_ref": "https://example/chat/2"}},
+				{EventID: "worker_evt_done", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 3, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}},
+			}, nil
+		}),
+	}
+
+	processed, err := consumer.RunOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+
+	all, err := manager.List(context.Background(), conversations.Filter{TenantID: "tenant_a"})
+	if err != nil {
+		t.Fatalf("List returned error: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("len(list) = %d, want 1 (duplicate thread_bound must upsert)", len(all))
+	}
+	if all[0].ProviderThreadRef != "https://example/chat/2" {
+		t.Fatalf("thread ref = %q, want the latest https://example/chat/2", all[0].ProviderThreadRef)
+	}
+}
+
+func TestWorkerConsumerIgnoresConversationEventsWhenDisabled(t *testing.T) {
+	// nil Conversations manager (feature flag off): conversation.* events must be
+	// intercepted and dropped without panic, and the job must still complete.
+	// Interception has to happen even with no store — otherwise the unknown type
+	// would reach ApplyWorkerEvent and fail the job.
+	store := jobstore.NewMemoryStore()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	job, err := store.Create(context.Background(), jobstore.CreateRequest{
+		APIVersion:     "2026-05-22",
+		TenantID:       "tenant_a",
+		AppID:          "app_a",
+		IdempotencyKey: "idem_thread_bound_disabled",
+		Target:         "mock",
+		CommandType:    "submit",
+		ConversationID: "conv_disabled",
+		Input:          map[string]any{"prompt": "hello"},
+		TraceID:        "trace_thread_bound_disabled",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+		t.Fatalf("EnqueueJob returned error: %v", err)
+	}
+
+	// No Conversations manager configured.
+	consumer := WorkerConsumer{
+		Spool: dispatcher,
+		Jobs:  store,
+		Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			return []jobstore.WorkerEvent{
+				{EventID: "worker_evt_bound", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "conversation.thread_bound", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{"thread_ref": "https://example/chat/1"}},
+				{EventID: "worker_evt_done", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 2, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}},
+			}, nil
+		}),
+	}
+
+	processed, err := consumer.RunOnce(context.Background())
+	if err != nil || !processed {
+		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+	loaded, found, err := store.Get(context.Background(), job.ID)
+	if err != nil || !found {
+		t.Fatalf("Get found=%v err=%v", found, err)
+	}
+	if loaded.Status != jobstore.StatusCompleted {
+		t.Fatalf("status = %s, want %s", loaded.Status, jobstore.StatusCompleted)
 	}
 }
 

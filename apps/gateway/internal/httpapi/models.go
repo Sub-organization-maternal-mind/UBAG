@@ -64,6 +64,7 @@ type jobRequest struct {
 	ConversationID string         `json:"conversation_id,omitempty"`
 	TemplateID     string         `json:"template_id,omitempty"`
 	Input          map[string]any `json:"input"`
+	ModelSettings  map[string]any `json:"model_settings,omitempty"`
 	Options        map[string]any `json:"options,omitempty"`
 	Callbacks      map[string]any `json:"callbacks,omitempty"`
 	Context        map[string]any `json:"context,omitempty"`
