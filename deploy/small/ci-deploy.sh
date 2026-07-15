@@ -49,8 +49,23 @@ printf '%s' "$token" | docker login "$REGISTRY" -u ubag-ci --password-stdin >/de
 unset token
 log "authenticated to $REGISTRY"
 
+# Retry the pull: this is a multi-hundred-MB transfer over the public internet,
+# and a reset partway through is transient rather than fatal. Docker keeps the
+# layers it already fetched, so each attempt resumes rather than restarts.
+# (A GitHub-CDN IPv6 PMTU blackhole caused exactly this; /etc/gai.conf now
+# de-prioritizes 2606:50c0::/32, and this retry covers the residual flakiness.)
 log "pulling $IMAGE"
-docker pull -q "$IMAGE" >/dev/null
+pulled=0
+for attempt in 1 2 3; do
+  if docker pull -q "$IMAGE" >/dev/null; then
+    pulled=1
+    log "pull ok on attempt ${attempt}"
+    break
+  fi
+  log "pull attempt ${attempt} failed; retrying in $((attempt * 5))s"
+  sleep $((attempt * 5))
+done
+[ "$pulled" = 1 ] || fail "could not pull $IMAGE after 3 attempts"
 
 # Pin the image for this and every future `up`. env.local is gitignored and
 # VPS-only, so this is the one place the running tag is recorded.
