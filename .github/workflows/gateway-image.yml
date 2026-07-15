@@ -61,3 +61,39 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "ghcr.io/sub-organization-maternal-mind/ubag-gateway:sha-${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+  # Pull-based deploy: the VPS never builds and never stores a registry
+  # credential. This job authenticates with the run's own GITHUB_TOKEN, which
+  # expires with the job, and hands it to the box over stdin for a single pull.
+  # The deploy key is pinned by command= to deploy/small/ci-deploy.sh, so it
+  # cannot open a shell or deploy anything but a validated sha-<commit> tag.
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/perf/latency-az'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    # Serialize deploys: two concurrent recreates of the same gateway would race.
+    concurrency:
+      group: gateway-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Add deploy key
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.UBAG_DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.UBAG_DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy gateway
+        run: |
+          set -euo pipefail
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" | ssh \
+            -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes \
+            "root@${{ secrets.UBAG_DEPLOY_HOST }}" \
+            "deploy-gateway sha-${{ github.sha }}"
+
+      - name: Revoke local key material
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519
