@@ -24,6 +24,9 @@
     "conversation_resume",
     "drift_baseline_required"
   ],
+  "model_catalog": {
+    "settings": {}
+  },
   "selector_strategy": {
     "type": "provider_specific",
     "drift_baseline_required": true

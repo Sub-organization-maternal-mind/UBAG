@@ -3,8 +3,13 @@ import assert from 'node:assert/strict';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { detectDrift } from '../src/index.ts';
-import { loadAdapterRegistry } from '../src/node.mjs';
+import {
+  detectDrift,
+  validateAdapterManifest,
+  buildRegistryEntry,
+  RegistryError,
+} from '../src/index.ts';
+import { loadAdapterRegistry, adapterManifestSchema } from '../src/node.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..', '..');
@@ -76,4 +81,75 @@ test('a tampered baseline checksum is detected as drift', () => {
   const report = detectDrift(tamperedBaseline, index.adapters);
   assert.equal(report.inSync, false);
   assert.equal(report.changed.length, 1);
+});
+
+const ZERO_CHECKSUM = `sha256:${'0'.repeat(64)}`;
+
+/** Minimal manifest carrying only the required fields, for catalog cases. */
+function baseManifest() {
+  return {
+    schema_version: 'ubag.adapter.v0',
+    id: 'sample',
+    display_name: 'Sample',
+    version: '0.1.0',
+    status: 'mock',
+    supported_command_types: ['chat.prompt'],
+    capabilities: [],
+    selector_strategy: { type: 'none', drift_baseline_required: false },
+    safe_mode: { user_owned_sessions_only: true },
+  };
+}
+
+test('rejects a model_catalog whose choice values contain a non-string', () => {
+  const manifest = {
+    ...baseManifest(),
+    model_catalog: { settings: { model: { kind: 'choice', values: ['ok', 123] } } },
+  };
+  assert.throws(
+    () => validateAdapterManifest(manifest, adapterManifestSchema),
+    (err) => err instanceof RegistryError && err.code === 'manifest_invalid',
+  );
+});
+
+test('rejects a model_catalog setting with an unknown kind', () => {
+  const manifest = {
+    ...baseManifest(),
+    model_catalog: { settings: { model: { kind: 'slider', values: ['a'] } } },
+  };
+  assert.throws(
+    () => validateAdapterManifest(manifest, adapterManifestSchema),
+    (err) => err instanceof RegistryError && err.code === 'manifest_invalid',
+  );
+});
+
+test('accepts a valid model_catalog and surfaces it on the registry entry', () => {
+  const manifest = {
+    ...baseManifest(),
+    model_catalog: {
+      settings: {
+        model: { kind: 'choice', values: ['a', 'b'] },
+        deepthink: { kind: 'toggle' },
+      },
+    },
+  };
+  // Must not throw.
+  validateAdapterManifest(manifest, adapterManifestSchema);
+  const entry = buildRegistryEntry('sample/manifest.json', manifest, ZERO_CHECKSUM);
+  assert.deepEqual(entry.model_catalog, manifest.model_catalog);
+});
+
+test('a manifest without a model_catalog produces an entry without one', () => {
+  const manifest = baseManifest();
+  validateAdapterManifest(manifest, adapterManifestSchema);
+  const entry = buildRegistryEntry('sample/manifest.json', manifest, ZERO_CHECKSUM);
+  assert.equal(entry.model_catalog, undefined);
+});
+
+test('model_catalog is surfaced on the loaded mock registry entry', () => {
+  const { registry } = loadAdapterRegistry({ adaptersDir });
+  const mock = registry.get('mock');
+  assert.ok(mock.model_catalog, 'mock entry should carry a model_catalog');
+  assert.equal(mock.model_catalog.settings.model.kind, 'choice');
+  assert.deepEqual(mock.model_catalog.settings.model.values, ['mock-fast', 'mock-deep']);
+  assert.equal(mock.model_catalog.settings.deepthink.kind, 'toggle');
 });

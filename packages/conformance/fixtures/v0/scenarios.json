@@ -3285,6 +3285,133 @@
       }
     },
     {
+      "id": "jobs.create.model-settings.accepted",
+      "category": "jobs",
+      "title": "Create job forwards model_settings and conversation_id",
+      "request": {
+        "method": "POST",
+        "path": "/v1/jobs",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Content-Type": "application/json",
+          "Idempotency-Key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1BB",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1BB",
+          "client": {
+            "app_id": "fixture-app",
+            "app_version": "0.0.0",
+            "sdk": {
+              "name": "__SDK_NAME__",
+              "version": "__SDK_VERSION__"
+            }
+          },
+          "job": {
+            "target": "mock_target",
+            "command_type": "echo",
+            "conversation_id": "conv_fixture_1",
+            "model_settings": {
+              "model": "mock-deep",
+              "thinking": "extended"
+            },
+            "input": {
+              "prompt": "Hello UBAG"
+            },
+            "options": {
+              "priority": "normal",
+              "return_mode": "final",
+              "conversation_missing": "fail"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_version": "2026-05-22",
+          "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1BC",
+          "idempotent_replay": false,
+          "status": "queued",
+          "target": "mock_target",
+          "metadata": {
+            "queued_at": "2026-05-22T00:00:01Z",
+            "retries": 0
+          },
+          "trace_id": "trace_job_create_model_settings",
+          "events_url": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1BC/events"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.status": "queued",
+        "body.idempotent_replay": false
+      }
+    },
+    {
+      "id": "errors.model-unavailable",
+      "category": "jobs",
+      "title": "Out-of-catalog model is rejected before dispatch",
+      "request": {
+        "method": "POST",
+        "path": "/v1/jobs",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Content-Type": "application/json",
+          "Idempotency-Key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1BD",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1BD",
+          "client": {
+            "app_id": "fixture-app",
+            "app_version": "0.0.0",
+            "sdk": {
+              "name": "__SDK_NAME__",
+              "version": "__SDK_VERSION__"
+            }
+          },
+          "job": {
+            "target": "mock_target",
+            "command_type": "echo",
+            "model_settings": {
+              "model": "does-not-exist"
+            },
+            "input": {
+              "prompt": "Hello UBAG"
+            },
+            "options": {
+              "priority": "normal",
+              "return_mode": "final"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": {
+            "code": "UBAG-VALIDATION-MODEL-UNAVAILABLE-001",
+            "category": "validation",
+            "message": "Requested model is not in the target adapter model catalog.",
+            "retryable": false,
+            "details": {
+              "model": "does-not-exist"
+            },
+            "doc_url": "https://docs.ubag.dev/errors/UBAG-VALIDATION-MODEL-UNAVAILABLE",
+            "trace_id": "trace_model_unavailable"
+          }
+        }
+      },
+      "expect": {
+        "throws": "UbagApiError",
+        "error.code": "UBAG-VALIDATION-MODEL-UNAVAILABLE-001",
+        "error.retryable": false
+      }
+    },
+    {
       "id": "jobs.get.completed",
       "category": "jobs",
       "title": "Get job returns completed output",

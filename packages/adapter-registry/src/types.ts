@@ -22,6 +22,21 @@ export interface SelectorStrategy {
   readonly drift_baseline_required?: boolean;
 }
 
+/** One caller-selectable provider UI setting declared by an adapter manifest. */
+export interface CatalogSetting {
+  readonly kind: 'choice' | 'toggle';
+  readonly values?: readonly string[];
+}
+
+/**
+ * Declares which provider UI settings a caller may pin per job, keyed by the
+ * adapter's own setting keys. An empty `settings` map means nothing is
+ * caller-selectable and the operator default always applies.
+ */
+export interface ModelCatalog {
+  readonly settings: { readonly [key: string]: CatalogSetting };
+}
+
 /**
  * Known fields of an adapter manifest. Provider-specific extras are preserved
  * via the index signature so the loader never drops data.
@@ -35,6 +50,7 @@ export interface AdapterManifest {
   readonly supported_command_types: readonly string[];
   readonly capabilities: readonly string[];
   readonly selector_strategy: SelectorStrategy;
+  readonly model_catalog?: ModelCatalog;
   readonly aliases?: readonly string[];
   readonly login_posture?: string;
   readonly [key: string]: unknown;
@@ -55,6 +71,7 @@ export interface RegistryEntry {
   readonly supported_command_types: readonly string[];
   readonly drift: DriftMetadata;
   readonly checksum: string;
+  readonly model_catalog?: ModelCatalog;
   readonly signature?: string;
 }
 

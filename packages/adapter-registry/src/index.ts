@@ -3,6 +3,8 @@ export type {
   JsonObject,
   AdapterStatus,
   SelectorStrategy,
+  CatalogSetting,
+  ModelCatalog,
   AdapterManifest,
   DriftMetadata,
   RegistryEntry,

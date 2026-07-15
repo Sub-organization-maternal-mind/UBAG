@@ -104,6 +104,7 @@
           "type": ["string", "null"],
           "minLength": 1,
           "maxLength": 160,
+          "description": "Opaque caller-owned conversation key scoped to (tenant, app_id, target). Reused keys resume the same provider chat thread; unseen keys open a new chat. Ignored unless the gateway has conversations enabled. Must not contain credentials or secrets.",
           "examples": ["conv_123"]
         },
         "template_id": {
@@ -111,6 +112,23 @@
           "minLength": 1,
           "maxLength": 160,
           "examples": ["radiology_ct_brain_v3"]
+        },
+        "model_settings": {
+          "type": ["object", "null"],
+          "description": "Optional per-job provider UI settings, keyed by the target adapter's own setting keys (e.g. gemini_web: model, thinking; deepseek_web: mode, deepthink). Validated against the target adapter's model_catalog at job creation; discover the available keys and values from /v1/adapters. Omitted means the adapter's operator defaults apply. Must not contain credentials or secrets.",
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "maxLength": 64
+          },
+          "additionalProperties": {
+            "type": ["string", "boolean"],
+            "maxLength": 96
+          },
+          "maxProperties": 16,
+          "examples": [
+            { "model": "3.5 Flash", "thinking": "Extended" },
+            { "mode": "Expert", "deepthink": true }
+          ]
         },
         "input": {
           "type": "object",
@@ -170,6 +188,12 @@
           "minLength": 1,
           "maxLength": 96,
           "default": "none"
+        },
+        "conversation_missing": {
+          "type": "string",
+          "enum": ["fail", "restart"],
+          "default": "fail",
+          "description": "Behavior when job.conversation_id refers to a provider chat thread that no longer exists. fail returns UBAG-TARGET-CONVERSATION-NOT-FOUND-001; restart opens a fresh chat and rebinds the key."
         },
         "trace_context": {
           "type": "string",

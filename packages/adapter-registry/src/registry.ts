@@ -3,9 +3,11 @@ import {
   REGISTRY_INDEX_SCHEMA_VERSION,
   type AdapterManifest,
   type AdapterStatus,
+  type CatalogSetting,
   type DriftChange,
   type DriftReport,
   type JsonObject,
+  type ModelCatalog,
   type RegistryEntry,
   type RegistryIndex,
 } from './types.ts';
@@ -66,6 +68,18 @@ export function validateRegistryIndex(index: unknown, schema: JsonSchema): asser
   }
 }
 
+/** Deep-copy a model catalog so the entry never shares references with the manifest. */
+function cloneModelCatalog(catalog: ModelCatalog): ModelCatalog {
+  const settings: { [key: string]: CatalogSetting } = {};
+  for (const [key, setting] of Object.entries(catalog.settings)) {
+    settings[key] =
+      setting.values !== undefined
+        ? { kind: setting.kind, values: [...setting.values] }
+        : { kind: setting.kind };
+  }
+  return { settings };
+}
+
 /** Derive an extended index entry from a validated manifest and its checksum. */
 export function buildRegistryEntry(
   manifestPath: string,
@@ -75,7 +89,17 @@ export function buildRegistryEntry(
   if (!isChecksum(checksum)) {
     throw new RegistryError('checksum_format_invalid', `invalid checksum "${checksum}" for ${manifest.id}`);
   }
-  return {
+  const entry: {
+    id: string;
+    manifest: string;
+    version: string;
+    status: AdapterStatus;
+    capabilities: string[];
+    supported_command_types: string[];
+    drift: { baseline_required: boolean; selector_strategy_type: string };
+    checksum: string;
+    model_catalog?: ModelCatalog;
+  } = {
     id: manifest.id,
     manifest: manifestPath,
     version: manifest.version,
@@ -88,6 +112,10 @@ export function buildRegistryEntry(
     },
     checksum,
   };
+  if (manifest.model_catalog !== undefined) {
+    entry.model_catalog = cloneModelCatalog(manifest.model_catalog);
+  }
+  return entry;
 }
 
 export interface BuildIndexOptions {

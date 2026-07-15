@@ -20,6 +20,13 @@
     "conversation_resume",
     "artifact_free"
   ],
+  "model_catalog": {
+    "settings": {
+      "model": { "kind": "choice", "values": ["mock-fast", "mock-deep"] },
+      "thinking": { "kind": "choice", "values": ["standard", "extended"] },
+      "deepthink": { "kind": "toggle" }
+    }
+  },
   "selector_strategy": {
     "type": "none",
     "drift_baseline_required": false

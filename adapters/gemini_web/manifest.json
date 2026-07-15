@@ -22,6 +22,12 @@
     "conversation_resume_later",
     "drift_baseline_required"
   ],
+  "model_catalog": {
+    "settings": {
+      "model": { "kind": "choice", "values": ["3.5 Flash"] },
+      "thinking": { "kind": "choice", "values": ["Standard", "Extended"] }
+    }
+  },
   "selector_strategy": {
     "type": "provider_specific",
     "drift_baseline_required": true

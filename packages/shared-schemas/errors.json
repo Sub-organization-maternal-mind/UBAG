@@ -96,7 +96,9 @@
           { "code": "UBAG-VALIDATION-ROUTE-001",                   "message": "Route not found",                                       "retryable": false },
           { "code": "UBAG-VALIDATION-LIMIT-001",                   "message": "Pagination limit is out of range (1–100)",              "retryable": false },
           { "code": "UBAG-VALIDATION-EVENT-SEQUENCE-001",          "message": "SSE/WS event sequence number out of order",             "retryable": false },
-          { "code": "UBAG-VALIDATION-COMMAND-SCHEMA-001",          "message": "job.input does not match the JSON Schema for command_type×api_version", "retryable": false, "note": "Phase 2 command validator" }
+          { "code": "UBAG-VALIDATION-COMMAND-SCHEMA-001",          "message": "job.input does not match the JSON Schema for command_type×api_version", "retryable": false, "note": "Phase 2 command validator" },
+          { "code": "UBAG-VALIDATION-MODEL-UNAVAILABLE-001",       "message": "Requested model is not in the target adapter's model catalog.", "retryable": false },
+          { "code": "UBAG-VALIDATION-MODE-UNAVAILABLE-001",        "message": "Requested thinking mode or extra setting is not in the target adapter's model catalog.", "retryable": false }
         ]
       },
       {
@@ -219,7 +221,9 @@
           { "code": "UBAG-TARGET-DOWN-001",            "message": "Target site is unreachable or returning 5xx",                    "retryable": true  },
           { "code": "UBAG-TARGET-NOT-FOUND-002",       "message": "Target name is not registered in this gateway",                  "retryable": false },
           { "code": "UBAG-TARGET-DISABLED-003",        "message": "Target has been administratively disabled",                      "retryable": false },
-          { "code": "UBAG-TARGET-MAINTENANCE-004",     "message": "Target is in maintenance window; retry_after_ms is the window end", "retryable": true }
+          { "code": "UBAG-TARGET-MAINTENANCE-004",     "message": "Target is in maintenance window; retry_after_ms is the window end", "retryable": true },
+          { "code": "UBAG-TARGET-CONVERSATION-NOT-FOUND-001", "message": "The bound provider chat thread for this conversation no longer exists.", "retryable": false, "note": "Set job.options.conversation_missing=restart to open a fresh chat and rebind the key instead of failing." },
+          { "code": "UBAG-TARGET-CONVERSATION-BROKEN-001", "message": "The conversation binding is marked broken and cannot be resumed.", "retryable": false }
         ]
       },
       {

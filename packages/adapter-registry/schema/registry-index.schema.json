@@ -75,6 +75,29 @@
             "pattern": "^sha256:[0-9a-f]{64}$",
             "description": "SHA-256 of the raw manifest file bytes. Used for tamper detection and drift checks."
           },
+          "model_catalog": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["settings"],
+            "description": "Caller-selectable provider UI settings surfaced from the adapter manifest, keyed by the adapter's own setting keys. Absent when the adapter declares none.",
+            "properties": {
+              "settings": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["kind"],
+                  "properties": {
+                    "kind": { "type": "string", "enum": ["choice", "toggle"] },
+                    "values": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          },
           "signature": {
             "type": "string",
             "description": "Optional detached signature over the checksum (publisher key). Verification is out of scope for v1 but the field is reserved."

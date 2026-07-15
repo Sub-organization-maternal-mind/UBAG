@@ -375,12 +375,11 @@ git commit -m "feat(openapi): model_settings, conversation_missing, GET /v1/conv
 
 - [ ] **Step 1: Read `validate-fixtures.mjs`** and note `requiredEndpointIds` (~line 27) and the exact scenario object shape. Read one existing job-create scenario and one collection scenario as templates.
 
-- [ ] **Step 2: Add three scenarios** matching the existing shape exactly:
-  1. job create with `model_settings: {"model": "mock-deep", "thinking": "extended"}` + `conversation_id` against `mock` → accepted.
-  2. job create with `model_settings: {"model": "does-not-exist"}` → `400` with `UBAG-VALIDATION-MODEL-UNAVAILABLE-001`.
-  3. `GET /v1/conversations` collection listing.
+- [ ] **Step 2: Add two job-create scenarios** matching the existing shape exactly. Both reuse the harness's existing `POST /v1/jobs` → `createJob` dispatch, which forwards the full scenario body, so they are safe before the SDK types land:
+  1. job create with `model_settings: {"model": "mock-deep", "thinking": "extended"}` + `conversation_id` → `202` accepted (`expect.ok`).
+  2. job create with `model_settings: {"model": "does-not-exist"}` → `409`/`400` error envelope with `UBAG-VALIDATION-MODEL-UNAVAILABLE-001` (`expect.throws: "UbagApiError"`, `error.code`).
 
-- [ ] **Step 3: Add the conversations endpoint id to `requiredEndpointIds`.**
+- [ ] **Step 3: Do NOT add a `conversations.list.ok` scenario here.** The SDK conformance harnesses (`packages/sdk-typescript/test/conformance.test.mjs` `invokeScenario`, and the Go equivalent) dispatch each scenario to a **named client method** and throw on an unmapped route. A `GET /v1/conversations` scenario therefore cannot exist until the SDK has `listConversations` — that scenario, its `requiredEndpointIds` entry, and the harness dispatch lines are all added together in **Task D1a** (moved out of this task to keep every commit green).
 
 - [ ] **Step 4: Validate**
 
@@ -1306,6 +1305,8 @@ export type UbagModelSettings = Record<string, string | boolean>;
 ```
 
 Add `model_settings?: UbagModelSettings | null` to the job type and `conversation_missing?: UbagConversationMissing` to the options type. Mirror both in the Go SDK: `ModelSettings map[string]any \`json:"model_settings,omitempty"\`` on the job struct and `ConversationMissing string \`json:"conversation_missing,omitempty"\`` on the options struct.
+
+- [ ] **Step 2a (Task D1a — conversations SDK method + conformance closure):** add a `listConversations(params?, options?)` method to the TS SDK client and its Go equivalent (`ListConversations`), returning the `ConversationListResponse` shape. Then add the deferred conformance pieces from Task A6 Step 3: a `conversations.list.ok` scenario in `packages/conformance/fixtures/v0/scenarios.json`, its id in `requiredEndpointIds` (`validate-fixtures.mjs`), and the dispatch line in **both** `invokeScenario` (TS, `packages/sdk-typescript/test/conformance.test.mjs`) and the Go conformance harness. Model the method and dispatch on `listAlerts` / `alerts.list.ok` exactly. These land together so `pnpm test:sdk` stays green.
 
 - [ ] **Step 3: Regenerate manifests and check freshness**
 

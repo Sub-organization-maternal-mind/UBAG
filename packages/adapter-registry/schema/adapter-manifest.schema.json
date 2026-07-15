@@ -54,6 +54,28 @@
       "type": "array",
       "items": { "type": "string" }
     },
+    "model_catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["settings"],
+      "properties": {
+        "settings": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind"],
+            "properties": {
+              "kind": { "type": "string", "enum": ["choice", "toggle"] },
+              "values": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
     "selector_strategy": {
       "type": "object",
       "additionalProperties": true,

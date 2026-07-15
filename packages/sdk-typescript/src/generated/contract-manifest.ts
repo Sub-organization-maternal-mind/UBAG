@@ -85,6 +85,10 @@ export const UBAG_ENDPOINTS = {
     "method": "POST",
     "path": "/v1/alerts/{alert_id}/resolve"
   },
+  "GET /v1/conversations": {
+    "method": "GET",
+    "path": "/v1/conversations"
+  },
   "GET /v1/browser/instances": {
     "method": "GET",
     "path": "/v1/browser/instances"
@@ -351,6 +355,14 @@ export const UBAG_ERROR_CODES = {
     "category": "validation",
     "retryable": false
   },
+  "UBAG-VALIDATION-MODEL-UNAVAILABLE-001": {
+    "category": "validation",
+    "retryable": false
+  },
+  "UBAG-VALIDATION-MODE-UNAVAILABLE-001": {
+    "category": "validation",
+    "retryable": false
+  },
   "UBAG-QUOTA-DAILY-001": {
     "category": "quota",
     "retryable": true
@@ -563,6 +575,14 @@ export const UBAG_ERROR_CODES = {
     "category": "target",
     "retryable": true
   },
+  "UBAG-TARGET-CONVERSATION-NOT-FOUND-001": {
+    "category": "target",
+    "retryable": false
+  },
+  "UBAG-TARGET-CONVERSATION-BROKEN-001": {
+    "category": "target",
+    "retryable": false
+  },
   "UBAG-TEMPLATE-NOT-FOUND-001": {
     "category": "template",
     "retryable": false
@@ -645,6 +665,6 @@ export const UBAG_ERROR_CODES = {
   }
 } as const;
 export const UBAG_SCHEMA_FINGERPRINTS = {
-  "job-request": "b489314eee1659deda168aaa34804ac10329215bd1c3c1e2192fa10c1c5c8f86",
+  "job-request": "ab1b8f11d25bc5e9af3909a41b8c371a6f6cbe2ff4d739500b56a710999e0448",
   "job-response": "23b36663886ac364f43d0642d22e49fe66502be8867d36b59d81d3f45dbd99d4"
 } as const;

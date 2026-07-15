@@ -36,6 +36,7 @@ var UbagEndpoints = map[string]ManifestEndpoint{
 	"GET /v1/alerts/config": {Method: "GET", Path: "/v1/alerts/config"},
 	"POST /v1/alerts/{alert_id}/acknowledge": {Method: "POST", Path: "/v1/alerts/{alert_id}/acknowledge"},
 	"POST /v1/alerts/{alert_id}/resolve": {Method: "POST", Path: "/v1/alerts/{alert_id}/resolve"},
+	"GET /v1/conversations": {Method: "GET", Path: "/v1/conversations"},
 	"GET /v1/browser/instances": {Method: "GET", Path: "/v1/browser/instances"},
 	"GET /v1/browser/contexts": {Method: "GET", Path: "/v1/browser/contexts"},
 	"GET /v1/browser/tabs": {Method: "GET", Path: "/v1/browser/tabs"},
@@ -105,6 +106,8 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 	"UBAG-VALIDATION-LIMIT-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-EVENT-SEQUENCE-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-COMMAND-SCHEMA-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-MODEL-UNAVAILABLE-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-MODE-UNAVAILABLE-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-QUOTA-DAILY-001": {Category: "quota", Retryable: true, RetryAfterMs: 0},
 	"UBAG-QUOTA-CREDITS-002": {Category: "quota", Retryable: false, RetryAfterMs: 0},
 	"UBAG-QUOTA-CONCURRENT-003": {Category: "quota", Retryable: true, RetryAfterMs: 0},
@@ -158,6 +161,8 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 	"UBAG-TARGET-NOT-FOUND-002": {Category: "target", Retryable: false, RetryAfterMs: 0},
 	"UBAG-TARGET-DISABLED-003": {Category: "target", Retryable: false, RetryAfterMs: 0},
 	"UBAG-TARGET-MAINTENANCE-004": {Category: "target", Retryable: true, RetryAfterMs: 0},
+	"UBAG-TARGET-CONVERSATION-NOT-FOUND-001": {Category: "target", Retryable: false, RetryAfterMs: 0},
+	"UBAG-TARGET-CONVERSATION-BROKEN-001": {Category: "target", Retryable: false, RetryAfterMs: 0},
 	"UBAG-TEMPLATE-NOT-FOUND-001": {Category: "template", Retryable: false, RetryAfterMs: 0},
 	"UBAG-TEMPLATE-READY-001": {Category: "template", Retryable: true, RetryAfterMs: 0},
 	"UBAG-TEMPLATE-RENDER-002": {Category: "template", Retryable: false, RetryAfterMs: 0},
@@ -181,6 +186,6 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 }
 
 var UbagSchemaFingerprints = map[string]string{
-	"job-request": "b489314eee1659deda168aaa34804ac10329215bd1c3c1e2192fa10c1c5c8f86",
+	"job-request": "ab1b8f11d25bc5e9af3909a41b8c371a6f6cbe2ff4d739500b56a710999e0448",
 	"job-response": "23b36663886ac364f43d0642d22e49fe66502be8867d36b59d81d3f45dbd99d4",
 }

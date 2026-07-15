@@ -23,6 +23,12 @@
     "conversation_resume",
     "drift_baseline_required"
   ],
+  "model_catalog": {
+    "settings": {
+      "mode": { "kind": "choice", "values": ["Expert"] },
+      "deepthink": { "kind": "toggle" }
+    }
+  },
   "selector_strategy": {
     "type": "provider_specific",
     "drift_baseline_required": true

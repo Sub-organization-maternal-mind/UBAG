@@ -603,6 +603,32 @@ paths:
           $ref: "#/components/responses/InternalError"
         "501":
           $ref: "#/components/responses/NotImplemented"
+  /v1/conversations:
+    get:
+      tags: [Jobs]
+      operationId: listConversations
+      summary: List conversation thread bindings.
+      description: >-
+        Returns conversation bindings that map a caller-owned conversation key to
+        a provider chat thread for the authenticated tenant. Read-only job
+        metadata. Requires the job:read action. Returns 501 when the gateway does
+        not have conversations enabled.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Conversation bindings returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
   /v1/browser/instances:
     get:
       tags: [Browser Topology]
@@ -1716,6 +1742,44 @@ components:
         trace_id:
           type: string
           minLength: 1
+    ConversationListResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, conversations]
+      properties:
+        api_version:
+          type: string
+        conversations:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [tenant_id, app_id, target, conversation_key, state, created_at, last_used_at]
+            properties:
+              tenant_id:
+                type: string
+              app_id:
+                type: string
+              target:
+                type: string
+              conversation_key:
+                type: string
+              provider_thread_ref:
+                type: string
+                description: Provider chat URL. Never contains session or credential material.
+              state:
+                type: string
+                enum: [active, broken]
+              created_at:
+                type: string
+                format: date-time
+              last_used_at:
+                type: string
+                format: date-time
+              last_job_id:
+                type: string
+        next_cursor:
+          type: ["string", "null"]
     BrowserInstance:
       type: object
       additionalProperties: false
