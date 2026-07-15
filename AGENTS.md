@@ -3,6 +3,11 @@
 
 # UBAG Project Instructions
 
+## Agent operating rules (read first — every session, every coding agent)
+
+- **Skip long builds/CI during routine coding.** Don't run full suites (`pnpm test:v0:local`, `pnpm check`, full gateway builds, etc.) as part of normal implementation work — do small, targeted checks only (a single test, `go vet`, a quick lint). Code the bulk of the change, then commit and push once it's done; the user runs full verification separately and will report any errors back.
+- **Never act on assumptions.** When a decision needs the user's input (ambiguous scope, missing config/credentials, a choice between approaches), stop and ask in a clarifying question that presents your top recommendation(s) as selectable options — don't guess and implement.
+
 ## Automatic UI/UX Design Skill
 
 Use the project-scoped Hallmark skill for every frontend, UI, UX, layout, visual design, theme, landing page, component styling, redesign, or design audit task in this project.
