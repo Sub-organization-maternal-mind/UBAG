@@ -1,6 +1,29 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-06-18
+Last updated: 2026-07-16
+
+## 2026-07-16 Orchestration Semantics (per-request model/mode + conversation affinity)
+
+Slice 1 of the AI-orchestrator gap roadmap (see `docs/superpowers/specs/2026-07-15-orchestration-semantics-design.md` and `docs/superpowers/plans/2026-07-15-orchestration-semantics.md`). All new runtime behavior is inert by default behind `UBAG_CONVERSATIONS_ENABLED` (default false); the no-conversation / no-model-settings path is byte-identical to before.
+
+- **Contracts**: `job.model_settings` (flat map keyed by each adapter's own setting keys, values string|boolean — e.g. gemini `{model,thinking}`, deepseek `{mode,deepthink}`) and `job.options.conversation_missing` (`fail`|`restart`) added to `packages/shared-schemas/schemas/job-request.schema.json` and mirrored in OpenAPI. `job.conversation_id` (already present) is now honored as an opaque conversation key scoped to `(tenant, app_id, target)`. Four error codes registered in `errors.json` under existing categories: `UBAG-VALIDATION-MODEL-UNAVAILABLE-001`, `UBAG-VALIDATION-MODE-UNAVAILABLE-001`, `UBAG-TARGET-CONVERSATION-NOT-FOUND-001`, `UBAG-TARGET-CONVERSATION-BROKEN-001`. Adapter manifests gained a `model_catalog` block (`settings: {key: {kind: choice|toggle, values?}}`) validated + surfaced by `packages/adapter-registry`; catalogs ship only labels proven by the current `selectors.py` baseline (gemini model `3.5 Flash`, thinking `Standard`/`Extended`; deepseek mode `Expert`, `deepthink` toggle), `chatgpt_web` empty, `mock` synthetic. New route `GET /v1/conversations` documented. Conformance grew three scenarios (model_settings accepted, out-of-catalog rejected, conversations list); 44 scenarios total.
+- **Gateway**: new nil-safe `apps/gateway/internal/conversations` package (memory/SQLite/Postgres, modeled on `internal/alerts`); `Bind` is a true upsert on `(tenant,app,target,key)`; SQLite self-bootstraps DDL in `Ready()`, Postgres asserts via `to_regclass` and ships `migrations/postgres/0010_conversations.sql`. Every job-create path (httpapi `createJob` + `processBatchEntry`, grpcapi `CreateJob`) validates `model_settings` against the target's `model_catalog` before storage/idempotency/enqueue, and `model_settings` is in the payload secret-scan allow-list. Validated `model_settings` is injected into `options.provider_config` at create time (the worker already reads that key), so it persists for retry and flows through every dispatch path; any client-supplied `provider_config` is stripped first (it is a gateway-internal channel — letting a client set it would bypass catalog validation, and the value is interpolated into a Playwright selector). `WorkerConsumer` projects `conversation.thread_bound/_broken/_rebound` events (tenant forced from the job, chat-URL only, intercepted not appended to the job event log) and injects the conversation block into the envelope at dispatch-to-worker time. `GET /v1/conversations` (`job:read`, paginated, nil-safe 501) surfaces bindings.
+- **Worker**: `engine.py` reads the envelope `conversation {key, thread_ref, on_missing}` block — resume via `page_driver.resume_thread` (skip new chat), or on-missing `fail` → raise `UBAG-TARGET-CONVERSATION-NOT-FOUND-001` + emit `thread_broken`, `restart` → fresh chat + `thread_rebound`; a key with no ref → new chat then capture `current_thread_url` and emit `thread_bound`. Events carry only the chat URL (safe mode). `scheduler.py` serializes same-`(provider, conversation_id)` jobs strictly FIFO while distinct conversations stay parallel under AIMD. A `provider_config` value guard rejects only selector-string-breaking chars (`"` `\` newlines) so real UI labels (parentheses, apostrophes) and legacy `UBAG_PROVIDER_CONFIG` env overrides still work. The registry-dispatched mock adapter (`adapters/mock/ubag_mock_adapter`) honors `options.provider_config`, echoes model settings, and emits a deterministic `thread_bound` with a **flat** top-level `thread_ref` matching the gateway consumer + live engine, so the browser-free bind→resume round trip is CI-testable.
+- **SDK/CLI/dashboard**: TS SDK gained `UbagModelSettings` (flat map) + `conversation_missing` + `listConversations`; Go SDK gained `ListConversations` (its REST client uses an untyped `JSON` map for the create body, so `model_settings`/`conversation_missing` need no struct change — the plan's assumption of a typed Go request struct did not match the code). CLI `create-job` gained `--model`/`--thinking`/`--conversation`/`--conversation-missing` (absent when omitted). Read-only dashboard `/conversations` page consumes `GET /v1/conversations` with an honest "not enabled" state on 501; it is reachable by URL but **not yet in the sidebar nav** — promotion is deferred because the dashboard e2e enforces the documented §24.2 17-page inventory (a separate spec decision).
+
+Validation (targeted, per repo rules; operator runs full `pnpm check` / `pnpm test:v0:local`):
+
+```
+pnpm lint:schemas ; pnpm lint:openapi ; node tools/check-contracts.mjs
+node packages/conformance/scripts/validate-fixtures.mjs   # 44 scenarios
+pnpm check:sdk-freshness ; pnpm test:sdk                    # 69 TS + Go
+pnpm test:cli ; pnpm test:adapter-registry                 # 3 / 21
+pnpm --filter @ubag/dashboard check ; pnpm --filter @ubag/dashboard test  # 17
+cd apps/gateway && go build ./... && go vet ./... && go test ./...  # green except the pre-existing Windows python-alias env test
+PYTHONPATH="apps/worker;adapters/mock" python -m pytest apps/worker/tests adapters/mock/tests  # 357 + 8
+```
+
+Known limitations / follow-ups: gRPC and the Go SDK cannot carry `model_settings` as typed fields (proto has no field; Go SDK is map-based) — HTTP is the typed surface. Live-provider verification (real Gemini/DeepSeek model pickers, chat resume) is ToS-bound and not CI-tested; it happens manually in production. Dashboard nav promotion + §24.2 update is a follow-up. Later roadmap slices: provider expansion (Kimi/Minimax/Claude activation), automatic provider fallback/routing, mobile push alerting.
 
 ## Current Phase
 

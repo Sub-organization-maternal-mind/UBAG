@@ -1,17 +1,31 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-06-18
+Last updated: 2026-07-16
 
-This is the resume point for any future agentic AI working in `D:\Projects\UBAG`.
+This is the resume point for any future agentic AI working in `E:\Projects\UBAG`.
 Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
 
 ## Current Repository State
 
-- Working directory: `D:\Projects\UBAG`.
-- Git is initialized on branch `master`, tracking `origin/master`.
-- The current workspace contains the intentional TS+Go-only SDK completion edits until this slice is reviewed or committed.
+- Working directory: `E:\Projects\UBAG` (the repo moved from the stale `D:\Projects\UBAG`; translate any remaining `D:\...` paths, never propagate them).
+- Git is initialized on branch `main`, tracking `origin/main`.
 - Preserve `AGENTS.md`, `design.md`, `.codex`, and all current workspace contents.
 - Do not run `git reset`, `git clean`, or destructive checkout commands unless the user explicitly asks.
+
+## Latest Slice: Orchestration Semantics (2026-07-16)
+
+Per-request model/mode selection + conversation affinity landed across contracts, gateway, worker, and SDK/CLI/dashboard, inert by default behind `UBAG_CONVERSATIONS_ENABLED` (default false). See the 2026-07-16 section of `PROGRESS.md` for the full description and the design/plan under `docs/superpowers/`.
+
+Key runtime facts for the next agent:
+
+- New env flag `UBAG_CONVERSATIONS_ENABLED` (default false). When enabled, the store backend follows the existing `UBAG_GATEWAY_STORE` `storeKind` (memory/sqlite/postgres), exactly like alerts. Postgres requires applying `migrations/postgres/0010_conversations.sql` (readiness fails closed otherwise); SQLite self-bootstraps.
+- New route `GET /v1/conversations` (`job:read`, nil-safe 501 when disabled).
+- `job.model_settings` is a flat map keyed by each adapter's own `ProviderSetting.key`; the gateway validates it against the adapter manifest `model_catalog` and copies it into the worker envelope `options.provider_config`. Client-supplied `options.provider_config` is stripped at create time.
+- Worker emits `conversation.thread_bound/_broken/_rebound` with a **flat** top-level `thread_ref` (chat URL only) — the gateway `WorkerConsumer` reads `data.thread_ref` non-recursively; keep any new emitter flat.
+- Next roadmap slices (not started): provider expansion (Kimi/Minimax/Claude activation), automatic provider fallback/routing, mobile push alerting.
+- Follow-ups: promote the dashboard `/conversations` page into the sidebar nav (requires updating the §24.2 17-page inventory + the e2e count); add typed `model_settings` to gRPC/proto if a typed non-HTTP surface is wanted.
+
+Host note: bare `python` on the current Windows host resolves to a broken Store alias stub; use `C:\Users\Admin\AppData\Local\Python\bin\python.exe` with `PYTHONPATH="apps/worker;adapters/mock"`. The single gateway test `TestProcessWorkerRunnerRunsPythonWorkerFromGatewayEnvelope` fails only for this alias reason.
 
 ## Current Product Phase
 
