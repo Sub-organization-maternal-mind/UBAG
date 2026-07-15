@@ -883,6 +883,56 @@ func workerConsumerEnabled() bool {
 	return value == "1" || value == "true" || value == "yes"
 }
 
+// workerDaemonEnabled reports whether jobs run through ONE long-lived worker
+// that keeps browser pages warm, instead of a worker spawned per job.
+//
+// Opt-in, and it stays that way: warm reuse changes how a live browser session
+// is driven for a radiology product, so being deployed must never be enough to
+// turn it on.
+func workerDaemonEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_WORKER_DAEMON")))
+	return value == "1" || value == "true" || value == "yes"
+}
+
+// buildWorkerRunner picks the per-job runner (default) or the warm-browser
+// daemon (UBAG_WORKER_DAEMON).
+func buildWorkerRunner(
+	python string,
+	script string,
+	maxRuntime time.Duration,
+	artifactStore artifacts.ArtifactStore,
+) (executor.WorkerRunner, error) {
+	if !workerDaemonEnabled() {
+		return executor.ProcessWorkerRunner{
+			Python:     python,
+			Script:     script,
+			MaxRuntime: maxRuntime,
+			Artifacts:  artifactStore,
+		}, nil
+	}
+
+	// The daemon has its own entrypoint. Refuse rather than fall back to the
+	// per-job script: that process exits after one job, so every job would
+	// restart it and warm reuse would look enabled while doing nothing.
+	daemonScript, err := resolveWorkerScriptPath(strings.TrimSpace(os.Getenv("UBAG_WORKER_DAEMON_SCRIPT")))
+	if err != nil {
+		return nil, fmt.Errorf("worker daemon script: %w", err)
+	}
+	if strings.TrimSpace(daemonScript) == "" {
+		return nil, fmt.Errorf(
+			"UBAG_WORKER_DAEMON is enabled but UBAG_WORKER_DAEMON_SCRIPT is not set " +
+				"(expected apps/worker/run_worker_daemon.py)")
+	}
+	slog.Warn("worker daemon enabled: browser pages are reused between jobs",
+		"script", daemonScript)
+	return &executor.DaemonWorkerRunner{
+		Python:     python,
+		Script:     daemonScript,
+		MaxRuntime: maxRuntime,
+		Artifacts:  artifactStore,
+	}, nil
+}
+
 func staleJobReaperEnabled() bool {
 	value := strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_JOB_REAPER_ENABLED")))
 	return value == "1" || value == "true" || value == "yes"
@@ -942,6 +992,10 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 	// the SAME rows /v1/browser/contexts reads — no longer masked by the
 	// deploy-time seed.
 	loginStateWriter, _ := topologyStore.(topology.LoginStateWriter)
+	runner, err := buildWorkerRunner(python, script, maxRuntime, artifactStore)
+	if err != nil {
+		return nil, err
+	}
 	return &executor.WorkerConsumer{
 		Queue:            queue,
 		Jobs:             jobs,
@@ -951,12 +1005,7 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 		Topology:         topologyIngestor,
 		LoginState:       loginStateWriter,
 		PollInterval:     pollInterval,
-		Runner: executor.ProcessWorkerRunner{
-			Python:     python,
-			Script:     script,
-			MaxRuntime: maxRuntime,
-			Artifacts:  artifactStore,
-		},
+		Runner:           runner,
 	}, nil
 }
 
