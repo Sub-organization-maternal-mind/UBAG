@@ -164,16 +164,36 @@ class TestLiveDriverOpenIsIdempotent:
 
         assert driver._page is live_page
 
-    def test_open_proceeds_normally_when_the_page_is_closed(self):
-        """A closed page must NOT be treated as live -- otherwise a crashed tab
-        would be silently reused forever."""
+    def test_a_closed_page_is_not_treated_as_live(self):
+        """A crashed/closed tab must not be reused forever -- the guard has to let
+        open() rebuild it.
+
+        Asserts the guard predicate rather than open()'s exception: which error
+        open() raises depends on whether Playwright happens to be installed, so
+        an exception-based test passes locally and fails on CI for reasons that
+        have nothing to do with this behaviour.
+        """
         driver = PlaywrightPageDriver()
         driver._page = _StubPage(closed=True)
 
-        # Reaching the real path raises ValueError on the empty profile, which is
-        # exactly how we know the guard did not short-circuit.
-        with pytest.raises(ValueError):
-            driver.open(target_url="https://example.test", user_data_dir="", headless=True)
+        assert driver._page_is_live() is False
+
+    def test_a_missing_page_is_not_treated_as_live(self):
+        driver = PlaywrightPageDriver()
+
+        assert driver._page_is_live() is False
+
+    def test_an_unqueryable_page_is_not_treated_as_live(self):
+        """A page whose CDP call throws is a corpse, not a warm page."""
+
+        class _DeadPage:
+            def is_closed(self):
+                raise RuntimeError("connection lost")
+
+        driver = PlaywrightPageDriver()
+        driver._page = _DeadPage()
+
+        assert driver._page_is_live() is False
 
 
 class TestDriftIsFailLoudNotWrongPatient:
