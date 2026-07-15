@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sys
 import unittest
@@ -94,6 +95,90 @@ class MockAdapterTests(unittest.TestCase):
                             }
                         }
                     )
+
+    def test_mock_emits_thread_bound_for_new_conversation(self):
+        # A conversation key with no bound thread_ref must emit a single
+        # deterministic conversation.thread_bound whose URL is derived from the
+        # conversation key via sha256 (matching the existing id idiom).
+        payload = {
+            "api_version": "v0",
+            "job": {
+                "target": "mock",
+                "command_type": "mock.complete",
+                "input": {"prompt": "hello"},
+                "conversation_id": "conv-123",
+            },
+            "conversation": {"key": "conv-123", "thread_ref": "", "on_missing": "fail"},
+        }
+
+        events = build_mock_events(payload)
+        bound = [event for event in events if event["type"] == "conversation.thread_bound"]
+
+        self.assertEqual(len(bound), 1)
+        expected_url = (
+            "https://mock.local/chat/"
+            + hashlib.sha256(b"conversation:conv-123").hexdigest()[:16]
+        )
+        # Flat top-level thread_ref, matching the gateway consumer (which reads
+        # data.thread_ref non-recursively) and the live engine's emit shape.
+        self.assertEqual(bound[0]["data"]["thread_ref"], expected_url)
+        # The lifecycle terminal event is still completed.
+        self.assertEqual(events[-1]["type"], "completed")
+        # Still fully deterministic across identical payloads.
+        self.assertEqual(build_mock_events(json.loads(json.dumps(payload))), events)
+
+    def test_mock_resumes_bound_thread_without_rebinding(self):
+        # A payload that already carries a thread_ref is a resume: it must NOT
+        # emit conversation.thread_bound again.
+        payload = {
+            "api_version": "v0",
+            "job": {
+                "target": "mock",
+                "command_type": "mock.complete",
+                "input": {"prompt": "continue the discussion"},
+                "conversation_id": "conv-123",
+            },
+            "conversation": {
+                "key": "conv-123",
+                "thread_ref": "https://mock.local/chat/already-bound",
+                "on_missing": "fail",
+            },
+        }
+
+        events = build_mock_events(payload)
+        bound = [event for event in events if event["type"] == "conversation.thread_bound"]
+
+        self.assertEqual(bound, [])
+        self.assertEqual(events[-1]["type"], "completed")
+
+    def test_mock_echoes_model_settings_in_completed_event(self):
+        # model_settings arrive as the flat options.provider_config map the
+        # gateway injects; the completed event echoes them so the whole path is
+        # CI-testable without a browser.
+        payload = {
+            "api_version": "v0",
+            "job": {
+                "target": "mock",
+                "command_type": "mock.complete",
+                "input": {"prompt": "hello"},
+                "options": {
+                    "provider_config": {
+                        "model": "mock-deep",
+                        "thinking": "extended",
+                        "deepthink": True,
+                    }
+                },
+            },
+        }
+
+        events = build_mock_events(payload)
+        completed = events[-1]
+
+        self.assertEqual(completed["type"], "completed")
+        self.assertEqual(
+            completed["data"]["metadata"]["model_settings"],
+            {"model": "mock-deep", "thinking": "extended", "deepthink": True},
+        )
 
 
 if __name__ == "__main__":

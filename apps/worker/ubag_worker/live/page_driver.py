@@ -188,6 +188,31 @@ class PageDriver(ABC):
         """
         return False
 
+    def current_thread_url(self, selectors: ProviderSelectors) -> str:
+        """Return the canonical provider chat-thread URL for the current page.
+
+        Conversation affinity binds a caller-owned conversation key to this URL so
+        a later job can resume the same chat. Concrete (NOT abstract) so existing
+        drivers keep working: the base cannot know a real URL, so it returns ``""``
+        ("no bindable thread"), which the engine treats as "emit no binding".
+
+        A chat URL ONLY — never cookies, storage state, session ids, or noVNC URLs.
+        """
+        return ""
+
+    def resume_thread(self, selectors: ProviderSelectors, thread_ref: str) -> bool:
+        """Navigate to a previously-bound chat thread and confirm it loaded.
+
+        Concrete (NOT abstract) so existing drivers keep working. Best-effort,
+        mirroring :meth:`start_new_chat`'s posture: returns ``True`` only when the
+        thread URL settled AND a prior conversation turn is present
+        (:meth:`response_container_present`); returns ``False`` when it cannot
+        confirm the thread. It NEVER raises ``DriftDetectedError`` — a vanished or
+        renamed thread must not fail the job here; the engine decides fail vs.
+        restart based on ``on_missing``. The base has no page, so it cannot resume.
+        """
+        return False
+
     def response_container_present(self, selectors: ProviderSelectors) -> bool:
         """True when a prior conversation turn is visible on the page.
 
@@ -290,11 +315,17 @@ class MockPageDriver(PageDriver):
     response_container_visible: bool = False
     # Simulates a dead/broken page: the probe raises instead of answering.
     explode_on_probe: bool = False
+    # Conversation affinity: the canonical chat-thread URL current_thread_url
+    # reports (settable fake), and whether a resume_thread navigation is confirmed
+    # as loaded (the live driver checks URL-settled + response_container_present).
+    thread_url: str = ""
+    resume_succeeds: bool = True
     opened: bool = field(default=False, init=False)
     closed: bool = field(default=False, init=False)
     submitted_prompt: Optional[str] = field(default=None, init=False)
     attached_files: List[str] = field(default_factory=list, init=False)
     started_new_chat: bool = field(default=False, init=False)
+    resumed_thread_ref: Optional[str] = field(default=None, init=False)
     ensured_settings: List[Mapping[str, object]] = field(default_factory=list, init=False)
     _url: str = field(default="about:blank", init=False)
 
@@ -396,6 +427,21 @@ class MockPageDriver(PageDriver):
         self._guard_drift(selectors.new_chat.name, selectors.selector_version)
         self.started_new_chat = True
         return True
+
+    def current_thread_url(self, selectors: ProviderSelectors) -> str:
+        return self.thread_url
+
+    def resume_thread(self, selectors: ProviderSelectors, thread_ref: str) -> bool:
+        # Model a navigation: the page URL settles on the bound thread. Whether the
+        # thread is confirmed loaded is scripted via ``resume_succeeds`` (the live
+        # driver checks URL-settled + response_container_present). Never raises, so
+        # a scripted "gone" thread is reported as unresumable rather than failing.
+        self.resumed_thread_ref = thread_ref
+        self._url = thread_ref
+        if self.resume_succeeds and thread_ref:
+            self.thread_url = thread_ref
+            return True
+        return False
 
     def ensure_provider_config(
         self,
@@ -645,6 +691,36 @@ class PlaywrightPageDriver(PageDriver):
 
     def current_url(self) -> str:  # pragma: no cover - requires real browser
         return self._page.url if self._page else ""
+
+    def current_thread_url(self, selectors: ProviderSelectors) -> str:  # pragma: no cover - requires real browser
+        # The provider's own chat URL is the thread ref. It is a plain page URL —
+        # no cookies, storage state, session ids, or noVNC URLs are ever exposed.
+        return self._page.url if self._page else ""
+
+    def resume_thread(self, selectors: ProviderSelectors, thread_ref: str) -> bool:  # pragma: no cover - requires real browser
+        # Navigate to the bound chat and confirm it actually loaded. Best-effort,
+        # mirroring start_new_chat: any failure to confirm returns False (the
+        # engine then decides fail vs. restart). Never raises DriftDetectedError.
+        if not thread_ref:
+            return False
+        try:
+            self._page.goto(thread_ref, wait_until="domcontentloaded")
+            self._page.wait_for_timeout(800)
+        except Exception:  # noqa: BLE001 - a thread that will not load is unresumable
+            return False
+        # URL settled: the page committed a navigation to a non-empty URL.
+        try:
+            if not self._page.url:
+                return False
+        except Exception:  # noqa: BLE001 - a page we cannot query is not resumable
+            return False
+        # Prior conversation turn present. response_container_present never raises:
+        # a drifted/absent container reads False, so we report unresumable here
+        # rather than failing the job — the later read is what fails loudly.
+        try:
+            return self.response_container_present(selectors)
+        except Exception:  # noqa: BLE001 - best-effort; never raise from resume
+            return False
 
     # -- selector helpers ------------------------------------------------
     def _first_visible(self, group, *, timeout_ms: int = 4000):  # pragma: no cover

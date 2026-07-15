@@ -18,7 +18,11 @@ Design constraints (see UBAG_World_Class_Blueprint_v2.md §13):
 
 from __future__ import annotations
 
-from .engine import LiveSessionEngine, LiveSessionError
+from .engine import (
+    ConversationThreadNotFoundError,
+    LiveSessionEngine,
+    LiveSessionError,
+)
 from .orchestrator import ConcurrencyState, LiveLease, LiveOrchestrator
 from .page_driver import (
     DriftDetectedError,
@@ -40,6 +44,7 @@ from .selectors import (
 
 __all__ = [
     "ConcurrencyState",
+    "ConversationThreadNotFoundError",
     "DriftDetectedError",
     "LiveLease",
     "LiveOrchestrator",

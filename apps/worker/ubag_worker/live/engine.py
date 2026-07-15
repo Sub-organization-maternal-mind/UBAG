@@ -26,7 +26,15 @@ from typing import TYPE_CHECKING, Any, Iterator, List, Mapping, Optional
 # Reuse the canonical secret-material guard so the live path rejects exactly the
 # same disallowed credential/cookie/token material as the registry & mock paths.
 from ..adapter_registry import _contains_disallowed_secret_material  # noqa: E402
-from .events import JsonObject, canonical_json, digest, worker_event
+from .events import (
+    CONVERSATION_THREAD_BOUND_EVENT_TYPE,
+    CONVERSATION_THREAD_BROKEN_EVENT_TYPE,
+    CONVERSATION_THREAD_REBOUND_EVENT_TYPE,
+    JsonObject,
+    canonical_json,
+    digest,
+    worker_event,
+)
 from .page_driver import (
     AUTHENTICATED,
     DriftDetectedError,
@@ -62,9 +70,39 @@ _DEFAULT_INTERACTION_ATTEMPTS = 3
 _CONCURRENCY_CHANGE_EVENT_TYPE = "concurrency.cap_changed"
 _TOPOLOGY_REPORT_EVENT_TYPE = "browser.topology_reported"
 
+# The single field a conversation.* event payload carries: the provider chat URL.
+# The gateway WorkerConsumer reads ONLY this field and forces every identity field
+# (tenant, app, target, conversation key) from the trusted job record — so a
+# thread event must carry the URL and nothing else (no cookies, storage state,
+# session ids, or noVNC URLs). It mirrors the ``thread_ref`` field the gateway
+# sends down in the dispatch envelope.
+_CONVERSATION_THREAD_REF_FIELD = "thread_ref"
+
 
 class LiveSessionError(ValueError):
     """Raised when a live job payload is invalid (e.g. carries secrets)."""
+
+
+class ConversationThreadNotFoundError(LiveSessionError):
+    """A bound provider chat thread could not be resumed and ``on_missing=fail``.
+
+    Carries the stable target error code and the pre-built (redacted, URL-only)
+    ``conversation.thread_broken`` telemetry event so :meth:`iter_events` can emit
+    it before the error propagates and the gateway marks the binding broken.
+
+    Subclasses :class:`LiveSessionError` so the interaction retry loop treats it as
+    a deterministic outcome (no browser retry) rather than a transient hiccup.
+    """
+
+    error_code = "UBAG-TARGET-CONVERSATION-NOT-FOUND-001"
+
+    def __init__(self, conversation_key: str, broken_event: Any) -> None:
+        super().__init__(
+            "bound provider chat thread for conversation %r could not be resumed "
+            "(%s)" % (conversation_key, self.error_code)
+        )
+        self.conversation_key = conversation_key
+        self.broken_event = broken_event
 
 
 class LiveSessionEngine:
@@ -282,6 +320,16 @@ class LiveSessionEngine:
             for event_type, data in (interaction["events"] if interaction else []):
                 yield emit(event_type, data)
 
+        except ConversationThreadNotFoundError as exc:
+            # The bound provider chat vanished and the caller chose "fail" (the
+            # default). Emit the redacted thread_broken telemetry (URL only) so the
+            # gateway marks the binding broken, then re-raise so the job fails with
+            # the stable UBAG-TARGET-CONVERSATION-NOT-FOUND-001 code. Not an AIMD
+            # provider-health signal — it is a caller/state error, so the ceiling
+            # is left untouched (orch_success stays True).
+            event_type, data = exc.broken_event
+            yield emit(event_type, data)
+            raise
         except DriftDetectedError as exc:
             # Selector drift is an adverse runtime signal — feed AIMD so the
             # ceiling backs off for the next job of this provider+identity.
@@ -374,7 +422,42 @@ class LiveSessionEngine:
         """
         events: List = []
 
-        if job.new_chat_enabled and self._selectors.new_chat is not None:
+        # Conversation affinity. Runs BEFORE start_new_chat. When the gateway
+        # injected no conversation block (conversations disabled, or the job
+        # carries none), ``conversation_key`` is None and every branch below is
+        # skipped, so the path stays byte-identical to the pre-feature behavior.
+        resumed = False
+        bind_after_response = False  # emit thread_bound with the captured chat URL
+        rebind_after_response = False  # emit thread_rebound with the captured URL
+        if job.conversation_key is not None:
+            thread_ref = job.conversation_thread_ref
+            if thread_ref:
+                # A bound thread exists: resume it so the end user keeps context.
+                resumed = driver.resume_thread(self._selectors, thread_ref)
+                if not resumed:
+                    if job.conversation_on_missing == "restart":
+                        # Opt-in self-healing: fall through to a fresh chat and
+                        # rebind the key to it after the response.
+                        rebind_after_response = True
+                    else:
+                        # Default posture: mark the binding broken and fail loudly
+                        # with a stable code. thread_broken carries ONLY the (now
+                        # dead) URL; the gateway forces every identity field from
+                        # the trusted job record.
+                        broken_event = (CONVERSATION_THREAD_BROKEN_EVENT_TYPE, {
+                            _CONVERSATION_THREAD_REF_FIELD: thread_ref,
+                        })
+                        raise ConversationThreadNotFoundError(
+                            job.conversation_key, broken_event
+                        )
+            else:
+                # First job for an unseen key: open a new chat below, then bind the
+                # key to the assigned chat URL after the response.
+                bind_after_response = True
+
+        # Skip start_new_chat when we resumed a bound thread — starting a new chat
+        # would discard exactly the context we just navigated back to.
+        if not resumed and job.new_chat_enabled and self._selectors.new_chat is not None:
             started_new_chat = driver.start_new_chat(self._selectors)
             events.append(("session.new_chat", {
                 "status": "new_chat" if started_new_chat else "new_chat_skipped",
@@ -458,6 +541,23 @@ class LiveSessionEngine:
                 "dom_signature": dom_signature,
             },
         }))
+
+        # Bind / rebind the conversation key AFTER the response, once the provider
+        # has assigned/settled the canonical chat URL. Best-effort like
+        # start_new_chat: with no bindable URL (base driver) nothing is emitted, so
+        # the store is never handed an empty ref. The event carries ONLY the URL.
+        if bind_after_response or rebind_after_response:
+            chat_url = driver.current_thread_url(self._selectors)
+            if chat_url:
+                event_type = (
+                    CONVERSATION_THREAD_REBOUND_EVENT_TYPE
+                    if rebind_after_response
+                    else CONVERSATION_THREAD_BOUND_EVENT_TYPE
+                )
+                events.append((event_type, {
+                    _CONVERSATION_THREAD_REF_FIELD: chat_url,
+                }))
+
         return {"events": events, "blocked": None}
 
 
@@ -480,6 +580,9 @@ class _NormalizedJob:
         "response_timeout_s",
         "tenant_id",
         "conversation_id",
+        "conversation_key",
+        "conversation_thread_ref",
+        "conversation_on_missing",
         "audio_artifact_key",
         "audio_local_path",
         "wait_for_artifacts",
@@ -530,6 +633,13 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
         or job_payload.get("conversation_id")
     )
 
+    # Conversation-affinity block, injected into the envelope by the gateway only
+    # when conversations are enabled and the job carries a conversation_id (see
+    # executor.go DispatchConversation). Absent -> today's path exactly.
+    conversation_key, conversation_thread_ref, conversation_on_missing = (
+        _conversation_binding(payload)
+    )
+
     # Optional audio-transcription inputs. ``audio_artifact_key`` names the job
     # artifact the caller uploaded; ``audio_local_path`` is the locally-materialized
     # file the worker runner/gateway resolved that key to (the engine never fetches
@@ -576,6 +686,9 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
         ),
         tenant_id=tenant_id,
         conversation_id=conversation_id,
+        conversation_key=conversation_key,
+        conversation_thread_ref=conversation_thread_ref,
+        conversation_on_missing=conversation_on_missing,
         audio_artifact_key=audio_artifact_key,
         audio_local_path=audio_local_path,
         wait_for_artifacts=wait_for_artifacts,
@@ -607,6 +720,33 @@ def _manual_context(payload: Mapping[str, Any]) -> Mapping[str, Any]:
             for key, value in candidate.items():
                 merged.setdefault(str(key), value)
     return merged
+
+
+def _conversation_binding(payload: Mapping[str, Any]) -> tuple:
+    """Extract the gateway's conversation-affinity block from the envelope.
+
+    Returns ``(key, thread_ref, on_missing)``:
+
+    * ``key`` is the caller-owned conversation key, or ``None`` when the gateway
+      injected no block (conversations disabled, or the job carries none). ``None``
+      means "conversation affinity is off for this job" — the today path exactly.
+    * ``thread_ref`` is the bound provider chat URL to resume, or ``None`` for an
+      unseen key (first job -> bind after the response).
+    * ``on_missing`` is ``"fail"`` (default) or ``"restart"``; any other value is
+      normalized to the safe default ``"fail"``.
+    """
+
+    block = payload.get("conversation")
+    if not isinstance(block, Mapping):
+        return None, None, "fail"
+    key = _optional_string(block.get("key"))
+    if key is None:
+        return None, None, "fail"
+    thread_ref = _optional_string(block.get("thread_ref"))
+    on_missing = str(block.get("on_missing") or "fail").strip().lower()
+    if on_missing not in ("fail", "restart"):
+        on_missing = "fail"
+    return key, thread_ref, on_missing
 
 
 def _resolve_user_data_dir(
@@ -768,6 +908,42 @@ def _float_or_default(value: Any, default: float) -> float:
         return default
 
 
+# Characters that could let a provider_config value break out of the Playwright
+# selector it is interpolated into via ``.format(value=desired)`` in
+# ``page_driver``: quotes, a closing paren, a backslash, or a newline.
+# Every resolved value is interpolated into a Playwright selector as
+# ``:has-text("{value}")`` (double-quoted). Only characters that break OUT of
+# that double-quoted string are dangerous: the double quote itself, a backslash
+# (CSS escape), and newlines. Parentheses, single quotes, and spaces are common
+# in real provider UI labels (e.g. ``2.5 Flash (Preview)``) and are safe inside
+# the quotes, so rejecting them would break legitimate operator env overrides on
+# the no-model-settings path.
+_PROVIDER_CONFIG_FORBIDDEN_CHARS = ('"', "\\", "\n", "\r")
+
+
+def _sanitize_provider_config_value(value: Any) -> Any:
+    """Reject provider_config values that could break a Playwright selector.
+
+    The gateway already validates ``model_settings`` against the target adapter's
+    catalog, but this is defense in depth: every resolved ``desired`` value is
+    interpolated into a selector template via ``.format(value=desired)`` in
+    ``page_driver``, so a value carrying a quote, closing paren, backslash, or
+    newline could alter the selector's meaning. Booleans (toggle settings) pass
+    through untouched; other non-string values are left as-is.
+    """
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        for char in _PROVIDER_CONFIG_FORBIDDEN_CHARS:
+            if char in value:
+                raise ValueError(
+                    "provider_config value contains a disallowed selector "
+                    "metacharacter: %r" % char
+                )
+    return value
+
+
 def _resolve_provider_config(
     provider_id: str, options: Mapping[str, Any]
 ) -> dict:
@@ -793,7 +969,7 @@ def _resolve_provider_config(
     opt = options.get("provider_config")
     if isinstance(opt, Mapping):
         config.update(opt)
-    return config
+    return {key: _sanitize_provider_config_value(val) for key, val in config.items()}
 
 
 def _flag(value: Any, default: bool) -> bool:
@@ -851,4 +1027,8 @@ def _interaction_attempts() -> int:
     return _DEFAULT_INTERACTION_ATTEMPTS
 
 
-__all__ = ["LiveSessionEngine", "LiveSessionError"]
+__all__ = [
+    "ConversationThreadNotFoundError",
+    "LiveSessionEngine",
+    "LiveSessionError",
+]

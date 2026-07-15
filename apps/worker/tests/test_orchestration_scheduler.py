@@ -109,6 +109,51 @@ class SchedulerTests(unittest.TestCase):
         busy.clear()
         self.assertEqual(sched.pick_next().job_id, "follow")
 
+    def test_same_conversation_key_runs_fifo(self):
+        # Two jobs on one conversation must never interleave (typing into the
+        # same chat concurrently would corrupt both) and must run in submission
+        # order — strict FIFO beats lane priority. j1 is submitted first at the
+        # lowest lane; j2 second at the highest. j1 must still run first.
+        clock = _FakeClock()
+        sched = WeightedScheduler(default_limit=5, clock=clock)
+        sched.submit(
+            ScheduledJob(job_id="j1", provider="p1", lane=Lane.BULK, conversation_id="conv")
+        )
+        sched.submit(
+            ScheduledJob(job_id="j2", provider="p1", lane=Lane.CRITICAL, conversation_id="conv")
+        )
+        first = sched.pick_next()
+        self.assertEqual(first.job_id, "j1")  # FIFO head wins over j2's higher lane
+        # j2 cannot dispatch while its conversation is in flight, even though a
+        # provider token is free (default_limit=5).
+        self.assertIsNone(sched.pick_next())
+        sched.complete(first)
+        self.assertEqual(sched.pick_next().job_id, "j2")
+
+    def test_distinct_conversation_keys_run_in_parallel(self):
+        # Serialization is per-conversation, not global: two different
+        # conversations on the same provider dispatch concurrently under the
+        # provider token cap, so throughput does not collapse to one-at-a-time.
+        clock = _FakeClock()
+        sched = WeightedScheduler(default_limit=5, clock=clock)
+        sched.submit(ScheduledJob(job_id="a", provider="p1", conversation_id="convA"))
+        sched.submit(ScheduledJob(job_id="b", provider="p1", conversation_id="convB"))
+        first = sched.pick_next()
+        second = sched.pick_next()
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        self.assertEqual({first.job_id, second.job_id}, {"a", "b"})
+
+    def test_jobs_without_conversation_key_are_unaffected(self):
+        # No conversation_id anywhere ⇒ today's scheduling exactly: pure lane
+        # order, both jobs dispatchable in parallel, no serialization applied.
+        clock = _FakeClock()
+        sched = WeightedScheduler(default_limit=5, clock=clock)
+        sched.submit(ScheduledJob(job_id="low", provider="p1", lane=Lane.LOW))
+        sched.submit(ScheduledJob(job_id="crit", provider="p1", lane=Lane.CRITICAL))
+        self.assertEqual(sched.pick_next().job_id, "crit")
+        self.assertEqual(sched.pick_next().job_id, "low")
+
 
 class BulkheadTests(unittest.TestCase):
     def _topology(self):

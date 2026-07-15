@@ -90,6 +90,9 @@ class _NormalizedJob:
     prompt: str
     tokens: List[str]
     result_text: str
+    model_settings: Dict[str, Any]
+    conversation_key: str
+    thread_ref: str
 
 
 class MockAdapter:
@@ -137,6 +140,31 @@ class MockAdapter:
             )
             sequence += 1
 
+        # A conversation key with no bound thread yet binds a fresh, deterministic
+        # chat URL. A payload that already carries a thread_ref is a resume and
+        # must NOT re-emit thread_bound. No conversation key ⇒ today's path exactly.
+        if job.conversation_key and not job.thread_ref:
+            # Flat top-level thread_ref: the gateway WorkerConsumer reads
+            # data.thread_ref non-recursively (stringFromEventData), and the live
+            # engine emits the same flat shape. Nesting it would make the bind
+            # persist an empty ref and silently break resume for the mock target.
+            yield _event(
+                job,
+                sequence,
+                "conversation.thread_bound",
+                "thread_bound",
+                {"thread_ref": _conversation_thread_url(job.conversation_key)},
+            )
+            sequence += 1
+
+        metadata: JsonObject = {
+            "adapter": self.name,
+            "adapter_version": self.version,
+            "token_count": len(job.tokens),
+        }
+        if job.model_settings:
+            metadata["model_settings"] = dict(job.model_settings)
+
         yield _event(
             job,
             sequence,
@@ -147,11 +175,7 @@ class MockAdapter:
                     "type": "text",
                     "text": job.result_text,
                 },
-                "metadata": {
-                    "adapter": self.name,
-                    "adapter_version": self.version,
-                    "token_count": len(job.tokens),
-                },
+                "metadata": metadata,
             },
         )
 
@@ -192,6 +216,8 @@ def _normalize_payload(payload: Mapping[str, Any]) -> _NormalizedJob:
     job_id = _derive_job_id(payload, job_payload)
     trace_id = _string_or_default(payload.get("trace_id"), "trace_" + _digest(job_id)[:16])
     tokens, result_text = _resolve_tokens(job_id, target, command_type, prompt, options)
+    model_settings = _extract_model_settings(options)
+    conversation_key, thread_ref = _extract_conversation(payload, job_payload)
 
     return _NormalizedJob(
         api_version=api_version,
@@ -202,7 +228,57 @@ def _normalize_payload(payload: Mapping[str, Any]) -> _NormalizedJob:
         prompt=prompt,
         tokens=tokens,
         result_text=result_text,
+        model_settings=model_settings,
+        conversation_key=conversation_key,
+        thread_ref=thread_ref,
     )
+
+
+def _extract_model_settings(options: Mapping[str, Any]) -> Dict[str, Any]:
+    """Read the validated model settings the gateway injects.
+
+    The gateway flattens ``job.model_settings`` into the worker envelope as
+    ``options.provider_config`` — a flat map keyed by the adapter's own setting
+    keys (e.g. ``model``/``thinking``/``mode``/``deepthink``). Reserved
+    ``_``-prefixed worker control keys (``_enabled``/``_new_chat``) never belong
+    in the echo, so they are dropped here as defense in depth.
+    """
+
+    provider_config = _mapping_or_empty(options.get("provider_config", {}))
+    return {
+        str(key): value
+        for key, value in provider_config.items()
+        if not str(key).startswith("_")
+    }
+
+
+def _extract_conversation(
+    payload: Mapping[str, Any], job_payload: Mapping[str, Any]
+) -> Tuple[str, str]:
+    """Resolve the conversation key and any already-bound thread ref.
+
+    The gateway injects a ``conversation: {key, thread_ref, on_missing}`` block
+    into the envelope; ``job.conversation_id`` is the public fallback for the
+    key. ``thread_ref`` is a provider chat URL only — never credentials.
+    """
+
+    conversation_key = ""
+    thread_ref = ""
+    conversation = payload.get("conversation")
+    if isinstance(conversation, Mapping):
+        conversation_key = _string_or_default(conversation.get("key"), "")
+        thread_ref = _string_or_default(conversation.get("thread_ref"), "")
+    if not conversation_key:
+        conversation_key = _string_or_default(
+            job_payload.get("conversation_id", payload.get("conversation_id")), ""
+        )
+    return conversation_key, thread_ref
+
+
+def _conversation_thread_url(conversation_key: str) -> str:
+    """Derive a deterministic mock chat URL from a conversation key (sha256)."""
+
+    return "https://mock.local/chat/" + _digest("conversation:" + conversation_key)[:16]
 
 
 def _event(

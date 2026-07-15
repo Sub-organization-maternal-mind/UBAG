@@ -67,6 +67,21 @@ def _types(events):
     return [event["type"] for event in events]
 
 
+def _payload_with_conversation(target, key, thread_ref=None, on_missing="fail", **context):
+    """Build a live payload carrying the gateway's conversation-affinity block.
+
+    Mirrors the worker envelope the gateway sends when conversations are enabled:
+    a top-level ``conversation: {key, thread_ref, on_missing}`` block. ``thread_ref``
+    is omitted for an unseen key (first job -> bind); present for a resume attempt.
+    """
+    payload = _payload(target, **context)
+    block = {"key": key, "on_missing": on_missing}
+    if thread_ref is not None:
+        block["thread_ref"] = thread_ref
+    payload["conversation"] = block
+    return payload
+
+
 class SelectorConfigTests(unittest.TestCase):
     def test_all_live_providers_have_selectors(self):
         # Every real provider is registered; the generic template ships as an
@@ -410,6 +425,169 @@ class LiveWebTemplateTests(unittest.TestCase):
         self.assertEqual(selectors.prompt_input.primary, "#acme-input")
         # Untouched groups still carry safe placeholder defaults.
         self.assertTrue(selectors.submit_button.candidates)
+
+
+def test_provider_config_value_with_selector_metacharacters_is_rejected():
+    from ubag_worker.live.engine import _sanitize_provider_config_value
+    import pytest
+    # Only characters that break out of the double-quoted has-text("{value}")
+    # context are rejected: the double quote, a backslash, and newlines.
+    for bad in ['bad"value', "bad\\value", "bad\nvalue", "bad\rvalue"]:
+        with pytest.raises(ValueError):
+            _sanitize_provider_config_value(bad)
+    # Parentheses and single quotes are common in real provider UI labels and
+    # are safe inside the double-quoted string, so they must be allowed.
+    assert _sanitize_provider_config_value("2.5 Flash (Preview)") == "2.5 Flash (Preview)"
+    assert _sanitize_provider_config_value("O'Reilly mode") == "O'Reilly mode"
+
+
+def test_provider_config_value_plain_label_is_allowed():
+    from ubag_worker.live.engine import _sanitize_provider_config_value
+    assert _sanitize_provider_config_value("2.5 Pro") == "2.5 Pro"
+    assert _sanitize_provider_config_value(True) is True
+
+
+# ---------------------------------------------------------------------------
+# Conversation affinity: resume / bind / restart (Task C2)
+# ---------------------------------------------------------------------------
+
+
+def test_resume_navigates_to_bound_thread_and_does_not_start_new_chat():
+    # A job carrying conversation.thread_ref must resume that chat, so the end
+    # user keeps their context, and must NOT click New chat.
+    engine = LiveSessionEngine(get_provider_selectors("chatgpt_web"))
+    driver = MockPageDriver(authenticated=True, response_text="ok")
+    payload = _payload_with_conversation(
+        "chatgpt_web", "conv_1", thread_ref="https://chatgpt.com/c/abc"
+    )
+
+    events = engine.run(payload, driver=driver)
+    types = _types(events)
+
+    assert driver.resumed_thread_ref == "https://chatgpt.com/c/abc"
+    assert driver.started_new_chat is False
+    assert "session.new_chat" not in types
+    # The thread is already bound: no (re)binding telemetry is emitted.
+    assert "conversation.thread_bound" not in types
+    assert "conversation.thread_rebound" not in types
+    assert "conversation.thread_broken" not in types
+    assert types[-1] == "completed"
+
+
+def test_new_conversation_emits_thread_bound_with_chat_url():
+    # First job for an unseen key: after the response, the canonical chat URL is
+    # captured and emitted as conversation.thread_bound.
+    engine = LiveSessionEngine(get_provider_selectors("chatgpt_web"))
+    driver = MockPageDriver(
+        authenticated=True,
+        response_text="ok",
+        thread_url="https://chatgpt.com/c/new-123",
+    )
+    payload = _payload_with_conversation("chatgpt_web", "conv_new")  # no thread_ref
+
+    events = engine.run(payload, driver=driver)
+    types = _types(events)
+
+    # Unseen key -> normal new chat; never attempted a resume.
+    assert "session.new_chat" in types
+    assert driver.resumed_thread_ref is None
+    bound = [e for e in events if e["type"] == "conversation.thread_bound"]
+    assert len(bound) == 1
+    assert bound[0]["data"] == {"thread_ref": "https://chatgpt.com/c/new-123"}
+    # Bound only AFTER the response, when the provider has assigned the chat URL.
+    assert types.index("conversation.thread_bound") > types.index("completed")
+
+
+def test_missing_thread_with_on_missing_fail_raises_conversation_not_found():
+    # Default posture: fail loudly with the stable code, mark the binding broken.
+    import pytest
+
+    engine = LiveSessionEngine(get_provider_selectors("chatgpt_web"))
+    driver = MockPageDriver(authenticated=True, resume_succeeds=False)
+    payload = _payload_with_conversation(
+        "chatgpt_web",
+        "conv_gone",
+        thread_ref="https://chatgpt.com/c/gone",
+        on_missing="fail",
+    )
+
+    collected = []
+    with pytest.raises(LiveSessionError) as excinfo:
+        for event in engine.iter_events(payload, driver=driver):
+            collected.append(event)
+
+    assert getattr(excinfo.value, "error_code", "") == "UBAG-TARGET-CONVERSATION-NOT-FOUND-001"
+    assert "UBAG-TARGET-CONVERSATION-NOT-FOUND-001" in str(excinfo.value)
+
+    types = [e["type"] for e in collected]
+    assert "conversation.thread_broken" in types
+    broken = [e for e in collected if e["type"] == "conversation.thread_broken"][0]
+    assert broken["data"] == {"thread_ref": "https://chatgpt.com/c/gone"}
+    # The binding failed BEFORE the prompt was submitted; the job never completes.
+    assert driver.submitted_prompt is None
+    assert "completed" not in types
+
+
+def test_missing_thread_with_on_missing_restart_opens_fresh_chat_and_rebinds():
+    # Opt-in self-healing: new chat + conversation.thread_rebound.
+    engine = LiveSessionEngine(get_provider_selectors("chatgpt_web"))
+    driver = MockPageDriver(
+        authenticated=True,
+        response_text="ok",
+        resume_succeeds=False,
+        thread_url="https://chatgpt.com/c/fresh-9",
+    )
+    payload = _payload_with_conversation(
+        "chatgpt_web",
+        "conv_heal",
+        thread_ref="https://chatgpt.com/c/gone",
+        on_missing="restart",
+    )
+
+    events = engine.run(payload, driver=driver)
+    types = _types(events)
+
+    # Resume was attempted and failed, so a fresh chat is opened instead.
+    assert driver.resumed_thread_ref == "https://chatgpt.com/c/gone"
+    assert driver.started_new_chat is True
+    assert "session.new_chat" in types
+    # The key is rebound to the fresh chat URL (rebound, not bound).
+    rebound = [e for e in events if e["type"] == "conversation.thread_rebound"]
+    assert len(rebound) == 1
+    assert rebound[0]["data"] == {"thread_ref": "https://chatgpt.com/c/fresh-9"}
+    assert "conversation.thread_bound" not in types
+    assert "conversation.thread_broken" not in types
+    assert types.index("conversation.thread_rebound") > types.index("completed")
+
+
+def test_thread_bound_payload_contains_only_the_url():
+    # Safe mode: never emit cookies, storage state, or noVNC URLs.
+    engine = LiveSessionEngine(get_provider_selectors("chatgpt_web"))
+    driver = MockPageDriver(
+        authenticated=True,
+        response_text="ok",
+        thread_url="https://chatgpt.com/c/only-url",
+    )
+    payload = _payload_with_conversation("chatgpt_web", "conv_redact")
+
+    events = engine.run(payload, driver=driver)
+    bound = [e for e in events if e["type"] == "conversation.thread_bound"][0]
+    data = bound["data"]
+
+    assert set(data.keys()) == {"thread_ref"}
+    assert data["thread_ref"] == "https://chatgpt.com/c/only-url"
+    for forbidden in (
+        "cookie",
+        "cookies",
+        "storage",
+        "storage_state",
+        "novnc",
+        "novnc_url",
+        "session",
+        "session_id",
+        "token",
+    ):
+        assert forbidden not in data
 
 
 if __name__ == "__main__":
