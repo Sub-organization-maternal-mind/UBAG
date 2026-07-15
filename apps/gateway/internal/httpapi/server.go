@@ -2453,6 +2453,14 @@ func buildJobResultEnvelope(job jobstore.Job) *JobResultEnvelope {
 // pays for the scan.
 const maxJobSignalEvents = 10000
 
+// jobSignalEventTail bounds how many of the most recent events deriveJobSignals
+// reads when a store supports jobstore.RecentEventLister. A terminal-failure
+// event and any pending manual-action prompt are always among the latest events
+// (a job stalled on sign-in is not streaming tokens), so this tail preserves the
+// signal reconstruction while turning an unbounded token-stream re-scan into a
+// bounded, indexed lookup on every status poll.
+const jobSignalEventTail = 256
+
 // jobSignals holds the last-error (class + message) and any pending
 // manual-action prompt reconstructed from a job's recorded worker events.
 type jobSignals struct {
@@ -2572,7 +2580,20 @@ func (s *Server) deriveJobSignals(ctx context.Context, job jobstore.Job) jobSign
 	case jobstore.StatusCompleted, jobstore.StatusCompletedWithWarnings:
 		return jobSignals{}
 	}
-	events, found, err := s.jobs.ListEvents(ctx, job.ID, 0, maxJobSignalEvents)
+	var (
+		events []jobstore.Event
+		found  bool
+		err    error
+	)
+	// Prefer the bounded tail scan when the store supports it (Postgres/SQLite/
+	// memory all do): a token-streaming job with thousands of recorded events is
+	// otherwise re-read from sequence 0 on every poll. Fall back to the full scan
+	// for any store that does not implement RecentEventLister.
+	if rl, ok := s.jobs.(jobstore.RecentEventLister); ok {
+		events, found, err = rl.RecentEvents(ctx, job.ID, jobSignalEventTail)
+	} else {
+		events, found, err = s.jobs.ListEvents(ctx, job.ID, 0, maxJobSignalEvents)
+	}
 	if err != nil || !found {
 		return jobSignals{}
 	}
@@ -2991,6 +3012,16 @@ func (s *Server) authorizeGatewayAction(w http.ResponseWriter, r *http.Request, 
 // store error is intentionally ignored so auditing cannot fail the gateway.
 func (s *Server) emitAuthorizationAudit(r *http.Request, principal authenticatedPrincipal, action, outcome string) {
 	if s == nil || s.audit == nil {
+		return
+	}
+	// High-frequency read authorizations (job:read status polling, browser:read,
+	// concurrency:read, audit:read, alerts:read) do not warrant a synchronous,
+	// Merkle-chained audit write on every request. That write serializes the
+	// hot path — a per-tenant advisory lock on Postgres, the single connection on
+	// the SQLite edge — for negligible audit value on a routine allowed read.
+	// Skip auditing *allowed* reads; every denial and every mutation is still
+	// recorded so the security-relevant trail is unaffected.
+	if outcome == "allow" && strings.HasSuffix(action, ":read") {
 		return
 	}
 	actor := principal.Subject

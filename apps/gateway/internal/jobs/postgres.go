@@ -488,6 +488,44 @@ LIMIT $3`, jobID, afterSequence, limit)
 	return events, true, rows.Err()
 }
 
+// RecentEvents returns the newest `limit` events for a job in ascending
+// sequence order, bounding the signal-reconstruction scan on hot status polls
+// (see jobs.RecentEventLister). The caller has already loaded the job, so this
+// skips the existence pre-check and reports found=true.
+func (p *PostgresStore) RecentEvents(ctx context.Context, jobID string, limit int) ([]Event, bool, error) {
+	if p == nil || p.db == nil {
+		return nil, false, fmt.Errorf("postgres job store is not configured")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := p.db.QueryContext(ctx, `
+SELECT id, job_id, api_version, type, sequence, data_json, trace_id, created_at
+FROM gateway_job_events
+WHERE job_id = $1
+ORDER BY sequence DESC
+LIMIT $2`, jobID, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	events := []Event{}
+	for rows.Next() {
+		var event Event
+		var data []byte
+		if err := rows.Scan(&event.ID, &event.JobID, &event.APIVersion, &event.Type, &event.Sequence, &data, &event.TraceID, &event.CreatedAt); err != nil {
+			return nil, false, err
+		}
+		event.Data = decodeMap(data)
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	reverseEvents(events)
+	return events, true, nil
+}
+
 func (p *PostgresStore) getJobForUpdate(ctx context.Context, tx *sql.Tx, id string) (Job, int, bool, error) {
 	row := tx.QueryRowContext(ctx, selectJobSQL()+` WHERE id = $1 FOR UPDATE`, id)
 	job, sequence, found, err := scanJobWithSequence(row)

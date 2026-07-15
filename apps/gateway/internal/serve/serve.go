@@ -19,6 +19,7 @@ import (
 
 	"github.com/improbable-eng/grpc-web/go/grpcweb"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/ubag/ubag/apps/gateway/internal/abac"
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/audit"
@@ -182,6 +183,7 @@ func Run(ctx context.Context) error {
 		KillSwitch:        enterprise.killSwitch,
 		MFA:               enterprise.mfaService,
 		JITAdmin:          enterprise.jitAdmin,
+		ABACEnforcer:      enterprise.abacEnforcer,
 	})
 
 	if workerConsumerEnabled() {
@@ -518,6 +520,11 @@ type enterpriseStores struct {
 	topology         topology.Store
 	concurrency      *topology.ConcurrencyRegistry
 
+	// abacEnforcer is nil unless an operator supplies UBAG_ABAC_BUNDLE. Nil means
+	// the HTTP server skips ABAC entirely, so wiring it in is an exact no-op for
+	// existing callers (RBAC remains the only gate).
+	abacEnforcer *abac.Enforcer
+
 	// Phase 9 — multi-region and enterprise auth (gated on GeoReplication=On or env override)
 	regionRegistry *region.Registry
 	regionRouter   *region.Router
@@ -767,6 +774,24 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 	// worker-event ingestion path and never mutated via HTTP.
 	out.concurrency = topology.NewConcurrencyRegistry()
 
+	// ABAC policy bundle (opt-in). The enforcer stays nil unless an operator
+	// supplies a bundle, so activating this machinery cannot deny any request
+	// that RBAC already allows — critical because a mis-scoped rule would 403
+	// job:create and silently kill BOTH failover providers. A malformed bundle
+	// fails startup loudly rather than booting silently unenforced.
+	if path := strings.TrimSpace(os.Getenv("UBAG_ABAC_BUNDLE")); path != "" {
+		bundle, err := abac.LoadBundleFromFile(path)
+		if err != nil {
+			return enterpriseStores{}, fmt.Errorf("abac bundle: %w", err)
+		}
+		enforcer, err := abac.NewEnforcer(bundle)
+		if err != nil {
+			return enterpriseStores{}, fmt.Errorf("abac enforcer: %w", err)
+		}
+		out.abacEnforcer = enforcer
+		slog.Info("abac policy bundle loaded", "path", path, "rules", len(bundle.Rules))
+	}
+
 	// Phase 9 — resolve the deployment profile to gate region and auth components.
 	prof, _ := profile.ParseOrDefault(os.Getenv("UBAG_PROFILE"))
 	feat := prof.Features()
@@ -858,6 +883,56 @@ func workerConsumerEnabled() bool {
 	return value == "1" || value == "true" || value == "yes"
 }
 
+// workerDaemonEnabled reports whether jobs run through ONE long-lived worker
+// that keeps browser pages warm, instead of a worker spawned per job.
+//
+// Opt-in, and it stays that way: warm reuse changes how a live browser session
+// is driven for a radiology product, so being deployed must never be enough to
+// turn it on.
+func workerDaemonEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_WORKER_DAEMON")))
+	return value == "1" || value == "true" || value == "yes"
+}
+
+// buildWorkerRunner picks the per-job runner (default) or the warm-browser
+// daemon (UBAG_WORKER_DAEMON).
+func buildWorkerRunner(
+	python string,
+	script string,
+	maxRuntime time.Duration,
+	artifactStore artifacts.ArtifactStore,
+) (executor.WorkerRunner, error) {
+	if !workerDaemonEnabled() {
+		return executor.ProcessWorkerRunner{
+			Python:     python,
+			Script:     script,
+			MaxRuntime: maxRuntime,
+			Artifacts:  artifactStore,
+		}, nil
+	}
+
+	// The daemon has its own entrypoint. Refuse rather than fall back to the
+	// per-job script: that process exits after one job, so every job would
+	// restart it and warm reuse would look enabled while doing nothing.
+	daemonScript, err := resolveWorkerScriptPath(strings.TrimSpace(os.Getenv("UBAG_WORKER_DAEMON_SCRIPT")))
+	if err != nil {
+		return nil, fmt.Errorf("worker daemon script: %w", err)
+	}
+	if strings.TrimSpace(daemonScript) == "" {
+		return nil, fmt.Errorf(
+			"UBAG_WORKER_DAEMON is enabled but UBAG_WORKER_DAEMON_SCRIPT is not set " +
+				"(expected apps/worker/run_worker_daemon.py)")
+	}
+	slog.Warn("worker daemon enabled: browser pages are reused between jobs",
+		"script", daemonScript)
+	return &executor.DaemonWorkerRunner{
+		Python:     python,
+		Script:     daemonScript,
+		MaxRuntime: maxRuntime,
+		Artifacts:  artifactStore,
+	}, nil
+}
+
 func staleJobReaperEnabled() bool {
 	value := strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_JOB_REAPER_ENABLED")))
 	return value == "1" || value == "true" || value == "yes"
@@ -917,6 +992,10 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 	// the SAME rows /v1/browser/contexts reads — no longer masked by the
 	// deploy-time seed.
 	loginStateWriter, _ := topologyStore.(topology.LoginStateWriter)
+	runner, err := buildWorkerRunner(python, script, maxRuntime, artifactStore)
+	if err != nil {
+		return nil, err
+	}
 	return &executor.WorkerConsumer{
 		Queue:            queue,
 		Jobs:             jobs,
@@ -926,12 +1005,7 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 		Topology:         topologyIngestor,
 		LoginState:       loginStateWriter,
 		PollInterval:     pollInterval,
-		Runner: executor.ProcessWorkerRunner{
-			Python:     python,
-			Script:     script,
-			MaxRuntime: maxRuntime,
-			Artifacts:  artifactStore,
-		},
+		Runner:           runner,
 	}, nil
 }
 
@@ -1041,6 +1115,16 @@ func workerQueueFromEnv(dispatcher executor.Dispatcher, maxRuntime time.Duration
 		ackWait, err := durationFromMillisEnv("UBAG_NATS_WORKER_ACK_WAIT_MS", ackDefault)
 		if err != nil {
 			return nil, err
+		}
+		// Hard invariant, not operator discipline: an ack wait at or below the
+		// worker's max runtime lets JetStream redeliver a message while the job is
+		// STILL RUNNING. A second worker would then drive the SAME shared browser
+		// profile — generating the report twice and risking interleaved/cross-patient
+		// output. Refuse to start rather than allow duplicate in-flight execution.
+		if ackWait <= maxRuntime {
+			return nil, fmt.Errorf(
+				"UBAG_NATS_WORKER_ACK_WAIT_MS (%s) must be greater than UBAG_WORKER_MAX_RUNTIME_MS (%s): a shorter ack wait causes JetStream to redeliver and duplicate still-running jobs",
+				ackWait, maxRuntime)
 		}
 		nakDelay, err := durationFromMillisEnv("UBAG_NATS_WORKER_NAK_DELAY_MS", time.Second)
 		if err != nil {

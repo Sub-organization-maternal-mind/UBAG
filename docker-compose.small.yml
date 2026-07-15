@@ -6,11 +6,13 @@ services:
       context: .
       dockerfile: deploy/small/gateway.Dockerfile
     image: ${UBAG_GATEWAY_IMAGE:-ubag/gateway:small-local}
-    cpus: "1.0"
-    mem_limit: 1g
+    cpus: "3.0"
+    mem_limit: 2g
     restart: unless-stopped
     environment:
       UBAG_GATEWAY_ADDR: ":8080"
+      GOMAXPROCS: "3"
+      GOMEMLIMIT: "1800MiB"
       UBAG_APP_SECRET: ${UBAG_APP_SECRET:?Set UBAG_APP_SECRET in deploy/small/env.local}
       UBAG_API_VERSION: ${UBAG_API_VERSION:-2026-05-22}
       UBAG_GATEWAY_VERSION: ${UBAG_GATEWAY_VERSION:-0.0.0-small}
@@ -28,7 +30,11 @@ services:
       UBAG_NATS_STREAM: ${UBAG_NATS_STREAM:-UBAG_JOBS}
       UBAG_NATS_SUBJECT: ${UBAG_NATS_SUBJECT:-ubag.jobs}
       UBAG_NATS_WORKER_DURABLE: ${UBAG_NATS_WORKER_DURABLE:-ubag-worker}
-      UBAG_NATS_WORKER_ACK_WAIT_MS: ${UBAG_NATS_WORKER_ACK_WAIT_MS:-35000}
+      # Leave empty so the gateway derives ack-wait from UBAG_WORKER_MAX_RUNTIME_MS
+      # (+5s). A hardcoded default here silently overrode that and, with a longer
+      # worker runtime, would let JetStream redeliver a still-running job and
+      # duplicate it. Startup now refuses any ack-wait <= max runtime.
+      UBAG_NATS_WORKER_ACK_WAIT_MS: ${UBAG_NATS_WORKER_ACK_WAIT_MS:-}
       UBAG_NATS_WORKER_NAK_DELAY_MS: ${UBAG_NATS_WORKER_NAK_DELAY_MS:-1000}
       UBAG_NATS_WORKER_FETCH_WAIT_MS: ${UBAG_NATS_WORKER_FETCH_WAIT_MS:-500}
       UBAG_NATS_WORKER_MAX_DELIVER: ${UBAG_NATS_WORKER_MAX_DELIVER:-5}
@@ -43,6 +49,12 @@ services:
       UBAG_WORKER_SCRIPT: ${UBAG_WORKER_SCRIPT:-/app/apps/worker/run_mock_worker.py}
       UBAG_WORKER_POLL_INTERVAL_MS: ${UBAG_WORKER_POLL_INTERVAL_MS:-500}
       UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-120000}
+      # Opt-in stale-job reaper: times out jobs stuck non-terminal (crashed
+      # worker) and releases their concurrency-lane token. Default MaxLifetime is
+      # idle-time since last update — a progressing job is never reaped.
+      UBAG_JOB_REAPER_ENABLED: ${UBAG_JOB_REAPER_ENABLED:-false}
+      UBAG_JOB_MAX_LIFETIME_SECONDS: ${UBAG_JOB_MAX_LIFETIME_SECONDS:-3600}
+      UBAG_JOB_REAPER_INTERVAL_SECONDS: ${UBAG_JOB_REAPER_INTERVAL_SECONDS:-60}
       # Live-browser bridge: when the "live-browser" profile is up, point the
       # worker at the shared Chromium (CDP) so live jobs reuse the user-owned,
       # manually-logged-in profile instead of launching a throwaway browser.

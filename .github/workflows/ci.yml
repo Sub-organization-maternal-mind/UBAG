@@ -5,8 +5,10 @@
 name: ci
 
 on:
+  # perf/** is included because perf/latency-az deploys straight to prod via
+  # gateway-image.yml; without it, prod-bound commits were never linted or tested.
   push:
-    branches: [main, "feat/**", "release/**"]
+    branches: [main, "feat/**", "release/**", "perf/**"]
   pull_request:
     branches: [main]
 
