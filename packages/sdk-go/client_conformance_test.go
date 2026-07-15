@@ -273,6 +273,8 @@ func invokeScenario(t *testing.T, client *Client, scenario fixtureScenario) (JSO
 		return client.RetryJob(ctx, jobID, request.Body, options...)
 	case request.Method == http.MethodPost && parsed.Path == "/v1/webhooks/replay":
 		return client.ReplayWebhookDelivery(ctx, request.Body, options...)
+	case request.Method == http.MethodGet && parsed.Path == "/v1/conversations":
+		return client.ListConversations(ctx, listConversationsParamsFromQuery(parsed.Query()), options...)
 	case request.Method == http.MethodGet && parsed.Path == "/v1/alerts":
 		return client.ListAlerts(ctx, listAlertsParamsFromQuery(parsed.Query()), options...)
 	case request.Method == http.MethodGet && parsed.Path == "/v1/alerts/config":
@@ -357,6 +359,13 @@ func listAlertsParamsFromQuery(query url.Values) ListAlertsParams {
 	return ListAlertsParams{
 		Limit:  limit,
 		Status: query.Get("status"),
+	}
+}
+
+func listConversationsParamsFromQuery(query url.Values) ListConversationsParams {
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	return ListConversationsParams{
+		Limit: limit,
 	}
 }
 

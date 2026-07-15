@@ -26,6 +26,15 @@ export type UbagJobPriority = "low" | "normal" | "high" | "urgent" | (string & {
 export type UbagReturnMode = "accepted" | "final" | "stream" | (string & {});
 export type UbagRetryPolicy = "none" | "default" | "aggressive" | (string & {});
 export type UbagCachePolicy = "none" | "semantic_30d" | (string & {});
+export type UbagConversationMissing = "fail" | "restart" | (string & {});
+
+/**
+ * Per-job provider UI settings, keyed by the target adapter's own setting keys.
+ * Discover the available keys and values from the adapter's model_catalog via
+ * the adapters endpoint — they differ per provider (gemini_web: model,
+ * thinking; deepseek_web: mode, deepthink).
+ */
+export type UbagModelSettings = Record<string, string | boolean>;
 
 export interface UbagJobOptions {
   priority?: UbagJobPriority;
@@ -34,6 +43,7 @@ export interface UbagJobOptions {
   response_formats?: string[];
   retry_policy?: UbagRetryPolicy;
   cache_policy?: UbagCachePolicy;
+  conversation_missing?: UbagConversationMissing;
   trace_context?: string;
   [key: string]: UbagJsonValue | undefined;
 }
@@ -49,6 +59,7 @@ export interface UbagJobCommand {
   command_type: string;
   conversation_id?: string;
   template_id?: string;
+  model_settings?: UbagModelSettings | null;
   input: UbagJsonObject;
   options?: UbagJobOptions;
   callbacks?: UbagJobCallbacks;
@@ -321,6 +332,33 @@ export interface UbagAlertMutationResponse {
   kind: "alert" | (string & {});
   data: UbagAlert;
   trace_id: string;
+}
+
+export interface UbagListConversationsParams {
+  limit?: number;
+}
+
+/**
+ * Durable binding from a caller-owned conversation key to a provider chat
+ * thread, scoped to (tenant_id, app_id, target). provider_thread_ref is a
+ * provider chat URL only — never session or credential material.
+ */
+export interface UbagConversation {
+  tenant_id: string;
+  app_id: string;
+  target: string;
+  conversation_key: string;
+  provider_thread_ref?: string;
+  state: "active" | "broken" | (string & {});
+  created_at: string;
+  last_used_at: string;
+  last_job_id?: string;
+}
+
+export interface UbagConversationListResponse {
+  api_version: string;
+  conversations: UbagConversation[];
+  next_cursor: string | null;
 }
 
 /**

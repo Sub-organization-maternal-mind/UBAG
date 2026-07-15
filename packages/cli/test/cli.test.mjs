@@ -192,6 +192,66 @@ test('CLI rejects missing option values before consuming the next option', async
   );
 });
 
+test('create-job maps model/thinking/conversation flags onto the request body', async () => {
+  const requests = [];
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = Buffer.concat(chunks).toString('utf8');
+    requests.push({ method: request.method, url: request.url, body });
+
+    response.setHeader('content-type', 'application/json');
+    response.setHeader('connection', 'close');
+    if (request.url === '/v1/jobs' && request.method === 'POST') {
+      response.statusCode = 202;
+      response.end(JSON.stringify(jobResponse('queued')));
+      return;
+    }
+
+    response.statusCode = 404;
+    response.end(JSON.stringify({ error: { code: 'UBAG-VALIDATION-ROUTE-001', category: 'validation', message: 'not found', retryable: false, trace_id: 'trace_cli' } }));
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    await runCli([
+      'create-job',
+      '--target', 'mock',
+      '--prompt', 'hi',
+      '--model', 'mock-deep',
+      '--thinking', 'extended',
+      '--conversation', 'conv_cli_1',
+      '--conversation-missing', 'restart',
+      '--json'
+    ], baseUrl);
+    await runCli(['create-job', '--target', 'mock', '--prompt', 'hi', '--model', 'mock-fast', '--json'], baseUrl);
+    await runCli(['create-job', '--target', 'mock', '--prompt', 'hi', '--json'], baseUrl);
+
+    const withFlags = JSON.parse(requests[0].body);
+    assert.deepEqual(withFlags.job.model_settings, { model: 'mock-deep', thinking: 'extended' });
+    assert.equal(withFlags.job.conversation_id, 'conv_cli_1');
+    assert.equal(withFlags.job.options.conversation_missing, 'restart');
+
+    // A flat map: only the flags that were passed appear, and only under model_settings.
+    const onlyModel = JSON.parse(requests[1].body);
+    assert.deepEqual(onlyModel.job.model_settings, { model: 'mock-fast' });
+    assert.ok(!('conversation_id' in onlyModel.job), 'conversation_id must be absent when --conversation is omitted');
+
+    // Omitting every flag must leave each field absent, not an empty object/string.
+    const withoutFlags = JSON.parse(requests[2].body);
+    assert.ok(!('model_settings' in withoutFlags.job), 'model_settings must be absent when no model flags are passed');
+    assert.ok(!('conversation_id' in withoutFlags.job), 'conversation_id must be absent when --conversation is omitted');
+    assert.ok(
+      withoutFlags.job.options === undefined || !('conversation_missing' in withoutFlags.job.options),
+      'conversation_missing must be absent when --conversation-missing is omitted'
+    );
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 function runCli(args, baseUrl) {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [cliPath, '--base-url', baseUrl, ...args], {

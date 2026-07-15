@@ -25,6 +25,28 @@ export interface JobsResponse {
   next_cursor?: string;
 }
 
+// Conversation types — real gateway shape from GET /v1/conversations
+// (ConversationListResponse). A conversation is a durable binding from a
+// caller-owned conversation key to a provider chat thread. provider_thread_ref
+// is a chat URL only — never cookies, storage state, or credential material.
+export interface Conversation {
+  tenant_id: string;
+  app_id: string;
+  target: string;
+  conversation_key: string;
+  provider_thread_ref?: string;
+  state: 'active' | 'broken';
+  created_at: string;
+  last_used_at: string;
+  last_job_id?: string;
+}
+
+export interface ConversationsResponse {
+  api_version?: string;
+  conversations: Conversation[];
+  next_cursor?: string | null;
+}
+
 // Target types — real gateway shape from /v1/targets
 export interface Target {
   key: string;

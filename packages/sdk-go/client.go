@@ -140,6 +140,10 @@ type ListAlertsParams struct {
 	Status string
 }
 
+type ListConversationsParams struct {
+	Limit int
+}
+
 type ListBrowserInstancesParams struct {
 	Limit int
 	State string
@@ -313,6 +317,14 @@ func (client *Client) ReplayWebhookDelivery(ctx context.Context, request JSON, o
 
 func (client *Client) CacheStatus(ctx context.Context, options ...RequestOption) (JSON, error) {
 	return client.request(ctx, http.MethodGet, "/v1/cache", nil, client.resolveOptions(options...))
+}
+
+func (client *Client) ListConversations(ctx context.Context, params ListConversationsParams, options ...RequestOption) (JSON, error) {
+	pairs := make([][2]string, 0, 1)
+	if params.Limit > 0 {
+		pairs = append(pairs, [2]string{"limit", strconv.Itoa(params.Limit)})
+	}
+	return client.request(ctx, http.MethodGet, "/v1/conversations"+encodeQueryPairs(pairs), nil, client.resolveOptions(options...))
 }
 
 func (client *Client) ListAlerts(ctx context.Context, params ListAlertsParams, options ...RequestOption) (JSON, error) {

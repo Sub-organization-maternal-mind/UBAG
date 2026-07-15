@@ -85,6 +85,8 @@ const VALUE_OPTIONS = new Set([
   "client-app-id",
   "command-type",
   "content-type",
+  "conversation",
+  "conversation-missing",
   "cursor",
   "delivery-id",
   "context-id",
@@ -98,6 +100,7 @@ const VALUE_OPTIONS = new Set([
   "instance-id",
   "limit",
   "max-events",
+  "model",
   "options-json",
   "output",
   "payload",
@@ -111,6 +114,7 @@ const VALUE_OPTIONS = new Set([
   "status",
   "target",
   "tenant-id",
+  "thinking",
   "timeout-ms",
   "to-sequence",
   "until"
@@ -806,6 +810,23 @@ function buildCreateJobRequest(args: ParsedArgs, config: RuntimeConfig): UbagCre
     job.options = parseJsonObject(optionsJson, "options-json") as UbagJobOptions;
   }
 
+  const conversation = getOption(args, "conversation");
+  if (conversation !== undefined) {
+    job.conversation_id = conversation;
+  }
+
+  const modelSettings = buildModelSettings(args);
+  if (modelSettings !== undefined) {
+    (job as UbagJobCommand & { model_settings?: Record<string, string | boolean> }).model_settings = modelSettings;
+  }
+
+  const conversationMissing = getOption(args, "conversation-missing");
+  if (conversationMissing !== undefined) {
+    const options = (job.options ?? {}) as UbagJobOptions;
+    options.conversation_missing = conversationMissing;
+    job.options = options;
+  }
+
   const request: UbagCreateJobRequest = {
     api_version: config.apiVersion,
     client: {
@@ -821,6 +842,21 @@ function buildCreateJobRequest(args: ParsedArgs, config: RuntimeConfig): UbagCre
   }
 
   return request;
+}
+
+function buildModelSettings(args: ParsedArgs): Record<string, string | boolean> | undefined {
+  const settings: Record<string, string | boolean> = {};
+  const model = getOption(args, "model");
+  const thinking = getOption(args, "thinking");
+
+  if (model !== undefined) {
+    settings.model = model;
+  }
+  if (thinking !== undefined) {
+    settings.thinking = thinking;
+  }
+
+  return Object.keys(settings).length > 0 ? settings : undefined;
 }
 
 function buildListParams(args: ParsedArgs): UbagListJobsParams {
@@ -1381,6 +1417,10 @@ Options:
   --prompt <text>               Builds {"prompt": text} input.
   --input-json <json>           Job input object.
   --options-json <json>         Job options object.
+  --model <value>               Sets job.model_settings.model (provider setting key).
+  --thinking <value>            Sets job.model_settings.thinking (provider setting key).
+  --conversation <key>          Sets job.conversation_id to resume a provider chat thread.
+  --conversation-missing <mode> Sets job.options.conversation_missing (fail|restart).
   --payload <json>              Full create-job request envelope.
   --file <path|->               Full create-job request envelope from file or stdin.
   --idempotency-key <key>       Idempotency key for this create request.

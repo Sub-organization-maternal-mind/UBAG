@@ -17,6 +17,7 @@ import {
   type UbagCacheStatusResponse,
   type UbagCollectionResponse,
   type UbagConcurrencyListResponse,
+  type UbagConversationListResponse,
   type UbagCreateJobRequest,
   type UbagArtifactDownloadResponse,
   type UbagArtifactListResponse,
@@ -30,6 +31,7 @@ import {
   type UbagListBrowserInstancesParams,
   type UbagListBrowserTabsParams,
   type UbagListConcurrencyParams,
+  type UbagListConversationsParams,
   type UbagListEventsParams,
   type UbagListJobEventsParams,
   type UbagListJobsParams,
@@ -251,6 +253,13 @@ export class UbagClient {
 
   async cacheStatus(options: UbagRequestOptions = {}): Promise<UbagCacheStatusResponse> {
     return this.request("GET", "/v1/cache", options);
+  }
+
+  async listConversations(params: UbagListConversationsParams = {}, options: UbagRequestOptions = {}): Promise<UbagConversationListResponse> {
+    const query = new URLSearchParams();
+    addOptionalQuery(query, "limit", params.limit);
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request("GET", `/v1/conversations${suffix}`, options);
   }
 
   async listAlerts(params: UbagListAlertsParams = {}, options: UbagRequestOptions = {}): Promise<UbagAlertListResponse> {

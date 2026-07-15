@@ -37,6 +37,7 @@ const requiredEndpointIds = new Set([
   "audit.list.ok",
   "webhooks.list.ok",
   "events.list.ok",
+  "conversations.list.ok",
   "cache.status.ok",
   "metrics.get.ok",
   "jobs.create.accepted",

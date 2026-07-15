@@ -132,6 +132,7 @@ async function invokeScenario(client, scenario) {
   if (request.method === 'GET' && route === '/v1/audit') return client.listAuditEvents(listParamsFromSearch(parsed), options);
   if (request.method === 'GET' && route === '/v1/webhooks') return client.listWebhooks(listParamsFromSearch(parsed), options);
   if (request.method === 'GET' && route === '/v1/events') return client.listEvents(listParamsFromSearch(parsed), options);
+  if (request.method === 'GET' && route === '/v1/conversations') return client.listConversations(listParamsFromSearch(parsed), options);
   if (request.method === 'GET' && route === '/v1/cache') return client.cacheStatus(options);
   if (request.method === 'GET' && route === '/v1/metrics') {
     return { body: await client.getMetrics(options) };
