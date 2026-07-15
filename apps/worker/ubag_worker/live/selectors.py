@@ -420,12 +420,24 @@ GEMINI_WEB = ProviderSelectors(
     provider_id="gemini_web",
     display_name="Gemini Web",
     target_url="https://gemini.google.com/app",
-    selector_version="2026-06-29-controls-verified",
+    selector_version="2026-07-15-prompt-input-rebaselined",
+    # Re-baselined 2026-07-15 against live gemini.google.com/app. Gemini's
+    # composer is a Quill editor whose <rich-textarea> holds TWO contenteditable
+    # divs: the real composer (div.ql-editor, ~439x24) and an invisible
+    # 'div.ql-clipboard' paste shim (0x1). The old lead selector
+    # 'rich-textarea div[contenteditable=true]' matched BOTH, and _first_visible
+    # takes .first — which resolved to the never-visible clipboard shim and burned
+    # its full timeout before falling through, so a job whose composer had not yet
+    # settled (i.e. straight after ensure_provider_config, with no wait) reported
+    # prompt_input drift even though the composer was present and visible. Every
+    # candidate below matches the real composer ONLY (verified count=1).
     prompt_input=SelectorGroup(
         "prompt_input",
         (
-            "rich-textarea div[contenteditable='true']",
             "div.ql-editor[contenteditable='true']",
+            "rich-textarea div.ql-editor[contenteditable='true']",
+            "div[contenteditable='true'][aria-label*='Enter a prompt']",
+            "div[contenteditable='true'][data-placeholder='Ask Gemini']",
             "textarea[aria-label*='prompt']",
         ),
     ),
