@@ -30,19 +30,29 @@ Automatic provider fallback/routing; new provider adapters; mobile push notifica
 
 ## Contract changes (first, per repo rule)
 
+> **Revised 2026-07-15 after code verification.** Two items in this section were corrected once the implementation plan was researched against the code; the corrections are marked inline. See `docs/superpowers/plans/2026-07-15-orchestration-semantics.md` for the authoritative detail.
+
 `packages/shared-schemas/schemas/job-request.schema.json`:
 
-- New optional `job.model_settings` object: `{ model?: string, thinking?: string, extras?: object<string,string> }`. Omitted → the adapter's current operator defaults apply.
+- New optional `job.model_settings`: a **flat map keyed by the target adapter's own setting keys**, values `string | boolean` — e.g. `{"model": "3.5 Flash", "thinking": "Extended"}` for Gemini, `{"mode": "Expert", "deepthink": true}` for DeepSeek. Omitted → the adapter's current operator defaults apply.
+  - *Correction:* this section originally proposed `{ model?, thinking?, extras? }`. The code disproves that shape: DeepSeek has no `model` or `thinking` setting at all — its reasoning is a boolean **toggle** (`deepthink`) and its mode is a separate choice (`mode`). A fixed `model`/`thinking` abstraction would be false for DeepSeek and would need a per-provider translation table with no source of truth. Model labels are provider-specific regardless, so per-provider keys cost callers nothing and the catalog makes them discoverable.
 - The existing `job.conversation_id` field becomes honored as an opaque conversation key scoped to `(tenant, app_id, target)`.
 - New `job.options.conversation_missing`: `"fail"` (default) or `"restart"` — what to do when a bound thread no longer exists on the provider side.
 
 `packages/openapi`: mirrors the same fields on job creation and documents `GET /v1/conversations`.
 
-Stable error codes added: `conversation_not_found`, `conversation_broken`, `model_unavailable`, `mode_unavailable`.
+Stable error codes added — *correction:* the bare names originally listed here (`conversation_not_found` etc.) are invalid. `packages/shared-schemas/schemas/error.schema.json` pins `code` to `^UBAG-[A-Z0-9-]+-[0-9]{3}$` and its `category` enum is closed. The real codes, using existing categories only:
 
-Adapter manifests (`adapters/*/manifest.json`) gain a `model_catalog` block declaring supported `models`, `thinking` levels, and `extras` (name → allowed values). Real catalogs for `gemini_web` and `deepseek_web`; an empty catalog for `chatgpt_web` initially (the worker deliberately leaves the ChatGPT account default today); a synthetic catalog for `mock`. `pnpm test:adapter-registry` validates the block. Callers discover catalogs through the existing `/v1/targets` / `/v1/adapters` endpoints.
+| Code | Category |
+|---|---|
+| `UBAG-VALIDATION-MODEL-UNAVAILABLE-001` | `validation` |
+| `UBAG-VALIDATION-MODE-UNAVAILABLE-001` | `validation` |
+| `UBAG-TARGET-CONVERSATION-NOT-FOUND-001` | `target` |
+| `UBAG-TARGET-CONVERSATION-BROKEN-001` | `target` |
 
-The gateway validates `model_settings` against the target's catalog at job creation and fails fast with `model_unavailable` / `mode_unavailable`.
+Adapter manifests (`adapters/*/manifest.json`) gain a `model_catalog` block: `settings: { [settingKey]: { kind: "choice" | "toggle", values?: string[] } }`, keyed to match `ProviderSetting.key` in `selectors.py`. Catalogs ship only labels proven by the current selector baseline (Gemini `model: ["3.5 Flash"]`, `thinking: ["Standard", "Extended"]`; DeepSeek `mode: ["Expert"]`, `deepthink` toggle); expanding them requires live-DOM verification per the repo's selector-drift rule. `chatgpt_web` ships an empty catalog (the worker deliberately leaves the account default); `mock` ships a synthetic one. `pnpm test:adapter-registry` validates the block. Callers discover catalogs through the existing `/v1/targets` / `/v1/adapters` endpoints.
+
+The gateway validates `model_settings` against the target's catalog at job creation and fails fast. This is a **security control**, not only UX: the value is interpolated into a Playwright selector via `.format(value=desired)` in the worker's page driver.
 
 Conformance fixtures (`packages/conformance`) and the TypeScript/Go SDKs are updated in the same slice, gated by `check:contracts` and `check:sdk-freshness`.
 
@@ -50,23 +60,23 @@ Conformance fixtures (`packages/conformance`) and the TypeScript/Go SDKs are upd
 
 New package `apps/gateway/internal/conversations`, modeled on `apps/gateway/internal/alerts` (memory + SQLite + Postgres stores, nil-safe optional wiring):
 
-- Row: `tenant, app_id, target, conversation_key, provider_thread_ref (chat URL/ID), state (active|broken), created_at, last_used_at, last_job_id`.
-- Migrations: `migrations/postgres/0008_conversations.sql` and SQLite `0006_conversations.sql` (verify latest numbering at implementation time).
+- Row: `tenant, app_id, target, conversation_key, provider_thread_ref (chat URL/ID), state (active|broken), created_at, last_used_at, last_job_id`. `Bind` is an **upsert** on the full key — the engine retries an interaction up to 3×, so an append-only projection would duplicate.
+- Migrations — *correction:* the numbers guessed here were wrong, and `migrations/sqlite/` is the **edge** tier, not where a gateway table belongs. Actual: `migrations/postgres/0010_conversations.sql` (mandatory, since Postgres `Ready()` asserts schema via `to_regclass` and fails closed) plus package-owned SQLite DDL bootstrapped in `Ready()`, following the `alerts` package exactly.
 - Dispatch: when a job carries `conversation_id`, the gateway resolves it to a thread ref and injects it into the worker envelope through the existing executor dispatch boundary.
-- Ingestion: the worker emits `conversation.thread_bound` / `conversation.thread_broken` / `conversation.thread_rebound` events; the existing `WorkerConsumer` projects them into the store (same pattern as `browser.topology_reported`).
-- New read-only route `GET /v1/conversations` (tenant/app-scoped, paginated, `job:read` RBAC, nil-safe 501 when disabled).
-- Env flag, inert by default: `UBAG_CONVERSATIONS=off|memory|sqlite|postgres`. When `off`, `conversation_id` is accepted and ignored exactly as today.
+- Ingestion: the worker emits `conversation.thread_bound` / `conversation.thread_broken` / `conversation.thread_rebound` events; the existing `WorkerConsumer` intercepts them, forces the tenant from the job record, projects them into the store, and does **not** append them to the job's lifecycle event log — exactly the `browser.topology_reported` pattern. They are telemetry, so they are not added to the closed `type` enum in `job-event.schema.json`.
+- New read-only route `GET /v1/conversations` (tenant/app-scoped, paginated, `job:read` RBAC, nil-safe 501 when disabled). `job:read` is deliberate: the RBAC action surface has drifted across `httpapi`, `grpcapi`, and `packages/security/src/rbac.ts` with no generator, so a bespoke `conversations:read` would mean three hand-edits for no benefit — conversations are job metadata.
+- Env flag, inert by default — *correction:* `UBAG_CONVERSATIONS_ENABLED` (boolean, default `false`), matching the `UBAG_RATE_LIMIT_ENABLED` / `UBAG_CACHE_ENABLED` precedent. The store backend follows the existing `storeKind` thread (memory/sqlite/postgres) rather than a second enum, because that is how `alerts` already works. When disabled, `conversation_id` is accepted and ignored exactly as today.
 
 ## Worker / live engine
 
-- `apps/worker/ubag_worker/live/selectors.py`: `ProviderConfig` gains a `model_catalog` mapping catalog entry names onto the existing choice-setting machinery (menu selectors, `satisfied_when` verification, and the slow-reasoning flag that already lengthens response timeouts). A job's `model_settings` resolves to a per-job enforcement list; absent settings keep today's fixed defaults byte-identical.
+- **Model/mode selection needs no worker change** — *correction, verified 2026-07-15.* This section originally called for `ProviderConfig` to gain a `model_catalog`. There is no `ProviderConfig` class (the dataclasses are `ProviderSelectors` / `ProviderSetting`), and an override path **already exists**: `engine.py`'s `_resolve_provider_config` merges provider defaults < `UBAG_PROVIDER_CONFIG_<ID>` env JSON < `options.provider_config`, and `page_driver.ensure_provider_config` applies it at one line (`desired = overrides.get(setting.key, setting.desired)`). It was unreachable only because `job_options` is `additionalProperties: false` with no `provider_config` field, so no client could send it. The gateway therefore copies validated `model_settings` into the envelope's `options.provider_config`, and the worker works unchanged. The only worker hardening added is a value guard rejecting selector-breaking characters (defense in depth behind the gateway's catalog validation).
 - `apps/worker/ubag_worker/live/engine.py` conversation flow:
   - **Resume:** navigate to the thread URL and verify it loaded (URL pattern + provider response container present) before typing. On failure, follow `conversation_missing`: `fail` (default) returns stable `conversation_not_found` and emits `conversation.thread_broken`; `restart` opens a fresh chat, rebinds the key, and emits `conversation.thread_rebound`.
   - **New conversation:** after the first response, capture the canonical chat URL (providers rewrite the URL on first message) and emit `conversation.thread_bound`.
   - **Redaction rule:** thread refs are chat URLs only — never cookies, storage state, or noVNC URLs (same posture as the topology intercept).
 - `apps/worker/ubag_worker/orchestration/scheduler.py`: jobs sharing a conversation key run strictly FIFO; distinct conversations remain parallel under the existing AIMD channel caps.
 - `apps/worker/ubag_worker/live/events.py`: the three conversation event types.
-- The mock adapter honors `model_settings` and conversation binding deterministically so the entire path is CI-testable; live provider paths stay out of CI per existing ToS policy.
+- The mock adapter honors `model_settings` and conversation binding deterministically so the entire path is CI-testable; live provider paths stay out of CI per existing ToS policy. *Note:* the registry-dispatched mock is `adapters/mock/ubag_mock_adapter/adapter.py` (`run(payload)`); the similarly-named `apps/worker/ubag_worker/adapters/mock/adapter.py` is a different, unreachable class implementing a `TargetAdapter` Protocol.
 
 ## Error handling
 
