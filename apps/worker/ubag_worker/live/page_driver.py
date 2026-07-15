@@ -39,6 +39,10 @@ UNKNOWN = "unknown"
 # with no visible streaming indicator, so they need a wider window than a plain
 # reply to avoid latching a partial answer. Env-overridable for tuning.
 _REASONING_SETTLE_S = 4.0
+# Warm-reuse emptiness probe budget. A presence check on an already-loaded page,
+# so it is deliberately short; a false "absent" is caught downstream by drift
+# detection rather than by waiting longer here.
+_EMPTINESS_PROBE_MS = 1500
 
 
 @dataclass(frozen=True)
@@ -184,6 +188,51 @@ class PageDriver(ABC):
         """
         return False
 
+    def response_container_present(self, selectors: ProviderSelectors) -> bool:
+        """True when a prior conversation turn is visible on the page.
+
+        The warm-reuse emptiness probe. It deliberately reuses the already
+        drift-baselined ``response_container`` group rather than a purpose-made
+        turn/emptiness selector: ``ProviderSelectors`` declares no such group,
+        and a *guessed* one is the worst possible outcome here -- it would
+        silently match nothing, report "empty", and let a prior patient's report
+        bleed into the next job.
+
+        Concrete (NOT abstract) so existing drivers keep working. The default is
+        ``True`` = "cannot prove this page is empty", so a driver without a real
+        probe is never reused.
+
+        Must not raise on drift: a drifted selector matches nothing and reads
+        "absent" -- see :meth:`prepare_for_next_job` for why that is survivable.
+        """
+        return True
+
+    def prepare_for_next_job(self, selectors: ProviderSelectors) -> bool:
+        """Make a REUSED page safe for the next job, or refuse.
+
+        Returns ``True`` only when the page is healthy AND provably shows no
+        prior conversation turn. ``False`` means the caller MUST discard this
+        driver and open a cold one -- i.e. today's per-job behaviour, which is
+        always safe.
+
+        Never raises: a cold rebuild is always available, so any doubt is
+        reported as ``False`` rather than failing an otherwise-good job.
+
+        Safety in every branch:
+        - prior turn visible -> ``False`` -> cold rebuild.
+        - provably empty     -> ``True``  -> submit into a genuinely fresh chat.
+        - selector drifted   -> probe reads "absent" -> ``True`` -> submit, and
+          the later :meth:`read_final_response` raises ``DriftDetectedError``
+          against the same drifted group, so the job fails LOUDLY instead of
+          returning whatever the previous turn left on screen.
+        """
+        try:
+            self.reset(selectors.target_url)
+            self.start_new_chat(selectors)
+            return not self.response_container_present(selectors)
+        except Exception:
+            return False
+
     def ensure_provider_config(
         self,
         selectors: ProviderSelectors,
@@ -237,6 +286,10 @@ class MockPageDriver(PageDriver):
     # Setting keys reported as "already_set" (rest are reported "set"); lets a
     # test assert idempotency without a browser.
     config_already: Optional[Sequence[str]] = None
+    # Whether a prior conversation turn is on the page (warm-reuse probe).
+    response_container_visible: bool = False
+    # Simulates a dead/broken page: the probe raises instead of answering.
+    explode_on_probe: bool = False
     opened: bool = field(default=False, init=False)
     closed: bool = field(default=False, init=False)
     submitted_prompt: Optional[str] = field(default=None, init=False)
@@ -325,6 +378,17 @@ class MockPageDriver(PageDriver):
         if selectors.file_input is not None:
             self._guard_drift(selectors.file_input.name, selectors.selector_version)
         self.attached_files = list(file_paths)
+
+    def response_container_present(self, selectors: ProviderSelectors) -> bool:
+        if self.explode_on_probe:
+            raise RuntimeError("page is gone")
+        if self.drift_group == selectors.response_container.name:
+            # Model drift the way it really behaves: the selector matches
+            # nothing, so the probe CANNOT see the prior turn and reports
+            # "absent" rather than raising. This is the dangerous read the gate
+            # must survive; read_final_response is what fails loudly.
+            return False
+        return self.response_container_visible
 
     def start_new_chat(self, selectors: ProviderSelectors) -> bool:
         if selectors.new_chat is None:
@@ -470,7 +534,31 @@ class PlaywrightPageDriver(PageDriver):
         )
 
     # -- lifecycle -------------------------------------------------------
+    def _page_is_live(self) -> bool:
+        """True when this driver already holds a usable page.
+
+        Any doubt (no page, closed page, a CDP call that throws) is reported as
+        NOT live, so the caller opens a cold page rather than driving a corpse.
+        """
+        page = self._page
+        if page is None:
+            return False
+        try:
+            return not page.is_closed()
+        except Exception:  # noqa: BLE001 - a page we cannot query is not usable
+            return False
+
     def open(self, *, target_url: str, user_data_dir: str, headless: bool) -> None:
+        # Idempotent: the warm-reuse daemon holds ONE driver across jobs, but the
+        # engine calls open() on every job. Without this guard each job would
+        # re-attach over CDP and open a NEW page, discarding the warm page and
+        # the entire point of reuse. Getting a reused page ready for the next job
+        # is prepare_for_next_job()'s responsibility, not open()'s -- open() must
+        # not navigate here, or it would clear a page the caller has not yet
+        # proven empty.
+        if self._page_is_live():
+            return
+
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:  # pragma: no cover - requires real browser
@@ -586,6 +674,23 @@ class PlaywrightPageDriver(PageDriver):
                     continue
             if time.monotonic() >= deadline:
                 raise DriftDetectedError(group.name, group.baseline_version) from last_error
+
+    def response_container_present(self, selectors: ProviderSelectors) -> bool:
+        """Warm-reuse emptiness probe against the drift-baselined container.
+
+        Reuses ``_present``, which returns a bool and never raises: a container
+        that matches nothing -- whether the chat is genuinely fresh OR the
+        selector has drifted -- reads "absent". See
+        :meth:`PageDriver.prepare_for_next_job` for why the drift case stays safe
+        (the later read fails loudly against the same group).
+
+        The probe runs on a short budget: it is a presence check on an already
+        loaded page, not a wait for something to appear.
+        """
+        return self._present(
+            selectors.response_container,
+            timeout_ms=_emptiness_probe_ms(),
+        )
 
     def _present(self, group, *, timeout_ms: int = 3000) -> bool:  # pragma: no cover
         for candidate in group.as_list():
@@ -991,6 +1096,25 @@ class PlaywrightPageDriver(PageDriver):
             self._page = None
             self._owns_page = False
             self._playwright = None
+
+
+def _emptiness_probe_ms() -> int:
+    """Budget (ms) for the warm-reuse emptiness probe; env-overridable.
+
+    Short by design: this asks "is a prior turn already rendered on this loaded
+    page?", not "wait for one to appear". Erring long only delays the cold-tab
+    fallback; it never trades away response completeness, which is decided
+    later by stream_response/read_final_response.
+    """
+
+    raw = os.environ.get("UBAG_EMPTINESS_PROBE_MS", "").strip()
+    try:
+        value = int(raw)
+        if value > 0:
+            return value
+    except (TypeError, ValueError):
+        pass
+    return _EMPTINESS_PROBE_MS
 
 
 def _reasoning_settle_s() -> float:

@@ -23,6 +23,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The gateway image bundles the Python worker that drives the browser, so this
+  # gates the deploy on the worker suite. It runs in parallel with the build and
+  # takes seconds; the build is the long pole, so this costs no wall-clock.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install worker
+        working-directory: apps/worker
+        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]" || python -m pip install -e .
+      - name: pytest
+        working-directory: apps/worker
+        env:
+          UBAG_ADAPTER_OFFLINE: '1'
+        run: python -m pytest tests/ -q
+
   build:
     runs-on: ubuntu-latest
     permissions:
@@ -68,7 +87,9 @@ jobs:
   # The deploy key is pinned by command= to deploy/small/ci-deploy.sh, so it
   # cannot open a shell or deploy anything but a validated sha-<commit> tag.
   deploy:
-    needs: build
+    # Both, deliberately: a green build only proves it compiles. This branch
+    # deploys straight to prod, which drives live radiology reporting.
+    needs: [build, test]
     if: github.ref == 'refs/heads/perf/latency-az'
     runs-on: ubuntu-latest
     permissions:
