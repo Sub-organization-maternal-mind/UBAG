@@ -48,6 +48,21 @@ type ConcurrencyRegistry struct {
 	// inFlight is the gateway-side in-flight counter, separate from the
 	// AIMD view which reflects worker-reported counts.
 	inFlight map[string]map[string]int // [tenantID][key]count
+	// held maps a job ID to the lane whose in-flight token it holds. It is the
+	// source of truth for per-job, exactly-once, balanced release: MarkAcquired
+	// records the association once a created job's token is live, and
+	// ReleaseForJob returns exactly that token at most once. Jobs that never
+	// acquired a token (e.g. gRPC- or workflow-created jobs) are absent, so
+	// releasing them is a safe no-op — this is what keeps the shared lane count
+	// balanced and immune to double-release across cancel / worker / reaper.
+	held map[string]heldToken // [jobID]lane
+}
+
+// heldToken is the lane a job's in-flight token belongs to.
+type heldToken struct {
+	tenantID    string
+	target      string
+	identityRef string
 }
 
 // NewConcurrencyRegistry returns an empty registry.
@@ -55,6 +70,7 @@ func NewConcurrencyRegistry() *ConcurrencyRegistry {
 	return &ConcurrencyRegistry{
 		byTenant: map[string]map[string]ConcurrencyView{},
 		inFlight: map[string]map[string]int{},
+		held:     map[string]heldToken{},
 	}
 }
 
@@ -153,6 +169,11 @@ func (r *ConcurrencyRegistry) Acquire(tenantID, target, identityRef string) bool
 
 // Release decrements the in-flight count for a (tenant, target, identityRef)
 // tuple. It is a no-op on nil registries or for unknown pairs.
+//
+// Release is lane-scoped and NOT idempotent per job: use it only to undo a token
+// the caller just acquired but could not yet associate with a job ID (e.g. job
+// creation failed after Acquire). For every terminal transition of a *created*
+// job, use ReleaseForJob so release is exactly-once and balanced.
 func (r *ConcurrencyRegistry) Release(tenantID, target, identityRef string) {
 	if r == nil {
 		return
@@ -163,15 +184,64 @@ func (r *ConcurrencyRegistry) Release(tenantID, target, identityRef string) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.decrementLocked(tenantID, concurrencyKey(target, identityRef))
+}
 
-	if r.inFlight == nil {
+// decrementLocked lowers the in-flight count for a lane, clamped at zero. The
+// caller must hold r.mu.
+func (r *ConcurrencyRegistry) decrementLocked(tenantID, key string) {
+	if r.inFlight == nil || r.inFlight[tenantID] == nil {
 		return
 	}
-	if r.inFlight[tenantID] == nil {
-		return
-	}
-	key := concurrencyKey(target, identityRef)
 	if r.inFlight[tenantID][key] > 0 {
 		r.inFlight[tenantID][key]--
 	}
+}
+
+// MarkAcquired associates an already-acquired token (from a prior Acquire that
+// returned true) with a job ID, once the job exists. Call it immediately after
+// the job is created; from then on the token is released via ReleaseForJob. It
+// is nil-safe and idempotent.
+func (r *ConcurrencyRegistry) MarkAcquired(jobID, tenantID, target, identityRef string) {
+	if r == nil {
+		return
+	}
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.held == nil {
+		r.held = map[string]heldToken{}
+	}
+	r.held[jobID] = heldToken{
+		tenantID:    strings.TrimSpace(tenantID),
+		target:      strings.TrimSpace(target),
+		identityRef: strings.TrimSpace(identityRef),
+	}
+}
+
+// ReleaseForJob returns the in-flight token held by jobID to its lane exactly
+// once. It is nil-safe and idempotent: a job that never acquired a token (e.g.
+// gRPC/workflow-created jobs) or whose token was already released is a no-op.
+// This makes release safe to call from every terminal path — worker
+// completion/failure, the cancel API, and the stale-job reaper — without
+// double-counting the shared lane.
+func (r *ConcurrencyRegistry) ReleaseForJob(jobID string) {
+	if r == nil {
+		return
+	}
+	jobID = strings.TrimSpace(jobID)
+	if jobID == "" {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	token, ok := r.held[jobID]
+	if !ok {
+		return
+	}
+	delete(r.held, jobID)
+	r.decrementLocked(token.tenantID, concurrencyKey(token.target, token.identityRef))
 }

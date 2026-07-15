@@ -362,12 +362,13 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 
 // releaseConcurrencyToken releases the in-flight token for a job when it
 // reaches a terminal state. It is nil-safe and a no-op when Concurrency is not
-// configured.
+// configured. Release is keyed by job ID and idempotent, so every terminal path
+// may call it without risk of double-counting the shared lane.
 func (c *WorkerConsumer) releaseConcurrencyToken(job jobstore.Job) {
 	if c == nil || c.Concurrency == nil {
 		return
 	}
-	c.Concurrency.Release(job.TenantID, job.Target, job.AppID)
+	c.Concurrency.ReleaseForJob(job.ID)
 }
 
 // raiseManualActionAlert raises a human-in-the-loop alert when a worker reports
@@ -678,22 +679,12 @@ func (c *WorkerConsumer) notifyCurrentTerminalJob(ctx context.Context, lease Wor
 	}
 	// Release the in-flight concurrency token acquired for this job at creation.
 	// Every path that reaches this helper does so via applyFailure, which drives
-	// the job to a terminal *failure* status. Those worker-driven failure paths
-	// previously returned the lease without releasing, so repeated failures
-	// leaked tokens until the target's lane exhausted its ceiling, 429-bricked,
-	// and only a gateway restart cleared it.
-	//
-	// Only failure statuses are released here, and exactly once: a job is
-	// released on its first terminal transition, and any redelivery of an
-	// already-terminal job short-circuits at the early-terminal checks in
-	// RunOnce (which never reach this helper). Completed and cancelled jobs are
-	// released by their own terminal branches — RunOnce for completion, the
-	// cancel API / RunOnce cancel branch for cancellation — so releasing them
-	// here would double-release and corrupt the in-flight count. The only status
-	// that can arrive here already-terminal-and-already-released is a cancel that
-	// raced the worker, which this switch deliberately excludes.
-	switch job.Status {
-	case jobstore.StatusFailedRetryable, jobstore.StatusFailedTerminal, jobstore.StatusDeadLetter, jobstore.StatusTimedOut:
+	// the job to a terminal failure status; releasing here closes the token leak
+	// on the worker failure paths. Release is per-job and idempotent
+	// (ReleaseForJob), so overlapping with any other terminal owner — the RunOnce
+	// completed/cancelled branches or the cancel API — cannot double-count the
+	// shared lane.
+	if jobstore.TerminalStatus(job.Status) {
 		c.releaseConcurrencyToken(job)
 	}
 	c.runPostJobHook(ctx, job)

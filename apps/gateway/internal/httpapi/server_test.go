@@ -838,12 +838,12 @@ func TestCancelJobDoesNotDoubleReleaseConcurrencyTokenForAlreadyFailedJob(t *tes
 	if !registry.Acquire(tenant, target, app) {
 		t.Fatal("precondition: acquiring job B's token should succeed")
 	}
-	// The worker consumer fails job A and releases ITS token (the primary fix); the
-	// lane now holds exactly one in-flight token — job B's.
+	// The worker consumer fails job A and releases ITS token per-job; the lane now
+	// holds exactly one in-flight token — job B's.
 	if _, _, err := store.UpdateStatus(context.Background(), created.JobID, jobstore.StatusFailedRetryable); err != nil {
 		t.Fatalf("force-fail job A: %v", err)
 	}
-	registry.Release(tenant, target, app)
+	registry.ReleaseForJob(created.JobID)
 
 	// Cancelling the already-failed job A must be a no-op for the token.
 	cancelBody := `{"api_version":"2026-05-22","idempotency_key":"idem_double_release_cancel","reason":"operator_requested"}`
