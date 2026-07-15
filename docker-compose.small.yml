@@ -30,7 +30,11 @@ services:
       UBAG_NATS_STREAM: ${UBAG_NATS_STREAM:-UBAG_JOBS}
       UBAG_NATS_SUBJECT: ${UBAG_NATS_SUBJECT:-ubag.jobs}
       UBAG_NATS_WORKER_DURABLE: ${UBAG_NATS_WORKER_DURABLE:-ubag-worker}
-      UBAG_NATS_WORKER_ACK_WAIT_MS: ${UBAG_NATS_WORKER_ACK_WAIT_MS:-35000}
+      # Leave empty so the gateway derives ack-wait from UBAG_WORKER_MAX_RUNTIME_MS
+      # (+5s). A hardcoded default here silently overrode that and, with a longer
+      # worker runtime, would let JetStream redeliver a still-running job and
+      # duplicate it. Startup now refuses any ack-wait <= max runtime.
+      UBAG_NATS_WORKER_ACK_WAIT_MS: ${UBAG_NATS_WORKER_ACK_WAIT_MS:-}
       UBAG_NATS_WORKER_NAK_DELAY_MS: ${UBAG_NATS_WORKER_NAK_DELAY_MS:-1000}
       UBAG_NATS_WORKER_FETCH_WAIT_MS: ${UBAG_NATS_WORKER_FETCH_WAIT_MS:-500}
       UBAG_NATS_WORKER_MAX_DELIVER: ${UBAG_NATS_WORKER_MAX_DELIVER:-5}

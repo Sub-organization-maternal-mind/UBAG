@@ -34,10 +34,20 @@ type Principal struct {
 	Subject  string
 }
 
+// compiledRule pairs a rule's name with its CEL program, compiled once at
+// construction. Allow runs on the request path and must only Eval: CEL
+// Compile/Program does lex/parse/type-check/plan and is orders of magnitude
+// costlier than Eval, so it must never happen per-request.
+type compiledRule struct {
+	name string
+	prog cel.Program
+}
+
 // Enforcer evaluates ABAC rules against a request context.
 type Enforcer struct {
-	env    *cel.Env
-	bundle PolicyBundle
+	env      *cel.Env
+	bundle   PolicyBundle
+	programs []compiledRule
 }
 
 // DefaultEnforcer returns a permissive enforcer with no rules.
@@ -56,7 +66,10 @@ func NewEnforcer(bundle PolicyBundle) (*Enforcer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("abac: init CEL env: %w", err)
 	}
-	// Pre-compile all rules to catch syntax errors eagerly.
+	// Compile every rule ONCE, here, and keep the program. A syntax/type error
+	// fails construction (and therefore startup) instead of surfacing per
+	// request.
+	programs := make([]compiledRule, 0, len(bundle.Rules))
 	for _, rule := range bundle.Rules {
 		ast, issues := env.Compile(rule.Condition)
 		if issues != nil && issues.Err() != nil {
@@ -66,9 +79,9 @@ func NewEnforcer(bundle PolicyBundle) (*Enforcer, error) {
 		if err != nil {
 			return nil, fmt.Errorf("abac: rule %q program error: %w", rule.Name, err)
 		}
-		_ = prog // programs are created lazily below; this just validates
+		programs = append(programs, compiledRule{name: rule.Name, prog: prog})
 	}
-	return &Enforcer{env: env, bundle: bundle}, nil
+	return &Enforcer{env: env, bundle: bundle, programs: programs}, nil
 }
 
 // Allow evaluates all bundle rules against principal+resource+action.
@@ -77,7 +90,7 @@ func NewEnforcer(bundle PolicyBundle) (*Enforcer, error) {
 //
 // A nil Enforcer is permissive: Allow always returns true, nil.
 func (e *Enforcer) Allow(principal Principal, resource, action string) (bool, error) {
-	if e == nil || len(e.bundle.Rules) == 0 {
+	if e == nil || len(e.programs) == 0 {
 		return true, nil
 	}
 	vars := map[string]any{
@@ -90,22 +103,15 @@ func (e *Enforcer) Allow(principal Principal, resource, action string) (bool, er
 		"resource": resource,
 		"action":   action,
 	}
-	for _, rule := range e.bundle.Rules {
-		ast, issues := e.env.Compile(rule.Condition)
-		if issues != nil && issues.Err() != nil {
-			return false, fmt.Errorf("abac: rule %q compile: %w", rule.Name, issues.Err())
-		}
-		prog, err := e.env.Program(ast)
+	// Evaluate the programs compiled at construction; never Compile/Program here.
+	for _, rule := range e.programs {
+		out, _, err := rule.prog.Eval(vars)
 		if err != nil {
-			return false, fmt.Errorf("abac: rule %q program: %w", rule.Name, err)
-		}
-		out, _, err := prog.Eval(vars)
-		if err != nil {
-			return false, fmt.Errorf("abac: rule %q eval: %w", rule.Name, err)
+			return false, fmt.Errorf("abac: rule %q eval: %w", rule.name, err)
 		}
 		result, ok := out.Value().(bool)
 		if !ok {
-			return false, fmt.Errorf("abac: rule %q must evaluate to bool, got %T", rule.Name, out.Value())
+			return false, fmt.Errorf("abac: rule %q must evaluate to bool, got %T", rule.name, out.Value())
 		}
 		if !result {
 			return false, nil
