@@ -508,6 +508,12 @@ class PlaywrightPageDriver(PageDriver):
         # (the operator's shared CDP browser) and must close it ourselves.
         self._owns_page = False
         self._artifacts_dir: Optional[str] = None
+        # Per-candidate count of response containers present just BEFORE the
+        # current prompt was submitted. On a resumed multi-turn thread the page
+        # already shows prior assistant turns; this baseline lets the response
+        # reader wait for THIS turn's node and skip the earlier ones. Captured in
+        # submit_prompt, consumed by stream_response. Empty on a fresh chat.
+        self._response_baseline: dict[str, int] = {}
 
     @staticmethod
     def _cdp_attach_attempts() -> int:
@@ -751,6 +757,90 @@ class PlaywrightPageDriver(PageDriver):
             if time.monotonic() >= deadline:
                 raise DriftDetectedError(group.name, group.baseline_version) from last_error
 
+    def _snapshot_counts(self, group) -> "dict[str, int]":  # pragma: no cover - requires real browser
+        """Per-candidate match counts for a selector group, right now.
+
+        Captured before submit so the read path can tell a NEWLY rendered turn
+        from the prior turns already on a resumed thread. Per-candidate because
+        the fallback selectors in a group match different node sets and therefore
+        have different baselines. Never raises: a candidate we cannot count reads
+        as 0, so at worst the reader waits for the container to (re)appear rather
+        than skipping the turn.
+        """
+        counts: dict[str, int] = {}
+        for candidate in group.as_list():
+            try:
+                counts[candidate] = self._page.locator(candidate).count()
+            except Exception:  # noqa: BLE001 - an uncountable candidate is treated as absent
+                counts[candidate] = 0
+        return counts
+
+    def _await_new_response(self, group, baseline, *, timeout_ms: int):  # pragma: no cover - requires real browser
+        """Wait for THIS turn's response container and return its NEWEST locator.
+
+        A resumed multi-turn thread already shows prior assistant turns; reading
+        ``.first`` (as :meth:`_first_visible` does) latches the OLDEST turn's
+        answer -- already rendered and stable -- so streaming settles instantly on
+        the wrong text. Instead we wait until some candidate's match count exceeds
+        its pre-submit ``baseline`` (this turn's node has appeared) and return that
+        candidate's ``.last`` (newest) element. On a fresh chat every baseline is
+        0 and the first assistant node makes ``.last`` == ``.first`` -- byte-
+        identical to the previous behaviour. Times out into ``DriftDetectedError``
+        (the job fails loudly) rather than ever returning a prior turn's answer.
+        """
+        import time
+
+        deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
+        probe_ms = 250 if timeout_ms > 250 else timeout_ms
+        poll_s = 0.25
+        last_error: Optional[Exception] = None
+        while True:
+            for candidate in group.as_list():
+                base = baseline.get(candidate, 0)
+                try:
+                    locator = self._page.locator(candidate)
+                    if locator.count() <= base:
+                        continue
+                    newest = locator.last
+                    newest.wait_for(state="visible", timeout=probe_ms)
+                    return newest
+                except Exception as exc:  # noqa: BLE001 - try next fallback / keep waiting
+                    last_error = exc
+                    continue
+            if time.monotonic() >= deadline:
+                raise DriftDetectedError(group.name, group.baseline_version) from last_error
+            # No new turn yet. Pace the wait: unlike _first_visible, the count<=base
+            # branch above has no blocking wait_for, so without this the loop would
+            # busy-spin a CPU core for the whole (up to reasoning-length) timeout
+            # while the provider is still generating the reply.
+            time.sleep(poll_s)
+
+    def _newest_visible(self, group, *, timeout_ms: int = 4000):  # pragma: no cover - requires real browser
+        """Like :meth:`_first_visible` but returns the NEWEST (``.last``) match.
+
+        Chat transcripts are chronological, so the newest matching container is
+        the turn that just completed. Reading ``.last`` (rather than ``.first``)
+        is what makes :meth:`read_final_response` return THIS turn's answer on a
+        resumed multi-turn thread instead of the oldest turn's. On a single-turn
+        chat the two resolve to the same element.
+        """
+        import time
+
+        deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
+        probe_ms = 250 if timeout_ms > 250 else timeout_ms
+        last_error: Optional[Exception] = None
+        while True:
+            for candidate in group.as_list():
+                try:
+                    locator = self._page.locator(candidate).last
+                    locator.wait_for(state="visible", timeout=probe_ms)
+                    return locator
+                except Exception as exc:  # noqa: BLE001 - try next fallback
+                    last_error = exc
+                    continue
+            if time.monotonic() >= deadline:
+                raise DriftDetectedError(group.name, group.baseline_version) from last_error
+
     def response_container_present(self, selectors: ProviderSelectors) -> bool:
         """Warm-reuse emptiness probe against the drift-baselined container.
 
@@ -962,6 +1052,12 @@ class PlaywrightPageDriver(PageDriver):
 
     # -- interaction -----------------------------------------------------
     def submit_prompt(self, selectors: ProviderSelectors, prompt: str) -> None:  # pragma: no cover
+        # Turn-aware read baseline: snapshot how many assistant turns are already
+        # on the page BEFORE we submit, so stream_response/read_final_response can
+        # target the NEW turn and never latch a prior turn's answer on a resumed
+        # thread. Captured per-candidate because a group's fallback selectors match
+        # different node sets. Must run before the reply node can render.
+        self._response_baseline = self._snapshot_counts(selectors.response_container)
         field = self._first_visible(selectors.prompt_input)
         try:
             field.click()
@@ -1069,7 +1165,15 @@ class PlaywrightPageDriver(PageDriver):
     ) -> Iterator[str]:
         import time
 
-        container = self._first_visible(selectors.response_container, timeout_ms=int(timeout_s * 1000))
+        # Bind to THIS turn's container, not a prior turn's. On a resumed thread
+        # the earlier answers are already on screen; _await_new_response waits for
+        # a node beyond the pre-submit baseline and returns the newest one, so the
+        # poll below tracks the reply we just triggered.
+        container = self._await_new_response(
+            selectors.response_container,
+            self._response_baseline,
+            timeout_ms=int(timeout_s * 1000),
+        )
         deadline = time.monotonic() + timeout_s
         seen = ""
         last_growth = time.monotonic()
@@ -1116,13 +1220,16 @@ class PlaywrightPageDriver(PageDriver):
         # pane. When the job requested return_mode="final" and the provider declares an
         # explicit final_answer_container, read that authoritative node; fall back to
         # response_container only if the answer selector has drifted.
+        # Read the NEWEST match (.last), not the oldest (.first): on a resumed
+        # multi-turn thread .first is a prior turn's answer. streaming already
+        # waited for this turn's node, so the newest container is this turn's.
         if return_mode == "final" and selectors.final_answer_container is not None:
             try:
-                answer = self._first_visible(selectors.final_answer_container)
+                answer = self._newest_visible(selectors.final_answer_container)
                 return answer.inner_text(timeout=4000)
             except DriftDetectedError:
                 pass
-        container = self._first_visible(selectors.response_container)
+        container = self._newest_visible(selectors.response_container)
         return container.inner_text(timeout=4000)
 
     def dom_signature(self, selectors: ProviderSelectors) -> str:  # pragma: no cover
