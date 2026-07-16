@@ -14,7 +14,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/ubag-ga
 
 FROM python:3.12-slim
 
-RUN apt-get update -qq && apt-get install -y --no-install-recommends wget \
+RUN apt-get update -qq && apt-get install -y --no-install-recommends wget postgresql-client \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd -r ubag \
   && useradd -r -g ubag ubag \
@@ -27,6 +27,11 @@ WORKDIR /app
 COPY --from=build /out/ubag-gateway /app/ubag-gateway
 COPY apps/worker /app/apps/worker
 COPY adapters /app/adapters
+# postgresql-client (psql) + these SQL files aren't needed by docker-compose.small.yml
+# (its own postgres-migrate service applies them via a host bind-mount instead), but
+# platforms without volume mounts — e.g. Render's preDeployCommand — need them baked
+# into the image to run migrations against a managed Postgres before each deploy.
+COPY migrations/postgres /app/migrations/postgres
 
 USER ubag
 

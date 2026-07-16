@@ -71,6 +71,19 @@ services:
     plan: free
     region: oregon
     healthCheckPath: /v1/health
+    # Render's managed Postgres starts empty — nothing runs the repo's SQL
+    # migrations automatically the way docker-compose.small.yml's postgres
+    # container does via docker-entrypoint-initdb.d. All of these are
+    # idempotent (CREATE TABLE IF NOT EXISTS), so re-running them on every
+    # deploy is safe and is the actual fix, not a workaround: the gateway
+    # unconditionally validates every enterprise-store table (response cache,
+    # workflow, SSO, SCIM, SIEM, webhook rotation, etc.) whenever
+    # UBAG_GATEWAY_STORE=postgres, regardless of whether those features are
+    # in use — there's no env var to skip it.
+    preDeployCommand: >-
+      for f in /app/migrations/postgres/*.sql; do
+        psql "$UBAG_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f "$f" || exit 1;
+      done
     envVars:
       - key: UBAG_GATEWAY_ADDR
         value: ":8080"
