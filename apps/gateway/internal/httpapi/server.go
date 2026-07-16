@@ -89,6 +89,14 @@ type Config struct {
 	AppID       string
 	ActorRole   string
 
+	// DevCORSOrigin, when non-empty, adds permissive CORS headers for exactly
+	// this one origin and answers preflight OPTIONS requests with 204. It
+	// exists solely for local development where the dashboard and gateway run
+	// on different localhost ports; production deploys the two behind a single
+	// nginx origin and never need this. Empty (the default) is a no-op — the
+	// gateway never sends CORS headers unless an operator opts in.
+	DevCORSOrigin string
+
 	Jobs        jobstore.Store
 	Idempotency idempotency.Service
 	Executor    executor.Dispatcher
@@ -231,21 +239,22 @@ type Config struct {
 }
 
 type Server struct {
-	apiVersion  string
-	version     string
-	buildCommit string
-	appSecret   string
-	tenantID    string
-	appID       string
-	actorRole   string
-	maxBody     int64
-	jobs        jobstore.Store
-	idempotency idempotency.Service
-	executor    executor.Dispatcher
-	artifactSt  artifacts.ArtifactStore
-	templates   templates.Store
-	webhooks    webhooks.OutboxStore
-	webhookURLs webhooks.URLPolicy
+	apiVersion    string
+	version       string
+	buildCommit   string
+	appSecret     string
+	tenantID      string
+	appID         string
+	actorRole     string
+	devCORSOrigin string
+	maxBody       int64
+	jobs          jobstore.Store
+	idempotency   idempotency.Service
+	executor      executor.Dispatcher
+	artifactSt    artifacts.ArtifactStore
+	templates     templates.Store
+	webhooks      webhooks.OutboxStore
+	webhookURLs   webhooks.URLPolicy
 
 	rateLimiter      ratelimit.Limiter
 	rateResolver     *ratelimit.PolicyResolver
@@ -386,21 +395,22 @@ func NewServer(config Config) *Server {
 	}
 
 	server := &Server{
-		apiVersion:  config.APIVersion,
-		version:     config.Version,
-		buildCommit: config.BuildCommit,
-		appSecret:   config.AppSecret,
-		tenantID:    strings.TrimSpace(config.TenantID),
-		appID:       strings.TrimSpace(config.AppID),
-		actorRole:   strings.TrimSpace(config.ActorRole),
-		maxBody:     config.MaxBodyBytes,
-		jobs:        config.Jobs,
-		idempotency: config.Idempotency,
-		executor:    config.Executor,
-		artifactSt:  config.Artifacts,
-		templates:   config.Templates,
-		webhooks:    config.Webhooks,
-		webhookURLs: config.WebhookURLPolicy,
+		apiVersion:    config.APIVersion,
+		version:       config.Version,
+		buildCommit:   config.BuildCommit,
+		appSecret:     config.AppSecret,
+		tenantID:      strings.TrimSpace(config.TenantID),
+		appID:         strings.TrimSpace(config.AppID),
+		actorRole:     strings.TrimSpace(config.ActorRole),
+		devCORSOrigin: strings.TrimSpace(config.DevCORSOrigin),
+		maxBody:       config.MaxBodyBytes,
+		jobs:          config.Jobs,
+		idempotency:   config.Idempotency,
+		executor:      config.Executor,
+		artifactSt:    config.Artifacts,
+		templates:     config.Templates,
+		webhooks:      config.Webhooks,
+		webhookURLs:   config.WebhookURLPolicy,
 
 		rateLimiter:      config.RateLimiter,
 		rateResolver:     config.RateLimitResolver,
@@ -461,6 +471,7 @@ func (s *Server) routes() {
 		s.withRecovery,                    // catches panics before they propagate
 		mw.Trace,                          // injects/extracts W3C trace ID (§18.3)
 		mw.RequestLog(serviceName),        // structured JSON request log line (§18.1)
+		s.withDevCORS,                     // opt-in cross-origin dev shim (§7.2 note above); no-op unless configured
 		s.withAuth,                        // authenticates bearer / device / SSO session
 		s.withRateLimit,                   // IETF token-bucket rate-limiting (§10.6)
 		mw.APIVersionHeader(s.apiVersion), // sets Ubag-Api-Version-Used (§6.5)
@@ -3442,6 +3453,32 @@ func (s *Server) withTrace(next http.Handler) http.Handler {
 		w.Header().Set("X-Request-Id", traceID)
 		w.Header().Set("Ubag-Trace-Id", traceID)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), traceContextKey{}, traceID)))
+	})
+}
+
+// withDevCORS adds CORS headers for exactly one configured origin and answers
+// preflight OPTIONS requests directly, before auth. It is a no-op unless
+// devCORSOrigin is set (Config.DevCORSOrigin / UBAG_DEV_CORS_ORIGIN), and it
+// only ever allows that single operator-chosen origin — never a wildcard or a
+// reflected Origin header. This exists for local development only, where the
+// dashboard and gateway run on different localhost ports; production serves
+// both from one nginx origin and sets nothing here.
+func (s *Server) withDevCORS(next http.Handler) http.Handler {
+	if s.devCORSOrigin == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") == s.devCORSOrigin {
+			w.Header().Set("Access-Control-Allow-Origin", s.devCORSOrigin)
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, Ubag-Api-Version")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Vary", "Origin")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 
