@@ -101,5 +101,19 @@ if (Test-PortOpen $dashboardPort) {
   }
 }
 
+# --- Live-browser bridge (streams a real Chrome into the dashboard's Browser
+# Sessions page so the operator can log into providers interactively). ---
+$liveBrowserPort = 58090
+$liveBrowserDir = Join-Path $repoRoot 'tools\live-browser'
+if (Test-PortOpen $liveBrowserPort) {
+  Write-Host "Live-browser bridge already running on port $liveBrowserPort - leaving it alone."
+} else {
+  Write-Host "Starting live-browser bridge (launches a Chrome with a persistent profile)..."
+  Start-Process -FilePath 'node' -ArgumentList 'bridge.mjs' -WorkingDirectory $liveBrowserDir -WindowStyle Minimized
+  # Non-fatal if it does not come up quickly; the dashboard shows a clear
+  # "bridge not connected" panel and auto-reconnects.
+  Wait-ForHttp "http://127.0.0.1:$liveBrowserPort/health" 15 | Out-Null
+}
+
 Write-Host "Opening $dashboardUrl ..."
 Start-Process $dashboardUrl

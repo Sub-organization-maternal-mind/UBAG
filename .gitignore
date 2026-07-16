@@ -43,6 +43,11 @@ apps/gateway/artifacts/
 apps/gateway/*.log
 apps/dashboard/*.log
 
+# Live-browser bridge local state: the persistent Chrome profile (holds the
+# operator's provider logins/cookies) and its logs. NEVER commit these.
+tools/live-browser/chrome-profile/
+tools/live-browser/*.log
+
 # Playwright reports (local only)
 playwright-report/
 test-results/

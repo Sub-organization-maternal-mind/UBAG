@@ -5,6 +5,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
+  import LiveBrowser from '$lib/components/LiveBrowser.svelte';
   import type {
     BrowserInstance,
     BrowserContext,
@@ -208,6 +209,16 @@
         {/each}
       </div>
     {/if}
+
+    <!-- Live interactive browser: stream the real Chrome into the dashboard and
+         drive it (log into providers) without a separate window. -->
+    <div class="space-y-2">
+      <div class="flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-ink uppercase tracking-wider">Live Browser</h2>
+        <span class="text-xs text-ink-mute">Log into a provider here; the session is remembered.</span>
+      </div>
+      <LiveBrowser />
+    </div>
 
     <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
       <div class="space-y-3">
