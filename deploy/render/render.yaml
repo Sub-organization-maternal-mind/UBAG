@@ -1,0 +1,137 @@
+# UBAG — Render Blueprint (API + dashboard + docs profile)
+#
+# Scope: gateway API (mock/adapter jobs, no live-browser automation),
+# operator dashboard, and public docs. Deliberately excludes, relative to
+# docker-compose.small.yml:
+#   - browser-viewer (live-browser noVNC/CDP) — needs a persistent, manually
+#     logged-in Chrome profile and loopback-only noVNC, which doesn't map
+#     cleanly onto Render's stateless/public-by-default model. Revisit as a
+#     deliberate follow-up (see deploy/render/README.md) once you actually
+#     need real ChatGPT/Gemini/etc. sessions instead of mock/adapter jobs.
+#   - Dragonfly/Redis — confirmed unused by any gateway code path today.
+#   - NATS JetStream — only earns its keep at multi-instance scale; a single
+#     gateway instance uses UBAG_EXECUTOR_MODE=file + a small disk instead.
+#   - Self-hosted Prometheus/Grafana/Pyroscope/Glitchtip/Vector — use Render's
+#     built-in metrics/logs instead of fighting the platform.
+#   - MinIO — replaced by an external S3-compatible bucket (e.g. Cloudflare
+#     R2) rather than hosting object storage ourselves; UBAG_ARTIFACT_STORE's
+#     "minio" mode just needs an S3-API endpoint, doesn't care who runs it.
+#
+# Deploy: push this branch, then in the Render Dashboard use
+# New > Blueprint and point it at this file's path (deploy/render/render.yaml)
+# when connecting the repo. Render prompts for every `sync: false` value below
+# during the initial Blueprint creation flow only.
+#
+# Verify current `plan`/`region` values against the Render Dashboard/pricing
+# page before applying — these are Render account-level enums that evolve
+# independently of this file.
+
+databases:
+  - name: ubag-postgres
+    databaseName: ubag
+    user: ubag
+    plan: basic-1gb
+    region: oregon
+    postgresMajorVersion: "17"
+
+services:
+  # ── Gateway: Go binary + embedded Python worker (deploy/small/gateway.Dockerfile) ──
+  # Private only — never gets a public onrender.com URL. The dashboard service
+  # below is the sole public entry point, mirroring docker-compose.small.yml's
+  # ubag-private/ubag-public network split.
+  - type: pserv
+    name: gateway
+    runtime: docker
+    dockerfilePath: ./deploy/small/gateway.Dockerfile
+    dockerContext: .
+    plan: starter
+    region: oregon
+    # Backs UBAG_EXECUTOR_SPOOL_DIR so accepted jobs survive a restart even
+    # before you turn on a real worker consumer. Drop this + switch
+    # UBAG_EXECUTOR_MODE to "noop" if you'd rather run fully stateless.
+    disk:
+      name: executor-spool
+      mountPath: /var/lib/ubag/executor-spool
+      sizeGB: 1
+    envVars:
+      - key: UBAG_GATEWAY_ADDR
+        value: ":8080"
+      - key: UBAG_API_VERSION
+        value: "2026-05-22"
+      - key: UBAG_APP_SECRET
+        sync: false
+      # Durable job/idempotency state — the "memory" default loses everything
+      # on restart and isn't shared across instances.
+      - key: UBAG_GATEWAY_STORE
+        value: postgres
+      - key: UBAG_POSTGRES_DSN
+        fromDatabase:
+          name: ubag-postgres
+          property: connectionString
+      # Durable artifact bytes. "minio" mode just needs an S3-API endpoint —
+      # point these at an external bucket (Cloudflare R2 recommended: free
+      # egress, S3-compatible) rather than provisioning your own MinIO here.
+      - key: UBAG_ARTIFACT_STORE
+        value: minio
+      - key: UBAG_MINIO_ENDPOINT
+        sync: false
+      - key: UBAG_MINIO_ACCESS_KEY
+        sync: false
+      - key: UBAG_MINIO_SECRET_KEY
+        sync: false
+      - key: UBAG_MINIO_BUCKET
+        value: ubag-artifacts
+      - key: UBAG_MINIO_USE_SSL
+        value: "true"
+      - key: UBAG_EXECUTOR_MODE
+        value: file
+      - key: UBAG_EXECUTOR_SPOOL_DIR
+        value: /var/lib/ubag/executor-spool
+      # Deliberately off: jobs are accepted and durably queued, but nothing
+      # executes them yet. Flip to "true" (+ UBAG_WORKER_SCRIPT=run_live_worker.py
+      # + UBAG_REMOTE_BROWSER_ENDPOINT) only once you've deliberately stood up
+      # live-browser automation — see deploy/render/README.md.
+      - key: UBAG_WORKER_CONSUMER_ENABLED
+        value: "false"
+      - key: UBAG_WEBHOOK_WORKER_ENABLED
+        value: "false"
+      - key: UBAG_WEBHOOK_SECRET
+        sync: false
+
+  # ── nginx-dashboard: the only public entry point ──────────────────────────
+  # Builds the dashboard SPA, Basic-Auth-gates it, and injects the gateway
+  # bearer token into /v1/* server-side so it never reaches the browser.
+  - type: web
+    name: ubag-dashboard
+    runtime: docker
+    dockerfilePath: ./deploy/render/nginx-dashboard.Dockerfile
+    dockerContext: .
+    plan: starter
+    region: oregon
+    healthCheckPath: /healthz
+    envVars:
+      # Must equal the gateway's UBAG_APP_SECRET above — Render won't cross-wire
+      # these automatically since they're two independently-prompted secrets.
+      - key: UBAG_GATEWAY_SECRET
+        sync: false
+      - key: UBAG_GATEWAY_UPSTREAM
+        fromService:
+          type: pserv
+          name: gateway
+          property: hostport
+      - key: UBAG_OPERATOR_USER
+        sync: false
+      - key: UBAG_OPERATOR_PASSWORD
+        sync: false
+
+  # ── Docs (Astro Starlight) — plain public static site, no auth/proxy needed ──
+  - type: web
+    name: ubag-docs
+    runtime: static
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @ubag/docs build
+    staticPublishPath: ./apps/docs/dist
+    envVars:
+      # Render's native (non-Docker) build image reads this to pick the Node
+      # version — matches the workspace's stated Node 25+ requirement.
+      - key: NODE_VERSION
+        value: "25"

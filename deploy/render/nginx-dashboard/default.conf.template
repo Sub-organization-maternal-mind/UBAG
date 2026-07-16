@@ -1,0 +1,133 @@
+# UBAG nginx-dashboard — ingress router, Render variant.
+# Rendered by nginx:alpine envsubst from this template at container start:
+#   ${UBAG_GATEWAY_SECRET}   → the gateway app secret (server-side only, never sent to browser)
+#   ${UBAG_GATEWAY_UPSTREAM} → the gateway private-service host:port (Render fromService hostport)
+#
+# Security model (matches deploy/small/nginx-dashboard/default.conf.template):
+#   - HTTP Basic Auth gates the dashboard + API (.htpasswd generated at
+#     container start by 40-generate-htpasswd.sh from env vars).
+#   - After Basic Auth passes, nginx INJECTS the Bearer token into /v1/*
+#     requests server-side, so the gateway secret never reaches the browser.
+#   - /healthz stays open — Render's healthCheckPath hits this.
+#
+# Differences from the deploy/small version: no Docker-embedded DNS resolver
+# (not available/needed on Render — the upstream below resolves once at
+# nginx start via normal DNS), and no /novnc//websockify live-browser-viewer
+# proxy (that service isn't part of this profile — see deploy/render/README.md).
+
+upstream ubag_gateway {
+    server ${UBAG_GATEWAY_UPSTREAM};
+    keepalive 32;
+}
+
+server {
+    listen 80 default_server;
+
+    gzip on;
+    gzip_vary on;
+    gzip_types text/css text/plain text/javascript application/javascript application/json image/svg+xml application/wasm;
+    gzip_min_length 1024;
+
+    # ── Healthcheck (open — used by Render's healthCheckPath) ────────────────
+    location = /healthz {
+        auth_basic off;
+        access_log off;
+        return 200 "ok\n";
+        add_header Content-Type text/plain;
+    }
+
+    # ── Everything below requires Basic Auth ──────────────────────────────────
+    auth_basic "UBAG Operator";
+    auth_basic_user_file /etc/nginx/.htpasswd;
+
+    # ── Blocked at edge (internal-only routes) ────────────────────────────────
+    location ~ ^/v1/(metrics|ready)(/|$) {
+        return 404;
+    }
+
+    # ── Gateway API — inject Bearer token server-side ─────────────────────────
+    location /v1/ {
+        proxy_pass         http://ubag_gateway;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        # Replace the browser's Basic-Auth header with the gateway Bearer token.
+        proxy_set_header   Authorization     "Bearer ${UBAG_GATEWAY_SECRET}";
+        proxy_set_header   Connection        "";
+        proxy_buffering    off;
+        proxy_cache        off;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        add_header X-Content-Type-Options "nosniff"     always;
+        add_header Referrer-Policy        "no-referrer"  always;
+        add_header X-Frame-Options        "DENY"         always;
+    }
+
+    # ── SvelteKit content-hashed bundles (immutable) — base path /dashboard ──
+    # The dashboard is built with UBAG_BASE_PATH=/dashboard, so all hashed
+    # assets are emitted under /dashboard/_app/immutable/.
+    location /dashboard/_app/immutable/ {
+        alias /srv/dashboard/_app/immutable/;
+        try_files $uri =404;
+        add_header Cache-Control          "public, max-age=31536000, immutable";
+        add_header X-Content-Type-Options "nosniff";
+        access_log off;
+    }
+
+    location /dashboard/_app/ {
+        alias /srv/dashboard/_app/;
+        try_files $uri =404;
+        add_header Cache-Control          "public, max-age=3600" always;
+        add_header X-Content-Type-Options "nosniff"              always;
+        access_log off;
+    }
+
+    # PWA manifest, favicon, and service worker are non-sensitive and are fetched
+    # by the browser WITHOUT credentials (manifest/favicon use no-cred mode per
+    # spec). They MUST be public, otherwise their 401 + WWW-Authenticate makes the
+    # browser re-show the Basic Auth dialog on every page load.
+    location = /dashboard/sw.js {
+        auth_basic off;
+        alias /srv/dashboard/sw.js;
+        add_header Cache-Control          "no-cache" always;
+        add_header Service-Worker-Allowed "/"        always;
+        add_header X-Content-Type-Options "nosniff"  always;
+    }
+
+    location = /dashboard/manifest.webmanifest {
+        auth_basic off;
+        alias /srv/dashboard/manifest.webmanifest;
+        add_header Cache-Control          "no-cache" always;
+        add_header X-Content-Type-Options "nosniff"  always;
+    }
+
+    location = /dashboard/favicon.svg {
+        auth_basic off;
+        alias /srv/dashboard/favicon.svg;
+        # no-cache so a CDN never caches an auth error for this public asset
+        add_header Cache-Control          "no-cache" always;
+        add_header X-Content-Type-Options "nosniff"  always;
+        access_log off;
+    }
+
+    # ── Dashboard SPA (try_files fallback to index.html) ──────────────────────
+    location /dashboard/ {
+        root /srv;
+        try_files $uri $uri/ /dashboard/index.html;
+        add_header Cache-Control          "no-cache"    always;
+        add_header X-Content-Type-Options "nosniff"     always;
+        add_header Referrer-Policy        "no-referrer"  always;
+        add_header X-Frame-Options        "DENY"         always;
+    }
+
+    location = / {
+        return 301 /dashboard/;
+    }
+
+    location / {
+        return 200 "UBAG ingress — API: /v1/*  Dashboard: /dashboard/\n";
+        add_header Content-Type text/plain;
+    }
+}
