@@ -13,11 +13,11 @@ cd "$(dirname "$0")/.."
 
 mkdir -p artifacts
 
-: "${UBAG_GATEWAY_ADDR:=:8080}"
+: "${UBAG_GATEWAY_ADDR:=:58080}"
 : "${UBAG_APP_SECRET:=dev_local_secret_12345678}"
 : "${UBAG_APP_ID:=dev-app}"
 : "${UBAG_CONVERSATIONS_ENABLED:=true}"
-: "${UBAG_DEV_CORS_ORIGIN:=http://localhost:4179}"
+: "${UBAG_DEV_CORS_ORIGIN:=http://localhost:58179}"
 : "${UBAG_GATEWAY_STORE:=sqlite}"
 : "${UBAG_ARTIFACT_STORE:=localfs}"
 : "${UBAG_ARTIFACT_DIR:=./artifacts}"

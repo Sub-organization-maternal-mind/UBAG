@@ -12,8 +12,10 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..\..')
 $gatewayDir = Join-Path $repoRoot 'apps\gateway'
 $dashboardDir = Join-Path $repoRoot 'apps\dashboard'
 
-$gatewayPort = 8080
-$dashboardPort = 4179
+# Deliberately uncommon ports (not 8080/3000/5173/etc.) so this never collides
+# with some other local dev server on the machine.
+$gatewayPort = 58080
+$dashboardPort = 58179
 $gatewayUrl = "http://127.0.0.1:$gatewayPort"
 $dashboardUrl = "http://localhost:$dashboardPort"
 
@@ -74,6 +76,12 @@ if (Test-PortOpen $dashboardPort) {
   $distIndex = Join-Path $dashboardDir 'dist\index.html'
   if (-not (Test-Path $distIndex)) {
     Write-Host "Building dashboard (first run only, ~30s)..."
+    # Baked into the build (see vite.config.ts's `define` + settings.ts) so a
+    # fresh browser profile/Incognito/cleared localStorage still opens already
+    # pointed at the right gateway, instead of defaulting to the dashboard's
+    # own origin.
+    $env:UBAG_DEV_DEFAULT_GATEWAY_URL = $gatewayUrl
+    $env:UBAG_DEV_DEFAULT_APP_SECRET = 'dev_local_secret_12345678'
     Push-Location $dashboardDir
     & pnpm build
     Pop-Location

@@ -6,17 +6,25 @@
 # convenience script for local development only.
 #
 # Usage: bash apps/dashboard/scripts/run-local.sh
-# Settings (gateway URL, app secret) are stored in the browser's localStorage,
-# not on disk here, so they persist across restarts as long as the browser
-# profile is not cleared.
+#
+# The gateway URL and app secret are baked into the build (see
+# vite.config.ts's `define` + src/lib/stores/settings.ts) so every fresh
+# browser profile, Incognito window, or cleared localStorage still opens
+# already pointed at the right gateway — not left to default to the
+# dashboard's own origin. localStorage still overrides this if the user
+# explicitly changes it in Settings.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-echo "Building dashboard..."
+: "${UBAG_DEV_DEFAULT_GATEWAY_URL:=http://127.0.0.1:58080}"
+: "${UBAG_DEV_DEFAULT_APP_SECRET:=dev_local_secret_12345678}"
+export UBAG_DEV_DEFAULT_GATEWAY_URL UBAG_DEV_DEFAULT_APP_SECRET
+
+echo "Building dashboard (default gateway: ${UBAG_DEV_DEFAULT_GATEWAY_URL})..."
 pnpm build
 
-: "${PORT:=4179}"
+: "${PORT:=58179}"
 export PORT
 
 echo "Serving dist/ at http://localhost:${PORT}"
