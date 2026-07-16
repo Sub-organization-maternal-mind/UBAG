@@ -36,6 +36,10 @@ function log(...args) {
   console.log(new Date().toISOString(), '[live-browser]', ...args);
 }
 
+// Set by main(); called whenever Chrome dies or a capture fails so the bridge
+// relaunches Chrome and re-attaches instead of streaming a dead browser.
+let triggerRecover = () => {};
+
 // ---------------------------------------------------------------------------
 // Chrome discovery + launch
 // ---------------------------------------------------------------------------
@@ -110,7 +114,12 @@ async function ensureChrome() {
   ];
   log(`launching ${chrome} (profile: ${PROFILE_DIR})`);
   const child = spawn(chrome, args, { detached: false, stdio: 'ignore' });
-  child.on('exit', (code) => log(`Chrome exited (code ${code})`));
+  child.on('exit', (code) => {
+    log(`Chrome exited (code ${code})`);
+    // The operator likely closed the window (it looks like a stray Chrome).
+    // Relaunch + re-attach so the dashboard view recovers on its own.
+    triggerRecover();
+  });
 
   // Wait for CDP to come up.
   for (let i = 0; i < 40; i++) {
@@ -385,14 +394,37 @@ async function main() {
     if (!sock.destroyed) sock.write(encodeFrame(Buffer.from(base64, 'base64'), 0x2));
   }
 
+  // Self-healing: relaunch Chrome (if it was closed/crashed) and re-attach the
+  // page session. Debounced by `recovering` so overlapping triggers coalesce.
+  let recovering = false;
+  async function recover() {
+    if (recovering || clients.size === 0) return;
+    recovering = true;
+    try {
+      broadcastMeta({ status: 'recovering' });
+      log('recovering: (re)launching Chrome + re-attaching...');
+      await ensureChrome();
+      await page.attach(null);
+      lastFrameAt = 0; // force the keepalive to push a fresh frame immediately
+      log('recovery complete');
+    } catch (e) {
+      log('recovery failed, will retry', e.message);
+    } finally {
+      recovering = false;
+    }
+  }
+  triggerRecover = () => { recover(); };
+
   // Keepalive: while clients are connected, if the change-driven screencast has
   // been quiet for ~700ms, push a one-shot capture so the canvas stays live
-  // even on a static page (and recovers if the compositor briefly stalled).
+  // even on a static page. A failed capture means Chrome/the page target died,
+  // so kick off recovery.
   setInterval(async () => {
     if (clients.size === 0) return;
     if (Date.now() - lastFrameAt < 700) return;
     const shot = await page.captureOnce();
     if (shot) { lastFrameAt = Date.now(); broadcastFrame(shot); }
+    else recover();
   }, 700);
 
   const server = http.createServer((req, res) => {
