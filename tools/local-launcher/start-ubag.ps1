@@ -56,6 +56,11 @@ if (Test-PortOpen $gatewayPort) {
   $env:UBAG_GATEWAY_ADDR = ":$gatewayPort"
   $env:UBAG_APP_SECRET = 'dev_local_secret_12345678'
   $env:UBAG_APP_ID = 'dev-app'
+  # Empty UBAG_ACTOR_ROLE normalizes to "service" (job:* actions only), which
+  # denies Browser Sessions, Webhooks, Audit, Users & Roles, etc. This is a
+  # single-user local dev gateway with no real tenant boundary to protect, so
+  # grant full access rather than hitting the same 403 on every other page.
+  $env:UBAG_ACTOR_ROLE = 'superadmin'
   $env:UBAG_CONVERSATIONS_ENABLED = 'true'
   $env:UBAG_DEV_CORS_ORIGIN = $dashboardUrl
   $env:UBAG_GATEWAY_STORE = 'sqlite'
