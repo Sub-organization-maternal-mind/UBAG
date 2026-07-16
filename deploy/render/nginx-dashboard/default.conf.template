@@ -1,7 +1,7 @@
 # UBAG nginx-dashboard — ingress router, Render variant.
 # Rendered by nginx:alpine envsubst from this template at container start:
 #   ${UBAG_GATEWAY_SECRET}   → the gateway app secret (server-side only, never sent to browser)
-#   ${UBAG_GATEWAY_UPSTREAM} → the gateway private-service host:port (Render fromService hostport)
+#   ${UBAG_GATEWAY_UPSTREAM} → the gateway's public hostname (e.g. gateway-dxen.onrender.com)
 #
 # Security model (matches deploy/small/nginx-dashboard/default.conf.template):
 #   - HTTP Basic Auth gates the dashboard + API (.htpasswd generated at
@@ -10,13 +10,20 @@
 #     requests server-side, so the gateway secret never reaches the browser.
 #   - /healthz stays open — Render's healthCheckPath hits this.
 #
-# Differences from the deploy/small version: no Docker-embedded DNS resolver
-# (not available/needed on Render — the upstream below resolves once at
-# nginx start via normal DNS), and no /novnc//websockify live-browser-viewer
-# proxy (that service isn't part of this profile — see deploy/render/README.md).
+# Differences from the deploy/small version:
+#   - Proxies to gateway over HTTPS on its PUBLIC hostname, not a private
+#     host:port. Render's private network only accepts connections FROM Free
+#     web services, not TO them ("Free web services can send private network
+#     requests, but they can't receive them") — since gateway is also Free,
+#     its public URL is the only thing reachable, hence https:// upstream +
+#     proxy_ssl_server_name (correct SNI/Host so Render's edge routes to it).
+#   - No Docker-embedded DNS resolver needed — the upstream is a real public
+#     hostname, resolved once at nginx start via normal DNS.
+#   - No /novnc//websockify live-browser-viewer proxy (that service isn't
+#     part of this profile — see deploy/render/README.md).
 
 upstream ubag_gateway {
-    server ${UBAG_GATEWAY_UPSTREAM};
+    server ${UBAG_GATEWAY_UPSTREAM}:443;
     keepalive 32;
 }
 
@@ -47,9 +54,10 @@ server {
 
     # ── Gateway API — inject Bearer token server-side ─────────────────────────
     location /v1/ {
-        proxy_pass         http://ubag_gateway;
+        proxy_pass         https://ubag_gateway;
+        proxy_ssl_server_name on;
         proxy_http_version 1.1;
-        proxy_set_header   Host              $host;
+        proxy_set_header   Host              ${UBAG_GATEWAY_UPSTREAM};
         proxy_set_header   X-Real-IP         $remote_addr;
         proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
         proxy_set_header   X-Forwarded-Proto $scheme;

@@ -145,11 +145,17 @@ services:
       # these automatically since they're two independently-prompted secrets.
       - key: UBAG_GATEWAY_SECRET
         sync: false
+      # Render's private network only accepts traffic from — not to — Free
+      # web services ("Free web services can send private network requests,
+      # but they can't receive them"), so `gateway` (also Free) is only
+      # reachable over its public HTTPS URL, not hostport/private DNS. This
+      # holds its public hostname (e.g. gateway-dxen.onrender.com); the nginx
+      # template proxies to it over HTTPS accordingly.
       - key: UBAG_GATEWAY_UPSTREAM
         fromService:
           type: web
           name: gateway
-          property: hostport
+          property: RENDER_EXTERNAL_HOSTNAME
       - key: UBAG_OPERATOR_USER
         sync: false
       - key: UBAG_OPERATOR_PASSWORD
