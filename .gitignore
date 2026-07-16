@@ -39,6 +39,9 @@ apps/gateway/ubag-gateway.db
 apps/gateway/ubag-gateway.db-*
 apps/gateway/coverage.out
 apps/gateway/coverage.html
+apps/gateway/artifacts/
+apps/gateway/*.log
+apps/dashboard/*.log
 
 # Playwright reports (local only)
 playwright-report/
