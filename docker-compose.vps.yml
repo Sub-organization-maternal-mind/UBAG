@@ -1,0 +1,145 @@
+# UBAG — VPS self-host profile (185.252.233.186, shared box, HARD CAP: 1 CPU
+# core / 2GB RAM combined across every service below).
+#
+# This is a trimmed sibling of docker-compose.small.yml, not an override of it:
+# same Dockerfiles/config templates (deploy/small/*, unmodified), but only the
+# 3 services actually needed for "API + dashboard, mock/adapter jobs" scope —
+# no live-browser viewer, no Dragonfly (confirmed unused by any gateway code
+# path), no MinIO (localfs artifacts instead — this host has persistent disk,
+# unlike Render's free tier), no NATS (file-spool executor mode needs no
+# queue at single-instance scale; verified in apps/gateway/internal/serve/
+# serve.go + executor/{filespool,workerconsumer}.go: UBAG_EXECUTOR_MODE=file
+# builds a FileSpoolWorkerQueue that never touches NATS).
+#
+# Resource budget (cpus / mem_limit), sized to leave real headroom under the
+# 1-core/2GB ceiling on a box already running ~15 other tenants:
+#   gateway......... 0.55 cpu / 1100m  (Go binary + embedded Python mock worker)
+#   nginx-dashboard.. 0.15 cpu /   96m
+#   TOTAL........... 0.70 cpu / 1196m  (under the 1.0 core / 2048m cap)
+#
+# Postgres comes from the shared platform stack at /opt/platform since
+# 2026-07-17 (one instance for every project on the box — see
+# /opt/platform/PLATFORM-RULES.md). The gateway joins the external `platform`
+# docker network and reads UBAG_POSTGRES_DSN from deploy/vps/env.local
+# (credentials from /opt/platform/projects/ubag.env).
+#
+# Ingress: this box already runs a shared Nginx Proxy Manager (NPM) container
+# for ~15 other client sites, listening on host 80/81/443. Rather than publish
+# another host port (this VPS has no active firewall — ufw is inactive — so
+# any 0.0.0.0-bound port is directly internet-reachable, not just via
+# Cloudflare/NPM), nginx-dashboard joins NPM's own docker network
+# (nginx-proxy-manager_default, declared external below) so NPM reaches it by
+# container name with zero additional host-port exposure. See deploy/vps/README.md
+# for the NPM Proxy Host settings and the ubag.polytronx.com DNS/Cloudflare status.
+#
+# Deploy: from /opt/docker/ubag on the VPS,
+#   docker compose -f docker-compose.vps.yml --env-file deploy/vps/env.local up -d --build
+
+name: ubag-vps
+
+services:
+  # Applies migrations/postgres/0001-0010 itself via gateway-entrypoint.sh
+  # (baked into the image), tolerating individual failures — 0008+ needs
+  # pg_partman, not available on every managed Postgres and unused by the
+  # mock/adapter-jobs scope this profile targets. No separate migrate step
+  # needed.
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/small/gateway.Dockerfile
+    image: ${UBAG_GATEWAY_IMAGE:-ubag/gateway:vps-local}
+    cpus: "0.55"
+    mem_limit: 1100m
+    restart: unless-stopped
+    environment:
+      UBAG_GATEWAY_ADDR: ":8080"
+      GOMAXPROCS: "1"
+      GOMEMLIMIT: "950MiB"
+      UBAG_APP_SECRET: ${UBAG_APP_SECRET:?Set UBAG_APP_SECRET in deploy/vps/env.local}
+      UBAG_API_VERSION: ${UBAG_API_VERSION:-2026-05-22}
+      UBAG_GATEWAY_VERSION: ${UBAG_GATEWAY_VERSION:-0.0.0-vps}
+      UBAG_BUILD_COMMIT: ${UBAG_BUILD_COMMIT:-local}
+      UBAG_ACTOR_ROLE: ${UBAG_ACTOR_ROLE:-}
+      UBAG_GATEWAY_STORE: postgres
+      # Full DSN lives in deploy/vps/env.local (platform credentials from
+      # /opt/platform/projects/ubag.env on the VPS — never committed).
+      UBAG_POSTGRES_DSN: ${UBAG_POSTGRES_DSN:?Set UBAG_POSTGRES_DSN in deploy/vps/env.local}
+      UBAG_IDEMPOTENCY_TTL_HOURS: ${UBAG_IDEMPOTENCY_TTL_HOURS:-24}
+      UBAG_DATABASE_MAX_OPEN_CONNS: ${UBAG_DATABASE_MAX_OPEN_CONNS:-5}
+      UBAG_DATABASE_MAX_IDLE_CONNS: ${UBAG_DATABASE_MAX_IDLE_CONNS:-2}
+      UBAG_DATABASE_CONN_MAX_LIFETIME_SECONDS: ${UBAG_DATABASE_CONN_MAX_LIFETIME_SECONDS:-300}
+      # No live browser, no queue — jobs spool to disk and are picked up
+      # in-process by the embedded Python mock worker.
+      UBAG_EXECUTOR_MODE: file
+      UBAG_EXECUTOR_SPOOL_DIR: /var/lib/ubag/executor-spool
+      UBAG_ARTIFACT_STORE: localfs
+      UBAG_ARTIFACT_DIR: /var/lib/ubag/artifacts
+      UBAG_WORKER_CONSUMER_ENABLED: "true"
+      # python:3.12-slim (this image's runtime base) installs its interpreter
+      # under /usr/local/bin, not /usr/bin — the docker-compose.small.yml
+      # default (/usr/bin/python3) is a latent bug that's never been hit in
+      # Docker before since that profile's UBAG_WORKER_CONSUMER_ENABLED
+      # defaults to false; the local (non-Docker) dev launcher points at a
+      # real host interpreter instead, so it never surfaced there either.
+      UBAG_WORKER_PYTHON: /usr/local/bin/python3
+      UBAG_WORKER_SCRIPT: /app/apps/worker/run_mock_worker.py
+      UBAG_WORKER_POLL_INTERVAL_MS: ${UBAG_WORKER_POLL_INTERVAL_MS:-500}
+      UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-120000}
+      UBAG_WEBHOOK_WORKER_ENABLED: "false"
+      UBAG_WEBHOOK_SECRET: ${UBAG_WEBHOOK_SECRET:-}
+    volumes:
+      - executor_spool:/var/lib/ubag/executor-spool
+      - artifact_data:/var/lib/ubag/artifacts
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/v1/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ubag-private
+      # Shared backing-services network (platform-postgres et al.) — created by
+      # /opt/platform/bin/init-platform.sh.
+      - platform
+
+  nginx-dashboard:
+    image: nginx:alpine
+    container_name: ubag-nginx-dashboard
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+    cpus: "0.15"
+    mem_limit: 96m
+    environment:
+      UBAG_GATEWAY_SECRET: ${UBAG_APP_SECRET:?Set UBAG_APP_SECRET in deploy/vps/env.local}
+      NGINX_ENVSUBST_FILTER: "UBAG_"
+    volumes:
+      - "./deploy/small/nginx-dashboard/default.conf.template:/etc/nginx/templates/default.conf.template:ro"
+      - "./deploy/vps/nginx-dashboard/.htpasswd:/etc/nginx/.htpasswd:ro"
+      - "./apps/dashboard/dist:/srv/dashboard:ro"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - ubag-private
+      # NPM's own network — lets the shared Nginx Proxy Manager container
+      # reach this one by name (ubag-nginx-dashboard:80) without publishing
+      # any host port. Must already exist (created by the nginx-proxy-manager
+      # compose stack at /opt/docker/nginx-proxy-manager).
+      - nginx-proxy-manager_default
+
+networks:
+  ubag-private:
+    internal: true
+  nginx-proxy-manager_default:
+    external: true
+  platform:
+    external: true
+
+volumes:
+  executor_spool:
+  artifact_data:

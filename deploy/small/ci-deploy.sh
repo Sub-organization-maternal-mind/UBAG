@@ -13,9 +13,9 @@
 # so no long-lived registry credential is ever written to this host.
 set -euo pipefail
 
-readonly REPO_DIR=/opt/ubag
-readonly COMPOSE_FILE=docker-compose.small.yml
-readonly ENV_FILE=deploy/small/env.local
+readonly REPO_DIR=/opt/docker/ubag
+readonly COMPOSE_FILE=docker-compose.vps.yml
+readonly ENV_FILE=deploy/vps/env.local
 readonly REGISTRY=ghcr.io
 readonly IMAGE_REPO=ghcr.io/sub-organization-maternal-mind/ubag-gateway
 
@@ -83,9 +83,9 @@ docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --no-deps --force
 # RadioPad uses, so a pass means RadioPad's real route works.
 log "waiting for gateway health"
 for i in $(seq 1 30); do
-  if docker exec ubag-small-nginx-dashboard-1 wget -qO- -T5 http://gateway:8080/v1/ready >/dev/null 2>&1; then
+  if docker exec ubag-nginx-dashboard wget -qO- -T5 http://gateway:8080/v1/ready >/dev/null 2>&1; then
     log "gateway healthy after ${i} attempt(s)"
-    log "running image: $(docker inspect ubag-small-gateway-1 --format '{{.Config.Image}}')"
+    log "running image: $(docker inspect ubag-vps-gateway-1 --format '{{.Config.Image}}')"
     exit 0
   fi
   sleep 2
