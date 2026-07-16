@@ -1,21 +1,46 @@
-# UBAG — Render Blueprint (API + dashboard + docs profile)
+# UBAG — Render Blueprint (API + dashboard + docs profile, FREE TIER ONLY)
 #
-# Scope: gateway API (mock/adapter jobs, no live-browser automation),
-# operator dashboard, and public docs. Deliberately excludes, relative to
-# docker-compose.small.yml:
+# Every service below is on Render's Free plan. Free tier only exists for
+# three service types — web services, Postgres, and Key Value — NOT private
+# services. That's why `gateway` is `type: web` instead of `pserv` here: a
+# private service has no free option at all, full stop. Concretely, staying
+# free means accepting:
+#   - `gateway` gets its own public onrender.com URL (no longer network-
+#     private). This is a real posture change from a "private-only" design,
+#     but the gateway enforces UBAG_APP_SECRET as a bearer token on every
+#     request itself — a caller without the secret is rejected regardless of
+#     whether they hit `gateway` directly or go through `ubag-dashboard`.
+#     nginx-dashboard's Basic Auth + secret injection still exist so the
+#     browser UI never has to know the secret — that part is unchanged.
+#   - Free web services (`gateway`, `ubag-dashboard`) spin down after 15
+#     minutes idle and cold-start on the next request (a few seconds' delay).
+#     They also can't attach a persistent disk — filesystem changes vanish on
+#     every redeploy/restart/spin-down. That's why UBAG_EXECUTOR_MODE is
+#     "noop" below (no spool dir to lose) rather than "file".
+#   - Free Postgres expires 30 days after creation, then a 14-day grace
+#     period, then Render deletes it — data and all — unless you upgrade it
+#     to a paid instance type before then. It's also capped at 1GB. Fine for
+#     trying this out; not something to leave unattended for real data.
+#   - `ubag-docs` (static site) has no paid/free distinction — static sites
+#     are simply free, unconditionally.
+# None of this needs Cloudflare R2 to change — R2's own free tier (10GB
+# storage, 1M/10M ops per month) is separate from Render's and already what
+# deploy/render/README.md has you set up.
+#
+# Scope beyond the free-tier constraint above: gateway API (mock/adapter
+# jobs, no live-browser automation), operator dashboard, and public docs.
+# Deliberately excludes, relative to docker-compose.small.yml:
 #   - browser-viewer (live-browser noVNC/CDP) — needs a persistent, manually
 #     logged-in Chrome profile and loopback-only noVNC, which doesn't map
-#     cleanly onto Render's stateless/public-by-default model. Revisit as a
-#     deliberate follow-up (see deploy/render/README.md) once you actually
-#     need real ChatGPT/Gemini/etc. sessions instead of mock/adapter jobs.
+#     onto Render's model (free tier or not). Revisit as a deliberate
+#     follow-up (see deploy/render/README.md) once you need real
+#     ChatGPT/Gemini/etc. sessions instead of mock/adapter jobs.
 #   - Dragonfly/Redis — confirmed unused by any gateway code path today.
-#   - NATS JetStream — only earns its keep at multi-instance scale; a single
-#     gateway instance uses UBAG_EXECUTOR_MODE=file + a small disk instead.
+#   - NATS JetStream — a queue only earns its keep at multi-instance scale.
 #   - Self-hosted Prometheus/Grafana/Pyroscope/Glitchtip/Vector — use Render's
 #     built-in metrics/logs instead of fighting the platform.
-#   - MinIO — replaced by an external S3-compatible bucket (e.g. Cloudflare
-#     R2) rather than hosting object storage ourselves; UBAG_ARTIFACT_STORE's
-#     "minio" mode just needs an S3-API endpoint, doesn't care who runs it.
+#   - MinIO — replaced by an external S3-compatible bucket (Cloudflare R2)
+#     rather than hosting object storage ourselves.
 #
 # Deploy: push this branch, then in the Render Dashboard use
 # New > Blueprint and point it at this file's path (deploy/render/render.yaml)
@@ -30,29 +55,22 @@ databases:
   - name: ubag-postgres
     databaseName: ubag
     user: ubag
-    plan: basic-1gb
+    plan: free
     region: oregon
     postgresMajorVersion: "17"
 
 services:
   # ── Gateway: Go binary + embedded Python worker (deploy/small/gateway.Dockerfile) ──
-  # Private only — never gets a public onrender.com URL. The dashboard service
-  # below is the sole public entry point, mirroring docker-compose.small.yml's
-  # ubag-private/ubag-public network split.
-  - type: pserv
+  # type: web (not pserv) — private services have no free tier. See the
+  # header comment above for what that trades away.
+  - type: web
     name: gateway
     runtime: docker
     dockerfilePath: ./deploy/small/gateway.Dockerfile
     dockerContext: .
-    plan: starter
+    plan: free
     region: oregon
-    # Backs UBAG_EXECUTOR_SPOOL_DIR so accepted jobs survive a restart even
-    # before you turn on a real worker consumer. Drop this + switch
-    # UBAG_EXECUTOR_MODE to "noop" if you'd rather run fully stateless.
-    disk:
-      name: executor-spool
-      mountPath: /var/lib/ubag/executor-spool
-      sizeGB: 1
+    healthCheckPath: /v1/health
     envVars:
       - key: UBAG_GATEWAY_ADDR
         value: ":8080"
@@ -69,8 +87,8 @@ services:
           name: ubag-postgres
           property: connectionString
       # Durable artifact bytes. "minio" mode just needs an S3-API endpoint —
-      # point these at an external bucket (Cloudflare R2 recommended: free
-      # egress, S3-compatible) rather than provisioning your own MinIO here.
+      # point these at an external bucket (Cloudflare R2: free egress,
+      # S3-compatible, own free tier) rather than provisioning MinIO here.
       - key: UBAG_ARTIFACT_STORE
         value: minio
       - key: UBAG_MINIO_ENDPOINT
@@ -83,14 +101,17 @@ services:
         value: ubag-artifacts
       - key: UBAG_MINIO_USE_SSL
         value: "true"
+      # "noop": free web services can't attach a persistent disk, so a spool
+      # dir (UBAG_EXECUTOR_MODE=file) would just vanish on every spin-down —
+      # worse than not queuing at all. Jobs are accepted via the API but not
+      # enqueued for execution, consistent with UBAG_WORKER_CONSUMER_ENABLED
+      # being off below.
       - key: UBAG_EXECUTOR_MODE
-        value: file
-      - key: UBAG_EXECUTOR_SPOOL_DIR
-        value: /var/lib/ubag/executor-spool
-      # Deliberately off: jobs are accepted and durably queued, but nothing
-      # executes them yet. Flip to "true" (+ UBAG_WORKER_SCRIPT=run_live_worker.py
-      # + UBAG_REMOTE_BROWSER_ENDPOINT) only once you've deliberately stood up
-      # live-browser automation — see deploy/render/README.md.
+        value: noop
+      # Deliberately off: nothing executes accepted jobs yet. Flip to "true"
+      # (+ UBAG_WORKER_SCRIPT=run_live_worker.py + UBAG_REMOTE_BROWSER_ENDPOINT
+      # + a paid plan with a real executor mode) only once you've deliberately
+      # stood up live-browser automation — see deploy/render/README.md.
       - key: UBAG_WORKER_CONSUMER_ENABLED
         value: "false"
       - key: UBAG_WEBHOOK_WORKER_ENABLED
@@ -98,15 +119,16 @@ services:
       - key: UBAG_WEBHOOK_SECRET
         sync: false
 
-  # ── nginx-dashboard: the only public entry point ──────────────────────────
+  # ── nginx-dashboard: the recommended entry point for browser use ─────────
   # Builds the dashboard SPA, Basic-Auth-gates it, and injects the gateway
   # bearer token into /v1/* server-side so it never reaches the browser.
+  # (gateway also has its own public URL now — see header comment.)
   - type: web
     name: ubag-dashboard
     runtime: docker
     dockerfilePath: ./deploy/render/nginx-dashboard.Dockerfile
     dockerContext: .
-    plan: starter
+    plan: free
     region: oregon
     healthCheckPath: /healthz
     envVars:
@@ -116,7 +138,7 @@ services:
         sync: false
       - key: UBAG_GATEWAY_UPSTREAM
         fromService:
-          type: pserv
+          type: web
           name: gateway
           property: hostport
       - key: UBAG_OPERATOR_USER
@@ -125,6 +147,7 @@ services:
         sync: false
 
   # ── Docs (Astro Starlight) — plain public static site, no auth/proxy needed ──
+  # Static sites have no plan/pricing tier — they're simply free.
   - type: web
     name: ubag-docs
     runtime: static

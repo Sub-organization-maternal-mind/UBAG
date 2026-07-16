@@ -2,21 +2,33 @@
 
 A Render Blueprint (`render.yaml`) covering the gateway API, operator
 dashboard, and public docs — the API + dashboard profile, not live-browser
-automation. See the header comment in `render.yaml` for exactly what's
-excluded relative to `docker-compose.small.yml` and why.
+automation, **entirely on Render's free plan ($0/month on Render itself)**.
+See the header comment in `render.yaml` for exactly what's excluded relative
+to `docker-compose.small.yml` and why, and for the specific tradeoffs the
+free plan makes (no persistent disk, spin-down on idle, Postgres expiry).
 
 ## What gets deployed
 
-| Service | Render type | Public? |
-|---|---|---|
-| `gateway` | Private Service (Docker) | No — only `ubag-dashboard` can reach it |
-| `ubag-dashboard` | Web Service (Docker, nginx) | Yes — the only public entry point |
-| `ubag-docs` | Static Site | Yes |
-| `ubag-postgres` | Render Postgres | No |
+| Service | Render type | Plan | Public? |
+|---|---|---|---|
+| `gateway` | Web Service (Docker) | Free | Yes — private services have no free tier, so this isn't network-private like a typical small-profile deploy. Every request still needs the `UBAG_APP_SECRET` bearer token regardless. |
+| `ubag-dashboard` | Web Service (Docker, nginx) | Free | Yes — the recommended entry point (Basic Auth + secret injection) |
+| `ubag-docs` | Static Site | Free (unconditionally — static sites have no paid tier) | Yes |
+| `ubag-postgres` | Render Postgres | Free | No |
+
+Free-tier tradeoffs worth knowing before you rely on this:
+- `gateway` and `ubag-dashboard` **spin down after 15 minutes idle** and
+  cold-start (a few seconds) on the next request.
+- Neither can attach a **persistent disk** — that's why the executor runs in
+  `noop` mode (jobs are accepted, nothing queues them for execution yet).
+- `ubag-postgres` **expires 30 days after creation** (14-day grace period,
+  then deleted with all data) unless you upgrade it to a paid instance type
+  first. Fine for trying this out; don't leave real data on it unattended.
 
 Object storage (`UBAG_ARTIFACT_STORE=minio`) points at an external
 S3-compatible bucket rather than a MinIO container Render would have to run
-for you — Cloudflare R2 is a good default (S3-compatible API, free egress).
+for you — Cloudflare R2 (own separate free tier: 10GB storage, 1M/10M ops
+per month) is the default this profile assumes.
 
 ## Before you deploy
 
@@ -49,11 +61,12 @@ for you — Cloudflare R2 is a good default (S3-compatible API, free egress).
 ## What's intentionally not wired up yet
 
 - **Live-browser automation** (`UBAG_WORKER_CONSUMER_ENABLED`, real
-  ChatGPT/Gemini/etc. sessions): jobs are accepted and durably queued
-  (`UBAG_EXECUTOR_MODE=file`) but nothing executes them. Turning this on
-  needs a persistent, manually-logged-in Chrome reachable over CDP — which
-  doesn't fit Render's stateless/public-by-default model as cleanly as a
-  dedicated host. If/when you need it, that's a follow-up decision, not
+  ChatGPT/Gemini/etc. sessions): jobs are accepted but not queued at all
+  (`UBAG_EXECUTOR_MODE=noop` — free services can't attach the disk a real
+  queue would need). Turning this on for real needs a paid plan (for a disk
+  or a managed queue) plus a persistent, manually-logged-in Chrome reachable
+  over CDP — which doesn't fit Render's model as cleanly as a dedicated host
+  regardless of plan. If/when you need it, that's a follow-up decision, not
   something to flip silently.
 - **Webhooks** (`UBAG_WEBHOOK_WORKER_ENABLED`): off by default; set the
   secret and flip the flag once you have a real target to sign deliveries
