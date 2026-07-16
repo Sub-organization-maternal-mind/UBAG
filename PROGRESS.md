@@ -35,6 +35,17 @@ Live testing of conversation affinity found multi-turn recall broken by **two in
 
 Both covered by `apps/worker/tests/test_conversation_turn_read.py` (fake Playwright pages: 5 read tests incl. deferred-reveal + single-turn regression; 4 resume tests incl. deferred-hydration + dead-thread + empty-ref). Full worker suite green (366). Note: `resume_thread`/`_await_prior_turn` and the CDP-attach in `open()` are not reachable in CI; environmental caveat — the bridge Chrome can wedge for CDP attach when parked in a Google sign-in intercept, unrelated to the worker (reproduced with a raw Playwright client), cleared by relaunching the bridge Chrome.
 
+## 2026-07-16 Harden live-browser login persistence
+
+Goal: the operator's ChatGPT/DeepSeek/Gemini logins should survive restarts/crashes and never force a re-login. Changes in `tools/live-browser/bridge.mjs`:
+
+- **Clean-exit reset before every cold launch** (`hardenProfileForPersistentLogin`): patch the profile's `Default/Preferences` to `profile.exit_type=Normal` / `exited_cleanly=true` and `session.restore_on_startup=1`, so Chrome never opens in crash-recovery mode (which drops state) and never pops the "didn't shut down correctly" bubble over the login UI in the screencast. This makes a hard kill of Chrome (used to clear a wedged CDP attach) recover cleanly next launch. Note: Chrome rewrites `restore_on_startup` out of the file at runtime (it re-derives it), so session-cookie retention is best-effort; the durable logins ride on the persistent auth cookies below, not this pref.
+- **Stale-lock cleanup**: remove `SingletonLock`/`SingletonCookie`/`SingletonSocket`/`lockfile` before a cold launch so a relaunch after a hard kill is never blocked by "profile in use".
+- **`--hide-crash-restore-bubble`** flag as belt-and-suspenders for the bubble.
+- **Chrome spawned detached + unref**: it now outlives the bridge, and the bridge's SIGINT/SIGTERM handlers leave it running, so restarting the bridge no longer signs the operator out (previously Chrome was a child of the bridge and died with it). The next bridge start re-attaches via `cdpAlive()`.
+
+What actually keeps providers signed in is the persistent auth cookies in `Default/Network/Cookies`; the worker never launches a competing Chrome (it attaches over CDP and reuses the authenticated context), so jobs can't corrupt or lock the profile. **Verified**: after a full bridge+Chrome restart, all three providers (ChatGPT/DeepSeek/Gemini) probed as still logged in via their `authenticated_signal` selectors. Operator note: tick "stay signed in"/"keep me signed in" at login so the auth cookie is long-lived; server-side session expiry is provider policy and outside UBAG's control.
+
 ## Current Phase
 
 v0/v2.1 platform baseline: contracts, gateway, gateway executor dispatch boundary with file-spool and NATS worker result ingestion, memory/Postgres/SQLite gateway stores, NATS JetStream executor, MinIO/localfs artifact storage with idempotent mutations, signed webhook outbox delivery, built-in template catalog/application/rendering, scoped cross-job events, paginated operator collections, hardened payload secret-key detection, edge queue/store contracts, worker/adapters, gateway-wired dashboard, CLI, TS/Go SDK wave, security/compliance contracts, observability contracts, and small-profile deployment scaffolding.
