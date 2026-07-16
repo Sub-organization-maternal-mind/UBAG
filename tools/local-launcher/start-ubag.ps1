@@ -67,6 +67,26 @@ if (Test-PortOpen $gatewayPort) {
   $env:UBAG_ARTIFACT_STORE = 'localfs'
   $env:UBAG_ARTIFACT_DIR = './artifacts'
 
+  # --- Live-provider job dispatch ---
+  # Route jobs through the embedded worker consumer to the live Playwright
+  # engine, which attaches over CDP to the operator's logged-in Chrome (the
+  # live-browser bridge on 58091) and drives chatgpt_web/deepseek_web/gemini_web.
+  # Mock jobs still work (run_live_worker.py routes target=mock to the mock adapter).
+  New-Item -ItemType Directory -Force -Path (Join-Path $gatewayDir 'spool') | Out-Null
+  $env:UBAG_EXECUTOR_MODE = 'file'
+  $env:UBAG_EXECUTOR_SPOOL_DIR = (Join-Path $gatewayDir 'spool')
+  $env:UBAG_WORKER_CONSUMER_ENABLED = 'true'
+  # Real interpreter: bare "python" is a broken Windows Store alias here.
+  $workerPython = 'C:\Users\Admin\AppData\Local\Python\bin\python.exe'
+  if (-not (Test-Path $workerPython)) { $workerPython = 'python' }
+  $env:UBAG_WORKER_PYTHON = $workerPython
+  $env:UBAG_WORKER_SCRIPT = (Join-Path $repoRoot 'apps\worker\run_live_worker.py')
+  $env:UBAG_WORKER_MAX_RUNTIME_MS = '180000'
+  # The live-browser bridge's Chrome DevTools Protocol port (bridge WS is 58090,
+  # its Chrome CDP is 58091). The worker attaches here to inherit the logins.
+  $env:UBAG_REMOTE_BROWSER_ENDPOINT = 'http://127.0.0.1:58091'
+  $env:UBAG_PROFILE_DIR = (Join-Path $repoRoot 'tools\live-browser\chrome-profile')
+
   Start-Process -FilePath $exe -WorkingDirectory $gatewayDir -WindowStyle Minimized
 
   if (-not (Wait-ForHttp "$gatewayUrl/v1/health" 20)) {
