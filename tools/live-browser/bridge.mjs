@@ -17,8 +17,8 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -68,6 +68,43 @@ function findChrome() {
   return null;
 }
 
+// Make the persistent profile keep the operator's provider logins across
+// restarts, so they never have to sign in again. Two levers:
+//   1. session.restore_on_startup = 1 ("continue where you left off"): Chrome
+//      then PERSISTS session cookies to disk across restarts instead of dropping
+//      them on exit. Persistent auth cookies survive regardless; this covers the
+//      session-scoped bits some providers add.
+//   2. profile.exit_type/exited_cleanly = Normal/true: Chrome treats the last
+//      exit as clean, so it never opens in crash-recovery mode and never shows
+//      the "Chrome didn't shut down correctly" bubble (which, in a screencast,
+//      would sit on top of the login UI). This also makes a hard kill of Chrome
+//      (e.g. to clear a wedged CDP attach) recover cleanly on the next launch.
+// Only called on a COLD launch (Chrome not already running), so we never race a
+// live Chrome writing the same Preferences file. Fully best-effort.
+function hardenProfileForPersistentLogin() {
+  try {
+    const defaultDir = join(PROFILE_DIR, 'Default');
+    mkdirSync(defaultDir, { recursive: true });
+    const prefsPath = join(defaultDir, 'Preferences');
+    let prefs = {};
+    if (existsSync(prefsPath)) {
+      try { prefs = JSON.parse(readFileSync(prefsPath, 'utf8')); } catch { prefs = {}; }
+    }
+    prefs.session = { ...(prefs.session || {}), restore_on_startup: 1 };
+    prefs.profile = { ...(prefs.profile || {}), exit_type: 'Normal', exited_cleanly: true };
+    writeFileSync(prefsPath, JSON.stringify(prefs));
+    log('profile hardened for persistent login (restore_on_startup=1, clean exit)');
+  } catch (e) {
+    log('profile harden (prefs) skipped:', e.message);
+  }
+  // Clear stale single-instance locks a hard kill can leave behind, so a relaunch
+  // is never blocked by a "profile in use" lock. Safe only because Chrome is not
+  // running at this point.
+  for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'lockfile']) {
+    try { rmSync(join(PROFILE_DIR, name), { force: true }); } catch { /* ignore */ }
+  }
+}
+
 async function cdpAlive() {
   try {
     const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`, {
@@ -90,6 +127,7 @@ async function ensureChrome() {
     process.exit(1);
   }
   mkdirSync(PROFILE_DIR, { recursive: true });
+  hardenProfileForPersistentLogin();
   const args = [
     `--remote-debugging-port=${CDP_PORT}`,
     // Bind DevTools to loopback only.
@@ -97,6 +135,9 @@ async function ensureChrome() {
     `--user-data-dir=${PROFILE_DIR}`,
     '--no-first-run',
     '--no-default-browser-check',
+    // Never let the crash-restore / "restore pages?" bubble cover the login UI
+    // in the screencast (works with the clean-exit prefs set above).
+    '--hide-crash-restore-bubble',
     // Keep the compositor painting even when the window is unfocused,
     // occluded, or minimized. Without these, headed Chrome on Windows throttles
     // an occluded window and Page.startScreencast stops emitting frames — which
@@ -113,7 +154,11 @@ async function ensureChrome() {
     START_URL,
   ];
   log(`launching ${chrome} (profile: ${PROFILE_DIR})`);
-  const child = spawn(chrome, args, { detached: false, stdio: 'ignore' });
+  // detached + unref: Chrome outlives the bridge process, so restarting or
+  // stopping the bridge never tears down the browser (and its warm provider
+  // logins) — the next bridge start just re-attaches via cdpAlive().
+  const child = spawn(chrome, args, { detached: true, stdio: 'ignore' });
+  child.unref();
   child.on('exit', (code) => {
     log(`Chrome exited (code ${code})`);
     // The operator likely closed the window (it looks like a stray Chrome).
@@ -497,6 +542,15 @@ async function main() {
 
   server.listen(WS_PORT, '127.0.0.1', () => {
     log(`bridge listening on ws://127.0.0.1:${WS_PORT} (start url: ${START_URL})`);
+  });
+}
+
+// Stopping the bridge must NOT sign the operator out: leave Chrome running so
+// the provider logins stay warm, and let the next bridge start re-attach to it.
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    log(`received ${sig}; leaving Chrome running so provider logins stay warm`);
+    process.exit(0);
   });
 }
 
