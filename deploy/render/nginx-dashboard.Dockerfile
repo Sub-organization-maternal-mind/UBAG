@@ -20,6 +20,10 @@ RUN pnpm install --frozen-lockfile \
 
 FROM nginx:1.27-alpine
 
+# nginx:alpine links OpenSSL into nginx itself but doesn't ship the `openssl`
+# CLI — 40-generate-htpasswd.sh below needs it to hash the operator password.
+RUN apk add --no-cache openssl
+
 COPY --from=dashboard-build /src/apps/dashboard/dist /srv/dashboard
 COPY deploy/render/nginx-dashboard/default.conf.template /etc/nginx/templates/default.conf.template
 COPY deploy/render/nginx-dashboard/40-generate-htpasswd.sh /docker-entrypoint.d/40-generate-htpasswd.sh
