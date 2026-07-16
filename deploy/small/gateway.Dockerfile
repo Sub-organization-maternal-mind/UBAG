@@ -29,11 +29,14 @@ COPY apps/worker /app/apps/worker
 COPY adapters /app/adapters
 # postgresql-client (psql) + these SQL files aren't needed by docker-compose.small.yml
 # (its own postgres-migrate service applies them via a host bind-mount instead), but
-# platforms without volume mounts — e.g. Render's preDeployCommand — need them baked
-# into the image to run migrations against a managed Postgres before each deploy.
+# platforms without volume mounts or a pre-deploy hook — e.g. Render's Free plan,
+# which supports neither — need them baked into the image so gateway-entrypoint.sh
+# can apply them itself before the gateway binary starts.
 COPY migrations/postgres /app/migrations/postgres
+COPY deploy/small/gateway-entrypoint.sh /app/gateway-entrypoint.sh
+RUN chmod +x /app/gateway-entrypoint.sh
 
 USER ubag
 
 EXPOSE 8080
-ENTRYPOINT ["/app/ubag-gateway"]
+ENTRYPOINT ["/app/gateway-entrypoint.sh"]
