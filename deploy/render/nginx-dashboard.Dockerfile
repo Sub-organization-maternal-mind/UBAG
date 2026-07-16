@@ -7,7 +7,10 @@
 
 FROM node:25-alpine AS dashboard-build
 WORKDIR /src
-RUN corepack enable
+# node:25-alpine doesn't ship Corepack — install the pinned pnpm directly
+# (matches root package.json's "packageManager" field) instead of relying
+# on `corepack enable`.
+RUN npm install -g pnpm@10.33.2
 COPY . .
 # Emits hashed assets under /dashboard/_app/, matching the nginx location
 # blocks below — must match at build time, nginx can't rewrite this after.

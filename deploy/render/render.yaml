@@ -160,7 +160,10 @@ services:
   - type: web
     name: ubag-docs
     runtime: static
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @ubag/docs build
+    # `corepack enable` fails here too (tries to symlink into a read-only
+    # /usr/bin in Render's native build sandbox) — installing the pinned
+    # pnpm via npm instead sidesteps it, matching the Dockerfile fix.
+    buildCommand: npm install -g pnpm@10.33.2 && pnpm install --frozen-lockfile && pnpm --filter @ubag/docs build
     staticPublishPath: ./apps/docs/dist
     envVars:
       # Render's native (non-Docker) build image reads this to pick the Node
