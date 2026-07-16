@@ -44,6 +44,13 @@ _REASONING_SETTLE_S = 4.0
 # detection rather than by waiting longer here.
 _EMPTINESS_PROBE_MS = 1500
 
+# Resume-confirmation budget. UNLIKE the emptiness probe, this WAITS for a prior
+# turn to appear after navigating to a bound thread: providers (ChatGPT, Gemini)
+# hydrate a /c/<id> conversation's messages via async JS several seconds AFTER
+# domcontentloaded (measured ~6.6s for ChatGPT). Too short a wait misreads a
+# still-loading thread as "gone" and wrongly breaks the binding.
+_RESUME_CONFIRM_MS = 20000
+
 
 @dataclass(frozen=True)
 class _LaunchPlan:
@@ -720,13 +727,43 @@ class PlaywrightPageDriver(PageDriver):
                 return False
         except Exception:  # noqa: BLE001 - a page we cannot query is not resumable
             return False
-        # Prior conversation turn present. response_container_present never raises:
-        # a drifted/absent container reads False, so we report unresumable here
-        # rather than failing the job — the later read is what fails loudly.
+        # Prior conversation turn present. WAIT for it to hydrate rather than a
+        # one-shot probe: a bound thread is KNOWN to have earlier turns, but the
+        # provider renders them via async JS seconds after domcontentloaded, so a
+        # short check races the load and misreads a good thread as "gone" (which
+        # would wrongly break the binding). _await_prior_turn never raises.
         try:
-            return self.response_container_present(selectors)
+            return self._await_prior_turn(selectors, timeout_ms=_resume_confirm_ms())
         except Exception:  # noqa: BLE001 - best-effort; never raise from resume
             return False
+
+    def _await_prior_turn(self, selectors: ProviderSelectors, *, timeout_ms: int) -> bool:  # pragma: no cover - requires real browser
+        """Wait (bounded) for a resumed thread's prior turn to render.
+
+        Polls every response_container candidate for a match, sharing ONE overall
+        deadline across candidates (so a thread that never rehydrates fails in
+        ``timeout_ms``, not ``timeout_ms`` per candidate). Returns True as soon as
+        any prior turn is present; False if none appears within the budget. Never
+        raises: an unqueryable candidate is skipped, and a genuinely empty/broken
+        thread reads False so the engine can fail or restart per on_missing.
+        """
+        import time
+
+        deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
+        group = selectors.response_container
+        while True:
+            for candidate in group.as_list():
+                try:
+                    if self._page.locator(candidate).count() > 0:
+                        return True
+                except Exception:  # noqa: BLE001 - skip an uncountable candidate
+                    continue
+            if time.monotonic() >= deadline:
+                return False
+            try:
+                self._page.wait_for_timeout(200)
+            except Exception:  # noqa: BLE001 - pacing only; keep polling to the deadline
+                time.sleep(0.2)
 
     # -- selector helpers ------------------------------------------------
     def _first_visible(self, group, *, timeout_ms: int = 4000):  # pragma: no cover
@@ -1298,6 +1335,24 @@ def _emptiness_probe_ms() -> int:
     except (TypeError, ValueError):
         pass
     return _EMPTINESS_PROBE_MS
+
+
+def _resume_confirm_ms() -> int:
+    """Budget (ms) to wait for a resumed thread's prior turn to render; env-overridable.
+
+    Long by design (see :data:`_RESUME_CONFIRM_MS`): confirming a bound thread
+    means waiting for the provider to hydrate its earlier messages after
+    navigation, not a one-shot presence check.
+    """
+
+    raw = os.environ.get("UBAG_RESUME_CONFIRM_MS", "").strip()
+    try:
+        value = int(raw)
+        if value > 0:
+            return value
+    except (TypeError, ValueError):
+        pass
+    return _RESUME_CONFIRM_MS
 
 
 def _reasoning_settle_s() -> float:

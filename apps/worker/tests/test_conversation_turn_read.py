@@ -22,6 +22,16 @@ from ubag_worker.live.page_driver import PlaywrightPageDriver
 from ubag_worker.live.selectors import CHATGPT_WEB, DEEPSEEK_WEB
 
 
+class _CountLocator:
+    """Minimal locator exposing only .count() (what _await_prior_turn needs)."""
+
+    def __init__(self, n):
+        self._n = n
+
+    def count(self):
+        return self._n
+
+
 class _Element:
     """A single resolved node -- Playwright's locator after ``.first``/``.last``."""
 
@@ -232,3 +242,77 @@ class TestSingleTurnUnchanged:
 
         assert final == "pong"
         assert streamed == "pong"
+
+
+class _ResumeFakePage:
+    """Fake page for resume_thread: the prior turn hydrates after N polls.
+
+    A bound thread is navigated to, then its earlier messages render via async JS
+    some seconds later (measured ~6.6s for ChatGPT). ``appears_after_polls`` is
+    how many response-container polls return empty before the prior turn shows
+    (None = it never rehydrates, i.e. a genuinely dead thread).
+    """
+
+    def __init__(self, selectors, *, appears_after_polls, url="https://provider.test/c/x"):
+        self._primary = selectors.response_container.as_list()[0]
+        self._appears_after = appears_after_polls
+        self._primary_polls = 0
+        self._url = url
+        self.goto_calls = []
+
+    def goto(self, url, wait_until=None, timeout=None):
+        self._url = url
+        self.goto_calls.append(url)
+
+    def wait_for_timeout(self, _ms):
+        pass  # no-op: keeps the test instant
+
+    @property
+    def url(self):
+        return self._url
+
+    def locator(self, selector):
+        if selector == self._primary:
+            n = self._primary_polls
+            self._primary_polls += 1
+            present = self._appears_after is not None and n >= self._appears_after
+            return _CountLocator(1 if present else 0)
+        return _CountLocator(0)
+
+
+class TestResumeWaitsForHydration:
+    def test_resume_waits_for_a_slow_thread_to_rehydrate(self):
+        """The pinned second bug: the prior turn renders seconds after navigation.
+
+        With the old 1.5s one-shot probe this returned False -> thread_broken ->
+        UBAG-TARGET-CONVERSATION-NOT-FOUND-001 on a perfectly good thread.
+        """
+        driver = PlaywrightPageDriver()
+        page = _ResumeFakePage(CHATGPT_WEB, appears_after_polls=4)
+        driver._page = page
+
+        ok = driver.resume_thread(CHATGPT_WEB, "https://chatgpt.com/c/abc123")
+
+        assert ok is True
+        assert page.goto_calls == ["https://chatgpt.com/c/abc123"]
+
+    def test_resume_confirms_immediately_when_already_loaded(self):
+        """A thread already showing its prior turn resumes at once."""
+        driver = PlaywrightPageDriver()
+        driver._page = _ResumeFakePage(CHATGPT_WEB, appears_after_polls=0)
+
+        assert driver.resume_thread(CHATGPT_WEB, "https://chatgpt.com/c/abc123") is True
+
+    def test_resume_gives_up_when_the_thread_never_rehydrates(self, monkeypatch):
+        """A genuinely dead thread still reports unresumable (bounded, not a hang)."""
+        monkeypatch.setenv("UBAG_RESUME_CONFIRM_MS", "150")
+        driver = PlaywrightPageDriver()
+        driver._page = _ResumeFakePage(CHATGPT_WEB, appears_after_polls=None)
+
+        assert driver.resume_thread(CHATGPT_WEB, "https://chatgpt.com/c/abc123") is False
+
+    def test_resume_refuses_an_empty_thread_ref(self):
+        driver = PlaywrightPageDriver()
+        driver._page = _ResumeFakePage(CHATGPT_WEB, appears_after_polls=0)
+
+        assert driver.resume_thread(CHATGPT_WEB, "") is False
