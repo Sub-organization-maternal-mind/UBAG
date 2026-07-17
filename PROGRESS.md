@@ -25,6 +25,30 @@ every project on the box — authored in the separate `vps-platform` repo at
   true via the nginx docker-network path), dashboard `/healthz` OK.
 - `docker-compose.small.yml` (local/small profile) is unchanged — it still runs
   its own backing services for self-contained local use.
+- Nginx Proxy Manager proxy host added for `ubag.polytronx.com` (Let's Encrypt,
+  Force SSL, HTTP/2, Block Common Exploits) forwarding to `ubag-nginx-dashboard`
+  over the existing `nginx-proxy-manager_default` docker network — no new host
+  port published (this VPS has no active firewall; every 0.0.0.0-bound port is
+  directly internet-reachable, so container-network-only ingress was used
+  instead). Deployment scope is intentionally API + dashboard with mock/adapter
+  jobs only (`UBAG_EXECUTOR_MODE=file` + `UBAG_WORKER_CONSUMER_ENABLED=true` +
+  `run_mock_worker.py`, `UBAG_ARTIFACT_STORE=localfs`) — no live-browser
+  automation, to fit the 1-core/2GB budget the owner set for this box.
+- End-to-end verified through the public domain: `job_000000000003` submitted
+  via `POST https://ubag.polytronx.com/v1/jobs` (operator Basic Auth, gateway
+  bearer token injected server-side) reached `completed` with real mock output.
+- Found and fixed a latent bug while wiring worker-consumer mode into Docker
+  for the first time: `docker-compose.small.yml`'s default
+  `UBAG_WORKER_PYTHON=/usr/bin/python3` doesn't exist in the `python:3.12-slim`
+  gateway image (interpreter lives at `/usr/local/bin/python3`) — never hit
+  before because that profile's `UBAG_WORKER_CONSUMER_ENABLED` defaults to
+  `false`. `docker-compose.vps.yml` sets the correct path; the small profile's
+  default is still wrong for anyone who flips worker-consumer on in Docker.
+- Removed leftover artifacts from an earlier (2026-07-11/15) manual live-browser
+  probe against this box (`/root/ubag-probe.sh`,
+  `/root/ubag-rotated-credentials-20260711.txt`,
+  `/root/probe-baseline-gemini_web.json`) — confirmed with the owner as
+  expected/historical before deleting.
 
 ## 2026-07-16 Orchestration Semantics (per-request model/mode + conversation affinity)
 

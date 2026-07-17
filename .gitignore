@@ -19,6 +19,8 @@ dist/
 .env.*
 deploy/small/env.local
 deploy/small/secrets/
+deploy/vps/env.local
+deploy/vps/nginx-dashboard/.htpasswd
 
 # Python generated files
 __pycache__/
