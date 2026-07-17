@@ -1,21 +1,28 @@
-# UBAG — VPS self-host profile (185.252.233.186, shared box, HARD CAP: 1 CPU
-# core / 2GB RAM combined across every service below).
+# UBAG — VPS self-host profile (185.252.233.186, shared box).
 #
 # This is a trimmed sibling of docker-compose.small.yml, not an override of it:
 # same Dockerfiles/config templates (deploy/small/*, unmodified), but only the
-# 3 services actually needed for "API + dashboard, mock/adapter jobs" scope —
-# no live-browser viewer, no Dragonfly (confirmed unused by any gateway code
-# path), no MinIO (localfs artifacts instead — this host has persistent disk,
-# unlike Render's free tier), no NATS (file-spool executor mode needs no
-# queue at single-instance scale; verified in apps/gateway/internal/serve/
-# serve.go + executor/{filespool,workerconsumer}.go: UBAG_EXECUTOR_MODE=file
-# builds a FileSpoolWorkerQueue that never touches NATS).
+# services this box needs. Excluded vs the small profile: Dragonfly (confirmed
+# unused by any gateway code path), MinIO (localfs artifacts instead — this host
+# has persistent disk, unlike Render's free tier), and NATS (file-spool executor
+# mode needs no queue at single-instance scale; verified in
+# apps/gateway/internal/serve/serve.go + executor/{filespool,workerconsumer}.go:
+# UBAG_EXECUTOR_MODE=file builds a FileSpoolWorkerQueue that never touches NATS).
 #
-# Resource budget (cpus / mem_limit), sized to leave real headroom under the
-# 1-core/2GB ceiling on a box already running ~15 other tenants:
-#   gateway......... 0.55 cpu / 1100m  (Go binary + embedded Python mock worker)
+# Live-browser (added 2026-07-17, owner-approved lifting the earlier 1-core/2GB
+# cap to ~2 cores/4GB): a headed Google Chrome runs on the VPS (deploy/vps/
+# browser) so provider logins live on the server and jobs run 24/7 with the
+# operator's laptop off. The operator signs in once via the dashboard's Browser
+# Sessions widget (streamed by tools/live-browser/bridge.mjs over /live-ws); the
+# gateway's live worker attaches to that same Chrome over CDP. Safe-mode intact:
+# a human does the login, UBAG never types credentials or solves CAPTCHAs.
+#
+# Resource budget (cpus / mem_limit), under the ~2-core/4GB owner-approved cap on
+# a box with 6 cores / 11GB (~7GB free):
+#   gateway......... 0.60 cpu / 1300m  (Go binary + Python live worker + Playwright CDP client)
 #   nginx-dashboard.. 0.15 cpu /   96m
-#   TOTAL........... 0.70 cpu / 1196m  (under the 1.0 core / 2048m cap)
+#   browser......... 1.00 cpu / 1900m  (headed Chrome + Xvfb)
+#   TOTAL........... 1.75 cpu / 3296m  (under ~2 cores / 4096m)
 #
 # Postgres comes from the shared platform stack at /opt/platform since
 # 2026-07-17 (one instance for every project on the box — see
@@ -48,8 +55,8 @@ services:
       context: .
       dockerfile: deploy/small/gateway.Dockerfile
     image: ${UBAG_GATEWAY_IMAGE:-ubag/gateway:vps-local}
-    cpus: "0.55"
-    mem_limit: 1100m
+    cpus: "0.60"
+    mem_limit: 1300m
     restart: unless-stopped
     environment:
       UBAG_GATEWAY_ADDR: ":8080"
@@ -68,23 +75,35 @@ services:
       UBAG_DATABASE_MAX_OPEN_CONNS: ${UBAG_DATABASE_MAX_OPEN_CONNS:-5}
       UBAG_DATABASE_MAX_IDLE_CONNS: ${UBAG_DATABASE_MAX_IDLE_CONNS:-2}
       UBAG_DATABASE_CONN_MAX_LIFETIME_SECONDS: ${UBAG_DATABASE_CONN_MAX_LIFETIME_SECONDS:-300}
-      # No live browser, no queue — jobs spool to disk and are picked up
-      # in-process by the embedded Python mock worker.
+      # No queue — jobs spool to disk and are picked up in-process by the worker.
       UBAG_EXECUTOR_MODE: file
       UBAG_EXECUTOR_SPOOL_DIR: /var/lib/ubag/executor-spool
       UBAG_ARTIFACT_STORE: localfs
       UBAG_ARTIFACT_DIR: /var/lib/ubag/artifacts
       UBAG_WORKER_CONSUMER_ENABLED: "true"
       # python:3.12-slim (this image's runtime base) installs its interpreter
-      # under /usr/local/bin, not /usr/bin — the docker-compose.small.yml
-      # default (/usr/bin/python3) is a latent bug that's never been hit in
-      # Docker before since that profile's UBAG_WORKER_CONSUMER_ENABLED
-      # defaults to false; the local (non-Docker) dev launcher points at a
-      # real host interpreter instead, so it never surfaced there either.
+      # under /usr/local/bin, not /usr/bin.
       UBAG_WORKER_PYTHON: /usr/local/bin/python3
-      UBAG_WORKER_SCRIPT: /app/apps/worker/run_mock_worker.py
+      # run_live_worker.py routes live provider targets (chatgpt_web, gemini_web,
+      # deepseek_web, claude_web, ...) to the Playwright CDP-attach engine, and
+      # target=mock still falls through to the registry mock adapter — so mock
+      # jobs keep working unchanged (verified in run_live_worker.py routing).
+      UBAG_WORKER_SCRIPT: /app/apps/worker/run_live_worker.py
+      # Attach to the browser container's Chrome over CDP (via its socat proxy)
+      # instead of launching a throwaway browser — live jobs reuse the operator's
+      # manually-logged-in session. http(s):// endpoint => connect_over_cdp;
+      # needs only the playwright pip package (already in the gateway image), no
+      # browser download.
+      # MUST be the browser's IP, not its service name: Chrome's DevTools HTTP
+      # endpoint rejects any Host header that isn't localhost or an IP (a
+      # hostname like "browser" gets HTTP 500), so this uses the static IP pinned
+      # on ubag-private below. (The old production setup used an IP for the same
+      # reason.)
+      UBAG_REMOTE_BROWSER_ENDPOINT: ${UBAG_REMOTE_BROWSER_ENDPOINT:-http://172.28.0.10:9223}
       UBAG_WORKER_POLL_INTERVAL_MS: ${UBAG_WORKER_POLL_INTERVAL_MS:-500}
-      UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-120000}
+      # Live provider jobs (page loads, streamed responses) need more headroom
+      # than mock jobs; matches the verified local live-runtime setting.
+      UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-180000}
       UBAG_WEBHOOK_WORKER_ENABLED: "false"
       UBAG_WEBHOOK_SECRET: ${UBAG_WEBHOOK_SECRET:-}
     volumes:
@@ -132,9 +151,54 @@ services:
       # compose stack at /opt/docker/nginx-proxy-manager).
       - nginx-proxy-manager_default
 
+  # Headed Google Chrome on Xvfb, streamed to the dashboard's Browser Sessions
+  # widget by tools/live-browser/bridge.mjs (attach-only). The operator logs in
+  # to providers here; the gateway's live worker attaches over CDP (socat proxy
+  # on 9223). Profile persists on a named volume so logins survive restarts.
+  # No host port published — nginx reaches the bridge (58090) over ubag-private,
+  # and CDP (9223) never leaves the internal network.
+  browser:
+    build:
+      context: .
+      dockerfile: deploy/vps/browser/Dockerfile
+    image: ${UBAG_BROWSER_IMAGE:-ubag/vps-browser:local}
+    container_name: ubag-vps-browser
+    restart: unless-stopped
+    cpus: "1.0"
+    mem_limit: 1900m
+    environment:
+      UBAG_BROWSER_GEOMETRY: ${UBAG_BROWSER_GEOMETRY:-1280x800x24}
+      UBAG_BROWSER_START_URL: ${UBAG_BROWSER_START_URL:-https://chatgpt.com}
+    volumes:
+      - browser_profile:/profiles
+    healthcheck:
+      # Healthy only when BOTH the dashboard bridge (58090) and Chrome's CDP
+      # (58091) answer — a wedged Chrome behind a live bridge still flips this.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:58090/health >/dev/null 2>&1 && wget -qO- http://127.0.0.1:58091/json/version >/dev/null 2>&1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+    networks:
+      ubag-private:
+        # Static IP so the gateway's CDP endpoint (an IP, not a hostname — see
+        # UBAG_REMOTE_BROWSER_ENDPOINT above) is stable across recreation.
+        ipv4_address: 172.28.0.10
+
 networks:
   ubag-private:
-    internal: true
+    # NOT internal: the browser container needs outbound internet to reach the
+    # AI providers (chatgpt.com, gemini, etc.) — an internal network gave Chrome
+    # ERR_NAME_NOT_RESOLVED. This carries only app-tier traffic (gateway ↔ browser
+    # ↔ nginx); Postgres is on the external `platform` network, and none of these
+    # containers publish a host port, so dropping `internal` grants egress only —
+    # it adds no inbound exposure. The gateway also reaches egress via `platform`.
+    # Pinned subnet so the browser container can hold a static IP (172.28.0.10)
+    # for the gateway's CDP endpoint. 172.28.0.0/24 was free on this box at
+    # setup (checked against every existing docker network subnet).
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
   nginx-proxy-manager_default:
     external: true
   platform:
@@ -143,3 +207,4 @@ networks:
 volumes:
   executor_spool:
   artifact_data:
+  browser_profile:

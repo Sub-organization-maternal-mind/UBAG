@@ -31,6 +31,16 @@ const PROFILE_DIR = process.env.UBAG_LIVE_BROWSER_PROFILE
 const START_URL = process.env.UBAG_LIVE_BROWSER_START_URL ?? 'https://chatgpt.com';
 const FRAME_QUALITY = Number(process.env.UBAG_LIVE_BROWSER_QUALITY ?? 60);
 const FRAME_MAX_WIDTH = Number(process.env.UBAG_LIVE_BROWSER_MAX_WIDTH ?? 1280);
+// Host the dashboard-facing WebSocket binds to. Defaults to loopback (the local
+// single-machine dev case); a container sets 0.0.0.0 so an ingress proxy on the
+// same Docker network can reach it. Local Windows/macOS dev is unaffected.
+const BIND_HOST = process.env.UBAG_LIVE_BROWSER_BIND ?? '127.0.0.1';
+// Attach-only: never launch Chrome from the bridge. When a supervisor already
+// owns Chrome's lifecycle with container-safe flags (--no-sandbox, stealth,
+// keychain), the bridge must only attach + stream, never spawn its own Chrome
+// with the loopback/desktop flags below (which would fail as root in a
+// container). Off by default, so local dev still auto-launches Chrome.
+const ATTACH_ONLY = /^(1|true|yes|on)$/i.test(process.env.UBAG_LIVE_BROWSER_ATTACH_ONLY ?? '');
 
 function log(...args) {
   console.log(new Date().toISOString(), '[live-browser]', ...args);
@@ -120,6 +130,18 @@ async function ensureChrome() {
   if (await cdpAlive()) {
     log(`reusing Chrome already on CDP port ${CDP_PORT}`);
     return;
+  }
+  if (ATTACH_ONLY) {
+    // A supervisor owns Chrome; just wait (indefinitely — the container
+    // healthcheck surfaces a Chrome that never comes up) for its CDP endpoint.
+    log(`attach-only: waiting for supervised Chrome CDP on port ${CDP_PORT}...`);
+    for (;;) {
+      if (await cdpAlive()) {
+        log('Chrome CDP is up');
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
   }
   const chrome = findChrome();
   if (!chrome) {
@@ -540,8 +562,8 @@ async function main() {
     socket.on('error', () => { clients.delete(socket); socket.destroy(); });
   });
 
-  server.listen(WS_PORT, '127.0.0.1', () => {
-    log(`bridge listening on ws://127.0.0.1:${WS_PORT} (start url: ${START_URL})`);
+  server.listen(WS_PORT, BIND_HOST, () => {
+    log(`bridge listening on ws://${BIND_HOST}:${WS_PORT} (start url: ${START_URL})`);
   });
 }
 
@@ -553,6 +575,22 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
     process.exit(0);
   });
 }
+
+// Stay alive through CDP/page churn. When the live worker (which shares this
+// Chrome over CDP) opens or closes its own page, a CDP command the bridge had
+// in flight can come back as "Not attached to an active page" and reject with
+// no local handler — previously that crashed the whole bridge, killing the
+// operator's live view. Instead, log it and re-attach to a valid page. This is
+// a recovery signal, not a fatal condition (the SAME failure mode the built-in
+// keepalive already recovers from when a capture fails).
+process.on('unhandledRejection', (reason) => {
+  log('recoverable: unhandledRejection', reason?.message ?? reason);
+  triggerRecover();
+});
+process.on('uncaughtException', (err) => {
+  log('recoverable: uncaughtException', err?.message ?? err);
+  triggerRecover();
+});
 
 main().catch((e) => {
   log('fatal', e);

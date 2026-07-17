@@ -2,6 +2,51 @@
 
 Last updated: 2026-07-17
 
+## 2026-07-17 VPS: live-browser (VPS-hosted Chrome) for 24/7 provider sessions
+
+Added server-side live-browser so provider logins live on the VPS and jobs run
+24/7 with the operator's laptop off (owner-approved lifting the earlier
+1-core/2GB cap to ~2 cores/4GB). The operator signs in once via the dashboard's
+Browser Sessions widget — verified live: the ChatGPT page streamed into
+`https://ubag.polytronx.com/dashboard/browser` with the widget showing "Live".
+
+- **New `browser` service** (`deploy/vps/browser/{Dockerfile,entrypoint.sh}`):
+  headed Google Chrome on Xvfb (reusing the proven browser-viewer flags —
+  stealth + `--password-store=basic` + `--no-sandbox`), streamed by
+  `tools/live-browser/bridge.mjs` in a new **attach-only** mode. A foreground
+  watchdog owns Chrome (relaunch-on-death); the bridge only attaches + streams,
+  so it never launches Chrome with the desktop/loopback flags that fail as root
+  in a container. Persistent profile on a named volume (`browser_profile`).
+  socat exposes Chrome's loopback CDP to the worker on 9223. Capped 1.0cpu/1.9G.
+- **bridge.mjs patches (all env-gated, local Windows dev unchanged):**
+  `UBAG_LIVE_BROWSER_BIND` (0.0.0.0 in-container), `UBAG_LIVE_BROWSER_ATTACH_ONLY`
+  (never spawn Chrome), and process-level `unhandledRejection`/`uncaughtException`
+  handlers that re-attach instead of crashing. The last one fixes a real
+  shared-Chrome bug: when the live worker opens/closes its own page, an in-flight
+  CDP command returned "Not attached to an active page" and killed the bridge —
+  now it self-heals, plus a restart-loop supervisor in the entrypoint.
+- **Gateway → live worker:** `UBAG_WORKER_SCRIPT=run_live_worker.py` (mock still
+  routes to the mock adapter) + `UBAG_REMOTE_BROWSER_ENDPOINT=http://172.28.0.10:9223`.
+  Must be an **IP, not a hostname** — Chrome's DevTools HTTP endpoint returns 500
+  for any `Host` header that isn't localhost/an IP, so `ubag-private` is pinned to
+  `172.28.0.0/24` and the browser holds static `172.28.0.10`.
+- **`ubag-private` is no longer `internal`:** the browser needs outbound internet
+  to reach providers (an internal net gave Chrome ERR_NAME_NOT_RESOLVED). Only
+  app-tier traffic rides it, Postgres is on `platform`, and nothing publishes a
+  host port — so this grants egress only, no new inbound exposure.
+- **Dashboard + nginx:** `LiveBrowser.svelte` `defaultWsUrl()` now targets
+  `wss://<host>/live-ws` off-localhost (localStorage override still wins); nginx
+  adds an authed `/live-ws` WebSocket proxy (server-level Basic Auth inherited —
+  the bridge grants full Chrome control).
+- **Gotcha that cost the most time:** the NPM proxy host for ubag.polytronx.com
+  needs **"Websockets Support" enabled** — without it NPM strips the `Upgrade`
+  header and the browser WS handshake reaches nginx as a plain GET (426). Enabled
+  it; the widget connected immediately. (Internal handshake was 101 the whole
+  time — the break was purely the NPM toggle.)
+- Verified: live widget streams Chrome; worker attaches over CDP and progresses a
+  chatgpt_web job through session/token events; bridge survives worker page churn;
+  mock jobs still complete; all 3 containers healthy at ~1.5cpu/0.9G actual use.
+
 ## 2026-07-17 VPS: UBAG moved onto the shared-platform Postgres
 
 The production VPS (185.252.233.186) now runs a shared backing-services stack at

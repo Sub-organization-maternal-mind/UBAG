@@ -59,6 +59,30 @@ server {
         add_header X-Frame-Options        "DENY"         always;
     }
 
+    # ── Live-browser bridge (VPS profile) — dashboard JPEG-screencast WebSocket ─
+    # Proxies the dashboard's Browser Sessions widget to the bridge running in
+    # the `browser` container (tools/live-browser/bridge.mjs, attach-only). Uses
+    # a variable + the resolver above so nginx starts even when no browser
+    # container is present (small profile) — a request then 502s instead of
+    # failing at boot. Deliberately NO `auth_basic off`: the bridge grants full
+    # mouse/keyboard control of the logged-in Chrome, so it inherits the
+    # server-level Basic Auth gate. The dashboard page and this WS are the same
+    # origin + realm, so the browser reuses the operator's cached credentials on
+    # the handshake.
+    location = /live-ws {
+        set                $ubag_live_bridge http://browser:58090;
+        proxy_pass         $ubag_live_bridge;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade    $http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_set_header   Host       $host;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        proxy_buffering    off;
+        add_header X-Content-Type-Options "nosniff"    always;
+        add_header Referrer-Policy        "no-referrer" always;
+    }
+
     # ── noVNC live-browser viewer (WebSocket + SAMEORIGIN embed) ─────────────
     location /novnc/ {
         set                $ubag_browser_viewer http://browser-viewer:6080;

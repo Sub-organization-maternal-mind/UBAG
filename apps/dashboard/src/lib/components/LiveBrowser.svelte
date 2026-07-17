@@ -9,6 +9,17 @@
       const stored = localStorage.getItem('ubag_live_browser_ws');
       if (stored) return stored;
     }
+    // Served from a real host (VPS deployment): the bridge runs in a container
+    // behind nginx at /live-ws on the same origin. Use wss/ws to match the page
+    // scheme (browsers block ws:// from an https page except to localhost).
+    if (
+      typeof location !== 'undefined' &&
+      !['localhost', '127.0.0.1', '[::1]', ''].includes(location.hostname)
+    ) {
+      const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+      return scheme + location.host + '/live-ws';
+    }
+    // Local single-machine dev: bridge runs on the loopback default port.
     return 'ws://127.0.0.1:58090';
   }
 
