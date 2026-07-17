@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -38,6 +40,7 @@ if str(_WORKER_DIR) not in sys.path:
 # which resolves relative to adapter_registry.py, so no additional path
 # entry is needed for the adapters package.
 
+from ubag_worker.live import chat_ledger  # noqa: E402
 from ubag_worker.live.engine import LiveSessionEngine  # noqa: E402
 from ubag_worker.live.selectors import PROVIDER_SELECTORS  # noqa: E402
 from ubag_worker.runner import emit_jsonl, load_payload_from_text  # noqa: E402
@@ -135,13 +138,34 @@ def _target_from_payload(payload: object) -> str:
     return str(job_field.get("target", payload.get("target", "mock")))
 
 
+def _flag_enabled(name: str) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return False
+    return raw.strip().lower() not in ("", "0", "false", "no", "off")
+
+
 def _emit_live_jsonl(payload: object, stream) -> int:
     """Drive a live session and emit each event as a JSONL line."""
     target = _target_from_payload(payload)
     if target not in PROVIDER_SELECTORS:
         raise ValueError("no live selector configuration for target %r" % target)
     selectors = PROVIDER_SELECTORS[target]
-    engine = LiveSessionEngine(selectors)
+    # Record every chat this job creates so the chat reaper can only ever delete
+    # OUR chats and never the operator's own (provider deletion is permanent —
+    # see ubag_worker/live/chat_ledger.py). Opt-in: without
+    # UBAG_CHAT_LEDGER_ENABLED nothing is written and the job path is unchanged.
+    chat_sink = None
+    if _flag_enabled("UBAG_CHAT_LEDGER_ENABLED"):
+        def chat_sink(*, url, target, conversation_key):  # noqa: F811
+            chat_ledger.record_chat(
+                url=url,
+                target=target,
+                created_at=time.time(),
+                conversation_key=conversation_key,
+            )
+
+    engine = LiveSessionEngine(selectors, chat_sink=chat_sink)
     count = 0
     for event in engine.iter_events(payload):
         stream.write(_dump_event(event))

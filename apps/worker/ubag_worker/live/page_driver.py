@@ -23,6 +23,7 @@ Security invariants enforced here:
 from __future__ import annotations
 
 import os
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Iterator, List, Mapping, Optional, Sequence
@@ -33,6 +34,12 @@ from .selectors import ProviderSelectors
 AUTHENTICATED = "authenticated"
 LOGIN_REQUIRED = "login_required"
 UNKNOWN = "unknown"
+
+# A provider chat id is a URL path segment (e.g. a ChatGPT UUID). delete_chat
+# interpolates it into id-addressed selectors, so anything outside this charset
+# is REFUSED rather than escaped: a quote or bracket could widen the selector to
+# match other chats, and the delete it drives is permanent on a real account.
+_SAFE_CONV_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,128}$")
 
 # Settle window (seconds of no growth) before a response is considered complete.
 # Reasoning modes (DeepThink / Extended thinking) pause mid-thought for seconds
@@ -195,6 +202,22 @@ class PageDriver(ABC):
         """
         return False
 
+    def delete_chat(self, selectors: ProviderSelectors, conv_id: str) -> bool:
+        """PERMANENTLY delete one exact chat by its provider conversation id.
+
+        Concrete (NOT abstract) so existing drivers keep working untouched;
+        returns ``False`` by default, meaning "did not delete". Only the chat
+        reaper calls this, and only with an id read back from the chat ledger —
+        i.e. a chat UBAG recorded itself as creating. It must never be reachable
+        from a job path: deletion on these providers is permanent, the accounts
+        are real and human-owned, and the sidebar mixes our throwaway job chats
+        with the operator's own work.
+
+        Returns True only when the chat is VERIFIED gone afterwards, never merely
+        because a click was dispatched.
+        """
+        return False
+
     def current_thread_url(self, selectors: ProviderSelectors) -> str:
         """Return the canonical provider chat-thread URL for the current page.
 
@@ -327,11 +350,16 @@ class MockPageDriver(PageDriver):
     # as loaded (the live driver checks URL-settled + response_container_present).
     thread_url: str = ""
     resume_succeeds: bool = True
+    # Chat reaper: conv_ids whose delete is simulated as NOT landing (the live
+    # driver verifies the chat is gone rather than trusting the click).
+    undeletable_chats: Sequence[str] = ()
     opened: bool = field(default=False, init=False)
     closed: bool = field(default=False, init=False)
     submitted_prompt: Optional[str] = field(default=None, init=False)
     attached_files: List[str] = field(default_factory=list, init=False)
     started_new_chat: bool = field(default=False, init=False)
+    #: conv_ids delete_chat was asked to remove (assertable without a browser).
+    deleted_chats: List[str] = field(default_factory=list, init=False)
     resumed_thread_ref: Optional[str] = field(default=None, init=False)
     ensured_settings: List[Mapping[str, object]] = field(default_factory=list, init=False)
     _url: str = field(default="about:blank", init=False)
@@ -434,6 +462,13 @@ class MockPageDriver(PageDriver):
         self._guard_drift(selectors.new_chat.name, selectors.selector_version)
         self.started_new_chat = True
         return True
+
+    def delete_chat(self, selectors: ProviderSelectors, conv_id: str) -> bool:
+        if selectors.delete_chat is None:
+            return False
+        self._guard_drift("delete_chat", selectors.selector_version)
+        self.deleted_chats.append(conv_id)
+        return conv_id not in self.undeletable_chats
 
     def current_thread_url(self, selectors: ProviderSelectors) -> str:
         return self.thread_url
@@ -941,6 +976,54 @@ class PlaywrightPageDriver(PageDriver):
             self._page.wait_for_timeout(150)
         except Exception:  # noqa: BLE001
             pass
+
+    # -- chat reaper (PERMANENT delete of one exact UBAG-created chat) ---
+    def delete_chat(self, selectors: ProviderSelectors, conv_id: str) -> bool:  # pragma: no cover
+        """Delete exactly the chat with ``conv_id``; verify it is gone.
+
+        Safety posture (this is the only irreversible thing the worker can do):
+          * ``conv_id`` comes from the chat ledger — a chat UBAG recorded itself
+            as creating. It is substituted into id-addressed selectors, so this
+            cannot express "delete the oldest/any chat".
+          * The id is validated before it reaches a selector: provider chat ids
+            are URL path segments, so anything outside [A-Za-z0-9_-] is rejected
+            rather than interpolated (a quote/bracket could otherwise widen the
+            selector to match — and thus delete — OTHER chats).
+          * The options button is clicked via element.click(): the sidebar rows
+            sit under overlays that intercept a positional click, which would
+            silently dispatch to the wrong element.
+          * Returns True only when the chat is verified ABSENT afterwards.
+        """
+
+        flow = selectors.delete_chat
+        if flow is None or not conv_id:
+            return False
+        if not _SAFE_CONV_ID_RE.match(conv_id):
+            return False
+        options = flow.open_options.format(conv_id=conv_id)
+        try:
+            if not self._present_any([options], timeout_ms=4000):
+                # Already gone (or never in this sidebar): nothing to delete.
+                return not self._present_any(
+                    [flow.still_present.format(conv_id=conv_id)], timeout_ms=1000
+                )
+            self._page.eval_on_selector(options, "el => el.click()")
+            self._page.wait_for_timeout(900)
+            if not self._click_any([flow.delete_item], timeout_ms=4000):
+                self._dismiss_menus()
+                return False
+            self._page.wait_for_timeout(600)
+            if not self._click_any([flow.confirm], timeout_ms=4000):
+                self._dismiss_menus()
+                return False
+            self._page.wait_for_timeout(1500)
+        except Exception:  # noqa: BLE001 - never raise into the reaper loop
+            self._dismiss_menus()
+            return False
+        # Verify rather than trust the click.
+        return not self._present_any(
+            [flow.still_present.format(conv_id=conv_id)], timeout_ms=2000
+        )
 
     # -- pre-submit configuration (new chat + model/mode/reasoning) ------
     def start_new_chat(self, selectors: ProviderSelectors) -> bool:  # pragma: no cover

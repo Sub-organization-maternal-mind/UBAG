@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import TYPE_CHECKING, Any, Iterator, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Callable, Iterator, List, Mapping, Optional
 
 # Reuse the canonical secret-material guard so the live path rejects exactly the
 # same disallowed credential/cookie/token material as the registry & mock paths.
@@ -115,10 +115,18 @@ class LiveSessionEngine:
         manual_login_timeout_s: float = _DEFAULT_MANUAL_LOGIN_TIMEOUT_S,
         response_timeout_s: float = _DEFAULT_RESPONSE_TIMEOUT_S,
         orchestrator: "Optional[LiveOrchestrator]" = None,
+        chat_sink: "Optional[Callable[..., Any]]" = None,
     ) -> None:
         self._selectors = selectors
         self._manual_login_timeout_s = manual_login_timeout_s
         self._response_timeout_s = response_timeout_s
+        # Optional sink recording every chat UBAG creates, so the chat reaper can
+        # only ever delete OUR chats and never the human's (see chat_ledger.py —
+        # deletion on these providers is permanent). ``None`` (the default) keeps
+        # the engine side-effect-free for tests and for anyone not running the
+        # reaper; the event stream is identical either way, so no gateway or
+        # contract change is needed to carry this.
+        self._chat_sink = chat_sink
         # Optional process-level orchestrator (Fleet + ChannelPool + AIMD). When
         # ``None`` (the default) the engine behaves byte-for-byte as before and
         # emits only the canonical event stream — every existing test stays green.
@@ -546,17 +554,38 @@ class LiveSessionEngine:
         # has assigned/settled the canonical chat URL. Best-effort like
         # start_new_chat: with no bindable URL (base driver) nothing is emitted, so
         # the store is never handed an empty ref. The event carries ONLY the URL.
-        if bind_after_response or rebind_after_response:
+        #
+        # The URL is now also captured for UNBOUND jobs, purely to record it in the
+        # chat ledger: the reaper may only ever delete chats UBAG is recorded as
+        # having created, so a chat we never record can never be cleaned up (and,
+        # far more importantly, a chat the HUMAN created can never be mistaken for
+        # ours). Resumed threads are skipped — we did not create that chat on this
+        # run, and it is bound anyway.
+        chat_url = ""
+        if bind_after_response or rebind_after_response or (
+            self._chat_sink is not None and not resumed
+        ):
             chat_url = driver.current_thread_url(self._selectors)
-            if chat_url:
-                event_type = (
-                    CONVERSATION_THREAD_REBOUND_EVENT_TYPE
-                    if rebind_after_response
-                    else CONVERSATION_THREAD_BOUND_EVENT_TYPE
+        if chat_url and (bind_after_response or rebind_after_response):
+            event_type = (
+                CONVERSATION_THREAD_REBOUND_EVENT_TYPE
+                if rebind_after_response
+                else CONVERSATION_THREAD_BOUND_EVENT_TYPE
+            )
+            events.append((event_type, {
+                _CONVERSATION_THREAD_REF_FIELD: chat_url,
+            }))
+        if chat_url and self._chat_sink is not None and not resumed:
+            # Best-effort: a ledger failure must never fail a job that already
+            # produced a good answer (worst case: one chat is never reaped).
+            try:
+                self._chat_sink(
+                    url=chat_url,
+                    target=self._selectors.provider_id,
+                    conversation_key=job.conversation_key,
                 )
-                events.append((event_type, {
-                    _CONVERSATION_THREAD_REF_FIELD: chat_url,
-                }))
+            except Exception:  # noqa: BLE001
+                pass
 
         return {"events": events, "blocked": None}
 

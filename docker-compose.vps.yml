@@ -106,9 +106,17 @@ services:
       UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-180000}
       UBAG_WEBHOOK_WORKER_ENABLED: "false"
       UBAG_WEBHOOK_SECRET: ${UBAG_WEBHOOK_SECRET:-}
+      # Record every chat a live job creates, so the chat-reaper below can only
+      # ever delete OUR chats and never the operator's own. The accounts are real
+      # and their sidebars mix UBAG's job chats with the human's work; provider
+      # deletion is permanent. Recording is the safety mechanism — without it the
+      # reaper has no legitimate targets at all (which is the safe failure mode).
+      UBAG_CHAT_LEDGER_ENABLED: ${UBAG_CHAT_LEDGER_ENABLED:-true}
+      UBAG_CHAT_LEDGER_PATH: /var/lib/ubag/chat-ledger/ledger.jsonl
     volumes:
       - executor_spool:/var/lib/ubag/executor-spool
       - artifact_data:/var/lib/ubag/artifacts
+      - chat_ledger:/var/lib/ubag/chat-ledger
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/v1/ready"]
       interval: 15s
@@ -185,6 +193,37 @@ services:
         # UBAG_REMOTE_BROWSER_ENDPOINT above) is stable across recreation.
         ipv4_address: 172.28.0.10
 
+  # Deletes UBAG's own stale job chats so the operator's sidebar stays clean.
+  # It reads ONLY the chat ledger (chats UBAG recorded itself as creating) — it
+  # never scans the sidebar, matches titles, or reasons about age alone, so the
+  # operator's own chats are unreachable from here by construction. Bound
+  # conversations are skipped (deleting one breaks the next turn). Deletion is
+  # PERMANENT on these providers, hence: dry-run unless explicitly enabled.
+  chat-reaper:
+    image: ${UBAG_GATEWAY_IMAGE:-ubag/gateway:vps-local}
+    container_name: ubag-vps-chat-reaper
+    restart: unless-stopped
+    cpus: "0.10"
+    mem_limit: 256m
+    depends_on:
+      browser:
+        condition: service_healthy
+    environment:
+      # Inert by default (repo convention for risky runtime features): without
+      # this the loop only reports what it WOULD delete.
+      UBAG_CHAT_REAPER_ENABLED: ${UBAG_CHAT_REAPER_ENABLED:-false}
+      UBAG_CHAT_TTL_SECONDS: ${UBAG_CHAT_TTL_SECONDS:-7200}
+      UBAG_CHAT_LEDGER_PATH: /var/lib/ubag/chat-ledger/ledger.jsonl
+      UBAG_REMOTE_BROWSER_ENDPOINT: ${UBAG_REMOTE_BROWSER_ENDPOINT:-http://172.28.0.10:9223}
+      UBAG_CHAT_REAPER_INTERVAL_SECONDS: ${UBAG_CHAT_REAPER_INTERVAL_SECONDS:-900}
+    volumes:
+      - chat_ledger:/var/lib/ubag/chat-ledger
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'while true; do python3 /app/apps/worker/run_chat_reaper.py || echo "chat-reaper: cycle failed"; sleep "${UBAG_CHAT_REAPER_INTERVAL_SECONDS:-900}"; done'
+    networks:
+      - ubag-private
+
 networks:
   ubag-private:
     # NOT internal: the browser container needs outbound internet to reach the
@@ -208,3 +247,7 @@ volumes:
   executor_spool:
   artifact_data:
   browser_profile:
+  # Shared gateway<->chat-reaper: the record of chats UBAG created. This IS the
+  # reaper's allowlist — losing it means nothing gets reaped (safe), never that
+  # something extra does.
+  chat_ledger:

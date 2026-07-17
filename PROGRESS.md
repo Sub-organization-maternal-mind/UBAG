@@ -2,6 +2,73 @@
 
 Last updated: 2026-07-17
 
+## 2026-07-17 Chat reaper: delete UBAG's own stale job chats (never the human's)
+
+Operator ask: "all chats after 2 hours should be deleted — to avoid cluttering."
+Implemented, but NOT as literally asked, because the worker could not delete
+chats at all AND the literal rule was unsafe:
+
+- **The accounts are real and shared.** The live ChatGPT sidebar holds 26+ chats
+  mixing UBAG's throwaway job chats ("Math Query", "72", "Memory game BANANA")
+  with the operator's actual work ("Cloud Code Project Refactor", "RadioPad UI
+  Design", "ChatGPT Business Agents"). Provider deletion is PERMANENT — no trash.
+  "Delete everything older than 2h" would have destroyed the second list.
+- **UBAG could not tell them apart.** `engine.py` captured `current_thread_url`
+  only when `job.conversation_key` was set (engine.py:432), so ad-hoc jobs left
+  no record; `gateway_conversations` had 0 rows in production. So the ONLY
+  implementable literal rule was the destructive one.
+
+Design (operator-confirmed): only ever touch chats UBAG **recorded itself as
+creating**, making "we only delete our own" structural rather than a heuristic.
+
+- `ubag_worker/live/chat_ledger.py` — append-only JSONL of chats UBAG created
+  (url, conv_id, target, created_at, conversation_key). Best-effort by design:
+  a ledger failure must never fail a job that already answered, so every failure
+  biases toward UNDER-recording (missed cleanup = clutter; over-recording = data
+  loss). This ledger IS the reaper's allowlist.
+- `engine.py` gains an optional `chat_sink` (default None ⇒ byte-identical
+  behavior, no gateway/contract change needed since nothing new is emitted).
+- `page_driver.delete_chat(selectors, conv_id)` + `ChatDeleteFlow` selectors.
+  Ids are charset-guarded (`_SAFE_CONV_ID_RE`) before touching a selector — a
+  quote/bracket could widen the selector and delete OTHER chats. Returns True
+  only when the chat is VERIFIED absent afterwards, never on a click.
+- `run_chat_reaper.py` + `chat-reaper` compose service (15-min loop, 0.1cpu).
+  Dry-run is the default (`UBAG_CHAT_REAPER_ENABLED`); skips bound threads.
+- **ChatGPT delete flow verified live 2026-07-17** by deleting a UBAG-created
+  throwaway chat. The row options button carries the id directly
+  (`data-conversation-options-trigger="<uuid>"`), enabling exact id-addressed
+  deletion — no title/age/position matching is even expressible. Menu exposes
+  stable testids (`delete-chat-menu-item` → `delete-conversation-confirm-button`).
+  The options button needs `element.click()`: sidebar overlays intercept a
+  positional click and would dispatch to the WRONG element.
+  gemini_web/deepseek_web have no verified flow yet ⇒ `delete_chat=None` ⇒ the
+  reaper refuses them rather than improvising against a real account.
+
+Two real bugs found and fixed while verifying:
+
+1. **The bridge restart loop never ran.** `deploy/vps/browser/entrypoint.sh` runs
+   under `set -eu`, which the restart subshell inherits: when node exited
+   non-zero, errexit killed the SUBSHELL, so the bridge stayed dead until the
+   container was recreated (observed: browser unhealthy for ~1h, 0 restart
+   markers). Fixed with `set +e` inside the subshell; verified by killing the
+   bridge and watching it return in <8s.
+2. **The worker never saw the ledger env.** The gateway passes the worker a
+   curated allowlist (`minimalWorkerEnv`, workerconsumer.go) to keep secrets out
+   of the worker; the two non-secret ledger vars were missing, so recording
+   silently no-op'd. Added them. A second layer: the `chat_ledger` named volume
+   initialized root-owned (the image never created that dir, unlike
+   executor-spool), so the ubag-uid worker got EPERM and `record_chat` swallowed
+   it exactly as designed. Fixed in gateway.Dockerfile.
+
+Verified live end-to-end: job → ledger record → `reaper.deleted` (verified gone)
+→ `deleted_at` stamped; targeting dry-run on a mixed ledger reaped 1 of 4 and
+correctly skipped bound / too-young / already-deleted; the operator's own chats
+remain untouched. 386 worker tests (19 new), go vet clean.
+
+**Note:** the ~28 chats predating the ledger are not recorded, so the reaper will
+never touch them — they need manual cleanup. Cleanup applies to chats created
+from now on.
+
 ## 2026-07-17 gemini_web: re-baseline the flattened mode menu (3.5 Flash + Extended)
 
 The operator's gemini/deepseek defaults were ALREADY the requested values

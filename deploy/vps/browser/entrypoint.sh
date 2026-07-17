@@ -150,6 +150,12 @@ done
 # hard-exits anyway, this brings it back so the operator's live view is never
 # permanently dead (the Chrome watchdog below doesn't supervise the bridge).
 (
+  # `set +e` is LOAD-BEARING: this script runs under `set -eu`, which a subshell
+  # inherits. Without this, node exiting non-zero (the bridge's fatal path — e.g.
+  # a CDP attach racing a page that vanishes seconds after Chrome starts) trips
+  # errexit and kills THIS SUBSHELL, so the restart never happens and the live
+  # view stays dead until the container is recreated. Observed exactly that.
+  set +e
   while true; do
     UBAG_LIVE_BROWSER_ATTACH_ONLY=1 \
     UBAG_LIVE_BROWSER_BIND=0.0.0.0 \

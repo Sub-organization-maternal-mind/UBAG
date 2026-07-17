@@ -82,6 +82,34 @@ class ProviderSetting:
 
 
 @dataclass(frozen=True)
+class ChatDeleteFlow:
+    """The PERMANENT delete flow for one exact chat, used only by the reaper.
+
+    Every selector addresses a chat by its provider conversation id via a
+    ``{conv_id}`` placeholder — never by title/age/position. That is the whole
+    safety property: the reaper reads an id out of the chat ledger (a chat UBAG
+    recorded itself as creating) and can physically not express "delete the
+    oldest chat" or "delete anything matching this title", which on these real,
+    human-owned accounts would destroy the operator's own work with no undo.
+
+    ``open_options`` is dispatched via element.click() rather than a synthetic
+    mouse click: the sidebar rows sit under overlays that intercept a positional
+    click, which would silently click the WRONG element.
+    """
+
+    #: Row options button for one conversation. Templated with {conv_id}.
+    open_options: str
+    #: The "Delete" item inside that row's options menu.
+    delete_item: str
+    #: The confirm button in the "Delete chat?" dialog.
+    confirm: str
+    #: Matches only while the chat still exists; used to VERIFY the delete landed
+    #: instead of trusting the click. Templated with {conv_id}.
+    still_present: str
+    baseline_version: str = "unverified"
+
+
+@dataclass(frozen=True)
 class ProviderSelectors:
     """Provider-specific selector + navigation configuration.
 
@@ -132,6 +160,16 @@ class ProviderSelectors:
     # Ordered, idempotent UI settings enforced before submit (model pickers, mode
     # pills, reasoning toggles). Empty = submit in whatever mode is current.
     settings: Sequence[ProviderSetting] = field(default_factory=tuple)
+    # Optional PERMANENT chat deletion flow, used only by the chat reaper and only
+    # ever against a chat id read back from the chat ledger (a chat UBAG recorded
+    # itself as creating). None = this provider cannot be reaped, which is the
+    # safe default: an unverified delete selector on a real account risks the
+    # human's own chats, and provider deletion has no undo.
+    #
+    # Templates take "{conv_id}" (NOT a free-text title) so a delete can only ever
+    # address one exact conversation. Deliberately NOT part of all_groups(): a
+    # provider without a verified delete flow must never fail the drift baseline.
+    delete_chat: Optional[ChatDeleteFlow] = None
     # True when any enforced setting turns on a slow "reasoning" mode (DeepThink,
     # Extended thinking); the engine lengthens the response timeout accordingly so
     # a long think is not mistaken for a hang.
@@ -227,6 +265,21 @@ CHATGPT_WEB = ProviderSelectors(
             "a[href='/']:has-text('New chat')",
             "button[aria-label*='New chat']",
         ),
+    ),
+    # Verified 2026-07-17 by deleting a UBAG-created throwaway chat on the live
+    # account. The row options button carries the conversation id directly
+    # (data-conversation-options-trigger="<uuid>"), which is what makes an exact,
+    # id-addressed delete possible — no title or position matching. The menu then
+    # exposes stable testids (delete-chat-menu-item ->
+    # delete-conversation-confirm-button, dialog "Delete chat? This will delete
+    # <title>."). still_present re-checks the same id afterwards so the reaper
+    # verifies the deletion instead of trusting the click.
+    delete_chat=ChatDeleteFlow(
+        open_options="button[data-conversation-options-trigger='{conv_id}']",
+        delete_item="[data-testid='delete-chat-menu-item']",
+        confirm="[data-testid='delete-conversation-confirm-button']",
+        still_present="button[data-conversation-options-trigger='{conv_id}']",
+        baseline_version="2026-07-17-verified",
     ),
     # Operator default (always-on), superseding the 2026-06-29 "leave the account
     # default" decision: pin GPT-5.6 Sol + Medium intelligence on every job.

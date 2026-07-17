@@ -19,7 +19,7 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends wget postgr
   && groupadd -r ubag \
   && useradd -r -g ubag ubag \
   && pip3 install --no-cache-dir "playwright>=1.49" "patchright>=1.49" \
-  && mkdir -p /var/lib/ubag/executor-spool \
+  && mkdir -p /var/lib/ubag/executor-spool /var/lib/ubag/chat-ledger \
   && chown -R ubag:ubag /var/lib/ubag
 
 WORKDIR /app

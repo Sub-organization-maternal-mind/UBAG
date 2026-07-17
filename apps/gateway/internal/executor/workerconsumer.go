@@ -1154,6 +1154,13 @@ func minimalWorkerEnv() []string {
 		"UBAG_NOVNC_BASE_URL":          {},
 		"UBAG_REMOTE_BROWSER_ENDPOINT": {},
 		"UBAG_WORKER_SINGLE_USER_EDGE": {},
+		// Chat ledger: lets the worker record the chats it creates so the chat
+		// reaper can only ever delete UBAG's own (never the operator's). Both are
+		// non-secret — a boolean and a file path — so they respect the reason this
+		// allowlist exists: keep credentials (app secret, DSNs) out of the worker
+		// process, not withhold benign operational config.
+		"UBAG_CHAT_LEDGER_ENABLED":     {},
+		"UBAG_CHAT_LEDGER_PATH":        {},
 	}
 	env := []string{}
 	for _, item := range os.Environ() {
