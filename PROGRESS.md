@@ -65,9 +65,24 @@ Verified live end-to-end: job → ledger record → `reaper.deleted` (verified g
 correctly skipped bound / too-young / already-deleted; the operator's own chats
 remain untouched. 386 worker tests (19 new), go vet clean.
 
-**Note:** the ~28 chats predating the ledger are not recorded, so the reaper will
-never touch them — they need manual cleanup. Cleanup applies to chats created
-from now on.
+**Follow-up fix (same day):** `delete_chat` treated "options row not found" as
+"already gone" and returned success. ChatGPT paints its sidebar seconds after
+domcontentloaded, so on the reaper's freshly-opened page the row simply was not
+there yet within the 4s probe — the reaper reported `reaper.deleted`, stamped
+`deleted_at`, and never retried. Caught on the live account: a chat the reaper
+had "verified gone" was still in the sidebar. Failed safe (clutter kept, nothing
+wrongly deleted) but it made the reaper lie about its one irreversible action.
+Added `ChatDeleteFlow.list_ready` (`a[href^='/c/']`): an absence is trusted only
+once the chat list has rendered, else `delete_chat` refuses to conclude and
+returns False. Regression test asserts the gate exists and that every
+id-addressed template still consumes `{conv_id}`.
+
+**Note:** the 28 chats predating the ledger are unrecorded, so the reaper will
+never touch them. The 10 that were UBAG/test artifacts (math probes + the BANANA
+multi-turn tests) were deleted manually on operator request after an
+id+aria-label match check; sidebar went 28 → 18 with every operator chat intact.
+The 3 "Pong Request" chats were deliberately left — not provably UBAG's.
+Automatic cleanup applies only to chats created from now on.
 
 ## 2026-07-17 gemini_web: re-baseline the flattened mode menu (3.5 Flash + Extended)
 
