@@ -2,6 +2,67 @@
 
 Last updated: 2026-07-17
 
+## 2026-07-17 App JWT auth wired into serve: per-client (tenant, app) identity
+
+Multi-client readiness audit found the one production gap for serving many
+downstream projects (OET, IELTS, radiology, business admin, law, …) from one
+deployment: the `internal/appjwt` RS256 layer and `httpapi.Config.AppJWTPublicKey`
+existed and were unit-tested, but `serve.go` never loaded a key from env — so a
+deployed gateway was app-secret-only and every client collapsed into one shared
+`(tenant, app)` scope. Isolation between clients rested entirely on disjoint
+conversation-key namespaces, and any client could list every client's jobs.
+
+- **`serve.go`: `appJWTPublicKeyFromEnv()`** — `UBAG_APP_JWT_PUBLIC_KEY` (inline
+  PEM; literal `\n` accepted for single-line .env values) or
+  `UBAG_APP_JWT_PUBLIC_KEY_FILE` (mounted PEM; inline wins when both set).
+  Accepts PKIX ("PUBLIC KEY") and PKCS#1 ("RSA PUBLIC KEY") RSA keys; non-RSA or
+  malformed input **fails startup** rather than silently running without JWT
+  auth. Both unset ⇒ nil key ⇒ unchanged app-secret-only behavior.
+- **withAuth hardening (`httpapi/server.go` `validAppJWTClaims`)** — a correctly
+  signed token whose `tid`/`sub`/`role` is empty or not exactly its trimmed
+  form no longer authenticates (empty claims previously produced a shared
+  `""/""` principal scope, defeating exactly the isolation JWTs exist for, and
+  pooling rate-limit buckets; padded claims are rejected rather than normalized
+  inside the trust boundary). `exp==0` (never-expiring) is rejected per §11's
+  short-lived contract, and accepted lifetime is capped at 24h
+  (`maxAppJWTLifetime`) so a leaked long-exp token cannot grant access until
+  the shared key is rotated. Rejected tokens fall through to the remaining auth
+  branches and surface as the generic 401.
+- Client tokens carry `tid` (tenant), `sub` (app id), `role` (case-sensitive;
+  `service` is the right role for job-submitting clients), `iat`, `exp`; RS256
+  only, minted with `appjwt.IssueToken`. App-secret, PAT, and SSO branches are
+  untouched; gRPC remains app-secret-only (documented limitation).
+
+Tests (TDD, red first): `httpapi/appjwt_auth_test.go` — first coverage of the
+withAuth JWT branch (per-client job scoping incl. cross-tenant 404 + app-secret
+tenant blindness; empty/whitespace-claim rejection; padded-claim rejection;
+exp==0 rejection; 48h-exp rejection with 1h accepted; valid JWT against a
+JWT-disabled gateway → 401; expired/foreign-signature rejection; app-secret
+coexistence) and `serve/appjwt_env_test.go` (unset/inline/escaped-newline/file/
+precedence/PKCS#1/malformed/missing-file/non-RSA). `go test ./internal/httpapi/
+./internal/serve/ ./internal/appjwt/` + `go vet` green. A 3-lens adversarial
+review of the diff (auth-bypass, config-loading, test-validity) found no
+blockers; its should-fix (max-TTL cap) and nits (padded-claim normalization,
+missing nil-config test) were applied before commit.
+
+Live e2e (local gateway :58080, sqlite + file spool + worker consumer + mock
+adapter): 5 clients with distinct JWT identities ran 15 concurrent jobs, all
+completed with zero cross-contamination; all five deliberately shared the SAME
+conversation key ("consult") and got five isolated per-tenant conversation
+rows; per-client job listings fully scoped; cross-tenant GET → 404; the
+app-secret principal saw none of it; expired/empty-tid/no-exp/garbage tokens
+all 401. Deploy env examples updated (`deploy/small/env.example`,
+`deploy/vps/env.example`, `deploy/multi-region/env.example`); docs-site
+security model page updated.
+
+Not done (deliberate): no token-issuance endpoint (§11 says JWTs are "derived
+from app secret" — adding `/v1/auth/token` is a contract change that must go
+through `packages/openapi` first), no key rotation/JWKS (single env key; §11.3
+dual-accept grace is a follow-up), no `iat`/`nbf` validation (issuer-controlled;
+pre-issued tokens are usable before their intended window), no
+`packages/security` app_jwt contract parity (no `auth.app_jwt.*` audit event
+names yet), gRPC not extended.
+
 ## 2026-07-17 Chat reaper: delete UBAG's own stale job chats (never the human's)
 
 Operator ask: "all chats after 2 hours should be deleted — to avoid cluttering."

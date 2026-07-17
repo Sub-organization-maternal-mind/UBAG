@@ -3503,7 +3503,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		// App JWT: validate RS256 Bearer token.
 		if s.appJWTPublicKey != nil {
 			if bearer := bearerToken(r.Header.Get("Authorization")); bearer != "" {
-				if claims, err := appjwt.Verify(bearer, s.appJWTPublicKey); err == nil {
+				if claims, err := appjwt.Verify(bearer, s.appJWTPublicKey); err == nil && validAppJWTClaims(claims) {
 					principal := authenticatedPrincipal{
 						Role:     claims.Role,
 						TenantID: claims.TenantID,
@@ -3565,6 +3565,29 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 // or machine-API-key auth that carries no Subject), the principal is returned
 // unchanged. Requiring a non-empty Subject prevents a grant for actor="service"
 // from escalating ALL bearer-secret requests (privilege-escalation guard).
+// maxAppJWTLifetime caps how far in the future an accepted token's exp may
+// lie. §11 App JWTs are short-lived (minutes); without a ceiling, a leaked
+// long-exp token would grant access until the shared public key is rotated,
+// which invalidates every client at once.
+const maxAppJWTLifetime = 24 * time.Hour
+
+// validAppJWTClaims rejects correctly signed App JWTs whose claims cannot form
+// an isolated principal. Identity claims (tid, sub, role) must be non-empty
+// and exactly their trimmed form — an empty tid/sub would collapse the caller
+// into a shared ""/"" tenant scope (defeating per-app isolation and pooling
+// rate-limit buckets), and padded values are rejected rather than normalized
+// inside the trust boundary. exp must be present (exp==0 is a never-expiring
+// token) and within maxAppJWTLifetime of now. Rejected tokens fall through to
+// the remaining auth branches and surface as the generic 401.
+func validAppJWTClaims(claims appjwt.AppClaims) bool {
+	for _, claim := range [...]string{claims.TenantID, claims.AppID, claims.Role} {
+		if claim == "" || claim != strings.TrimSpace(claim) {
+			return false
+		}
+	}
+	return claims.Expires > 0 && time.Unix(claims.Expires, 0).Before(time.Now().Add(maxAppJWTLifetime))
+}
+
 func (s *Server) applyJITElevation(ctx context.Context, p authenticatedPrincipal) authenticatedPrincipal {
 	if s.jitAdmin == nil || p.Subject == "" {
 		return p

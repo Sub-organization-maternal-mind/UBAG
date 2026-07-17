@@ -2,7 +2,10 @@ package serve
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
 	"database/sql"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
 	"net"
@@ -149,6 +152,14 @@ func Run(ctx context.Context) error {
 		}()
 	}
 
+	appJWTPublicKey, err := appJWTPublicKeyFromEnv()
+	if err != nil {
+		return fmt.Errorf("invalid app JWT configuration: %w", err)
+	}
+	if appJWTPublicKey != nil {
+		slog.Info("app JWT authentication enabled: bearer RS256 tokens carry per-client (tenant_id, app_id) identity")
+	}
+
 	server := httpapi.NewServer(httpapi.Config{
 		APIVersion:       getenv("UBAG_API_VERSION", httpapi.DefaultAPIVersion),
 		Version:          getenv("UBAG_GATEWAY_VERSION", "0.0.0-dev"),
@@ -157,6 +168,7 @@ func Run(ctx context.Context) error {
 		TenantID:         getenv("UBAG_TENANT_ID", ""),
 		AppID:            getenv("UBAG_APP_ID", ""),
 		ActorRole:        getenv("UBAG_ACTOR_ROLE", ""),
+		AppJWTPublicKey:  appJWTPublicKey,
 		DevCORSOrigin:    getenv("UBAG_DEV_CORS_ORIGIN", ""),
 		Idempotency:      idempotencyStore,
 		Jobs:             jobs,
@@ -911,6 +923,49 @@ func firstEnv(keys ...string) string {
 func workerConsumerEnabled() bool {
 	value := strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_WORKER_CONSUMER_ENABLED")))
 	return value == "1" || value == "true" || value == "yes"
+}
+
+// appJWTPublicKeyFromEnv loads the RS256 public key that enables App JWT
+// authentication (§11). UBAG_APP_JWT_PUBLIC_KEY carries the PEM inline
+// (literal \n sequences are accepted so single-line .env values work); when it
+// is empty, UBAG_APP_JWT_PUBLIC_KEY_FILE names a PEM file (e.g. a mounted
+// secret). Both unset disables the feature (nil key, app-secret auth only). A
+// configured-but-unusable key fails startup instead of silently running
+// without JWT auth.
+func appJWTPublicKeyFromEnv() (*rsa.PublicKey, error) {
+	inline := strings.TrimSpace(os.Getenv("UBAG_APP_JWT_PUBLIC_KEY"))
+	file := strings.TrimSpace(os.Getenv("UBAG_APP_JWT_PUBLIC_KEY_FILE"))
+
+	var pemText string
+	switch {
+	case inline != "":
+		pemText = strings.ReplaceAll(inline, `\n`, "\n")
+	case file != "":
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return nil, fmt.Errorf("app JWT public key file %q: %w", file, err)
+		}
+		pemText = string(raw)
+	default:
+		return nil, nil
+	}
+
+	block, _ := pem.Decode([]byte(pemText))
+	if block == nil {
+		return nil, fmt.Errorf("app JWT public key is not valid PEM")
+	}
+	if parsed, err := x509.ParsePKIXPublicKey(block.Bytes); err == nil {
+		rsaKey, ok := parsed.(*rsa.PublicKey)
+		if !ok {
+			return nil, fmt.Errorf("app JWT public key must be an RSA key, got %T", parsed)
+		}
+		return rsaKey, nil
+	}
+	rsaKey, err := x509.ParsePKCS1PublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("app JWT public key is not a PKIX or PKCS#1 RSA public key: %w", err)
+	}
+	return rsaKey, nil
 }
 
 // workerDaemonEnabled reports whether jobs run through ONE long-lived worker

@@ -9,7 +9,7 @@ Standard privacy and security mode is the default. HIPAA/GDPR modes are planned 
 
 ## Authentication
 
-v0 starts with app-secret authentication. v1 adds short-lived app JWTs, device tokens, personal access tokens, and OIDC where needed. mTLS is a standard/enterprise path.
+v0 starts with app-secret authentication. Short-lived RS256 app JWTs are available on the HTTP gateway: set `UBAG_APP_JWT_PUBLIC_KEY` (inline PEM, literal `\n` accepted) or `UBAG_APP_JWT_PUBLIC_KEY_FILE` (PEM file) and clients present `Authorization: Bearer <jwt>` carrying `tid` (tenant), `sub` (app id), `role` (e.g. `service`), and a required `exp`. Each downstream client app then gets its own isolated `(tenant, app)` scope for jobs, conversations, rate limits, and listings. Tokens with empty identity claims or no expiry are rejected. Device tokens, personal access tokens, and OIDC follow in v1; mTLS is a standard/enterprise path; gRPC remains app-secret-only.
 
 ## Authorization
 
