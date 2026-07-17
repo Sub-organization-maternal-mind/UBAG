@@ -33,8 +33,8 @@ jobs:
     name: Chaos experiment schema validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "${{ env.PYTHON_VERSION }}"
       - name: Install test deps (stdlib only)
@@ -50,8 +50,8 @@ jobs:
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'smoke')
     needs: chaos-schema-validate
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "${{ env.PYTHON_VERSION }}"
       - name: Smoke — verify schema validation completes within 60s
@@ -74,8 +74,8 @@ jobs:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.profile == 'soak')
     needs: chaos-schema-validate
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "${{ env.PYTHON_VERSION }}"
       - name: Full soak — all experiment schemas + steady-state evaluator
