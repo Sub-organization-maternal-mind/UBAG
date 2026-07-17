@@ -45,7 +45,10 @@ services:
       UBAG_MINIO_BUCKET: ${UBAG_MINIO_BUCKET:-ubag-artifacts}
       UBAG_MINIO_USE_SSL: ${UBAG_MINIO_USE_SSL:-false}
       UBAG_WORKER_CONSUMER_ENABLED: ${UBAG_WORKER_CONSUMER_ENABLED:-false}
-      UBAG_WORKER_PYTHON: ${UBAG_WORKER_PYTHON:-/usr/bin/python3}
+      # python:3.12-slim (this image's runtime base, deploy/small/gateway.Dockerfile)
+      # installs its interpreter under /usr/local/bin, not /usr/bin — confirmed via
+      # `docker run --rm --entrypoint sh ubag/gateway:small-local -c "which python3"`.
+      UBAG_WORKER_PYTHON: ${UBAG_WORKER_PYTHON:-/usr/local/bin/python3}
       UBAG_WORKER_SCRIPT: ${UBAG_WORKER_SCRIPT:-/app/apps/worker/run_mock_worker.py}
       UBAG_WORKER_POLL_INTERVAL_MS: ${UBAG_WORKER_POLL_INTERVAL_MS:-500}
       UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-120000}

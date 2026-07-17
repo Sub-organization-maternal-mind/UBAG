@@ -38,12 +38,16 @@ every project on the box — authored in the separate `vps-platform` repo at
   via `POST https://ubag.polytronx.com/v1/jobs` (operator Basic Auth, gateway
   bearer token injected server-side) reached `completed` with real mock output.
 - Found and fixed a latent bug while wiring worker-consumer mode into Docker
-  for the first time: `docker-compose.small.yml`'s default
-  `UBAG_WORKER_PYTHON=/usr/bin/python3` doesn't exist in the `python:3.12-slim`
-  gateway image (interpreter lives at `/usr/local/bin/python3`) — never hit
-  before because that profile's `UBAG_WORKER_CONSUMER_ENABLED` defaults to
-  `false`. `docker-compose.vps.yml` sets the correct path; the small profile's
-  default is still wrong for anyone who flips worker-consumer on in Docker.
+  for the first time: the `UBAG_WORKER_PYTHON=/usr/bin/python3` default doesn't
+  exist in the `python:3.12-slim` gateway image (interpreter lives at
+  `/usr/local/bin/python3`) — never hit before because
+  `UBAG_WORKER_CONSUMER_ENABLED` defaults to `false` everywhere it appeared.
+  Fixed the default in `docker-compose.small.yml`, `deploy/small/env.example`,
+  and `deploy/helm/ubag/values.yaml` (same `ubag/gateway` image, same bug).
+  Verified on the VPS: `docker build -f deploy/small/gateway.Dockerfile -t
+  ubag/gateway:small-local .` then `docker run --rm --entrypoint sh
+  ubag/gateway:small-local -c "which python3"` returns `/usr/local/bin/python3`;
+  `/usr/bin/python3` doesn't exist in the image.
 - Removed leftover artifacts from an earlier (2026-07-11/15) manual live-browser
   probe against this box (`/root/ubag-probe.sh`,
   `/root/ubag-rotated-credentials-20260711.txt`,

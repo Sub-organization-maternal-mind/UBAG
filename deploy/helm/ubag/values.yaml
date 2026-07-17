@@ -202,7 +202,9 @@ config:
   UBAG_MINIO_BUCKET: "ubag-artifacts"
   UBAG_MINIO_USE_SSL: "false"
   UBAG_WORKER_CONSUMER_ENABLED: "false"
-  UBAG_WORKER_PYTHON: "/usr/bin/python3"
+  # python:3.12-slim (the ubag/gateway image's runtime base) installs its
+  # interpreter under /usr/local/bin, not /usr/bin.
+  UBAG_WORKER_PYTHON: "/usr/local/bin/python3"
   UBAG_WORKER_SCRIPT: "/app/apps/worker/run_mock_worker.py"
   UBAG_WORKER_POLL_INTERVAL_MS: "500"
   UBAG_WORKER_MAX_RUNTIME_MS: "30000"
