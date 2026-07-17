@@ -2,6 +2,53 @@
 
 Last updated: 2026-07-17
 
+## 2026-07-17 gemini_web: re-baseline the flattened mode menu (3.5 Flash + Extended)
+
+The operator's gemini/deepseek defaults were ALREADY the requested values
+(gemini `3.5 Flash` + `Extended`; deepseek `Expert` + `deepthink` on, all
+`required=True`), so no default changed. But verifying them against the live DOM
+surfaced real drift in Gemini:
+
+- **Google flattened the mode picker.** The nested `Thinking level` gem-menu-item
+  (submenu: Standard / Extended) is GONE. The single menu behind
+  `data-test-id='bard-mode-menu-button'` now lists
+  `3.1 Flash-Lite | 3.5 Flash | 3.1 Pro | Extended thinking`, and the label
+  "Standard" no longer exists anywhere.
+- The old second open_step (`gem-menu-item:has-text('Thinking level')`) matched
+  nothing; `_open_control` silently broke out of it and the setting still
+  resolved off the top-level menu — so jobs kept passing while burning a 4s click
+  timeout each. Dropped it; `satisfied_when`/`apply_click` were already correct
+  for the flat list.
+- **Verified live that model and Extended thinking are NOT mutually exclusive:**
+  clicking "Extended thinking" leaves "3.5 Flash" selected (both carry
+  `.selected`), so "3.5 Flash WITH extended thinking" is achievable and two
+  independent `choice` settings still model it correctly. `satisfied_when` gates
+  the click, so an already-on Extended is never clicked again (which would toggle
+  it back OFF).
+- `adapters/gemini_web/manifest.json` model_catalog corrected: dropped
+  `"Standard"` (a trap — the gateway would accept it, then the job would fail
+  with DriftDetectedError since no such label exists) and added the
+  now-proven `3.1 Flash-Lite` / `3.1 Pro` models.
+- selector_version `2026-07-15-prompt-input-rebaselined` →
+  `2026-07-17-mode-menu-flattened`.
+
+**Enforcement proven directly** by running `run_live_worker.py --input` in
+isolation and reading the `session.configured` event data (the gateway
+deliberately does not persist that event — see workerconsumer.go:318):
+
+```
+gemini_web:   [{key:model,   desired:"3.5 Flash", state:already_set},
+               {key:thinking,desired:"Extended",  state:set}]        -> "9"
+deepseek_web: [{key:mode,    desired:"Expert",    state:set},
+               {key:deepthink,desired:true,       state:already_set}] -> "16"
+```
+
+`state:set` = UBAG actively applied it (it was not already correct). A separate
+drift test forced gemini to `3.1 Pro` and the next job restored `3.5 Flash`.
+Note gemini/deepseek mode appears to be per-conversation (a fresh page resets to
+defaults), so inspecting a NEW page after a job cannot distinguish "enforced"
+from "default" — read the worker's event data instead. 367 worker tests pass.
+
 ## 2026-07-17 chatgpt_web: pin GPT-5.6 Sol + Medium intelligence
 
 Operator decision change: chatgpt_web previously shipped **no** settings on
