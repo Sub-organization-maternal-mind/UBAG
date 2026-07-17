@@ -25,7 +25,16 @@
     "drift_baseline_required"
   ],
   "model_catalog": {
-    "settings": {}
+    "settings": {
+      "model": {
+        "kind": "choice",
+        "values": ["GPT-5.6 Sol", "GPT-5.5", "GPT-5.4", "GPT-5.3", "o3"]
+      },
+      "thinking": {
+        "kind": "choice",
+        "values": ["Instant", "Medium", "High"]
+      }
+    }
   },
   "selector_strategy": {
     "type": "provider_specific",

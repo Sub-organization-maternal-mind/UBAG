@@ -170,14 +170,36 @@ class NewChatAndConfigTests(unittest.TestCase):
         self.assertIn("session.configured", types)
         self.assertFalse(driver.started_new_chat)
 
-    def test_chatgpt_has_new_chat_but_no_settings(self):
+    def test_chatgpt_pins_model_and_thinking(self):
+        # Supersedes the earlier "no forced model/mode for ChatGPT" decision:
+        # the operator now requires every ChatGPT job to run on GPT-5.6 Sol at
+        # Medium intelligence, so chatgpt_web enforces both settings (in that
+        # order — switching model can reset the intelligence level).
         selectors = get_provider_selectors("chatgpt_web")
         driver = MockPageDriver(response_text="Canberra")
         events = LiveSessionEngine(selectors).run(_payload("chatgpt_web"), driver=driver)
         types = _types(events)
         self.assertIn("session.new_chat", types)
-        self.assertNotIn("session.configured", types)
+        self.assertIn("session.configured", types)
         self.assertIn("completed", types)
+        self.assertEqual(
+            [(r["key"], r["desired"]) for r in driver.ensured_settings],
+            [("model", "GPT-5.6 Sol"), ("thinking", "Medium")],
+        )
+
+    def test_chatgpt_model_and_thinking_are_overridable_per_job(self):
+        # The pin is a DEFAULT, not a hard-code: options.provider_config still
+        # wins (same precedence as every other provider).
+        selectors = get_provider_selectors("chatgpt_web")
+        driver = MockPageDriver(response_text="Canberra")
+        LiveSessionEngine(selectors).run(
+            _payload("chatgpt_web", provider_config={"thinking": "High"}),
+            driver=driver,
+        )
+        self.assertEqual(
+            [(r["key"], r["desired"]) for r in driver.ensured_settings],
+            [("model", "GPT-5.6 Sol"), ("thinking", "High")],
+        )
 
     def test_transient_interaction_failure_retries_and_completes(self):
         selectors = get_provider_selectors("deepseek_web")

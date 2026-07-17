@@ -2,6 +2,47 @@
 
 Last updated: 2026-07-17
 
+## 2026-07-17 chatgpt_web: pin GPT-5.6 Sol + Medium intelligence
+
+Operator decision change: chatgpt_web previously shipped **no** settings on
+purpose (selectors.py comment, 2026-06-29: *"no forced model/mode for ChatGPT
+(leave the account default)"*). The operator now requires every ChatGPT job to
+run on **GPT-5.6 Sol** at **Medium** intelligence, so chatgpt_web now enforces
+both, like gemini_web/deepseek_web already did.
+
+- **DOM re-baselined 2026-07-17 against live chatgpt.com** (required — the old
+  `data-testid='model-switcher-dropdown-button'` no longer exists). Both controls
+  sit behind ONE composer pill (`button.__composer-pill[aria-haspopup='menu']`)
+  whose label is the current intelligence level. Its menu holds the intelligence
+  levels as `[role=menuitemradio]` (Instant 5.5 / Medium / High / Pro — Pro is
+  `cursor-not-allowed` on this account) plus a nested
+  `[role=menuitem][aria-haspopup=menu]` opener (labelled with the CURRENT model)
+  that reveals the models, also `[role=menuitemradio]`. Selected = `aria-checked`.
+- Matching on `menuitemradio` disambiguates the submenu OPENER (role=menuitem)
+  which carries the same "GPT-5.6 Sol" text. Verified on the live DOM that
+  `:has-text("Medium")` matches exactly 1 row and no model label contains
+  "Medium", so the two settings cannot cross-match.
+- `_open_control` **clicks** (not hovers) each open_step — verified clicking the
+  nested opener does reveal the model radios (9 radios visible).
+- Model is enforced BEFORE thinking (declaration order), since switching model
+  can reset the intelligence level. `reasoning=True` so Medium's think isn't
+  mistaken for a hang. `required=True` (default): if the pin can't be confirmed
+  the job fails loudly rather than silently answering on the wrong model.
+- `adapters/chatgpt_web/manifest.json` model_catalog filled in to match the
+  proven labels (was `{}`, which made the gateway reject any client-sent
+  `model_settings` for ChatGPT). "Pro" deliberately omitted — it is not
+  selectable on this account.
+- selector_version bumped `2026-06-29-newchat-verified` → `2026-07-17-model-pinned`.
+- **Live-verified enforcement (not just observation):** drifted the account to
+  thinking=High, ran a job → job completed AND the account was forced back to
+  `model='GPT-5.6 Sol' thinking='Medium'` (checked radios: `['Medium']`), with
+  `session.configured` in the gateway log. Note `session.new_chat`/
+  `session.configured` are deliberately NOT persisted to the job event log
+  (workerconsumer.go:318 logs and skips them as informational) — check the
+  gateway log, not `/v1/jobs/{id}/events`, to confirm the config phase ran.
+- Tests updated to the new intent (they had codified the old "no settings"
+  decision): 367 worker tests pass; adapter-registry 21/21; contracts green.
+
 ## 2026-07-17 VPS: live-browser (VPS-hosted Chrome) for 24/7 provider sessions
 
 Added server-side live-browser so provider logins live on the VPS and jobs run

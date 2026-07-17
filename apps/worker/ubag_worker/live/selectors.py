@@ -159,7 +159,7 @@ CHATGPT_WEB = ProviderSelectors(
     provider_id="chatgpt_web",
     display_name="ChatGPT Web",
     target_url="https://chatgpt.com/",
-    selector_version="2026-06-29-newchat-verified",
+    selector_version="2026-07-17-model-pinned",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
@@ -220,8 +220,6 @@ CHATGPT_WEB = ProviderSelectors(
             "input[accept*='audio']",
         ),
     ),
-    # Verified 2026-06-29 against live chatgpt.com. Operator decision: no forced
-    # model/mode for ChatGPT (leave the account default); only start a fresh chat.
     new_chat=SelectorGroup(
         "new_chat",
         (
@@ -230,6 +228,61 @@ CHATGPT_WEB = ProviderSelectors(
             "button[aria-label*='New chat']",
         ),
     ),
+    # Operator default (always-on), superseding the 2026-06-29 "leave the account
+    # default" decision: pin GPT-5.6 Sol + Medium intelligence on every job.
+    #
+    # Verified 2026-07-17 against live chatgpt.com (DOM re-baselined; the old
+    # data-testid='model-switcher-dropdown-button' no longer exists). Both
+    # controls live behind ONE composer pill whose label is the current
+    # intelligence level ("Medium"). Clicking it opens a menu containing:
+    #   * the intelligence levels as [role=menuitemradio] — Instant 5.5 / Medium /
+    #     High / Pro (Pro renders cursor-not-allowed on this account), and
+    #   * a nested [role=menuitem][aria-haspopup=menu] opener whose label is the
+    #     CURRENT model ("GPT-5.6 Sol"); clicking it (hover is not required —
+    #     _open_control clicks) reveals the models, also [role=menuitemradio]:
+    #     GPT-5.6 Sol / GPT-5.5 / GPT-5.4 / GPT-5.3 / o3.
+    # Selected state on both = aria-checked='true'.
+    #
+    # Why role=menuitemradio (not :has-text alone): the submenu OPENER carries the
+    # same "GPT-5.6 Sol" text as the model row, but is role=menuitem — matching on
+    # menuitemradio disambiguates. Verified on the live DOM: with the pill menu
+    # open, :has-text("Medium") matches exactly 1 row and no model label contains
+    # "Medium", so the two settings cannot cross-match.
+    #
+    # Order matters: model is enforced BEFORE thinking, because switching model can
+    # reset the intelligence level (settings are applied in declaration order).
+    settings=(
+        ProviderSetting(
+            key="model",
+            kind="choice",
+            desired="GPT-5.6 Sol",
+            open_steps=(
+                (
+                    "button.__composer-pill[aria-haspopup='menu']",
+                    "button[class*='composer-pill'][aria-haspopup='menu']",
+                ),
+                ("[role='menuitem'][aria-haspopup='menu']",),
+            ),
+            satisfied_when="[role='menuitemradio'][aria-checked='true']:has-text(\"{value}\")",
+            apply_click="[role='menuitemradio']:has-text(\"{value}\")",
+        ),
+        ProviderSetting(
+            key="thinking",
+            kind="choice",
+            desired="Medium",
+            open_steps=(
+                (
+                    "button.__composer-pill[aria-haspopup='menu']",
+                    "button[class*='composer-pill'][aria-haspopup='menu']",
+                ),
+            ),
+            satisfied_when="[role='menuitemradio'][aria-checked='true']:has-text(\"{value}\")",
+            apply_click="[role='menuitemradio']:has-text(\"{value}\")",
+        ),
+    ),
+    # Medium intelligence thinks before answering, so give the reader the longer
+    # reasoning timeout rather than mistaking a think for a hang.
+    reasoning=True,
 )
 
 CLAUDE_WEB = ProviderSelectors(
