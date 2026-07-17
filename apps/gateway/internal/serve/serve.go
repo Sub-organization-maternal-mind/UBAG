@@ -35,6 +35,7 @@ import (
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/mfa"
 	"github.com/ubag/ubag/apps/gateway/internal/obs"
+	"github.com/ubag/ubag/apps/gateway/internal/pat"
 	"github.com/ubag/ubag/apps/gateway/internal/profile"
 	"github.com/ubag/ubag/apps/gateway/internal/ratelimit"
 	"github.com/ubag/ubag/apps/gateway/internal/region"
@@ -190,6 +191,8 @@ func Run(ctx context.Context) error {
 		Audit:             enterprise.audit,
 		Sessions:          enterprise.sessions,
 		SessionTTL:        enterprise.sessionTTL,
+		PAT:               enterprise.pat,
+		PATDefaultTTL:     enterprise.patDefaultTTL,
 		Alerts:            enterprise.alerts,
 		Topology:          enterprise.topology,
 		Concurrency:       enterprise.concurrency,
@@ -531,6 +534,8 @@ type enterpriseStores struct {
 	audit            audit.Store
 	sessions         session.Store
 	sessionTTL       time.Duration
+	pat              pat.Store
+	patDefaultTTL    time.Duration
 	alerts           *alerts.Manager
 	topology         topology.Store
 	concurrency      *topology.ConcurrencyRegistry
@@ -746,6 +751,36 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 		out.sessions = sessionStore
 	default:
 		out.sessions = session.NewMemoryStore()
+	}
+
+	// Personal Access Token store (§11): opaque ubag_pat_ bearer tokens issued
+	// via POST /v1/auth/pat (superadmin only). Opt-in — UBAG_PAT_ENABLED gates
+	// the whole feature so a credential-issuance endpoint is never live by
+	// accident; when disabled the store stays nil and the route returns 501. The
+	// store follows the gateway store kind so issued tokens survive restarts on
+	// sqlite/postgres (the in-memory store loses them on restart).
+	if envBool("UBAG_PAT_ENABLED") {
+		patTTL, err := durationFromMillisEnv("UBAG_PAT_DEFAULT_TTL_MS", 0)
+		if err != nil {
+			return enterpriseStores{}, fmt.Errorf("invalid UBAG_PAT_DEFAULT_TTL_MS: %w", err)
+		}
+		out.patDefaultTTL = patTTL
+		switch {
+		case storeKind == "sqlite" && db != nil:
+			patStore := pat.NewSQLiteStore(db)
+			if err := patStore.Ready(ctx); err != nil {
+				return enterpriseStores{}, fmt.Errorf("pat sqlite schema: %w", err)
+			}
+			out.pat = patStore
+		case storeKind == "postgres" && db != nil:
+			patStore := pat.NewPostgresStore(db)
+			if err := patStore.Ready(ctx); err != nil {
+				return enterpriseStores{}, fmt.Errorf("pat postgres schema: %w", err)
+			}
+			out.pat = patStore
+		default:
+			out.pat = pat.NewMemoryStore()
+		}
 	}
 
 	// Human-in-the-loop manual-action alert store + notification sink.

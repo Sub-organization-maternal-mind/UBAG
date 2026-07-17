@@ -53,7 +53,12 @@ func (s *Server) handleIssuePAT(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Resolve scope: use caller's scope unless an admin provides an explicit override.
+	// Resolve scope: use caller's scope unless a privileged caller provides an
+	// explicit override. Issuing a PAT for another tenant/app is what makes PATs
+	// usable for per-client identity (one operator mints a scoped token per
+	// downstream project), so the override is allowed for admin and superadmin —
+	// and only superadmin can actually reach this handler (auth:pat:issue), so
+	// without superadmin here no role could both issue and scope a PAT.
 	tenantID := s.tenantID
 	appID := s.appID
 	role := "viewer"
@@ -62,10 +67,11 @@ func (s *Server) handleIssuePAT(w http.ResponseWriter, r *http.Request) {
 		appID = principal.AppID
 		role = principal.Role
 	}
-	if req.TenantID != "" && hasPrincipal && principal.Role == "admin" {
+	canOverrideScope := hasPrincipal && (principal.Role == "admin" || principal.Role == "superadmin")
+	if req.TenantID != "" && canOverrideScope {
 		tenantID = req.TenantID
 	}
-	if req.AppID != "" && hasPrincipal && principal.Role == "admin" {
+	if req.AppID != "" && canOverrideScope {
 		appID = req.AppID
 	}
 	if req.Role != "" {

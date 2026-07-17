@@ -2,6 +2,53 @@
 
 Last updated: 2026-07-17
 
+## 2026-07-17 PAT (Personal Access Tokens) wired into serve + made persistent
+
+Companion to the App JWT wiring below. The gateway's PAT layer (`internal/pat`,
+`POST /v1/auth/pat`, `ubag_pat_…` bearer auth) was implemented but unreachable
+in production — `httpapi.Config.PAT`/`PATDefaultTTL` were never set from env — and
+the `pat` package had **only** an in-memory store, so issued tokens would vanish
+on every restart (useless for a long-lived credential). Two gaps closed:
+
+- **Persistent stores (`pat/sqlite.go`, `pat/postgres.go`)** mirroring `session`:
+  only the SHA-256 hash of each token is persisted (a store leak reveals no
+  usable credential); `expires_at` NULL = non-expiring; revocation is a soft
+  flag. SQLite self-bootstraps its DDL in `Ready()`; Postgres is migration-driven
+  (`migrations/postgres/0011_personal_access_tokens.sql`, auto-applied by the
+  glob-based runner) and `Ready()` asserts the table via `to_regclass`. This
+  mirrors the conversations precedent (Postgres-only migration + SQLite
+  self-bootstrap; no `migrations/sqlite` counterpart needed).
+- **Env wiring (`serve.go`)** — `UBAG_PAT_ENABLED` gates the whole feature
+  (default off ⇒ route stays 501; opt-in because it mints credentials, matching
+  the App JWT philosophy). When on, the store follows the gateway store kind
+  (memory/sqlite/postgres) so tokens survive restarts on sqlite/postgres.
+  `UBAG_PAT_DEFAULT_TTL_MS` sets the default issued-token TTL (positive integer
+  ms; unset ⇒ no default expiry).
+- **Bug fix (`pat_handlers.go`)** — the tenant/app override in `handleIssuePAT`
+  only fired for `role == "admin"`, but `auth:pat:issue` is authorized for
+  `superadmin` **only**, so *no* role could both issue and scope a PAT — every
+  PAT collapsed to the issuer's own tenant, defeating per-client identity. The
+  override now also allows `superadmin`. Surfaced by TDD (`TestPATIssueThenAuthenticate`).
+
+Tests (TDD, red first): `pat/sqlite_test.go` (round-trip, expiry, revoke,
+unknown, hash-not-raw, persistence across store instances),
+`serve/pat_env_test.go` (disabled-by-default, memory when enabled, TTL parse),
+`httpapi/pat_auth_test.go` (superadmin issues → PAT authenticates scoped;
+per-tenant job isolation + cross-tenant 404; issuance requires superadmin;
+disabled ⇒ 501 + unknown PAT 401; revoked ⇒ 401). `go test ./internal/pat/
+./internal/serve/ ./internal/httpapi/` + `go vet` green.
+
+Live-verified (local gateway :58080, sqlite, `UBAG_PAT_ENABLED=true`): superadmin
+app-secret issued a PAT scoped to `tenant_radiology/radiology-assist`; the token
+authenticated, created a job, was invisible to a `tenant_law` PAT (list + 404),
+and a `service`-role PAT could not issue another PAT (403). After a full gateway
+restart the pre-restart token still authenticated (200) — SQLite persistence
+confirmed. Deploy env examples + docs security-model page updated.
+
+Not done (deliberate): no PAT listing/revocation REST endpoints (only issuance
+exists today; `Revoke` is store-level), gRPC stays app-secret-only, no
+`packages/security` `auth.personal_access_token.*` audit-event contract yet.
+
 ## 2026-07-17 App JWT auth wired into serve: per-client (tenant, app) identity
 
 Multi-client readiness audit found the one production gap for serving many
