@@ -106,6 +106,12 @@ class ChatDeleteFlow:
     #: Matches only while the chat still exists; used to VERIFY the delete landed
     #: instead of trusting the click. Templated with {conv_id}.
     still_present: str
+    #: Matches once the chat LIST itself has rendered. Load-bearing: without it,
+    #: "row not found" on a still-loading sidebar is indistinguishable from
+    #: "already deleted", and reporting the latter marks the ledger done so the
+    #: chat is never retried (observed exactly that — a reaped-looking chat was
+    #: still alive). Absence of this ⇒ refuse to conclude anything.
+    list_ready: str = ""
     baseline_version: str = "unverified"
 
 
@@ -279,6 +285,9 @@ CHATGPT_WEB = ProviderSelectors(
         delete_item="[data-testid='delete-chat-menu-item']",
         confirm="[data-testid='delete-conversation-confirm-button']",
         still_present="button[data-conversation-options-trigger='{conv_id}']",
+        # Any conversation link means the sidebar has rendered, so an absent row
+        # genuinely means "gone" rather than "not loaded yet".
+        list_ready="a[href^='/c/']",
         baseline_version="2026-07-17-verified",
     ),
     # Operator default (always-on), superseding the 2026-06-29 "leave the account

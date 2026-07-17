@@ -184,6 +184,19 @@ class DeleteChatDriverTests(unittest.TestCase):
         driver = MockPageDriver(undeletable_chats=("stubborn",))
         self.assertFalse(driver.delete_chat(selectors, "stubborn"))
 
+    def test_chatgpt_delete_flow_declares_a_list_ready_gate(self):
+        # Regression: without list_ready, a sidebar that has not painted yet
+        # reads as "already deleted", the reaper reports success, the ledger is
+        # marked done, and the chat is never retried. Observed on the live
+        # account (a reaped-looking chat was still alive), so the gate is
+        # load-bearing rather than cosmetic.
+        flow = get_provider_selectors("chatgpt_web").delete_chat
+        self.assertTrue(flow.list_ready, "chatgpt_web delete flow must gate on a rendered chat list")
+        # Every id-addressed template must actually consume the id, so a delete
+        # can never be expressed as "whatever is on screen".
+        for template in (flow.open_options, flow.still_present):
+            self.assertIn("{conv_id}", template)
+
 
 class ConvIdSelectorGuardTests(unittest.TestCase):
     def test_selector_breaking_ids_are_refused(self):

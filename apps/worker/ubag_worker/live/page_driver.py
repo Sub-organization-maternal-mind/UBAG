@@ -1002,8 +1002,17 @@ class PlaywrightPageDriver(PageDriver):
             return False
         options = flow.open_options.format(conv_id=conv_id)
         try:
+            # The chat list must be rendered before ANY absence can be trusted.
+            # ChatGPT paints its sidebar seconds after domcontentloaded, so a row
+            # missing at t=0 says nothing. Without this gate a slow sidebar reads
+            # as "already deleted", the ledger is marked done, and the chat is
+            # never retried — observed exactly that.
+            if flow.list_ready and not self._present_any(
+                [flow.list_ready], timeout_ms=20000
+            ):
+                return False
             if not self._present_any([options], timeout_ms=4000):
-                # Already gone (or never in this sidebar): nothing to delete.
+                # List is rendered and this row is absent ⇒ genuinely gone.
                 return not self._present_any(
                     [flow.still_present.format(conv_id=conv_id)], timeout_ms=1000
                 )
