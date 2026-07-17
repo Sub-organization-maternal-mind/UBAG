@@ -3,6 +3,7 @@ package pat
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -138,5 +139,25 @@ func TestSQLitePersistsAcrossStoreInstances(t *testing.T) {
 	}
 	if _, ok, err := second.Resolve(ctx, token.ID, time.Now()); err != nil || !ok {
 		t.Fatalf("second store resolve: ok=%v err=%v", ok, err)
+	}
+}
+
+// TestSQLiteStoreNilSafety: a store with no db reports ErrNotConfigured from
+// every method rather than panicking, so a misconfigured gateway fails closed.
+func TestSQLiteStoreNilSafety(t *testing.T) {
+	store := NewSQLiteStore(nil)
+	ctx := context.Background()
+
+	if err := store.Ready(ctx); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("Ready nil db = %v, want ErrNotConfigured", err)
+	}
+	if err := store.Save(ctx, Token{ID: "ubag_pat_x", TenantID: "t", AppID: "a"}); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("Save nil db = %v, want ErrNotConfigured", err)
+	}
+	if _, _, err := store.Resolve(ctx, "ubag_pat_x", time.Now()); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("Resolve nil db = %v, want ErrNotConfigured", err)
+	}
+	if err := store.Revoke(ctx, "ubag_pat_x"); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("Revoke nil db = %v, want ErrNotConfigured", err)
 	}
 }
