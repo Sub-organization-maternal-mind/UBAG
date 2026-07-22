@@ -3,11 +3,17 @@ title: A-Z Implementation Coverage
 description: Exact implementation coverage for the UBAG blueprint, with local evidence and external activation requirements.
 ---
 
-Last updated: 2026-06-18
+Last updated: 2026-07-23
 
 This ledger maps the UBAG A-Z plan to the current repository implementation. It is intentionally evidence-based: a row is marked **implemented** only when code, docs, configuration, and a validation command exist in this repo.
 
 For future agentic AI continuation, read the root `AGENT_HANDOFF.md` first, then `PROGRESS.md`, then this page. The rendered handoff is also available at `operations/agent-handoff`.
+
+## 2026-07-23 Gemini 3.6 Flash Standard-Mode Pin
+
+The live Gemini web adapter now selects `3.6 Flash` before every prompt and explicitly disables a persisted `Extended thinking` selection. The Gemini web UI stores model and thinking choices independently, so both `3.6 Flash` and Extended can otherwise remain selected at once. UBAG's required-setting drift path fails closed instead of running on another model or thinking depth.
+
+Production DOM inspection verified the current menu and selected-state behavior. The rebuilt gateway is healthy, and live production job `job_000000000028` completed with exact output `UBAG_GEMINI_36_STANDARD_OK` and selector version `2026-07-23-gemini-3.6-standard`.
 
 ## 2026-06-02 Live-Browser Viewer (noVNC) Admin Login Stack
 
@@ -148,6 +154,20 @@ Honest limitations / externally-blocked:
 | Enterprise Postgres persistence | §22 | Documented + conformance coverage | `data/postgres-persistence`, `postgres_persistence` coverage scenario. |
 
 All v2.1 surfaces are presentation-only reads. They never expose credentials, cookies, storage-state URIs (only a boolean `has_storage_state`), or SMTP secrets (only an `smtp_configured` flag).
+
+## RadioPad Production Live-Provider Evidence
+
+As of 2026-06-19, the production UBAG live-provider path used by RadioPad has been hardened and smoke-tested against `https://ubag.polytronx.com`.
+
+- Gateway worker subprocesses forward only the required non-secret browser runtime config, including the remote browser endpoint and noVNC base; secret-bearing values remain excluded.
+- Live-worker runtime budget is `120000` ms.
+- Live worker JSONL output flushes per event, and CDP-attached workers do not close the shared operator browser context.
+- Gateway stores accept `session.opening` and `session.authenticated` worker events.
+- DeepSeek production API smoke `job_000000000017` completed with `deepseek_web OK`.
+- Gemini production API smoke `job_000000000018` authenticated and safely stopped at `manual_consent_or_overlay_required`; the operator must clear the provider overlay manually in noVNC before Gemini jobs can complete.
+- RadioPad backend `radiopad-api` reached UBAG `/v1/browser/summary` with HTTP 200 using server-side UBAG config.
+
+The live-provider safety boundary remains unchanged: UBAG must not automate provider login, consent, CAPTCHA, 2FA, credential collection, cookie extraction, or PHI workflows.
 
 ## External Activation Items
 

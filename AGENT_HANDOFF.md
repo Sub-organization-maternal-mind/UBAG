@@ -1,16 +1,23 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-07-16
+Last updated: 2026-07-23
 
-This is the resume point for any future agentic AI working in `E:\Projects\UBAG`.
+This is the resume point for any future agentic AI working in `D:\Projects\UBAG`.
 Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
 
 ## Current Repository State
 
-- Working directory: `E:\Projects\UBAG` (the repo moved from the stale `D:\Projects\UBAG`; translate any remaining `D:\...` paths, never propagate them).
+- Working directory: `D:\Projects\UBAG`.
 - Git is initialized on branch `main`, tracking `origin/main`.
 - Preserve `AGENTS.md`, `design.md`, `.codex`, and all current workspace contents.
 - Do not run `git reset`, `git clean`, or destructive checkout commands unless the user explicitly asks.
+
+## Latest Slice: Gemini 3.6 Standard + source synchronization (2026-07-23)
+
+- Local `main` was fast-forwarded by 109 commits to GitHub `origin/main` at `9da31f5`; the full pre-sync dirty tree remains recoverable in `stash@{0}` (`codex-pre-sync-2026-07-23-local-and-gemini36`).
+- Production `/opt/docker/ubag` was compared to GitHub source-only. Runtime logs, spool records, databases, generated binaries, `.htpasswd`, and `deploy/vps/env.local` were excluded. Production's worker engine/page driver match GitHub; only the Gemini selector policy was newer and eligible to promote.
+- Gemini now enforces model `3.6 Flash` and treats Standard thinking as `Extended thinking = false`. The flattened Gemini picker persists these selections independently.
+- Production gateway image `sha256:c0add9399381232a54dd3559b9e87c05edf7330dd1a550b47a4e9c166baf5dfa` was deployed healthy. Live job `job_000000000028` completed with exact output `UBAG_GEMINI_36_STANDARD_OK` and selector version `2026-07-23-gemini-3.6-standard`.
 
 ## Latest Slice: Orchestration Semantics (2026-07-16)
 

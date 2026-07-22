@@ -20,9 +20,36 @@ export interface Job {
   error?: string;
 }
 
+export interface JobCreateResponse {
+  job_id: string;
+  status: string;
+  target: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface JobsResponse {
   jobs: Job[];
   next_cursor?: string;
+}
+
+export interface JobEnvelope {
+  api_version: string;
+  client: {
+    app_id: string;
+    app_version: string;
+    sdk: {
+      name: string;
+      version: string;
+    };
+  };
+  job: {
+    target: string;
+    command_type: string;
+    template_id?: string;
+    input: Record<string, unknown>;
+    options?: Record<string, unknown>;
+  };
 }
 
 // Conversation types — real gateway shape from GET /v1/conversations
@@ -102,6 +129,7 @@ export interface BrowserContext {
 export interface BrowserTab {
   tab_id: string;
   context_id: string;
+  conversation_id?: string;
   url?: string;
   title?: string;
   state?: string;
@@ -179,6 +207,21 @@ export interface Workflow {
   step_count?: number;
   created_at?: string;
   steps?: WorkflowStep[];
+}
+
+export interface WorkflowRun {
+  id: string;
+  definition_id: string;
+  state: string;
+  current_step: number;
+  steps: Array<{
+    step_id: string;
+    state: string;
+    job_id?: string;
+    error?: string;
+  }>;
+  created_at: string;
+  updated_at: string;
 }
 
 // Webhook

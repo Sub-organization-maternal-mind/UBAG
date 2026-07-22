@@ -1,6 +1,16 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-07-17
+Last updated: 2026-07-23
+
+## 2026-07-23 Gemini 3.6 Flash Standard + three-way source sync
+
+- Rebased the local checkout from `6178968` to GitHub `origin/main` at `9da31f5` (109 commits) while retaining the pre-sync dirty tree in `stash@{0}` as a recovery copy.
+- Compared the production source tree at `/opt/docker/ubag` against a fresh GitHub clone without reading or copying `deploy/vps/env.local`, `.htpasswd`, runtime databases, logs, spool payloads, or generated binaries. Production's worker engine/page driver match GitHub; older production gateway/PAT/dependency copies were intentionally not promoted over newer GitHub code.
+- Updated Gemini's native `ProviderSetting` policy from `3.5 Flash` + Extended to `3.6 Flash` + an idempotent `Extended thinking = off` toggle. Google stores model and thinking independently, so selecting `3.6 Flash` alone does not guarantee Standard thinking.
+- Production live-DOM verification confirmed the selected menu state contains only `3.6 Flash`, while the picker reads `Flash` rather than `Flash Extended`.
+- Rebuilt and recreated `ubag-vps-gateway-1`; container health returned `healthy` on the new image. Production smoke job `job_000000000028` completed with selector version `2026-07-23-gemini-3.6-standard` and exact output `UBAG_GEMINI_36_STANDARD_OK`.
+- The only production-only source promoted into the shared codebase is the verified Gemini selector policy. Server-only secrets and runtime artifacts remain untracked.
+- Post-merge validation passed: `cmd /c pnpm test:worker` (208 tests plus JSONL smoke), dashboard `svelte-check` (0 errors/warnings), dashboard Vitest (17 tests), `cmd /c pnpm test:deployment`, `cmd /c pnpm test:docs` including responsive widths, and `git diff --check`.
 
 ## 2026-07-17 PAT (Personal Access Tokens) wired into serve + made persistent
 

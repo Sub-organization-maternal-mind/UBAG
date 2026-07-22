@@ -535,7 +535,7 @@ GEMINI_WEB = ProviderSelectors(
     provider_id="gemini_web",
     display_name="Gemini Web",
     target_url="https://gemini.google.com/app",
-    selector_version="2026-07-17-mode-menu-flattened",
+    selector_version="2026-07-23-gemini-3.6-standard",
     # Re-baselined 2026-07-15 against live gemini.google.com/app. Gemini's
     # composer is a Quill editor whose <rich-textarea> holds TWO contenteditable
     # divs: the real composer (div.ql-editor, ~439x24) and an invisible
@@ -627,29 +627,28 @@ GEMINI_WEB = ProviderSelectors(
             "[data-test-id='new-chat-button']",
         ),
     ),
-    # Operator default (always-on): the "3.5 Flash" model + "Extended thinking".
+    # Operator default (always-on): "3.6 Flash" with Standard thinking.
     #
     # Re-baselined 2026-07-17 against live gemini.google.com. Google FLATTENED the
     # mode picker: the nested "Thinking level" gem-menu-item (whose submenu offered
     # Standard / Extended) is GONE, and "Extended thinking" is now a sibling entry
     # in the single menu opened by data-test-id='bard-mode-menu-button':
-    #     3.1 Flash-Lite | 3.5 Flash | 3.1 Pro | Extended thinking
+    #     3.5 Flash-Lite | 3.6 Flash | 3.1 Pro | Extended thinking
     # "Standard" no longer exists as a label at all.
     #
     # Crucially the model and Extended thinking are NOT mutually exclusive —
-    # verified live: clicking "Extended thinking" leaves "3.5 Flash" selected, so
-    # both carry the 'selected' class together. That is exactly the operator
-    # default (3.5 Flash WITH extended thinking), and it is why two independent
-    # `choice` settings still model this correctly.
+    # verified live on 2026-07-23: clicking "3.6 Flash" can leave Extended
+    # selected too. Standard has no menu label; it is the state where the
+    # independent Extended toggle is OFF.
     #
-    # Both settings are idempotent: `satisfied_when` gates the click, so an
-    # already-selected "Extended thinking" is never clicked again (which would
-    # toggle it back OFF).
+    # Both settings are idempotent. The model is a labelled choice; thinking is
+    # represented as a toggle whose desired state is False, so a persisted
+    # Extended selection is clicked exactly once to return to Standard.
     settings=(
         ProviderSetting(
             key="model",
             kind="choice",
-            desired="3.5 Flash",
+            desired="3.6 Flash",
             open_steps=(
                 (
                     "button[data-test-id='bard-mode-menu-button']",
@@ -662,13 +661,8 @@ GEMINI_WEB = ProviderSelectors(
         ),
         ProviderSetting(
             key="thinking",
-            kind="choice",
-            desired="Extended",
-            # Only ONE open step now. The old second step
-            # ("gem-menu-item:has-text('Thinking level')") matched nothing after
-            # Google's flattening: _open_control silently broke out of it and the
-            # setting still resolved off the top-level menu, so jobs kept passing
-            # while burning a 4s click timeout each. Dropped deliberately.
+            kind="toggle",
+            desired=False,
             open_steps=(
                 (
                     "button[data-test-id='bard-mode-menu-button']",
@@ -676,11 +670,11 @@ GEMINI_WEB = ProviderSelectors(
                     "button.input-area-switch",
                 ),
             ),
-            satisfied_when="gem-menu-item.selected:has-text(\"{value}\")",
-            apply_click="gem-menu-item:has-text(\"{value}\")",
+            on_when=("gem-menu-item.selected:has-text('Extended thinking')",),
+            toggle_click=("gem-menu-item:has-text('Extended thinking')",),
         ),
     ),
-    reasoning=True,
+    reasoning=False,
 )
 
 MISTRAL_LECHAT = ProviderSelectors(

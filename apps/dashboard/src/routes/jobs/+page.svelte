@@ -1,13 +1,22 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api } from '$lib/api/client';
+  import { api, listOf } from '$lib/api/client';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
-  import type { Job, JobsResponse } from '$lib/api/types';
+  import type { BrowserContext, Job, JobCreateResponse, JobEnvelope, JobsResponse, Template } from '$lib/api/types';
+
+  const API_VERSION = '2026-05-22';
+  const PROVIDERS = [
+    { key: 'chatgpt_web', label: 'ChatGPT' },
+    { key: 'gemini_web', label: 'Gemini' },
+    { key: 'deepseek_web', label: 'DeepSeek' },
+  ];
 
   let items = $state<Job[]>([]);
+  let templates = $state<Template[]>([]);
+  let contexts = $state<BrowserContext[]>([]);
   let loading = $state(true);
   let denied = $state(false);
   let error = $state<string | null>(null);
@@ -25,11 +34,24 @@
   let actionSuccess = $state<string | null>(null);
 
   let dialogEl = $state<HTMLDialogElement | null>(null);
+  let createTarget = $state('chatgpt_web');
+  let createCommandType = $state('submit');
+  let createTemplateId = $state('');
+  let createPrompt = $state('');
+  let createLoading = $state(false);
+  let createError = $state<string | null>(null);
+  let createSuccess = $state<string | null>(null);
 
   let filtered = $derived(
     filter
       ? items.filter((j) => JSON.stringify(j).toLowerCase().includes(filter.toLowerCase()))
       : items
+  );
+  let providerState = $derived(
+    Object.fromEntries(contexts.map((ctx) => [ctx.target_id, ctx.login_state ?? 'unknown']))
+  );
+  let matchingTemplates = $derived(
+    templates.filter((template) => !createCommandType || template.command_type === createCommandType)
   );
 
   async function load(cursor?: string) {
@@ -43,6 +65,15 @@
     if (res.error) { error = res.error; return; }
     items = res.data?.jobs ?? [];
     nextCursor = res.data?.next_cursor;
+  }
+
+  async function loadSupportData() {
+    const [templateRes, contextRes] = await Promise.all([
+      api.get('/v1/templates'),
+      api.get('/v1/browser/contexts'),
+    ]);
+    if (!templateRes.error && !templateRes.denied) templates = listOf<Template>(templateRes);
+    if (!contextRes.error && !contextRes.denied) contexts = listOf<BrowserContext>(contextRes);
   }
 
   function goNext() {
@@ -81,7 +112,10 @@
     cancelLoading = true;
     actionError = null;
     actionSuccess = null;
-    const res = await api.post(`/v1/jobs/${selectedJob.id}:cancel`);
+    const res = await api.post(`/v1/jobs/${selectedJob.id}/cancel`, {
+      api_version: API_VERSION,
+      reason: 'dashboard operator',
+    });
     cancelLoading = false;
     if (res.error) { actionError = res.error; return; }
     actionSuccess = 'Job cancelled.';
@@ -97,14 +131,55 @@
     retryLoading = true;
     actionError = null;
     actionSuccess = null;
-    const body = {
-      target: selectedJob.target,
-      command_type: selectedJob.command_type,
-    };
-    const res = await api.post<{ job: Job }>('/v1/jobs', body);
+    const res = await api.post(`/v1/jobs/${selectedJob.id}/retry`, {
+      api_version: API_VERSION,
+    });
     retryLoading = false;
     if (res.error) { actionError = res.error; return; }
-    actionSuccess = `Retried as job ${res.data?.job?.id?.slice(0, 8) ?? '?'}`;
+    actionSuccess = 'Retry queued.';
+    await load(currentCursor);
+  }
+
+  function buildJobEnvelope(): JobEnvelope {
+    const job: JobEnvelope['job'] = {
+      target: createTarget,
+      command_type: createCommandType.trim(),
+      input: { prompt: createPrompt.trim() },
+      options: { priority: 'normal', return_mode: 'final' },
+    };
+    if (createTemplateId) job.template_id = createTemplateId;
+    return {
+      api_version: API_VERSION,
+      client: {
+        app_id: 'ubag-dashboard',
+        app_version: '0.0.0',
+        sdk: { name: 'ubag-dashboard', version: '0.0.0' },
+      },
+      job,
+    };
+  }
+
+  async function createJob() {
+    createError = null;
+    createSuccess = null;
+    const prompt = createPrompt.trim();
+    if (!prompt) {
+      createError = 'Prompt is required.';
+      return;
+    }
+    if (!createCommandType.trim()) {
+      createError = 'Command type is required.';
+      return;
+    }
+    createLoading = true;
+    const res = await api.post<JobCreateResponse>('/v1/jobs', buildJobEnvelope());
+    createLoading = false;
+    if (res.error) {
+      createError = res.error;
+      return;
+    }
+    createSuccess = `Created job ${res.data?.job_id?.slice(0, 8) ?? ''}`;
+    createPrompt = '';
     await load(currentCursor);
   }
 
@@ -112,7 +187,10 @@
     try { return new Date(s).toLocaleString(); } catch { return s; }
   }
 
-  onMount(() => load());
+  onMount(() => {
+    load();
+    loadSupportData();
+  });
 </script>
 
 <div class="space-y-4">
@@ -120,6 +198,82 @@
     <h1 class="text-2xl font-display font-bold text-ink">Jobs</h1>
     <button onclick={() => load(currentCursor)} class="text-sm text-accent-deep hover:underline">Refresh</button>
   </div>
+
+  <form onsubmit={(e) => { e.preventDefault(); createJob(); }} class="rounded-md border border-rule bg-paper-soft p-4 space-y-4">
+    <div class="flex items-center justify-between gap-3 flex-wrap">
+      <h2 class="text-sm font-display font-semibold text-ink">Submit Provider Job</h2>
+      <div class="text-xs text-ink-mute font-mono">ChatGPT -> Gemini -> DeepSeek</div>
+    </div>
+
+    <div class="grid gap-4 lg:grid-cols-[1.2fr_1fr_1fr]">
+      <div>
+        <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Provider</span>
+        <div class="grid grid-cols-3 rounded-md border border-rule overflow-hidden bg-paper" role="group" aria-label="Provider">
+          {#each PROVIDERS as provider}
+            <button
+              type="button"
+              onclick={() => { createTarget = provider.key; }}
+              class="px-3 py-2 text-sm border-r border-rule last:border-r-0 transition-colors"
+              class:bg-accent-soft={createTarget === provider.key}
+              class:text-accent-deep={createTarget === provider.key}
+              class:font-medium={createTarget === provider.key}
+              class:text-ink-soft={createTarget !== provider.key}
+            >
+              <span>{provider.label}</span>
+              <span class="block text-[11px] font-mono text-ink-mute mt-0.5">{providerState[provider.key] ?? 'unknown'}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+
+      <label class="block">
+        <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Command Type</span>
+        <input
+          bind:value={createCommandType}
+          class="w-full px-3 py-2 rounded-md border border-rule bg-paper text-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+        />
+      </label>
+
+      <label class="block">
+        <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Template</span>
+        <select
+          bind:value={createTemplateId}
+          class="w-full px-3 py-2 rounded-md border border-rule bg-paper text-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+        >
+          <option value="">No template</option>
+          {#each matchingTemplates as template (template.id)}
+            <option value={template.id}>{template.id}</option>
+          {/each}
+        </select>
+      </label>
+    </div>
+
+    <label class="block">
+      <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Prompt</span>
+      <textarea
+        bind:value={createPrompt}
+        rows="4"
+        placeholder="Enter the provider prompt..."
+        class="w-full px-3 py-2 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40 resize-y"
+      ></textarea>
+    </label>
+
+    <div class="flex items-center gap-3 flex-wrap">
+      <button
+        type="submit"
+        disabled={createLoading}
+        class="px-4 py-2 rounded-md bg-accent text-paper text-sm font-medium hover:bg-accent-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      >
+        {createLoading ? 'Submitting...' : 'Submit Job'}
+      </button>
+      {#if createError}
+        <span class="text-xs text-danger">{createError}</span>
+      {/if}
+      {#if createSuccess}
+        <span class="text-xs text-success">{createSuccess}</span>
+      {/if}
+    </div>
+  </form>
 
   <!-- Filter -->
   <input

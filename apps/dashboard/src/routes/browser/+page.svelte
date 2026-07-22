@@ -27,6 +27,7 @@
   let terminalEl = $state<HTMLElement | null>(null);
   let term: { writeln: (s: string) => void; dispose: () => void } | null = null;
   let termReady = $state(false);
+  let terminalInstanceId = $state<string | null>(null);
 
   let instanceContexts = $derived(
     selectedInstance
@@ -69,6 +70,10 @@
     instances = listOf<BrowserInstance>(instRes);
     contexts = listOf<BrowserContext>(ctxRes);
     tabs = listOf<BrowserTab>(tabRes);
+    selectedInstance =
+      instances.find((inst) => selectedInstance && instanceId(inst) === instanceId(selectedInstance)) ??
+      instances[0] ??
+      null;
   }
 
   async function initTerminal() {
@@ -85,8 +90,8 @@
         cursorBlink: true,
       });
       (term as unknown as { open: (el: HTMLElement) => void }).open(terminalEl);
-      writeWelcome();
       termReady = true;
+      refreshTerminal();
     } catch (e) {
       console.warn('xterm init failed', e);
     }
@@ -110,8 +115,14 @@
 
   function refreshTerminal() {
     if (!term) return;
-    (term as unknown as { clear: () => void }).clear?.();
+    const reset = (term as unknown as { reset?: () => void }).reset;
+    if (reset) {
+      reset.call(term);
+    } else {
+      (term as unknown as { clear?: () => void }).clear?.();
+    }
     writeWelcome();
+    terminalInstanceId = selectedInstance ? instanceId(selectedInstance) : null;
   }
 
   function selectInstance(inst: BrowserInstance) {
@@ -137,6 +148,14 @@
 
   function tabState(tab: BrowserTab): string {
     return tab.state ?? tab.status ?? 'unknown';
+  }
+
+  function tabUrl(tab: BrowserTab): string {
+    return tab.url ?? tab.conversation_id ?? '';
+  }
+
+  function contextTabCount(ctx: BrowserContext): number {
+    return ctx.tab_count ?? tabs.filter((tab) => tab.context_id === contextId(ctx)).length;
   }
 
   function isLoopbackHttpUrl(value?: string | null): boolean {
@@ -169,7 +188,8 @@
   });
 
   $effect(() => {
-    if (selectedInstance && termReady) {
+    const currentInstanceId = selectedInstance ? instanceId(selectedInstance) : null;
+    if (termReady && currentInstanceId !== terminalInstanceId) {
       refreshTerminal();
     }
   });
@@ -274,7 +294,7 @@
                   <tr class="hover:bg-paper-soft transition-colors">
                     <td class="px-4 py-2.5 font-mono text-xs text-ink-mute">{truncate(contextId(ctx), 12)}</td>
                     <td class="px-4 py-2.5 font-mono text-xs text-ink-soft">{truncate(ctx.instance_id, 8)}</td>
-                    <td class="px-4 py-2.5 text-ink-soft text-center">{ctx.tab_count ?? 0}</td>
+                    <td class="px-4 py-2.5 text-ink-soft text-center">{contextTabCount(ctx)}</td>
                   </tr>
                 {/each}
               </tbody>
@@ -300,7 +320,7 @@
                   <tr class="hover:bg-paper-soft transition-colors">
                     <td class="px-4 py-2.5 font-mono text-xs text-ink-mute">{truncate(tabId(tab), 8)}</td>
                     <td class="px-4 py-2.5 font-mono text-xs text-ink-mute">{truncate(tab.context_id, 8)}</td>
-                    <td class="px-4 py-2.5 text-xs text-ink-soft max-w-[12rem] truncate" title={tab.url ?? ''}>{truncate(tab.url, 40)}</td>
+                    <td class="px-4 py-2.5 text-xs text-ink-soft max-w-[12rem] truncate" title={tabUrl(tab)}>{truncate(tabUrl(tab), 40)}</td>
                     <td class="px-4 py-2.5 text-xs text-ink max-w-[10rem] truncate" title={tab.title ?? ''}>{truncate(tab.title, 30)}</td>
                     <td class="px-4 py-2.5"><StatusBadge status={tabState(tab)} /></td>
                   </tr>
@@ -344,7 +364,7 @@
               {#each instanceContexts as ctx}
                 <div class="flex items-center gap-4">
                   <span class="font-mono text-ink">{truncate(contextId(ctx), 12)}</span>
-                  <span class="text-ink-mute">{ctx.tab_count ?? 0} tab{ctx.tab_count !== 1 ? 's' : ''}</span>
+                  <span class="text-ink-mute">{contextTabCount(ctx)} tab{contextTabCount(ctx) !== 1 ? 's' : ''}</span>
                 </div>
               {/each}
             </div>
@@ -356,7 +376,7 @@
               {#each instanceTabs as tab}
                 <div class="flex items-center gap-3">
                   <span class="font-mono text-ink-mute">{truncate(tabId(tab), 8)}</span>
-                  <span class="text-ink truncate max-w-[20rem]" title={tab.url ?? ''}>{truncate(tab.url, 50)}</span>
+                  <span class="text-ink truncate max-w-[20rem]" title={tabUrl(tab)}>{truncate(tabUrl(tab), 50)}</span>
                   <StatusBadge status={tabState(tab)} />
                 </div>
               {/each}
