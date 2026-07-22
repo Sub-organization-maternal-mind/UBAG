@@ -17,7 +17,8 @@ Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
 - Local `main` was fast-forwarded by 109 commits to GitHub `origin/main` at `9da31f5`; the full pre-sync dirty tree remains recoverable in `stash@{0}` (`codex-pre-sync-2026-07-23-local-and-gemini36`).
 - Production `/opt/docker/ubag` was compared to GitHub source-only. Runtime logs, spool records, databases, generated binaries, `.htpasswd`, and `deploy/vps/env.local` were excluded. Production's worker engine/page driver match GitHub; only the Gemini selector policy was newer and eligible to promote.
 - Gemini now enforces model `3.6 Flash` and treats Standard thinking as `Extended thinking = false`. The flattened Gemini picker persists these selections independently.
-- Production gateway image `sha256:c0add9399381232a54dd3559b9e87c05edf7330dd1a550b47a4e9c166baf5dfa` was deployed healthy. Live job `job_000000000028` completed with exact output `UBAG_GEMINI_36_STANDARD_OK` and selector version `2026-07-23-gemini-3.6-standard`.
+- Shared commit `acec1ed` was pushed to GitHub `main`, and all 1,121 tracked files were synchronized into production with zero missing files and zero hash mismatches.
+- Production gateway image `sha256:dde174b3d9422bba95c4022c753171f7b0ae830a3617acec6a798875eec52559` is healthy. Final live job `job_000000000029` completed with exact output `UBAG_SYNCED_GEMINI_36_STANDARD_OK` and selector version `2026-07-23-gemini-3.6-standard`.
 
 ## Latest Slice: Orchestration Semantics (2026-07-16)
 

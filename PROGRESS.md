@@ -11,6 +11,9 @@ Last updated: 2026-07-23
 - Rebuilt and recreated `ubag-vps-gateway-1`; container health returned `healthy` on the new image. Production smoke job `job_000000000028` completed with selector version `2026-07-23-gemini-3.6-standard` and exact output `UBAG_GEMINI_36_STANDARD_OK`.
 - The only production-only source promoted into the shared codebase is the verified Gemini selector policy. Server-only secrets and runtime artifacts remain untracked.
 - Post-merge validation passed: `cmd /c pnpm test:worker` (208 tests plus JSONL smoke), dashboard `svelte-check` (0 errors/warnings), dashboard Vitest (17 tests), `cmd /c pnpm test:deployment`, `cmd /c pnpm test:docs` including responsive widths, and `git diff --check`.
+- Pushed shared commit `acec1ed` to GitHub `main`, then synchronized all 1,121 GitHub-tracked files into `/opt/docker/ubag`; a hash audit reported zero missing files and zero mismatches. The prior production source and dashboard artifact are recoverable under `/opt/docker/ubag-sync-backups`.
+- Rebuilt the exact synchronized gateway image (`sha256:dde174b3d9422bba95c4022c753171f7b0ae830a3617acec6a798875eec52559`) and recreated gateway, chat-reaper, and nginx-dashboard. Gateway and nginx-dashboard are healthy; the existing browser remains healthy.
+- Final post-sync production smoke `job_000000000029` completed with exact output `UBAG_SYNCED_GEMINI_36_STANDARD_OK` and selector version `2026-07-23-gemini-3.6-standard`.
 
 ## 2026-07-17 PAT (Personal Access Tokens) wired into serve + made persistent
 
