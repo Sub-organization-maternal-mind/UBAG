@@ -45,7 +45,7 @@ No broad suite was run.
 
 ## Commit
 
-Commit SHA: reported in the completion handoff (a commit cannot embed its own final SHA).
+Implementation commit SHA: `a2a1ce80e84b57ed2b376ec72b7a229dd3e21be5`.
 
 ## Self-review and concerns
 
