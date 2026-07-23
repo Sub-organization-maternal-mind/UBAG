@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -11,6 +11,8 @@ import {
   createUbagClient,
   generateIdempotencyKey,
   type UbagAlertActionRequest,
+  type UbagAttachmentKind,
+  type UbagAttachmentUpload,
   type UbagAuditExportRange,
   type UbagAuditExportRequest,
   type UbagClientOptions,
@@ -81,6 +83,7 @@ const VALUE_OPTIONS = new Set([
   "api-version",
   "app-secret",
   "after-sequence",
+  "attach",
   "base-url",
   "client-app-id",
   "command-type",
@@ -332,11 +335,62 @@ async function runDiagnose(args: ParsedArgs): Promise<void> {
   );
 }
 
+const ATTACH_CONTENT_TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  txt: "text/plain",
+  md: "text/markdown",
+  csv: "text/csv",
+  json: "application/json",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  webm: "audio/webm",
+  wav: "audio/wav",
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  ogg: "audio/ogg",
+  mp4: "video/mp4"
+};
+
+function attachmentKindForContentType(contentType: string): UbagAttachmentKind {
+  if (contentType.startsWith("image/")) return "image";
+  if (contentType.startsWith("audio/")) return "voice";
+  if (contentType.startsWith("video/")) return "video";
+  return "document";
+}
+
+function buildAttachmentsFromSpec(spec: string): UbagAttachmentUpload[] {
+  return spec
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+    .map((path) => {
+      const body = readFileSync(resolve(path));
+      const key = basename(path);
+      const ext = key.toLowerCase().split(".").pop() ?? "";
+      const content_type = ATTACH_CONTENT_TYPES[ext] ?? "application/octet-stream";
+      return { key, filename: key, content_type, kind: attachmentKindForContentType(content_type), body };
+    });
+}
+
 async function runCreateJob(args: ParsedArgs): Promise<void> {
   const { client, config } = buildClient(args);
   const request = buildCreateJobRequest(args, config);
   const idempotencyKey = request.idempotency_key ?? getOption(args, "idempotency-key");
-  const response = await client.createJob(request, idempotencyKey === undefined ? {} : { idempotencyKey });
+  const requestOptions = idempotencyKey === undefined ? {} : { idempotencyKey };
+
+  const attachSpec = getOption(args, "attach");
+  if (attachSpec !== undefined && attachSpec.trim() !== "") {
+    const attachments = buildAttachmentsFromSpec(attachSpec);
+    // One-shot multipart create: envelope + files in a single request.
+    const response = await client.createJobMultipart(request, attachments, requestOptions);
+    printJson(response, args);
+    return;
+  }
+
+  const response = await client.createJob(request, requestOptions);
   printJson(response, args);
 }
 
@@ -1421,6 +1475,8 @@ Options:
   --thinking <value>            Sets job.model_settings.thinking (provider setting key).
   --conversation <key>          Sets job.conversation_id to resume a provider chat thread.
   --conversation-missing <mode> Sets job.options.conversation_missing (fail|restart).
+  --attach <paths>              Comma-separated file paths to attach (multipart one-shot).
+                                Content-type and kind are inferred from the extension.
   --payload <json>              Full create-job request envelope.
   --file <path|->               Full create-job request envelope from file or stdin.
   --idempotency-key <key>       Idempotency key for this create request.

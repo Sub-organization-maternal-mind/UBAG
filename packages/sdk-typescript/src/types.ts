@@ -73,6 +73,21 @@ export interface UbagCreateJobRequest {
   job: UbagJobCommand;
 }
 
+export type UbagAttachmentKind = "document" | "image" | "audio" | "video" | "voice";
+
+/** One entry in job.input.attachments — file metadata only (bytes ride via the artifact store). */
+export interface UbagJobAttachment {
+  key: string;
+  filename?: string;
+  content_type: string;
+  kind: UbagAttachmentKind;
+}
+
+/** An attachment plus its bytes, for the submit-with-attachments / multipart helpers. */
+export interface UbagAttachmentUpload extends UbagJobAttachment {
+  body: BodyInit;
+}
+
 export type UbagJobStatus =
   | "created"
   | "queued"

@@ -22,6 +22,8 @@ import {
   type UbagArtifactDownloadResponse,
   type UbagArtifactListResponse,
   type UbagArtifactResponse,
+  type UbagAttachmentUpload,
+  type UbagJsonValue,
   type UbagHealthResponse,
   type UbagJobEventsResponse,
   type UbagJobMutationRequest,
@@ -137,6 +139,75 @@ export class UbagClient {
         body
       });
     });
+  }
+
+  /**
+   * Create a job with attachments via the key-reference flow: submit the job
+   * (which is held until its files arrive), then upload every attachment's bytes
+   * to the artifact store in parallel. The returned response is the held job; the
+   * gateway dispatches it automatically once the final upload lands.
+   */
+  async submitJobWithAttachments(
+    request: UbagCreateJobRequest,
+    attachments: UbagAttachmentUpload[],
+    options: UbagRequestOptions = {}
+  ): Promise<UbagJobResponse> {
+    const manifest = attachments.map(({ body, ...meta }) => meta);
+    const jobRequest: UbagCreateJobRequest = {
+      ...request,
+      job: {
+        ...request.job,
+        input: { ...request.job.input, attachments: manifest as unknown as UbagJsonValue }
+      }
+    };
+    const created = await this.createJob(jobRequest, options);
+    await Promise.all(
+      attachments.map((attachment) =>
+        this.putJobArtifact(created.job_id, attachment.key, attachment.body, {
+          contentType: attachment.content_type
+        })
+      )
+    );
+    return created;
+  }
+
+  /**
+   * Create a job with attachments in a single multipart/form-data request: the
+   * job envelope is the first part, followed by one binary file part per
+   * attachment (part name === attachment key). The job is born complete and
+   * dispatches immediately.
+   */
+  async createJobMultipart(
+    request: UbagCreateJobRequest,
+    attachments: UbagAttachmentUpload[],
+    options: UbagRequestOptions = {}
+  ): Promise<UbagJobResponse> {
+    const apiVersion = request.api_version ?? options.apiVersion ?? this.apiVersion;
+    const idempotencyKey = request.idempotency_key ?? options.idempotencyKey ?? generateIdempotencyKey();
+    const manifest = attachments.map(({ body, ...meta }) => meta);
+    const envelope: UbagCreateJobRequest = {
+      ...request,
+      api_version: apiVersion,
+      idempotency_key: idempotencyKey,
+      client: {
+        ...request.client,
+        sdk: request.client.sdk ?? { name: UBAG_SDK_NAME, version: UBAG_SDK_VERSION }
+      },
+      job: {
+        ...request.job,
+        input: { ...request.job.input, attachments: manifest as unknown as UbagJsonValue }
+      }
+    };
+    const form = new FormData();
+    form.append("job", new Blob([JSON.stringify(envelope)], { type: JSON_CONTENT_TYPE }));
+    for (const attachment of attachments) {
+      form.append(
+        attachment.key,
+        new Blob([attachment.body as BlobPart], { type: attachment.content_type }),
+        attachment.filename ?? attachment.key
+      );
+    }
+    return this.requestRaw("POST", "/v1/jobs", { ...options, apiVersion, idempotencyKey, body: form });
   }
 
   async getJob(jobId: string, options: UbagRequestOptions = {}): Promise<UbagJobResponse> {
@@ -560,7 +631,13 @@ export class UbagClient {
       init.signal = options.signal;
     }
     if (options.body !== undefined) {
-      headers.set("Content-Type", options.contentType ?? "application/octet-stream");
+      if (options.contentType !== undefined) {
+        headers.set("Content-Type", options.contentType);
+      } else if (!(typeof FormData !== "undefined" && options.body instanceof FormData)) {
+        // FormData must keep the multipart boundary the fetch impl sets; only
+        // default a content type for non-FormData raw bodies.
+        headers.set("Content-Type", "application/octet-stream");
+      }
       init.body = options.body;
     }
 
