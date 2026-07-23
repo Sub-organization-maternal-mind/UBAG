@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ATTACHMENT_MAX_FILE_BYTES,
   DASHBOARD_ATTACHMENT_MAX_FILES,
+  resolveAttachmentPickerState,
   validateAttachmentFiles,
 } from './attachments';
 
@@ -33,5 +34,15 @@ describe('dashboard attachment validation', () => {
     const tooLarge = new File(['x'], 'large.pdf');
     Object.defineProperty(tooLarge, 'size', { value: ATTACHMENT_MAX_FILE_BYTES + 1 });
     expect(validateAttachmentFiles([tooLarge]).error).toMatch(/32 MiB/i);
+  });
+
+  it('keeps the loading state reachable while the route disables in-flight selection', () => {
+    expect(resolveAttachmentPickerState({
+      disabled: true,
+      loading: true,
+      hasError: false,
+      hasSuccess: false,
+      dragging: false,
+    })).toBe('loading');
   });
 });

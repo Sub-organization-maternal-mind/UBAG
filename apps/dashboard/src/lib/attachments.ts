@@ -4,6 +4,36 @@ export const DASHBOARD_ATTACHMENT_MAX_TOTAL_BYTES =
   DASHBOARD_ATTACHMENT_MAX_FILES * ATTACHMENT_MAX_FILE_BYTES;
 
 export type AttachmentKind = 'document' | 'image' | 'audio' | 'video' | 'voice';
+export type AttachmentPickerState =
+  | 'default'
+  | 'hover'
+  | 'focus'
+  | 'active'
+  | 'disabled'
+  | 'loading'
+  | 'error'
+  | 'success';
+
+export function resolveAttachmentPickerState({
+  disabled,
+  loading,
+  hasError,
+  hasSuccess,
+  dragging,
+}: {
+  disabled: boolean;
+  loading: boolean;
+  hasError: boolean;
+  hasSuccess: boolean;
+  dragging: boolean;
+}): AttachmentPickerState {
+  if (loading) return 'loading';
+  if (disabled) return 'disabled';
+  if (hasError) return 'error';
+  if (hasSuccess) return 'success';
+  if (dragging) return 'active';
+  return 'default';
+}
 
 export interface SelectedAttachment {
   file: File;

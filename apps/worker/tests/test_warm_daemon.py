@@ -27,6 +27,31 @@ class _RecordingFactory:
         return driver
 
 
+class _AttachmentHistoryDriver(MockPageDriver):
+    """Records state at the real engine's file-selection boundary."""
+
+    def __init__(self) -> None:
+        super().__init__(response_text="attachment job complete")
+        self.attachment_state_before_attach = []
+        self.attachment_batches = []
+
+    def attach_files(self, selectors, file_paths, *, timeout_ms=15000):
+        self.attachment_state_before_attach.append(list(self.attached_files))
+        super().attach_files(selectors, file_paths, timeout_ms=timeout_ms)
+        self.attachment_batches.append(list(self.attached_files))
+
+
+class _AttachmentRecordingFactory:
+    def __init__(self) -> None:
+        self.built = []
+
+    def __call__(self, options):
+        driver = _AttachmentHistoryDriver()
+        driver.response_container_visible = False
+        self.built.append(driver)
+        return driver
+
+
 class _FakeEngine:
     """Stands in for LiveSessionEngine: records the injected driver."""
 
@@ -56,6 +81,39 @@ def _reset_fake_engine():
 
 def _payload(profile="/profiles/gemini"):
     return {"job": {"target": "gemini_web"}, "user_data_dir": profile}
+
+
+def _attachment_payload(job_id, key, content_type, kind, local_path):
+    return {
+        "api_version": "2026-05-22",
+        "job_id": job_id,
+        "trace_id": "trace_%s" % job_id,
+        "user_data_dir": "/profiles/gemini",
+        "job": {
+            "target": "gemini_web",
+            "command_type": "chat.prompt",
+            "input": {
+                "prompt": "Inspect %s only." % key,
+                "attachments": [
+                    {
+                        "key": key,
+                        "content_type": content_type,
+                        "kind": kind,
+                    }
+                ],
+                "attachment_local_paths": [local_path],
+            },
+            "context": {
+                "account_binding_id": "acct_live_123",
+                "consent_ref": "consent_live_123",
+                "automation_scope": [
+                    "manual_login",
+                    "submit_prompt",
+                    "read_response",
+                ],
+            },
+        },
+    }
 
 
 def _daemon(factory):
@@ -120,6 +178,34 @@ class TestIsolation:
         assert len(factory.built) == 1
         assert _FakeEngine.attachment_state_before_run == [[], []]
         assert factory.built[0].attached_files == ["/tmp/second.wav"]
+
+    def test_real_engine_reuse_never_inherits_the_first_jobs_file_list(self):
+        factory = _AttachmentRecordingFactory()
+        daemon = WarmWorkerDaemon(driver_factory=factory)
+
+        list(daemon.run_job(_attachment_payload(
+            "job_first",
+            "first.pdf",
+            "application/pdf",
+            "document",
+            "/tmp/first.pdf",
+        )))
+        list(daemon.run_job(_attachment_payload(
+            "job_second",
+            "second.wav",
+            "audio/wav",
+            "voice",
+            "/tmp/second.wav",
+        )))
+
+        assert len(factory.built) == 1
+        driver = factory.built[0]
+        assert driver.attachment_state_before_attach == [[], []]
+        assert driver.attachment_batches == [
+            ["/tmp/first.pdf"],
+            ["/tmp/second.wav"],
+        ]
+        assert driver.attached_files == ["/tmp/second.wav"]
 
     def test_different_profiles_never_share_a_driver(self):
         """A warm page belongs to one identity; sharing it across profiles would

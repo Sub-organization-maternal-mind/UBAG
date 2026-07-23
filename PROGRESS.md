@@ -1,6 +1,6 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 ## 2026-07-23 Attachment clients, worker boundary, and dashboard completion
 
@@ -11,7 +11,7 @@ Completed the non-gateway attachment surface across the worker, SDKs, CLI, dashb
 - **Dashboard:** the Hallmark/NAJM jobs form now has an accessible multi-file picker with drag/drop, ordered file rows, kind/size labels, remove/clear controls, pre-network validation (10 files, 32 MiB each, 320 MiB total, known types, unique names), and explicit default/hover/focus/disabled/loading/error/success/empty states. Submission uses the existing authenticated, versioned, idempotent multipart client and clears native/file state after success. The page root is protected against horizontal overflow.
 - **Runtime/docs:** the VPS worker daemon remains opt-in (`UBAG_WORKER_DAEMON=false`) with an explicit script path. OpenAPI, SDK/CLI cookbook, CLI README, and VPS runbook document exact MIME matching and current limits.
 
-Focused validation only, per project instruction: worker attachment/warm-daemon tests **18 passed**; TypeScript SDK attachment tests **3 passed** after its package build; focused Go SDK attachment tests passed; focused CLI repeated-attachment test passed after its package build; dashboard validation/client tests **17 passed**; dashboard `svelte-check` reported **0 errors / 0 warnings**; one targeted dashboard build passed. The four-width Playwright check did not execute because the configured web server missed its 30-second readiness deadline, so runtime verification at 320/375/414/768 remains unproven in this local pass; static responsive and overflow review passed. No broad suite or CI flow ran.
+Focused validation only, per project instruction: worker attachment/warm-daemon tests **18 passed**; TypeScript SDK attachment tests **3 passed** after its package build; focused Go SDK attachment tests passed; focused CLI repeated-attachment test passed after its package build; dashboard validation/client tests **17 passed**; dashboard `svelte-check` reported **0 errors / 0 warnings**; one targeted dashboard build passed. Review follow-up made loading take precedence over disabled in the real picker state resolver, strengthened warm reuse through two real `LiveSessionEngine` attachment manifests on one mock driver (**9 warm-daemon tests passed**), and ran the single Chromium jobs-page test across **320/375/414/768** with picker/body overflow assertions (**1 passed**). No broad suite or CI flow ran.
 
 ## 2026-07-23 Gateway attachment hardening
 

@@ -2,11 +2,11 @@
 <script lang="ts">
   import {
     humanFileSize,
+    resolveAttachmentPickerState,
     validateAttachmentFiles,
+    type AttachmentPickerState,
     type SelectedAttachment,
   } from '$lib/attachments';
-
-  type PickerState = 'default' | 'hover' | 'focus' | 'active' | 'disabled' | 'loading' | 'error' | 'success';
 
   let {
     disabled = false,
@@ -20,7 +20,7 @@
     loading?: boolean;
     error?: string | null;
     success?: string | null;
-    forcedState?: PickerState | null;
+    forcedState?: AttachmentPickerState | null;
     onchange?: (attachments: SelectedAttachment[], error: string | null) => void;
   } = $props();
 
@@ -29,9 +29,15 @@
   let localError = $state<string | null>(null);
   let dragging = $state(false);
 
-  let visualState: PickerState = $derived(
+  let visualState: AttachmentPickerState = $derived(
     forcedState ??
-      (disabled ? 'disabled' : loading ? 'loading' : error || localError ? 'error' : success ? 'success' : dragging ? 'active' : 'default')
+      resolveAttachmentPickerState({
+        disabled,
+        loading,
+        hasError: Boolean(error || localError),
+        hasSuccess: Boolean(success),
+        dragging,
+      })
   );
   let describedBy = $derived(error || localError ? 'attachment-error' : 'attachment-help');
 

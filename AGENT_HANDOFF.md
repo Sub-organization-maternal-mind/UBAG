@@ -1,12 +1,12 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 ## Attachment clients, worker, and dashboard completion (2026-07-23)
 
 The non-gateway attachment implementation is complete on `feat/multi-file-attachments`: the worker rejects unsafe/duplicate manifest keys, count drift, and invalid or mismatched kind/MIME metadata; emits ordered attachment keys and kinds; and clears file-input state between warm-daemon jobs. TypeScript and Go SDKs expose compatibility aliases plus shared limits, and the CLI accepts one repeatable `--attach path[:kind]` flag per file with drive-letter-safe parsing and deterministic MIME validation. The Hallmark/NAJM dashboard jobs form provides an accessible drag/drop picker, ordered remove/clear list, 10-file/32 MiB-per-file/320 MiB-total client validation, all required component states, multipart submission, and horizontal-overflow protection. VPS worker daemon mode remains explicitly opt-in and false by default.
 
-Focused green checks: worker **18 passed**; TypeScript SDK attachment **3 passed** after package build; focused Go SDK attachment tests passed; focused CLI repeatable-attachment test passed after package build; dashboard validation/client **17 passed**; dashboard check **0 errors / 0 warnings**; targeted dashboard build passed. The targeted 320/375/414/768 Playwright test was added but did not execute because the configured web server missed its 30-second readiness deadline. Do not claim those runtime breakpoints as locally proven until that infrastructure check runs successfully. No broad suite or CI ran.
+Focused green checks: worker **18 passed**; TypeScript SDK attachment **3 passed** after package build; focused Go SDK attachment tests passed; focused CLI repeatable-attachment test passed after package build; dashboard validation/client **17 passed**; dashboard check **0 errors / 0 warnings**; targeted dashboard build passed. Review follow-up proved the real loading-state priority (**3 state tests**), exercised two real engine attachment manifests through one reused mock driver without file-list inheritance (**9 warm-daemon tests**), and passed the single Chromium jobs-page overflow test at **320/375/414/768**. No broad suite or CI ran.
 
 ## Gateway attachment hardening (2026-07-23)
 
