@@ -45,6 +45,16 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
   `test_attachments.py`); TS SDK typecheck + conformance (49); Go SDK build/vet/tests;
   CLI build + tests. Full local gate (`pnpm test:v0:local` / `pnpm check`) is the
   user's to run.
+- **Live DOM verification (all 3 target providers):** inspected the logged-in
+  ChatGPT / DeepSeek / Gemini composers read-only via the Chrome extension.
+  ChatGPT (`input[type='file'][multiple]` at rest) and DeepSeek (hidden
+  `input[type='file']` after load) match their `file_input` baselines — attach
+  works unchanged. Gemini renders **no** file input until "Upload & tools" →
+  "Upload files" fires the native chooser, so the worker gained a
+  `file_attach_trigger` click-path (verified selectors) and a Playwright
+  `expect_file_chooser` interception path in the driver, covered by mock tests
+  (215 worker tests green); the Playwright path still needs one live Gemini worker
+  run to confirm the real chooser.
 - **Follow-up flagged:** the adapter manifests carry a UTF-8 BOM that also breaks
   the Go `loadModelCatalogFromDisk` loader (model_settings silently fail-closed for
   BOM'd manifests). Attachments loader works around it; a separate task tracks

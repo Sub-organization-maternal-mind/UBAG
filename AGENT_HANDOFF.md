@@ -29,9 +29,15 @@ Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
   (fail-closed: no policy ⇒ attachments rejected). `internal/attachments`
   (`DeclaredAttachments`) is the single source of truth used by create validation,
   the gate, and the worker-runner materialize.
-- **Still open in this slice:** dashboard file-upload UI, richer warm-daemon
-  (`UBAG_WORKER_DAEMON`) enablement docs, and live DOM re-baselining of the attach
-  file inputs for ChatGPT/DeepSeek/Gemini against real logged-in sessions.
+- **Live DOM verification (2026-07-23, done):** inspected all three logged-in
+  provider composers read-only via the Chrome extension. **ChatGPT** renders
+  `input[type='file'][multiple]` at rest and **DeepSeek** renders a hidden
+  `input[type='file']` after load — both match their baselines, attach works as-is.
+  **Gemini** renders NO file input at rest or after opening the menu; it is
+  injected only when "Upload & tools" → "Upload files" fires the native file
+  chooser. Fixed: added a `file_attach_trigger` click-path to Gemini's selectors +
+  a Playwright `expect_file_chooser` interception path in the driver (mock-tested;
+  needs one live Gemini worker run to confirm the real chooser).
 - **Known issue (separate task):** adapter manifests have a UTF-8 BOM that breaks
   the Go `loadModelCatalogFromDisk` loader (model_settings fail-closed). The
   attachments loader strips the BOM; the model-catalog loader still needs the fix.

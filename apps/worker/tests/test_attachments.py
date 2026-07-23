@@ -99,6 +99,44 @@ class MultiFileAttachTests(unittest.TestCase):
         with self.assertRaises(LiveSessionError):
             LiveSessionEngine(selectors).run(payload, driver=MockPageDriver())
 
+    def test_gemini_uses_upload_menu_trigger(self):
+        # Gemini injects its <input type=file> only via the "Upload & tools" ->
+        # "Upload files" menu path (verified live 2026-07-23), so it declares a
+        # file_attach_trigger that the driver walks before setting files.
+        selectors = get_provider_selectors("gemini_web")
+        self.assertGreaterEqual(len(selectors.file_attach_trigger), 2)
+        driver = MockPageDriver(response_text="ok")
+        payload = _attachments_payload(
+            "gemini_web",
+            attachments=[{"key": "a.pdf", "content_type": "application/pdf", "kind": "document"}],
+            local_paths=["/tmp/ubag/a.pdf"],
+        )
+        events = LiveSessionEngine(selectors).run(payload, driver=driver)
+        self.assertTrue(driver.used_attach_trigger)
+        self.assertEqual(driver.attached_files, ["/tmp/ubag/a.pdf"])
+        self.assertIn("file.attached", _types(events))
+
+    def test_gemini_upload_trigger_drift_blocks(self):
+        selectors = get_provider_selectors("gemini_web")
+        driver = MockPageDriver(drift_group="upload_files_item")
+        payload = _attachments_payload(
+            "gemini_web",
+            attachments=[{"key": "a.pdf", "content_type": "application/pdf", "kind": "document"}],
+            local_paths=["/tmp/ubag/a.pdf"],
+        )
+        events = LiveSessionEngine(selectors).run(payload, driver=driver)
+        blocked = [e for e in events if e["type"] == "blocked"]
+        self.assertTrue(blocked)
+        self.assertEqual(blocked[0]["data"]["reason"], "selector_drift_detected")
+        self.assertEqual(blocked[0]["data"]["selector_group"], "upload_files_item")
+
+    def test_chatgpt_and_deepseek_have_no_trigger(self):
+        # Verified live 2026-07-23: both render the file input at rest, so they must
+        # NOT declare a trigger (the driver would otherwise click a phantom menu).
+        for target in ("chatgpt_web", "deepseek_web"):
+            selectors = get_provider_selectors(target)
+            self.assertEqual(len(selectors.file_attach_trigger), 0, target)
+
     def test_missing_local_paths_blocks(self):
         selectors = get_provider_selectors("gemini_web")
         driver = MockPageDriver()

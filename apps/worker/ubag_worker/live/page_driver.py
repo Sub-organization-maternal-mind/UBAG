@@ -357,6 +357,7 @@ class MockPageDriver(PageDriver):
     closed: bool = field(default=False, init=False)
     submitted_prompt: Optional[str] = field(default=None, init=False)
     attached_files: List[str] = field(default_factory=list, init=False)
+    used_attach_trigger: bool = field(default=False, init=False)
     started_new_chat: bool = field(default=False, init=False)
     #: conv_ids delete_chat was asked to remove (assertable without a browser).
     deleted_chats: List[str] = field(default_factory=list, init=False)
@@ -440,9 +441,14 @@ class MockPageDriver(PageDriver):
         timeout_ms: int = 15000,
     ) -> None:
         # Honor a configured drift on the file_input group so tests can assert the
-        # drift path; otherwise record the attach so unit tests can verify it.
+        # drift path; otherwise record the attach so unit tests can verify it. For
+        # inject-on-demand providers, also walk (and drift-guard) each trigger step
+        # so tests can assert the Gemini-style upload-menu path.
         if selectors.file_input is not None:
             self._guard_drift(selectors.file_input.name, selectors.selector_version)
+        for step in selectors.file_attach_trigger:
+            self._guard_drift(step.name, selectors.selector_version)
+        self.used_attach_trigger = bool(selectors.file_attach_trigger)
         self.attached_files = list(file_paths)
 
     def response_container_present(self, selectors: ProviderSelectors) -> bool:
@@ -1275,6 +1281,20 @@ class PlaywrightPageDriver(PageDriver):
         if group is None:
             raise DriftDetectedError("file_input", selectors.selector_version)
         paths = list(file_paths)
+
+        # Providers that inject the <input type=file> on demand (e.g. Gemini)
+        # expose an ordered click-path whose final step opens the native file
+        # chooser. Walk the path, intercepting the chooser on the last click, so
+        # the OS dialog never actually blocks the automation.
+        trigger = list(selectors.file_attach_trigger)
+        if trigger:
+            for step in trigger[:-1]:
+                self._click_first(step, timeout_ms)
+            with self._page.expect_file_chooser(timeout=timeout_ms) as chooser_info:
+                self._click_first(trigger[-1], timeout_ms)
+            chooser_info.value.set_files(paths, timeout=timeout_ms)
+            return
+
         last_error: Optional[Exception] = None
         for candidate in group.as_list():
             try:
@@ -1283,6 +1303,21 @@ class PlaywrightPageDriver(PageDriver):
                 # which is exactly how chat UIs expose their upload control — so we
                 # deliberately do NOT wait for visibility here.
                 locator.set_input_files(paths, timeout=timeout_ms)
+                return
+            except Exception as exc:  # noqa: BLE001 - try next fallback
+                last_error = exc
+                continue
+        raise DriftDetectedError(group.name, group.baseline_version) from last_error
+
+    def _click_first(  # pragma: no cover - requires real browser
+        self, group: SelectorGroup, timeout_ms: int
+    ) -> None:
+        """Click the first candidate in a selector group that resolves, or raise
+        DriftDetectedError against the group if none do."""
+        last_error: Optional[Exception] = None
+        for candidate in group.as_list():
+            try:
+                self._page.locator(candidate).first.click(timeout=timeout_ms)
                 return
             except Exception as exc:  # noqa: BLE001 - try next fallback
                 last_error = exc

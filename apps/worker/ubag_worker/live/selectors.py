@@ -158,6 +158,14 @@ class ProviderSelectors:
     # Deliberately NOT part of all_groups(): an absent attach control must never
     # fail the mandatory drift baseline for unrelated, text-only targets.
     file_input: Optional[SelectorGroup] = None
+    # Optional ordered click-path that reveals the hidden <input type=file> for
+    # providers that INJECT it on demand instead of rendering it at rest. Each step
+    # is clicked in order; the FINAL step opens the native OS file chooser, which
+    # the Playwright driver intercepts (expect_file_chooser) to set the files —
+    # never a real file dialog. Verified live 2026-07-23 for Gemini
+    # ("Upload & tools" -> "Upload files"); ChatGPT and DeepSeek render the input
+    # at rest and leave this empty. Like file_input, NOT part of all_groups().
+    file_attach_trigger: Sequence[SelectorGroup] = field(default_factory=tuple)
     # Optional "New chat / new conversation" affordance. When set, the engine
     # clicks it before configuring + submitting so each job starts a fresh
     # conversation (no context bleed between unrelated Fix requests). Best-effort:
@@ -611,11 +619,33 @@ GEMINI_WEB = ProviderSelectors(
     file_input=SelectorGroup(
         "file_input",
         (
-            # Gemini's visible affordance is an "Add files" button that injects a
-            # hidden <input type=file>; set_input_files targets the input directly.
+            # Verified live 2026-07-23: Gemini renders NO <input type=file> at rest.
+            # It is injected only when "Upload & tools" -> "Upload files" fires the
+            # native file chooser (see file_attach_trigger). This group is the
+            # target the intercepted chooser resolves to.
             "input[type='file']",
             "input[name='Filedata']",
             "input[accept*='audio']",
+        ),
+    ),
+    file_attach_trigger=(
+        # Step 1: open the composer's upload menu ("Upload & tools").
+        SelectorGroup(
+            "upload_menu_button",
+            (
+                "button[aria-label*='Upload' i]",
+                "button[mattooltip*='Upload' i]",
+            ),
+        ),
+        # Step 2: the "Upload files" menu item — clicking it opens the native file
+        # chooser the Playwright driver intercepts. Verified live 2026-07-23.
+        SelectorGroup(
+            "upload_files_item",
+            (
+                "[role='menuitem'][aria-label*='Upload files' i]",
+                "button[aria-label*='Upload files' i]",
+                "[aria-label*='Upload files' i]",
+            ),
         ),
     ),
     # Verified 2026-06-29 against live gemini.google.com/app.
