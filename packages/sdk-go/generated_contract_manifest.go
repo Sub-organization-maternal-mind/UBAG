@@ -108,6 +108,17 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 	"UBAG-VALIDATION-COMMAND-SCHEMA-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-MODEL-UNAVAILABLE-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-MODE-UNAVAILABLE-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-ATTACHMENTS-SHAPE-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-ATTACHMENT-KEY-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-ATTACHMENT-KIND-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-ATTACHMENT-DUPLICATE-KEY-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-ATTACHMENTS-COUNT-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-MULTIPART-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-MULTIPART-PART-ORDER-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-MULTIPART-PART-MISSING-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-MULTIPART-PART-UNKNOWN-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-QUOTA-DAILY-001": {Category: "quota", Retryable: true, RetryAfterMs: 0},
 	"UBAG-QUOTA-CREDITS-002": {Category: "quota", Retryable: false, RetryAfterMs: 0},
 	"UBAG-QUOTA-CONCURRENT-003": {Category: "quota", Retryable: true, RetryAfterMs: 0},
@@ -186,6 +197,6 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 }
 
 var UbagSchemaFingerprints = map[string]string{
-	"job-request": "ab1b8f11d25bc5e9af3909a41b8c371a6f6cbe2ff4d739500b56a710999e0448",
-	"job-response": "23b36663886ac364f43d0642d22e49fe66502be8867d36b59d81d3f45dbd99d4",
+	"job-request": "e81755a9dfd5fa641b6734adbe7ac4baac6da84258514e2c8cb43bf80776f9e0",
+	"job-response": "1be5e6556e2e9822e083ba7f168435010b0aed95beb82893e8c6a7e13d545e53",
 }

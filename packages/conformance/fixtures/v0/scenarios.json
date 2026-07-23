@@ -4,6 +4,38 @@
   "description": "Executable JSON scenarios for TypeScript/JavaScript and Go SDK conformance runners.",
   "coverage_scenarios": [
     {
+      "id": "attachments.key-reference-gate",
+      "category": "attachments",
+      "title": "A job with declared attachments is held (status created) until every artifact key is uploaded, then dispatches exactly once",
+      "assertions": [
+        "held_until_all_keys_present",
+        "dispatch_exactly_once",
+        "ttl_fails_incomplete_job"
+      ]
+    },
+    {
+      "id": "attachments.multipart-one-shot",
+      "category": "attachments",
+      "title": "Multipart one-shot create carries the job envelope plus one file part per declared key and dispatches immediately",
+      "assertions": [
+        "job_part_first",
+        "part_name_equals_attachment_key",
+        "born_complete_dispatch",
+        "rollback_on_partial_failure"
+      ]
+    },
+    {
+      "id": "attachments.limits-enforced",
+      "category": "attachments",
+      "title": "Per-file 32 MiB cap, adapter max_files count, and per-adapter content-type allowlist are enforced at create and upload",
+      "assertions": [
+        "per_file_size_cap",
+        "max_files_count",
+        "content_type_allowlist",
+        "unsupported_target_rejected"
+      ]
+    },
+    {
       "id": "retries.retryable-error",
       "category": "retries",
       "title": "Retry policy keeps the same idempotency key for retryable gateway failures",
@@ -3227,6 +3259,72 @@
       }
     },
     {
+      "id": "jobs.create.attachments.accepted",
+      "category": "jobs",
+      "title": "Create job with key-reference attachments is held until uploads land",
+      "request": {
+        "method": "POST",
+        "path": "/v1/jobs",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Content-Type": "application/json",
+          "Idempotency-Key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1BT",
+          "Ubag-Api-Version": "2026-05-22"
+        },
+        "body": {
+          "api_version": "2026-05-22",
+          "idempotency_key": "01HXY5ZS3KAFQ3PZ8NQ8C7H1BT",
+          "client": {
+            "app_id": "fixture-app",
+            "app_version": "0.0.0",
+            "sdk": {
+              "name": "__SDK_NAME__",
+              "version": "__SDK_VERSION__"
+            }
+          },
+          "job": {
+            "target": "chatgpt_web",
+            "command_type": "chat.prompt",
+            "input": {
+              "prompt": "Summarize the attached report",
+              "attachments": [
+                {
+                  "key": "report.pdf",
+                  "filename": "report.pdf",
+                  "content_type": "application/pdf",
+                  "kind": "document"
+                }
+              ]
+            },
+            "options": {
+              "priority": "normal",
+              "return_mode": "final"
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "api_version": "2026-05-22",
+          "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1BU",
+          "idempotent_replay": false,
+          "status": "created",
+          "target": "chatgpt_web",
+          "metadata": {
+            "retries": 0
+          },
+          "trace_id": "trace_job_create_attach",
+          "events_url": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1BU/events"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.status": "created",
+        "body.idempotent_replay": false
+      }
+    },
+    {
       "id": "jobs.create.idempotent-replay",
       "category": "idempotency",
       "title": "Create job replay preserves the original job id",
@@ -4386,5 +4484,5 @@
       }
     }
   ],
-  "scenario_count": 272
+  "scenario_count": 275
 }

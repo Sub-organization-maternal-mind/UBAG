@@ -1027,6 +1027,20 @@ paths:
         when they contain credentials, cookies, tokens, API keys, browser session
         state, client-supplied noVNC URLs, private keys, MFA/TOTP material, or
         CAPTCHA-solving instructions.
+
+        Attachments (documents/images/audio/video/voice) are supported two ways:
+        - **Key-reference (application/json):** declare files in `job.input.attachments`
+          (each `{key, content_type, kind}`), then upload the bytes with
+          `PUT /v1/jobs/{job_id}/artifacts/{key}`. The job is held (status `created`)
+          and only dispatches once every declared key has been uploaded.
+        - **Multipart one-shot (multipart/form-data):** send the `job` JSON envelope as
+          the first part, then one binary file part per declared attachment whose part
+          field name equals the attachment `key`. The job is born complete and dispatches
+          immediately.
+
+        Each attachment's `content_type` is validated against the target adapter's
+        declared attachments policy (see `GET /v1/adapters`); a target with no policy
+        rejects attachments. Per-file limit is 32 MiB; the adapter policy sets max count.
       parameters:
         - $ref: "#/components/parameters/UbagApiVersion"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -1070,6 +1084,22 @@ paths:
                       locale: en-GB
                       tags: [radiology]
                       cost_center: rad-dept
+          multipart/form-data:
+            schema:
+              type: object
+              required: [job]
+              properties:
+                job:
+                  $ref: "#/components/schemas/JobRequest"
+              additionalProperties:
+                type: string
+                format: binary
+                description: >-
+                  One binary file part per declared attachment. The part field
+                  name MUST equal the corresponding job.input.attachments[].key.
+            encoding:
+              job:
+                contentType: application/json
       responses:
         "202":
           description: Job accepted or idempotent response replayed.
@@ -1093,6 +1123,12 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "409":
           description: Idempotency key conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: A multipart attachment part exceeds the 32 MiB per-file limit.
           content:
             application/json:
               schema:

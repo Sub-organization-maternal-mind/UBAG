@@ -363,6 +363,50 @@ export const UBAG_ERROR_CODES = {
     "category": "validation",
     "retryable": false
   },
+  "UBAG-VALIDATION-ATTACHMENTS-SHAPE-001": {
+    "category": "validation",
+    "retryable": false
+  },
+  "UBAG-VALIDATION-ATTACHMENT-KEY-001": {
+    "category": "validation",
+    "retryable": false
+  },
+  "UBAG-VALIDATION-ATTACHMENT-KIND-001": {
+    "category": "validation",
+    "retryable": false
+  },
+  "UBAG-VALIDATION-ATTACHMENT-DUPLICATE-KEY-001": {
+    "category": "validation",
+    "retryable": false
+  },
+  "UBAG-VALIDATION-ATTACHMENTS-COUNT-001": {
+    "category": "validation",
+    "retryable": false
+  },
+  "UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001": {
+    "category": "validation",
+    "retryable": false
+  },
+  "UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001": {
+    "category": "validation",
+    "retryable": false
+  },
+  "UBAG-VALIDATION-MULTIPART-001": {
+    "category": "validation",
+    "retryable": false
+  },
+  "UBAG-VALIDATION-MULTIPART-PART-ORDER-001": {
+    "category": "validation",
+    "retryable": false
+  },
+  "UBAG-VALIDATION-MULTIPART-PART-MISSING-001": {
+    "category": "validation",
+    "retryable": false
+  },
+  "UBAG-VALIDATION-MULTIPART-PART-UNKNOWN-001": {
+    "category": "validation",
+    "retryable": false
+  },
   "UBAG-QUOTA-DAILY-001": {
     "category": "quota",
     "retryable": true
@@ -665,6 +709,6 @@ export const UBAG_ERROR_CODES = {
   }
 } as const;
 export const UBAG_SCHEMA_FINGERPRINTS = {
-  "job-request": "ab1b8f11d25bc5e9af3909a41b8c371a6f6cbe2ff4d739500b56a710999e0448",
-  "job-response": "23b36663886ac364f43d0642d22e49fe66502be8867d36b59d81d3f45dbd99d4"
+  "job-request": "e81755a9dfd5fa641b6734adbe7ac4baac6da84258514e2c8cb43bf80776f9e0",
+  "job-response": "1be5e6556e2e9822e083ba7f168435010b0aed95beb82893e8c6a7e13d545e53"
 } as const;

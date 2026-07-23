@@ -76,6 +76,46 @@
         }
       }
     },
+    "attachments": {
+      "type": "object",
+      "description": "File-attachment policy. Presence declares that the adapter accepts attachments (gateway is fail-closed: no block => attachments rejected). The model_catalog analog for files.",
+      "additionalProperties": false,
+      "required": ["accepted"],
+      "properties": {
+        "max_files": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "description": "Maximum attachments per job for this adapter."
+        },
+        "max_file_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Per-file byte ceiling (must not exceed the gateway's 32 MiB artifact cap)."
+        },
+        "accepted": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "content_types"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["document", "image", "audio", "video", "voice"]
+              },
+              "content_types": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string" },
+                "description": "Accepted MIME types for this kind. A trailing /* wildcard matches a type family (e.g. image/*)."
+              }
+            }
+          }
+        }
+      }
+    },
     "selector_strategy": {
       "type": "object",
       "additionalProperties": true,

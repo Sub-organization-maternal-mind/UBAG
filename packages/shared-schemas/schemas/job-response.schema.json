@@ -186,7 +186,8 @@
             "video_recording",
             "console_log",
             "downloaded_file",
-            "normalized_output"
+            "normalized_output",
+            "attachment"
           ]
         },
         "content_type": {

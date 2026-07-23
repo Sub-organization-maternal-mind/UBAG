@@ -132,8 +132,11 @@
         },
         "input": {
           "type": "object",
-          "description": "Command-specific payload validated by the command_type schema. It must not contain credentials, cookies, tokens, API keys, browser session state, noVNC URLs, private keys, MFA/TOTP material, or CAPTCHA-solving instructions.",
-          "additionalProperties": true
+          "description": "Command-specific payload validated by the command_type schema. It must not contain credentials, cookies, tokens, API keys, browser session state, noVNC URLs, private keys, MFA/TOTP material, or CAPTCHA-solving instructions. The optional input.attachments array declares files (documents/images/audio/video/voice) to attach; the bytes are uploaded out-of-band to the job artifact store under each entry's key (never inline in input).",
+          "additionalProperties": true,
+          "properties": {
+            "attachments": { "$ref": "#/$defs/attachments" }
+          }
         },
         "options": {
           "$ref": "#/$defs/job_options"
@@ -300,6 +303,45 @@
             ]
           },
           "maxProperties": 32
+        }
+      }
+    },
+    "attachments": {
+      "type": "array",
+      "description": "Files to attach to the job before the prompt is submitted. Bytes ride out-of-band via the job artifact store keyed by each entry's key; they must never be inlined here. The target adapter must declare an attachments policy (see /v1/adapters) or the job is rejected.",
+      "maxItems": 32,
+      "items": { "$ref": "#/$defs/attachment" }
+    },
+    "attachment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "content_type", "kind"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^[^/\\\\?%]+$",
+          "description": "Artifact-store key the bytes are (or will be) uploaded under. A single path segment; the gateway additionally rejects '.', '..', and control characters.",
+          "examples": ["report.pdf", "note.webm"]
+        },
+        "filename": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "Original file name shown to the provider. Bounded so the inline manifest can never approach the dispatch-envelope size cap.",
+          "examples": ["report.pdf"]
+        },
+        "content_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "MIME type; validated against the target adapter's accepted content types.",
+          "examples": ["application/pdf", "audio/webm"]
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["document", "image", "audio", "video", "voice"]
         }
       }
     }

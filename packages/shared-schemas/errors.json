@@ -98,7 +98,18 @@
           { "code": "UBAG-VALIDATION-EVENT-SEQUENCE-001",          "message": "SSE/WS event sequence number out of order",             "retryable": false },
           { "code": "UBAG-VALIDATION-COMMAND-SCHEMA-001",          "message": "job.input does not match the JSON Schema for command_type×api_version", "retryable": false, "note": "Phase 2 command validator" },
           { "code": "UBAG-VALIDATION-MODEL-UNAVAILABLE-001",       "message": "Requested model is not in the target adapter's model catalog.", "retryable": false },
-          { "code": "UBAG-VALIDATION-MODE-UNAVAILABLE-001",        "message": "Requested thinking mode or extra setting is not in the target adapter's model catalog.", "retryable": false }
+          { "code": "UBAG-VALIDATION-MODE-UNAVAILABLE-001",        "message": "Requested thinking mode or extra setting is not in the target adapter's model catalog.", "retryable": false },
+          { "code": "UBAG-VALIDATION-ATTACHMENTS-SHAPE-001",       "message": "job.input.attachments must be an array of {key, content_type, kind} objects", "retryable": false },
+          { "code": "UBAG-VALIDATION-ATTACHMENT-KEY-001",          "message": "Attachment key is empty or invalid",                    "retryable": false },
+          { "code": "UBAG-VALIDATION-ATTACHMENT-KIND-001",         "message": "Attachment kind must be one of document|image|audio|video|voice", "retryable": false },
+          { "code": "UBAG-VALIDATION-ATTACHMENT-DUPLICATE-KEY-001","message": "Duplicate attachment key in job.input.attachments",   "retryable": false },
+          { "code": "UBAG-VALIDATION-ATTACHMENTS-COUNT-001",       "message": "Number of attachments exceeds the target adapter's max_files", "retryable": false },
+          { "code": "UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001", "message": "Attachment content_type is not accepted by the target adapter", "retryable": false },
+          { "code": "UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001", "message": "Target adapter does not accept attachments",             "retryable": false },
+          { "code": "UBAG-VALIDATION-MULTIPART-001",               "message": "multipart/form-data request is malformed",              "retryable": false },
+          { "code": "UBAG-VALIDATION-MULTIPART-PART-ORDER-001",    "message": "The first multipart part must be the job JSON envelope",  "retryable": false },
+          { "code": "UBAG-VALIDATION-MULTIPART-PART-MISSING-001",  "message": "A declared attachment key has no matching multipart file part", "retryable": false },
+          { "code": "UBAG-VALIDATION-MULTIPART-PART-UNKNOWN-001",  "message": "A multipart file part does not match any declared attachment key", "retryable": false }
         ]
       },
       {
