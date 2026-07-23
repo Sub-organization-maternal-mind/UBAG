@@ -38,9 +38,9 @@ Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
   chooser. Fixed: added a `file_attach_trigger` click-path to Gemini's selectors +
   a Playwright `expect_file_chooser` interception path in the driver (mock-tested;
   needs one live Gemini worker run to confirm the real chooser).
-- **Known issue (separate task):** adapter manifests have a UTF-8 BOM that breaks
-  the Go `loadModelCatalogFromDisk` loader (model_settings fail-closed). The
-  attachments loader strips the BOM; the model-catalog loader still needs the fix.
+- **BOM regression fixed on this branch:** all eight adapter manifests are now
+  BOM-free, and the Go model-catalog loader defensively accepts BOM-prefixed
+  bytes with focused regression coverage.
 - Not yet merged to `main`; not deployed to the VPS.
 
 ## Latest Slice: Full tracked-file parity local ↔ GitHub ↔ VPS (2026-07-23)

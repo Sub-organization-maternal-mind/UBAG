@@ -55,10 +55,10 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
   `expect_file_chooser` interception path in the driver, covered by mock tests
   (215 worker tests green); the Playwright path still needs one live Gemini worker
   run to confirm the real chooser.
-- **Follow-up flagged:** the adapter manifests carry a UTF-8 BOM that also breaks
-  the Go `loadModelCatalogFromDisk` loader (model_settings silently fail-closed for
-  BOM'd manifests). Attachments loader works around it; a separate task tracks
-  fixing the model-catalog loader.
+- **BOM regression fixed:** removed the UTF-8 BOM from all eight adapter
+  manifests and hardened `loadModelCatalogFromDisk` through a BOM-tolerant
+  decoder. `TestDecodeModelCatalogAcceptsUTF8BOM` exercises genuinely
+  BOM-prefixed bytes so the defensive behavior cannot regress silently.
 
 ## 2026-07-23 Full tracked-file parity (local ↔ GitHub ↔ VPS)
 

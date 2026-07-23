@@ -3248,13 +3248,25 @@ func loadModelCatalogFromDisk(target string) jobcore.ModelCatalog {
 	if err != nil {
 		return jobcore.ModelCatalog{}
 	}
+	catalog, err := decodeModelCatalog(raw)
+	if err != nil {
+		return jobcore.ModelCatalog{}
+	}
+	return catalog
+}
+
+func decodeModelCatalog(raw []byte) (jobcore.ModelCatalog, error) {
+	// Adapter manifests are authored on Windows and can carry a UTF-8 BOM that
+	// encoding/json rejects; strip it so the catalog loads (an unstripped BOM
+	// silently yields an empty catalog, which fail-closes all model_settings).
+	raw = bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
 	var manifest struct {
 		ModelCatalog jobcore.ModelCatalog `json:"model_catalog"`
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil {
-		return jobcore.ModelCatalog{}
+		return jobcore.ModelCatalog{}, err
 	}
-	return manifest.ModelCatalog
+	return manifest.ModelCatalog, nil
 }
 
 // adaptersDir resolves the repo's adapters/ directory: UBAG_ADAPTERS_DIR when
