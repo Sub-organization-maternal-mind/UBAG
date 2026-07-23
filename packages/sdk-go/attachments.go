@@ -12,6 +12,11 @@ import (
 	"time"
 )
 
+const (
+	AttachmentMaxFileBytes     = 32 * 1024 * 1024
+	AttachmentMaxManifestFiles = 32
+)
+
 // AttachmentUpload is one file to attach to a job: metadata plus its bytes. The
 // bytes ride to the artifact store; only the metadata is declared inline in
 // job.input.attachments.
@@ -95,6 +100,11 @@ func (client *Client) SubmitJobWithAttachments(ctx context.Context, request JSON
 		}
 	}
 	return created, nil
+}
+
+// CreateJobWithAttachments is the discoverable alias for the key-reference flow.
+func (client *Client) CreateJobWithAttachments(ctx context.Context, request JSON, attachments []AttachmentUpload, options ...RequestOption) (JSON, error) {
+	return client.SubmitJobWithAttachments(ctx, request, attachments, options...)
 }
 
 // CreateJobMultipart creates a job with attachments in a single

@@ -29,6 +29,15 @@
   --font-body: "Aptos", "Segoe UI", BlinkMacSystemFont, sans-serif;
   --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, ui-monospace, monospace;
 
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+  --space-8: 4rem;
+
   --radius-sm: 4px;
   --radius-md: 8px;
   --radius-pill: 999px;
@@ -43,6 +52,7 @@
 html, body {
   margin: 0;
   padding: 0;
+  overflow-x: clip;
   background: var(--color-paper);
   color: var(--color-ink);
   font-family: var(--font-body);

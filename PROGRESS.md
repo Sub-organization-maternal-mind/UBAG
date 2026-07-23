@@ -2,6 +2,17 @@
 
 Last updated: 2026-07-23
 
+## 2026-07-23 Attachment clients, worker boundary, and dashboard completion
+
+Completed the non-gateway attachment surface across the worker, SDKs, CLI, dashboard, VPS Compose, and operator documentation:
+
+- **Worker boundary:** attachment manifests now reject unsafe keys (`.`, `..`, path separators, percent/question/NUL characters), duplicates, missing or invalid kind/content type, and local-path count drift before file selection. Policy mismatches block with `attachment_type_rejected`; successful `file.attached` telemetry includes ordered keys and kinds. Warm-daemon reuse explicitly clears browser attachment state between jobs and falls back to a cold session if clearing fails.
+- **SDKs and CLI:** TypeScript and Go expose `Create/createJobWithAttachments` aliases and the shared 32-file/32 MiB limits; TypeScript uploads accept `BlobPart`. The CLI now preserves repeatable `--attach path[:kind]` values, handles Windows drive letters safely, infers known MIME types (including `.webm` audio/video), and rejects unknown extensions or duplicate basenames.
+- **Dashboard:** the Hallmark/NAJM jobs form now has an accessible multi-file picker with drag/drop, ordered file rows, kind/size labels, remove/clear controls, pre-network validation (10 files, 32 MiB each, 320 MiB total, known types, unique names), and explicit default/hover/focus/disabled/loading/error/success/empty states. Submission uses the existing authenticated, versioned, idempotent multipart client and clears native/file state after success. The page root is protected against horizontal overflow.
+- **Runtime/docs:** the VPS worker daemon remains opt-in (`UBAG_WORKER_DAEMON=false`) with an explicit script path. OpenAPI, SDK/CLI cookbook, CLI README, and VPS runbook document exact MIME matching and current limits.
+
+Focused validation only, per project instruction: worker attachment/warm-daemon tests **18 passed**; TypeScript SDK attachment tests **3 passed** after its package build; focused Go SDK attachment tests passed; focused CLI repeated-attachment test passed after its package build; dashboard validation/client tests **17 passed**; dashboard `svelte-check` reported **0 errors / 0 warnings**; one targeted dashboard build passed. The four-width Playwright check did not execute because the configured web server missed its 30-second readiness deadline, so runtime verification at 320/375/414/768 remains unproven in this local pass; static responsive and overflow review passed. No broad suite or CI flow ran.
+
 ## 2026-07-23 Gateway attachment hardening
 
 Review fixes completed: multipart now invokes the exact shared normal-create preparation path (API version, one-time template application, authorization, kill switch, payload/model/attachment validation, and plugin hooks) before staging; runtime manifest bounds now mirror schema `additionalProperties`, 512-code-point key, and 128-code-point content type limits; chunked multipart uses an adjustable policy-derived stream cap with an explicit 8 KiB framing allowance; and stored-success counters move only after the full multipart artifact set commits. Focused review tests: parser 15 passed, review HTTP 5 passed; combined focused regression 22 parser + 36 HTTP passed; targeted vet/diff-check clean.
@@ -46,8 +57,8 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
   providers (activated Claude's dormant `file_upload_later`).
 - **SDKs + CLI:** `submitJobWithAttachments` (key-reference + parallel uploads) and
   `createJobMultipart` (one-shot) in both TypeScript and Go SDKs; CLI
-  `create-job --attach <comma-separated paths>` (multipart, content-type + kind
-  inferred from extension).
+  `create-job --attach <path[:kind]> --attach <path[:kind]>` (multipart,
+  content-type + kind inferred from extension, with an explicit kind override).
 - **Verification run:** gateway `go vet` + `internal/{attachments,jobs,executor,httpapi}`
   tests (incl. new gate/multipart/materialize tests); worker 212 tests (incl. new
   `test_attachments.py`); TS SDK typecheck + conformance (49); Go SDK build/vet/tests;
@@ -56,8 +67,9 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
 - **Live DOM verification (all 3 target providers):** inspected the logged-in
   ChatGPT / DeepSeek / Gemini composers read-only via the Chrome extension.
   ChatGPT (`input[type='file'][multiple]` at rest) and DeepSeek (hidden
-  `input[type='file']` after load) match their `file_input` baselines — attach
-  works unchanged. Gemini renders **no** file input until "Upload & tools" →
+  `input[type='file']` after load) match their `file_input` baselines. This
+  read-only inspection verified selectors only; it did not submit a real attached
+  job. Gemini renders **no** file input until "Upload & tools" →
   "Upload files" fires the native chooser, so the worker gained a
   `file_attach_trigger` click-path (verified selectors) and a Playwright
   `expect_file_chooser` interception path in the driver, covered by mock tests

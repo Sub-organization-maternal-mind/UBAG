@@ -115,7 +115,11 @@ class WarmWorkerDaemon:
         warm = self._warm.pop(key, None)
         if warm is not None:
             if warm.prepare_for_next_job(selectors):
-                return warm
+                try:
+                    warm.clear_attachment_state()
+                    return warm
+                except Exception:  # noqa: BLE001
+                    _close_quietly(warm)
             # Could not prove the page empty (prior turn still visible, dead
             # page, or a probe that threw). Discard it and pay for a cold tab --
             # slower, but it cannot return a prior patient's report.

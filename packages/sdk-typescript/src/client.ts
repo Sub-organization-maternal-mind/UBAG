@@ -171,6 +171,14 @@ export class UbagClient {
     return created;
   }
 
+  async createJobWithAttachments(
+    request: UbagCreateJobRequest,
+    attachments: UbagAttachmentUpload[],
+    options: UbagRequestOptions = {}
+  ): Promise<UbagJobResponse> {
+    return this.submitJobWithAttachments(request, attachments, options);
+  }
+
   /**
    * Create a job with attachments in a single multipart/form-data request: the
    * job envelope is the first part, followed by one binary file part per
@@ -203,7 +211,7 @@ export class UbagClient {
     for (const attachment of attachments) {
       form.append(
         attachment.key,
-        new Blob([attachment.body as BlobPart], { type: attachment.content_type }),
+        new Blob([attachment.body], { type: attachment.content_type }),
         attachment.filename ?? attachment.key
       );
     }

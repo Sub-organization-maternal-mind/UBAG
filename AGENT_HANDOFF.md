@@ -2,6 +2,12 @@
 
 Last updated: 2026-07-23
 
+## Attachment clients, worker, and dashboard completion (2026-07-23)
+
+The non-gateway attachment implementation is complete on `feat/multi-file-attachments`: the worker rejects unsafe/duplicate manifest keys, count drift, and invalid or mismatched kind/MIME metadata; emits ordered attachment keys and kinds; and clears file-input state between warm-daemon jobs. TypeScript and Go SDKs expose compatibility aliases plus shared limits, and the CLI accepts one repeatable `--attach path[:kind]` flag per file with drive-letter-safe parsing and deterministic MIME validation. The Hallmark/NAJM dashboard jobs form provides an accessible drag/drop picker, ordered remove/clear list, 10-file/32 MiB-per-file/320 MiB-total client validation, all required component states, multipart submission, and horizontal-overflow protection. VPS worker daemon mode remains explicitly opt-in and false by default.
+
+Focused green checks: worker **18 passed**; TypeScript SDK attachment **3 passed** after package build; focused Go SDK attachment tests passed; focused CLI repeatable-attachment test passed after package build; dashboard validation/client **17 passed**; dashboard check **0 errors / 0 warnings**; targeted dashboard build passed. The targeted 320/375/414/768 Playwright test was added but did not execute because the configured web server missed its 30-second readiness deadline. Do not claim those runtime breakpoints as locally proven until that infrastructure check runs successfully. No broad suite or CI ran.
+
 ## Gateway attachment hardening (2026-07-23)
 
 Post-review fixes are included: JSON and multipart create share `prepareCreateJob`, and multipart passes the prepared request through context so templates/plugins are not applied twice; unauthorized or template-invalid multipart requests fail before staging. Chunked bodies are bounded by the job-envelope limit before preflight and by policy bytes plus 8 KiB framing afterward. Rolled-back multipart writes do not increment stored-success metrics. Runtime entry-property/key/content-type bounds match the schema. Focused review regressions passed (15 parser, 5 HTTP; combined regression 22 parser and 36 HTTP), with targeted vet/diff-check clean.
@@ -38,7 +44,9 @@ Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
 - **Live DOM verification (2026-07-23, done):** inspected all three logged-in
   provider composers read-only via the Chrome extension. **ChatGPT** renders
   `input[type='file'][multiple]` at rest and **DeepSeek** renders a hidden
-  `input[type='file']` after load — both match their baselines, attach works as-is.
+  `input[type='file']` after load; both match their selector baselines. The
+  inspection did not submit a real attached job, so it proves DOM compatibility,
+  not end-to-end attachment execution.
   **Gemini** renders NO file input at rest or after opening the menu; it is
   injected only when "Upload & tools" → "Upload files" fires the native file
   chooser. Fixed: added a `file_attach_trigger` click-path to Gemini's selectors +

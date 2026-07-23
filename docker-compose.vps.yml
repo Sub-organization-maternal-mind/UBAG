@@ -89,6 +89,10 @@ services:
       # target=mock still falls through to the registry mock adapter — so mock
       # jobs keep working unchanged (verified in run_live_worker.py routing).
       UBAG_WORKER_SCRIPT: /app/apps/worker/run_live_worker.py
+      # Warm page reuse is opt-in. False preserves the per-job worker process;
+      # when explicitly enabled, the daemon uses its bundled long-lived script.
+      UBAG_WORKER_DAEMON: ${UBAG_WORKER_DAEMON:-false}
+      UBAG_WORKER_DAEMON_SCRIPT: ${UBAG_WORKER_DAEMON_SCRIPT:-/app/apps/worker/run_worker_daemon.py}
       # Attach to the browser container's Chrome over CDP (via its socat proxy)
       # instead of launching a throwaway browser — live jobs reuse the operator's
       # manually-logged-in session. http(s):// endpoint => connect_over_cdp;

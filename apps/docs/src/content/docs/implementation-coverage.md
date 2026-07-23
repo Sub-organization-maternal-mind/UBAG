@@ -9,6 +9,12 @@ This ledger maps the UBAG A-Z plan to the current repository implementation. It 
 
 For future agentic AI continuation, read the root `AGENT_HANDOFF.md` first, then `PROGRESS.md`, then this page. The rendered handoff is also available at `operations/agent-handoff`.
 
+## 2026-07-23 Attachment Client and Worker Completion
+
+The multi-file attachment path is implemented across the worker, TypeScript/Go SDKs, repeatable CLI flags, and the Hallmark/NAJM dashboard jobs form. The worker fail-closes unsafe or inconsistent manifests, emits ordered attachment telemetry, and clears file state between warm-daemon jobs. The dashboard validates count, per-file/total size, type, and duplicate names before its authenticated, versioned, idempotent multipart request. VPS worker-daemon mode is explicit and opt-in.
+
+Focused worker, SDK, CLI, and dashboard unit/type checks passed, plus one targeted dashboard build. A dedicated 320/375/414/768 Playwright check exists, but its configured web server missed the local readiness deadline before any test executed; those runtime breakpoints are therefore not claimed as proven by this pass.
+
 ## 2026-07-23 Gemini 3.6 Flash Standard-Mode Pin
 
 The live Gemini web adapter now selects `3.6 Flash` before every prompt and explicitly disables a persisted `Extended thinking` selection. The Gemini web UI stores model and thinking choices independently, so both `3.6 Flash` and Extended can otherwise remain selected at once. UBAG's required-setting drift path fails closed instead of running on another model or thinking depth.

@@ -1,12 +1,11 @@
 # UBAG — VPS profile (185.252.233.186)
 
-Trimmed sibling of `docker-compose.small.yml`: gateway + nginx-dashboard only
-(no live-browser, Dragonfly, MinIO, or NATS — see the header comment in
-`../../docker-compose.vps.yml` for why each is safe to drop for this scope).
-Hard-capped at **1 CPU core / 2GB RAM combined** (0.70 core / ~1.2GB actually
-allocated, leaving headroom) because this VPS is a **shared box** already
-running ~15 unrelated client sites behind a single Nginx Proxy Manager (NPM)
-container.
+Production sibling of `docker-compose.small.yml`: gateway, nginx-dashboard,
+the live-browser session container, and the chat reaper. Dragonfly, MinIO, and
+NATS are omitted; see the header comment in `../../docker-compose.vps.yml`.
+The VPS is a shared box running unrelated client sites behind a single Nginx
+Proxy Manager (NPM) container, so the Compose file keeps explicit service
+resource limits.
 
 **Postgres comes from the shared platform stack** (`/opt/platform` on the VPS,
 one instance for every project on the box — rules in
@@ -61,16 +60,26 @@ add a **Proxy Host**:
 
 | service         | cpus | mem_limit |
 |------------------|------|-----------|
-| gateway          | 0.55 | 1100m     |
+| gateway          | 0.60 | 1300m     |
 | nginx-dashboard  | 0.15 | 96m       |
-| **total**        | **0.70** | **~1.2G** |
+| browser          | 1.00 | 1900m     |
+| chat-reaper      | 0.10 | 256m      |
+| **total**        | **1.85** | **~3.5G** |
 
 (Postgres is shared platform capacity at `/opt/platform`, not part of this
 budget.)
 
+## Worker daemon (opt-in)
+
+The Compose source defaults `UBAG_WORKER_DAEMON=false`, retaining one worker
+process per job. Set it to `true` only when warm browser-page reuse is intended;
+`UBAG_WORKER_DAEMON_SCRIPT` defaults to the bundled
+`/app/apps/worker/run_worker_daemon.py`. Reused pages clear pending attachment
+state before the next job.
+
 ## Scope
 
-API + operator dashboard, mock/adapter jobs only (`UBAG_EXECUTOR_MODE=file` +
-`UBAG_WORKER_CONSUMER_ENABLED=true` + `run_mock_worker.py`) — no live-browser
-automation. Artifacts land on local disk (`UBAG_ARTIFACT_STORE=localfs`),
-which persists across restarts on this host (unlike Render's free tier).
+API + operator dashboard + live, manually authenticated browser adapters
+(`UBAG_EXECUTOR_MODE=file`, `UBAG_WORKER_CONSUMER_ENABLED=true`, and
+`run_live_worker.py`; `target=mock` still routes to the mock adapter). Artifacts
+land on persistent local disk (`UBAG_ARTIFACT_STORE=localfs`).

@@ -70,6 +70,20 @@ _DEFAULT_INTERACTION_ATTEMPTS = 3
 _CONCURRENCY_CHANGE_EVENT_TYPE = "concurrency.cap_changed"
 _TOPOLOGY_REPORT_EVENT_TYPE = "browser.topology_reported"
 
+_ATTACHMENT_CONTENT_TYPES = {
+    "document": frozenset(
+        ("application/pdf", "text/plain", "text/markdown", "text/csv", "application/json")
+    ),
+    "image": frozenset(("image/png", "image/jpeg", "image/gif", "image/webp")),
+    "audio": frozenset(
+        ("audio/webm", "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/ogg")
+    ),
+    "voice": frozenset(
+        ("audio/webm", "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/ogg")
+    ),
+    "video": frozenset(("video/mp4", "video/webm")),
+}
+
 # The single field a conversation.* event payload carries: the provider chat URL.
 # The gateway WorkerConsumer reads ONLY this field and forces every identity field
 # (tenant, app, target, conversation key) from the trusted job record — so a
@@ -497,6 +511,25 @@ class LiveSessionEngine:
         if not attach_paths and job.audio_local_path:
             attach_paths = [job.audio_local_path]
         if job.attachments or job.audio_artifact_key:
+            rejected = next(
+                (
+                    item
+                    for item in job.attachments
+                    if item["kind"] not in _ATTACHMENT_CONTENT_TYPES
+                    or item["content_type"]
+                    not in _ATTACHMENT_CONTENT_TYPES.get(item["kind"], ())
+                ),
+                None,
+            )
+            if rejected is not None:
+                return {"events": events, "blocked": {
+                    "reason": "attachment_type_rejected",
+                    "retryable": False,
+                    "message": (
+                        "Attachment %r has an invalid kind/content-type pair; "
+                        "refusing to attach untrusted metadata."
+                    ) % rejected["key"],
+                }}
             attach_supported = (
                 self._selectors.file_input is not None and bool(attach_paths)
             )
@@ -517,11 +550,15 @@ class LiveSessionEngine:
             attached_keys = [item["key"] for item in job.attachments]
             if not attached_keys and job.audio_artifact_key:
                 attached_keys = [job.audio_artifact_key]
+            attached_kinds = [item["kind"] for item in job.attachments]
+            if not attached_kinds and job.audio_artifact_key:
+                attached_kinds = ["audio"]
             events.append(("file.attached", {
                 "status": "file_attached",
                 "target": job.target,
                 "adapter": self._selectors.provider_id,
                 "artifact_keys": attached_keys,
+                "attachment_kinds": attached_kinds,
                 "count": len(attach_paths),
             }))
 
@@ -697,6 +734,10 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
         input_payload.get("attachment_local_paths")
         or options.get("attachment_local_paths")
     )
+    if attachments and len(attachments) != len(attachment_local_paths):
+        raise LiveSessionError(
+            "attachments and attachment_local_paths must contain the same number of entries"
+        )
     wait_for_artifacts = _string_tuple(options.get("wait_for_artifacts"))
 
     # Resolve the pre-submit configuration: per-provider UBAG defaults live in the
@@ -935,16 +976,20 @@ def _attachments_manifest(input_payload: Mapping[str, Any]) -> tuple:
     if not isinstance(raw, (list, tuple)):
         raise LiveSessionError("attachments must be an array")
     manifest = []
+    seen = set()
     for item in raw:
         if not isinstance(item, Mapping):
             raise LiveSessionError("each attachment must be an object")
         key = str(item.get("key", "")).strip()
         if not key:
             raise LiveSessionError("attachment.key is required")
-        if any(ch in key for ch in ("/", "\\", "%", "\x00")):
+        if key in (".", "..") or any(ch in key for ch in ("/", "\\", "%", "?", "\x00")):
             raise LiveSessionError(
-                "attachment.key must be a single path segment without '/', '\\', or '%'"
+                "attachment.key must be a unique safe path segment without '/', '\\', '%', or '?'"
             )
+        if key in seen:
+            raise LiveSessionError("attachment keys must be unique")
+        seen.add(key)
         manifest.append(
             {
                 "key": key,

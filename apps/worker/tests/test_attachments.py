@@ -72,6 +72,7 @@ class MultiFileAttachTests(unittest.TestCase):
         self.assertLess(types.index("file.attached"), types.index("completed"))
         attached = next(e for e in events if e["type"] == "file.attached")
         self.assertEqual(attached["data"]["artifact_keys"], ["report.pdf", "note.webm"])
+        self.assertEqual(attached["data"]["attachment_kinds"], ["document", "voice"])
         self.assertEqual(attached["data"]["count"], 2)
 
     def test_target_without_file_input_is_blocked(self):
@@ -94,6 +95,71 @@ class MultiFileAttachTests(unittest.TestCase):
         payload = _attachments_payload(
             "gemini_web",
             attachments=[{"key": "sub/a.pdf", "content_type": "application/pdf", "kind": "document"}],
+            local_paths=["/tmp/ubag/a.pdf"],
+        )
+        with self.assertRaises(LiveSessionError):
+            LiveSessionEngine(selectors).run(payload, driver=MockPageDriver())
+
+    def test_attachment_key_rejects_dot_dotdot_query_and_duplicates(self):
+        selectors = get_provider_selectors("gemini_web")
+        for key in (".", "..", "a?download=1"):
+            payload = _attachments_payload(
+                "gemini_web",
+                attachments=[
+                    {
+                        "key": key,
+                        "content_type": "application/pdf",
+                        "kind": "document",
+                    }
+                ],
+                local_paths=["/tmp/ubag/a.pdf"],
+            )
+            with self.subTest(key=key), self.assertRaises(LiveSessionError):
+                LiveSessionEngine(selectors).run(payload, driver=MockPageDriver())
+
+        duplicate = _attachments_payload(
+            "gemini_web",
+            attachments=[
+                {"key": "a.pdf", "content_type": "application/pdf", "kind": "document"},
+                {"key": "a.pdf", "content_type": "application/pdf", "kind": "document"},
+            ],
+            local_paths=["/tmp/ubag/a.pdf", "/tmp/ubag/a-copy.pdf"],
+        )
+        with self.assertRaises(LiveSessionError):
+            LiveSessionEngine(selectors).run(duplicate, driver=MockPageDriver())
+
+    def test_invalid_attachment_metadata_blocks_before_attaching(self):
+        selectors = get_provider_selectors("gemini_web")
+        invalid = (
+            {"key": "a.pdf", "content_type": "", "kind": "document"},
+            {"key": "a.pdf", "content_type": "application/pdf", "kind": ""},
+            {"key": "a.pdf", "content_type": "application/pdf", "kind": "archive"},
+            {"key": "a.pdf", "content_type": "image/png", "kind": "document"},
+        )
+        for attachment in invalid:
+            driver = MockPageDriver()
+            events = LiveSessionEngine(selectors).run(
+                _attachments_payload(
+                    "gemini_web",
+                    attachments=[attachment],
+                    local_paths=["/tmp/ubag/a.pdf"],
+                ),
+                driver=driver,
+            )
+            blocked = [event for event in events if event["type"] == "blocked"]
+            with self.subTest(attachment=attachment):
+                self.assertTrue(blocked)
+                self.assertEqual(blocked[0]["data"]["reason"], "attachment_type_rejected")
+                self.assertEqual(driver.attached_files, [])
+
+    def test_manifest_and_local_path_counts_must_match(self):
+        selectors = get_provider_selectors("gemini_web")
+        payload = _attachments_payload(
+            "gemini_web",
+            attachments=[
+                {"key": "a.pdf", "content_type": "application/pdf", "kind": "document"},
+                {"key": "b.pdf", "content_type": "application/pdf", "kind": "document"},
+            ],
             local_paths=["/tmp/ubag/a.pdf"],
         )
         with self.assertRaises(LiveSessionError):
@@ -137,7 +203,7 @@ class MultiFileAttachTests(unittest.TestCase):
             selectors = get_provider_selectors(target)
             self.assertEqual(len(selectors.file_attach_trigger), 0, target)
 
-    def test_missing_local_paths_blocks(self):
+    def test_missing_local_paths_is_rejected(self):
         selectors = get_provider_selectors("gemini_web")
         driver = MockPageDriver()
         payload = _attachments_payload(
@@ -145,11 +211,8 @@ class MultiFileAttachTests(unittest.TestCase):
             attachments=[{"key": "a.pdf", "content_type": "application/pdf", "kind": "document"}],
             local_paths=[],
         )
-        events = LiveSessionEngine(selectors).run(payload, driver=driver)
-        blocked = [e for e in events if e["type"] == "blocked"]
-
-        self.assertTrue(blocked)
-        self.assertEqual(blocked[0]["data"]["reason"], "attachment_not_supported_by_target")
+        with self.assertRaises(LiveSessionError):
+            LiveSessionEngine(selectors).run(payload, driver=driver)
 
 
 if __name__ == "__main__":

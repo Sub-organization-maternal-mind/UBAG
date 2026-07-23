@@ -32,6 +32,7 @@ cmd /c pnpm --filter @ubag/cli cli -- --help
 cmd /c pnpm --filter @ubag/cli cli -- health
 cmd /c pnpm --filter @ubag/cli cli -- diagnose
 cmd /c pnpm --filter @ubag/cli cli -- create-job --target mock_target --command-type echo --prompt "Hello UBAG"
+cmd /c pnpm --filter @ubag/cli cli -- create-job --target chatgpt_web --command-type chat.prompt --prompt "Summarize" --attach report.pdf --attach voice.webm:voice
 cmd /c pnpm --filter @ubag/cli cli -- get-job job_123
 cmd /c pnpm --filter @ubag/cli cli -- list-jobs --limit 10
 cmd /c pnpm --filter @ubag/cli cli -- list-job-events job_123 --limit 10
@@ -70,6 +71,12 @@ Or pass a full create-job envelope:
 cmd /c pnpm --filter @ubag/cli cli -- create-job --file job.json
 cmd /c pnpm --filter @ubag/cli cli -- create-job --payload "{\"client\":{\"app_id\":\"demo\"},\"job\":{\"target\":\"mock_target\",\"command_type\":\"echo\",\"input\":{\"prompt\":\"Hello\"}}}"
 ```
+
+`--attach <path>[:kind]` is repeatable. The optional kind is `document`,
+`image`, `audio`, `video`, or `voice`; otherwise the CLI infers kind and MIME
+from the extension. Unknown extensions and duplicate basenames are rejected.
+The hard limits are 32 manifest entries and 32 MiB per file; the currently
+exposed web providers allow 10 files (320 MiB derived total).
 
 ## Mock Worker
 

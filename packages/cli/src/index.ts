@@ -132,6 +132,7 @@ const OPTION_ALIASES = new Map([
 interface ParsedArgs {
   command: string | undefined;
   options: Map<string, string>;
+  optionValues: Map<string, string[]>;
   flags: Set<string>;
   positionals: string[];
 }
@@ -361,18 +362,48 @@ function attachmentKindForContentType(contentType: string): UbagAttachmentKind {
   return "document";
 }
 
-function buildAttachmentsFromSpec(spec: string): UbagAttachmentUpload[] {
-  return spec
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0)
-    .map((path) => {
-      const body = readFileSync(resolve(path));
-      const key = basename(path);
-      const ext = key.toLowerCase().split(".").pop() ?? "";
-      const content_type = ATTACH_CONTENT_TYPES[ext] ?? "application/octet-stream";
-      return { key, filename: key, content_type, kind: attachmentKindForContentType(content_type), body };
-    });
+const ATTACHMENT_KINDS = new Set<UbagAttachmentKind>([
+  "document",
+  "image",
+  "audio",
+  "video",
+  "voice"
+]);
+
+function parseAttachmentSpec(spec: string): { path: string; kind?: UbagAttachmentKind } {
+  const trimmed = spec.trim();
+  const suffixIndex = trimmed.lastIndexOf(":");
+  if (suffixIndex > 0) {
+    const suffix = trimmed.slice(suffixIndex + 1) as UbagAttachmentKind;
+    if (ATTACHMENT_KINDS.has(suffix)) {
+      return { path: trimmed.slice(0, suffixIndex), kind: suffix };
+    }
+  }
+  return { path: trimmed };
+}
+
+function buildAttachmentsFromSpecs(specs: string[]): UbagAttachmentUpload[] {
+  const seenKeys = new Set<string>();
+  return specs.map((spec) => {
+    const parsed = parseAttachmentSpec(spec);
+    const path = parsed.path;
+    const body = readFileSync(resolve(path));
+    const key = basename(path);
+    if (seenKeys.has(key)) {
+      throw new CliUsageError(`duplicate attachment key "${key}" (basenames must be unique)`);
+    }
+    seenKeys.add(key);
+    const ext = key.toLowerCase().split(".").pop() ?? "";
+    let content_type = ATTACH_CONTENT_TYPES[ext];
+    if (content_type === undefined) {
+      throw new CliUsageError(`cannot infer attachment MIME type for "${key}"; use a known extension`);
+    }
+    const kind = parsed.kind ?? attachmentKindForContentType(content_type);
+    if (ext === "webm" && kind === "video") {
+      content_type = "video/webm";
+    }
+    return { key, filename: key, content_type, kind, body };
+  });
 }
 
 async function runCreateJob(args: ParsedArgs): Promise<void> {
@@ -381,9 +412,9 @@ async function runCreateJob(args: ParsedArgs): Promise<void> {
   const idempotencyKey = request.idempotency_key ?? getOption(args, "idempotency-key");
   const requestOptions = idempotencyKey === undefined ? {} : { idempotencyKey };
 
-  const attachSpec = getOption(args, "attach");
-  if (attachSpec !== undefined && attachSpec.trim() !== "") {
-    const attachments = buildAttachmentsFromSpec(attachSpec);
+  const attachSpecs = getOptions(args, "attach").filter((spec) => spec.trim() !== "");
+  if (attachSpecs.length > 0) {
+    const attachments = buildAttachmentsFromSpecs(attachSpecs);
     // One-shot multipart create: envelope + files in a single request.
     const response = await client.createJobMultipart(request, attachments, requestOptions);
     printJson(response, args);
@@ -1180,6 +1211,7 @@ function parseCli(argv: string[]): ParsedArgs {
   return {
     command,
     options: parsed.options,
+    optionValues: parsed.optionValues,
     flags: parsed.flags,
     positionals: parsed.positionals
   };
@@ -1187,6 +1219,7 @@ function parseCli(argv: string[]): ParsedArgs {
 
 function parseOptions(tokens: string[]): Omit<ParsedArgs, "command"> {
   const options = new Map<string, string>();
+  const optionValues = new Map<string, string[]>();
   const flags = new Set<string>();
   const positionals: string[] = [];
   let positionalOnly = false;
@@ -1234,10 +1267,12 @@ function parseOptions(tokens: string[]): Omit<ParsedArgs, "command"> {
       index += 1;
     }
     options.set(option.name, value);
+    optionValues.set(option.name, [...(optionValues.get(option.name) ?? []), value]);
   }
 
   return {
     options,
+    optionValues,
     flags,
     positionals
   };
@@ -1282,6 +1317,10 @@ function isOptionToken(token: string): boolean {
 
 function getOption(args: ParsedArgs, name: string): string | undefined {
   return args.options.get(name);
+}
+
+function getOptions(args: ParsedArgs, name: string): string[] {
+  return args.optionValues.get(name) ?? [];
 }
 
 function hasFlag(args: ParsedArgs, name: string): boolean {
@@ -1475,8 +1514,9 @@ Options:
   --thinking <value>            Sets job.model_settings.thinking (provider setting key).
   --conversation <key>          Sets job.conversation_id to resume a provider chat thread.
   --conversation-missing <mode> Sets job.options.conversation_missing (fail|restart).
-  --attach <paths>              Comma-separated file paths to attach (multipart one-shot).
-                                Content-type and kind are inferred from the extension.
+  --attach <path[:kind]>        Repeat for each file (multipart one-shot).
+                                Kind defaults from extension; valid overrides are
+                                document, image, audio, video, and voice.
   --payload <json>              Full create-job request envelope.
   --file <path|->               Full create-job request envelope from file or stdin.
   --idempotency-key <key>       Idempotency key for this create request.

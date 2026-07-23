@@ -75,6 +75,9 @@ export interface UbagCreateJobRequest {
 
 export type UbagAttachmentKind = "document" | "image" | "audio" | "video" | "voice";
 
+export const UBAG_ATTACHMENT_MAX_FILE_BYTES = 32 * 1024 * 1024;
+export const UBAG_ATTACHMENT_MAX_MANIFEST_FILES = 32;
+
 /** One entry in job.input.attachments — file metadata only (bytes ride via the artifact store). */
 export interface UbagJobAttachment {
   key: string;
@@ -85,7 +88,7 @@ export interface UbagJobAttachment {
 
 /** An attachment plus its bytes, for the submit-with-attachments / multipart helpers. */
 export interface UbagAttachmentUpload extends UbagJobAttachment {
-  body: BodyInit;
+  body: BlobPart;
 }
 
 export type UbagJobStatus =

@@ -84,6 +84,24 @@ test.describe('Page routing', () => {
   }
 });
 
+test('jobs attachment picker fits the Hallmark mobile breakpoints', async ({ page }) => {
+  for (const bp of BREAKPOINTS.filter(({ width }) => width <= 768)) {
+    await page.setViewportSize({ width: bp.width, height: bp.height });
+    await page.goto('/jobs');
+    await page.waitForLoadState('domcontentloaded');
+
+    await expect(page.getByText('Drop files here or browse')).toBeVisible();
+    const picker = page.locator('.attachment-picker');
+    const geometry = await picker.evaluate((element) => ({
+      right: element.getBoundingClientRect().right,
+      viewport: document.documentElement.clientWidth,
+      bodyScroll: document.body.scrollWidth,
+    }));
+    expect(geometry.right, `Picker overflow at ${bp.name}`).toBeLessThanOrEqual(geometry.viewport + 1);
+    expect(geometry.bodyScroll, `Body overflow at ${bp.name}`).toBeLessThanOrEqual(geometry.viewport + 1);
+  }
+});
+
 test.describe('Visual snapshots', () => {
   // Run at desktop only for snapshot baseline (reduce snapshot count)
   test.use({ viewport: { width: 1440, height: 900 } });

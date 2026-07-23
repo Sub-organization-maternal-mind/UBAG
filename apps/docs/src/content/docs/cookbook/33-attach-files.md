@@ -12,8 +12,9 @@ Each attachment declares `{ key, content_type, kind }` (plus an optional
 `filename`); `kind` is one of `document | image | audio | video | voice`. The
 target adapter must declare an `attachments` policy (see
 [List Adapters](/cookbook/18-list-adapters/)) that accepts the content type, or the
-job is rejected. The per-file limit is 32 MiB; the adapter policy sets the maximum
-count.
+job is rejected. The actual upload MIME type must exactly match the manifest.
+The hard manifest ceiling is 32 files. The currently exposed ChatGPT, Gemini,
+and DeepSeek targets allow 10 files, 32 MiB per file, and a derived 320 MiB total.
 
 ## Flow A — key-reference (two-step)
 
@@ -28,7 +29,7 @@ import { readFile } from 'node:fs/promises';
 const client = new UbagClient({ baseUrl, appSecret });
 const pdf = await readFile('report.pdf');
 
-const job = await client.submitJobWithAttachments(
+const job = await client.createJobWithAttachments(
   {
     client: { app_id: 'my-app', app_version: '1.0.0' },
     job: {
@@ -42,7 +43,8 @@ const job = await client.submitJobWithAttachments(
 // job.status === 'created' until the upload lands, then the gateway dispatches it.
 ```
 
-The Go SDK mirrors this with `SubmitJobWithAttachments`.
+`submitJobWithAttachments` remains available as a compatible alias. The Go SDK
+uses `CreateJobWithAttachments` (with `SubmitJobWithAttachments` retained).
 
 ## Flow B — multipart one-shot
 
@@ -72,11 +74,15 @@ const job = await client.createJobMultipart(
 
 ```bash
 ubag create-job --target chatgpt_web --command-type chat.prompt \
-  --prompt "Summarize these" --attach report.pdf,notes.md
+  --prompt "Summarize these" \
+  --attach report.pdf \
+  --attach voice-note.webm:voice
 ```
 
-`--attach` takes a comma-separated list of file paths and uses the multipart
-one-shot flow, inferring each file's content type and kind from its extension.
+Repeat `--attach <path>[:kind]` once per file. Kind defaults from the extension;
+the optional final suffix is one of `document | image | audio | video | voice`.
+A Windows drive-letter colon is preserved because only a final valid kind suffix
+is parsed. Unknown extensions and duplicate basenames are rejected before send.
 
 ## Notes
 
@@ -85,9 +91,11 @@ one-shot flow, inferring each file's content type and kind from its extension.
   never receives its uploads is failed after a TTL.
 - **Idempotency:** both flows require an `Idempotency-Key`; the SDK helpers
   generate one when omitted.
-- **Warm browser:** enabling the warm-browser daemon (`UBAG_WORKER_DAEMON`) keeps a
+- **Warm browser:** explicitly setting `UBAG_WORKER_DAEMON=true` keeps a
   provider page hot between jobs; attachment materialization runs identically under
-  the daemon, and each reused page is reloaded so files never leak between jobs.
+  the daemon, and each reused page clears pending file state so files never leak
+  between jobs. The source/Compose default is `false`; the bundled script is
+  `/app/apps/worker/run_worker_daemon.py`.
 - **Safe mode:** attachments are user-supplied files into user-owned sessions. Do
   not place credentials, tokens, or session material in attachment metadata — the
   gateway rejects secret-like values in `job.input`.

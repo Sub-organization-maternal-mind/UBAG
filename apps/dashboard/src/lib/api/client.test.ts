@@ -27,7 +27,7 @@ Object.defineProperty(global, 'crypto', {
   writable: true,
 });
 
-import { gw, api, listOf } from './client';
+import { gw, gwMultipart, api, listOf } from './client';
 
 describe('gateway client', () => {
   beforeEach(() => {
@@ -133,6 +133,25 @@ describe('gateway client', () => {
 
     const result = await api.get('/v1/targets');
     expect(result.status).toBe(200);
+  });
+
+  it('multipart keeps auth, version, and idempotency headers without Content-Type', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 202,
+      text: () => Promise.resolve('{"job_id":"job_1"}'),
+    });
+    const form = new FormData();
+    form.append('job', new Blob(['{}'], { type: 'application/json' }));
+
+    await gwMultipart('/v1/jobs', form);
+
+    const [, init] = mockFetch.mock.calls[0];
+    expect(init.body).toBe(form);
+    expect(init.headers['Authorization']).toBe('Bearer test-secret');
+    expect(init.headers['Ubag-Api-Version']).toBe('2026-05-22');
+    expect(init.headers['Idempotency-Key']).toBe('test-uuid-1234');
+    expect(init.headers['Content-Type']).toBeUndefined();
   });
 });
 

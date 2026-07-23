@@ -1038,9 +1038,12 @@ paths:
           field name equals the attachment `key`. The job is born complete and dispatches
           immediately.
 
-        Each attachment's `content_type` is validated against the target adapter's
-        declared attachments policy (see `GET /v1/adapters`); a target with no policy
-        rejects attachments. Per-file limit is 32 MiB; the adapter policy sets max count.
+        Each attachment's actual multipart/upload MIME type must exactly match its
+        declared `content_type`, which is validated against the target adapter's
+        attachments policy (see `GET /v1/adapters`); a target with no policy rejects
+        attachments. The hard manifest ceiling is 32 files. The currently exposed
+        ChatGPT, Gemini, and DeepSeek dashboard targets allow 10 files, 32 MiB per
+        file, and a derived 320 MiB total.
       parameters:
         - $ref: "#/components/parameters/UbagApiVersion"
         - $ref: "#/components/parameters/IdempotencyKey"
@@ -1128,7 +1131,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "413":
-          description: A multipart attachment part exceeds the 32 MiB per-file limit.
+          description: A multipart attachment exceeds its 32 MiB per-file limit or the policy-derived total limit.
           content:
             application/json:
               schema:

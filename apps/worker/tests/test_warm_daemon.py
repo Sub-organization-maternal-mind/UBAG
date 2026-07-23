@@ -31,6 +31,7 @@ class _FakeEngine:
     """Stands in for LiveSessionEngine: records the injected driver."""
 
     seen_drivers = []
+    attachment_state_before_run = []
     raise_on_run = False
 
     def __init__(self, selectors):
@@ -38,6 +39,8 @@ class _FakeEngine:
 
     def iter_events(self, payload, *, driver=None):
         type(self).seen_drivers.append(driver)
+        type(self).attachment_state_before_run.append(list(driver.attached_files))
+        driver.attached_files = list(payload.get("attachment_local_paths", []))
         if type(self).raise_on_run:
             raise RuntimeError("provider blew up mid-job")
         yield {"event_type": "completed", "data": {"ok": True}}
@@ -46,6 +49,7 @@ class _FakeEngine:
 @pytest.fixture(autouse=True)
 def _reset_fake_engine():
     _FakeEngine.seen_drivers = []
+    _FakeEngine.attachment_state_before_run = []
     _FakeEngine.raise_on_run = False
     yield
 
@@ -101,6 +105,22 @@ class TestWarmReuse:
 
 
 class TestIsolation:
+    def test_reused_driver_clears_prior_attachment_state(self):
+        factory = _RecordingFactory()
+        daemon = _daemon(factory)
+
+        first = _payload()
+        first["attachment_local_paths"] = ["/tmp/first.pdf"]
+        second = _payload()
+        second["attachment_local_paths"] = ["/tmp/second.wav"]
+
+        list(daemon.run_job(first))
+        list(daemon.run_job(second))
+
+        assert len(factory.built) == 1
+        assert _FakeEngine.attachment_state_before_run == [[], []]
+        assert factory.built[0].attached_files == ["/tmp/second.wav"]
+
     def test_different_profiles_never_share_a_driver(self):
         """A warm page belongs to one identity; sharing it across profiles would
         cross-contaminate sessions."""

@@ -191,6 +191,10 @@ class PageDriver(ABC):
             "page driver %s does not support file attachment" % type(self).__name__
         )
 
+    def clear_attachment_state(self) -> None:
+        """Clear pending file selections before reusing a warm page."""
+        return None
+
     def start_new_chat(self, selectors: ProviderSelectors) -> bool:
         """Start a fresh conversation, if the provider exposes a New-chat control.
 
@@ -450,6 +454,10 @@ class MockPageDriver(PageDriver):
             self._guard_drift(step.name, selectors.selector_version)
         self.used_attach_trigger = bool(selectors.file_attach_trigger)
         self.attached_files = list(file_paths)
+
+    def clear_attachment_state(self) -> None:
+        self.attached_files = []
+        self.used_attach_trigger = False
 
     def response_container_present(self, selectors: ProviderSelectors) -> bool:
         if self.explode_on_probe:
@@ -1308,6 +1316,12 @@ class PlaywrightPageDriver(PageDriver):
                 last_error = exc
                 continue
         raise DriftDetectedError(group.name, group.baseline_version) from last_error
+
+    def clear_attachment_state(self) -> None:  # pragma: no cover - requires real browser
+        if not self._page_is_live():
+            return
+        for locator in self._page.locator("input[type='file']").all():
+            locator.set_input_files([])
 
     def _click_first(  # pragma: no cover - requires real browser
         self, group: SelectorGroup, timeout_ms: int

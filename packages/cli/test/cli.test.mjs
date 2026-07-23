@@ -192,6 +192,52 @@ test('CLI rejects missing option values before consuming the next option', async
   );
 });
 
+test('create-job keeps repeated attach flags and honors a final kind override', async () => {
+  const tempDir = await mkdtemp(join(tmpdir(), 'ubag-cli-attach-'));
+  const documentPath = join(tempDir, 'report.txt');
+  const mediaPath = join(tempDir, 'clip.webm');
+  await writeFile(documentPath, 'report');
+  await writeFile(mediaPath, Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+  let form;
+  const server = createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    form = await new Response(Buffer.concat(chunks), {
+      headers: { 'content-type': request.headers['content-type'] },
+    }).formData();
+    response.setHeader('content-type', 'application/json');
+    response.statusCode = 202;
+    response.end(JSON.stringify(jobResponse('queued')));
+  });
+
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const baseUrl = `http://127.0.0.1:${server.address().port}`;
+    await runCli([
+      'create-job',
+      '--target', 'mock',
+      '--prompt', 'inspect',
+      '--attach', documentPath,
+      '--attach', `${mediaPath}:video`,
+      '--json',
+    ], baseUrl);
+
+    assert.deepEqual([...form.keys()], ['job', 'report.txt', 'clip.webm']);
+    const envelope = JSON.parse(await form.get('job').text());
+    assert.deepEqual(
+      envelope.job.input.attachments.map(({ key, content_type, kind }) => ({ key, content_type, kind })),
+      [
+        { key: 'report.txt', content_type: 'text/plain', kind: 'document' },
+        { key: 'clip.webm', content_type: 'video/webm', kind: 'video' },
+      ],
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('create-job maps model/thinking/conversation flags onto the request body', async () => {
   const requests = [];
   const server = createServer(async (request, response) => {
