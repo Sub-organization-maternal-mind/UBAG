@@ -1018,6 +1018,34 @@ func workerDaemonEnabled() bool {
 	return value == "1" || value == "true" || value == "yes"
 }
 
+var warmDaemonTargets = map[string]struct{}{
+	"chatgpt_web":    {},
+	"claude_web":     {},
+	"deepseek_web":   {},
+	"gemini_web":     {},
+	"mistral_lechat": {},
+	"perplexity_web": {},
+}
+
+// targetWorkerRunner keeps non-live adapters on the normal per-job worker even
+// when warm browser reuse is enabled. The Python daemon intentionally supports
+// only targets in PROVIDER_SELECTORS; routing mock/generic jobs into it would
+// break the text-job compatibility path.
+type targetWorkerRunner struct {
+	daemon   executor.WorkerRunner
+	fallback executor.WorkerRunner
+}
+
+func (r *targetWorkerRunner) RunWorker(
+	ctx context.Context,
+	envelope executor.DispatchEnvelope,
+) ([]jobstore.WorkerEvent, error) {
+	if _, ok := warmDaemonTargets[strings.TrimSpace(envelope.Job.Target)]; ok {
+		return r.daemon.RunWorker(ctx, envelope)
+	}
+	return r.fallback.RunWorker(ctx, envelope)
+}
+
 // buildWorkerRunner picks the per-job runner (default) or the warm-browser
 // daemon (UBAG_WORKER_DAEMON).
 func buildWorkerRunner(
@@ -1049,11 +1077,20 @@ func buildWorkerRunner(
 	}
 	slog.Warn("worker daemon enabled: browser pages are reused between jobs",
 		"script", daemonScript)
-	return &executor.DaemonWorkerRunner{
+	daemon := &executor.DaemonWorkerRunner{
 		Python:     python,
 		Script:     daemonScript,
 		MaxRuntime: maxRuntime,
 		Artifacts:  artifactStore,
+	}
+	return &targetWorkerRunner{
+		daemon: daemon,
+		fallback: executor.ProcessWorkerRunner{
+			Python:     python,
+			Script:     script,
+			MaxRuntime: maxRuntime,
+			Artifacts:  artifactStore,
+		},
 	}, nil
 }
 

@@ -1,11 +1,13 @@
 package serve
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
+	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 )
 
 // Warm-browser reuse is opt-in. An unset flag MUST keep the per-job spawn: the
@@ -64,12 +66,65 @@ func TestBuildWorkerRunnerUsesDaemonWhenEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildWorkerRunner: %v", err)
 	}
-	daemon, ok := runner.(*executor.DaemonWorkerRunner)
+	routed, ok := runner.(*targetWorkerRunner)
 	if !ok {
-		t.Fatalf("expected *DaemonWorkerRunner, got %T", runner)
+		t.Fatalf("expected *targetWorkerRunner, got %T", runner)
+	}
+	daemon, ok := routed.daemon.(*executor.DaemonWorkerRunner)
+	if !ok {
+		t.Fatalf("expected daemon branch to be *DaemonWorkerRunner, got %T", routed.daemon)
 	}
 	if daemon.Script != script {
 		t.Fatalf("daemon script = %q, want %q", daemon.Script, script)
+	}
+	if _, ok := routed.fallback.(executor.ProcessWorkerRunner); !ok {
+		t.Fatalf("expected fallback branch to be ProcessWorkerRunner, got %T", routed.fallback)
+	}
+}
+
+func TestWorkerDaemonRoutesOnlyLiveWebTargets(t *testing.T) {
+	var daemonTargets []string
+	var fallbackTargets []string
+	runner := &targetWorkerRunner{
+		daemon: executor.WorkerRunFunc(func(_ context.Context, envelope executor.DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			daemonTargets = append(daemonTargets, envelope.Job.Target)
+			return nil, nil
+		}),
+		fallback: executor.WorkerRunFunc(func(_ context.Context, envelope executor.DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			fallbackTargets = append(fallbackTargets, envelope.Job.Target)
+			return nil, nil
+		}),
+	}
+
+	for _, target := range []string{
+		"chatgpt_web",
+		"claude_web",
+		"deepseek_web",
+		"gemini_web",
+		"mistral_lechat",
+		"perplexity_web",
+	} {
+		_, err := runner.RunWorker(context.Background(), executor.DispatchEnvelope{
+			Job: executor.DispatchJob{Target: target},
+		})
+		if err != nil {
+			t.Fatalf("route live target %q: %v", target, err)
+		}
+	}
+	for _, target := range []string{"mock", "generic_chat", "generic_form", "unknown"} {
+		_, err := runner.RunWorker(context.Background(), executor.DispatchEnvelope{
+			Job: executor.DispatchJob{Target: target},
+		})
+		if err != nil {
+			t.Fatalf("route fallback target %q: %v", target, err)
+		}
+	}
+
+	if len(daemonTargets) != 6 {
+		t.Fatalf("daemon targets = %v, want all six live web providers", daemonTargets)
+	}
+	if len(fallbackTargets) != 4 {
+		t.Fatalf("fallback targets = %v, want mock/generic/unknown", fallbackTargets)
 	}
 }
 
