@@ -118,6 +118,13 @@ func TestAttachmentsContentTypeRejected(t *testing.T) {
 	}
 }
 
+func TestDeepSeekRejectsAudioItsLiveComposerCannotAccept(t *testing.T) {
+	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "developer"}).Handler()
+	body := `{"api_version":"2026-05-22","idempotency_key":"idem_deepseek_audio_reject_1","client":{"app_id":"test","app_version":"0.0.0","sdk":{"name":"test","version":"0.0.0"}},"job":{"target":"deepseek_web","command_type":"chat.prompt","input":{"attachments":[{"key":"voice.wav","content_type":"audio/wav","kind":"voice"}]}}}`
+	resp := doJSON(server, http.MethodPost, "/v1/jobs", body, authHeaders("idem_deepseek_audio_reject_1"))
+	assertErrorCode(t, resp, http.StatusBadRequest, "UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001")
+}
+
 // A multipart one-shot create stores its file parts and dispatches immediately.
 func TestMultipartOneShotDispatchesImmediately(t *testing.T) {
 	dispatcher := &recordingExecutor{}

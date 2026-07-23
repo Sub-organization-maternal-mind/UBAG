@@ -15,6 +15,11 @@ target adapter must declare an `attachments` policy (see
 job is rejected. The actual upload MIME type must exactly match the manifest.
 The hard manifest ceiling is 32 files. The currently exposed ChatGPT, Gemini,
 and DeepSeek targets allow 10 files, 32 MiB per file, and a derived 320 MiB total.
+Content-type support remains provider-specific and is returned by
+`GET /v1/adapters`: DeepSeek Web currently accepts documents and images only.
+Its live composer removes file upload in Expert mode, so UBAG selects Instant
+for DeepSeek attachment jobs. Audio, voice, and video are rejected at job
+creation rather than being silently dropped by DeepSeek.
 
 ## Flow A — key-reference (two-step)
 

@@ -423,14 +423,16 @@ DEEPSEEK_WEB = ProviderSelectors(
     provider_id="deepseek_web",
     display_name="DeepSeek Web",
     target_url="https://chat.deepseek.com/",
-    selector_version="2026-06-29-controls-verified",
+    selector_version="2026-07-24-attachment-modes-verified",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
+            "textarea[placeholder='Message DeepSeek']",
             "textarea#chat-input",
             "textarea[placeholder*='Message']",
             "div[contenteditable='true']",
         ),
+        baseline_version="2026-07-24-live",
     ),
     submit_button=SelectorGroup(
         "submit_button",
@@ -495,9 +497,12 @@ DEEPSEEK_WEB = ProviderSelectors(
     file_input=SelectorGroup(
         "file_input",
         (
+            # Verified live 2026-07-24: DeepSeek renders no file input in
+            # Expert mode. Instant and Vision inject one multi-file input;
+            # engine.py selects a compatible mode before attachment jobs.
             "input[type='file']",
-            "input[accept*='audio']",
         ),
+        baseline_version="2026-07-24-instant-vision",
     ),
     # Verified 2026-06-29 against live chat.deepseek.com: the composer sidebar
     # exposes a "New chat" control whose label is a <span>New chat</span> inside a
