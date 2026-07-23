@@ -2,6 +2,10 @@
 
 Last updated: 2026-07-23
 
+## Gateway attachment hardening (2026-07-23)
+
+Gateway attachment validation, held dispatch, multipart staging/idempotency, batch semantics, catalog policy, metrics, executor materialization, SQLite CAS, declared-byte immutability, and outbox crash-window recovery are focused-green. Verified from `apps/gateway`: 19 attachment-parser, 8 executor, 2 SQLite CAS, and 17 HTTP attachment/catalog tests; targeted vet and diff-check clean. No broad suite ran. Multi-process deployments still need a store-level immutable write primitive; direct non-outbox enqueue is not crash-replayed because enqueue is not guaranteed idempotent.
+
 This is the resume point for any future agentic AI working in `D:\Projects\UBAG`.
 Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
 

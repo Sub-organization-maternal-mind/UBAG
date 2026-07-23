@@ -105,11 +105,14 @@
           { "code": "UBAG-VALIDATION-ATTACHMENT-DUPLICATE-KEY-001","message": "Duplicate attachment key in job.input.attachments",   "retryable": false },
           { "code": "UBAG-VALIDATION-ATTACHMENTS-COUNT-001",       "message": "Number of attachments exceeds the target adapter's max_files", "retryable": false },
           { "code": "UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001", "message": "Attachment content_type is not accepted by the target adapter", "retryable": false },
+          { "code": "UBAG-VALIDATION-ATTACHMENT-FILENAME-001",     "message": "Attachment filename must be 1-256 characters without control characters", "retryable": false },
+          { "code": "UBAG-VALIDATION-ATTACHMENT-IMMUTABLE-001",    "message": "Declared attachment bytes cannot change after dispatch", "retryable": false },
           { "code": "UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001", "message": "Target adapter does not accept attachments",             "retryable": false },
           { "code": "UBAG-VALIDATION-MULTIPART-001",               "message": "multipart/form-data request is malformed",              "retryable": false },
           { "code": "UBAG-VALIDATION-MULTIPART-PART-ORDER-001",    "message": "The first multipart part must be the job JSON envelope",  "retryable": false },
           { "code": "UBAG-VALIDATION-MULTIPART-PART-MISSING-001",  "message": "A declared attachment key has no matching multipart file part", "retryable": false },
-          { "code": "UBAG-VALIDATION-MULTIPART-PART-UNKNOWN-001",  "message": "A multipart file part does not match any declared attachment key", "retryable": false }
+          { "code": "UBAG-VALIDATION-MULTIPART-PART-UNKNOWN-001",  "message": "A multipart file part does not match any declared attachment key", "retryable": false },
+          { "code": "UBAG-VALIDATION-MULTIPART-PART-DUPLICATE-001","message": "A multipart attachment key appears more than once",          "retryable": false }
         ]
       },
       {

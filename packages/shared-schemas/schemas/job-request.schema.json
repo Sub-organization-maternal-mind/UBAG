@@ -321,7 +321,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 512,
-          "pattern": "^[^/\\\\?%]+$",
+          "pattern": "^[^/\\\\?%\\u0000-\\u001F\\u007F]+$",
           "description": "Artifact-store key the bytes are (or will be) uploaded under. A single path segment; the gateway additionally rejects '.', '..', and control characters.",
           "examples": ["report.pdf", "note.webm"]
         },
@@ -329,6 +329,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 256,
+          "pattern": "^[^\\u0000-\\u001F\\u007F]+$",
           "description": "Original file name shown to the provider. Bounded so the inline manifest can never approach the dispatch-envelope size cap.",
           "examples": ["report.pdf"]
         },

@@ -388,6 +388,44 @@ func TestAdapterCatalogMatchesWorkerRegistryMistralKey(t *testing.T) {
 	}
 }
 
+func TestAdapterCatalogExposesAttachmentPolicyForLiveProvidersOnly(t *testing.T) {
+	server := NewServer(Config{Version: "test", AppSecret: "dev-secret"}).Handler()
+	response := doJSON(server, http.MethodGet, "/v1/adapters", "", authHeaders(""))
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", response.Code, response.Body.String())
+	}
+	var payload collectionResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	live := map[string]bool{
+		"chatgpt_web": false, "claude_web": false, "deepseek_web": false,
+		"gemini_web": false, "mistral_lechat": false, "perplexity_web": false,
+	}
+	for _, adapter := range payload.Data {
+		key, _ := adapter["key"].(string)
+		caps, _ := adapter["capabilities"].([]any)
+		hasFileAttach := false
+		for _, cap := range caps {
+			hasFileAttach = hasFileAttach || cap == "file_attach"
+		}
+		_, hasPolicy := adapter["attachments"].(map[string]any)
+		if _, ok := live[key]; ok {
+			if !hasFileAttach || !hasPolicy {
+				t.Fatalf("live adapter %s missing file_attach/policy: %#v", key, adapter)
+			}
+			live[key] = true
+		} else if hasFileAttach || hasPolicy {
+			t.Fatalf("generic/mock adapter %s unexpectedly exposes attachment support: %#v", key, adapter)
+		}
+	}
+	for key, found := range live {
+		if !found {
+			t.Fatalf("live adapter %s not found", key)
+		}
+	}
+}
+
 func TestWebSocketStreamUpgrade(t *testing.T) {
 	testServer := httptest.NewServer(NewServer(Config{AppSecret: "dev-secret"}).Handler())
 	defer testServer.Close()

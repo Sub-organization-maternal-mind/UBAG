@@ -1,6 +1,9 @@
 package attachments
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDeclaredAttachmentsTextJob(t *testing.T) {
 	got, err := DeclaredAttachments(map[string]any{"prompt": "hi"})
@@ -96,4 +99,51 @@ func TestValidKind(t *testing.T) {
 	if ValidKind("archive") || ValidKind("") {
 		t.Fatal("expected invalid kinds to be rejected")
 	}
+}
+
+func TestDeclaredAttachmentsTypedValidationErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		input map[string]any
+		code  string
+	}{
+		{"shape", map[string]any{"attachments": "nope"}, "UBAG-VALIDATION-ATTACHMENTS-SHAPE-001"},
+		{"key type", map[string]any{"attachments": []any{map[string]any{"key": 7, "content_type": "application/pdf", "kind": "document"}}}, "UBAG-VALIDATION-ATTACHMENT-KEY-001"},
+		{"invalid key", map[string]any{"attachments": []any{map[string]any{"key": "../x", "content_type": "application/pdf", "kind": "document"}}}, "UBAG-VALIDATION-ATTACHMENT-KEY-001"},
+		{"invalid kind", map[string]any{"attachments": []any{map[string]any{"key": "x", "content_type": "application/pdf", "kind": "archive"}}}, "UBAG-VALIDATION-ATTACHMENT-KIND-001"},
+		{"duplicate", map[string]any{"attachments": []any{
+			map[string]any{"key": "x", "content_type": "application/pdf", "kind": "document"},
+			map[string]any{"key": "x", "content_type": "application/pdf", "kind": "document"},
+		}}, "UBAG-VALIDATION-ATTACHMENT-DUPLICATE-KEY-001"},
+		{"missing content type", map[string]any{"attachments": []any{map[string]any{"key": "x", "kind": "document"}}}, "UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001"},
+		{"content type type", map[string]any{"attachments": []any{map[string]any{"key": "x", "content_type": 7, "kind": "document"}}}, "UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001"},
+		{"count", map[string]any{"attachments": repeatedAttachments(33)}, "UBAG-VALIDATION-ATTACHMENTS-COUNT-001"},
+		{"empty filename", map[string]any{"attachments": []any{map[string]any{"key": "x", "filename": "", "content_type": "application/pdf", "kind": "document"}}}, "UBAG-VALIDATION-ATTACHMENT-FILENAME-001"},
+		{"long filename", map[string]any{"attachments": []any{map[string]any{"key": "x", "filename": strings.Repeat("a", 257), "content_type": "application/pdf", "kind": "document"}}}, "UBAG-VALIDATION-ATTACHMENT-FILENAME-001"},
+		{"control filename", map[string]any{"attachments": []any{map[string]any{"key": "x", "filename": "bad\nname", "content_type": "application/pdf", "kind": "document"}}}, "UBAG-VALIDATION-ATTACHMENT-FILENAME-001"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := DeclaredAttachments(tt.input)
+			validationErr, ok := err.(interface{ ValidationCode() string })
+			if !ok {
+				t.Fatalf("error = %v, want typed validation error %s", err, tt.code)
+			}
+			if validationErr.ValidationCode() != tt.code {
+				t.Fatalf("code = %q, want %q", validationErr.ValidationCode(), tt.code)
+			}
+		})
+	}
+}
+
+func repeatedAttachments(count int) []any {
+	out := make([]any, count)
+	for i := range out {
+		out[i] = map[string]any{
+			"key":          string(rune('a' + i)),
+			"content_type": "application/pdf",
+			"kind":         "document",
+		}
+	}
+	return out
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -168,5 +169,58 @@ func TestMaterializeAttachmentsPartialFailureCleansUp(t *testing.T) {
 	}
 	if _, ok := env.Job.Input["attachment_local_paths"]; ok {
 		t.Fatal("attachment_local_paths must not be injected on failure")
+	}
+}
+
+func TestMaterializeAttachmentsCountsArtifactReadFailures(t *testing.T) {
+	before := attachmentMaterializeFailureSnapshot()["artifact_read"]
+	runner := ProcessWorkerRunner{Artifacts: artifacts.NewMemoryArtifactStore()}
+	env := &DispatchEnvelope{JobID: "job_metric_missing", Job: DispatchJob{Input: map[string]any{
+		"attachments": []any{
+			map[string]any{"key": "missing.pdf", "content_type": "application/pdf", "kind": "document"},
+		},
+	}}}
+	if _, err := runner.materializeAttachments(context.Background(), env); err == nil {
+		t.Fatal("expected missing artifact error")
+	}
+	after := attachmentMaterializeFailureSnapshot()["artifact_read"]
+	if after != before+1 {
+		t.Fatalf("artifact_read failures = %d, want %d", after, before+1)
+	}
+}
+
+func TestMaterializeAttachmentsPreservesSafeDeclaredFilename(t *testing.T) {
+	store := artifacts.NewMemoryArtifactStore()
+	body := []byte("pdf")
+	if _, err := store.PutArtifact(context.Background(), "job_filename", "opaque", "application/pdf", bytes.NewReader(body), int64(len(body))); err != nil {
+		t.Fatal(err)
+	}
+	env := &DispatchEnvelope{JobID: "job_filename", Job: DispatchJob{Input: map[string]any{
+		"attachments": []any{
+			map[string]any{"key": "opaque", "filename": "Quarterly Report.pdf", "content_type": "application/pdf", "kind": "document"},
+		},
+	}}}
+	cleanup, err := (ProcessWorkerRunner{Artifacts: store}).materializeAttachments(context.Background(), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	paths := env.Job.Input["attachment_local_paths"].([]any)
+	if got := filepath.Base(paths[0].(string)); got != "Quarterly Report.pdf" {
+		t.Fatalf("materialized filename = %q, want declared filename", got)
+	}
+}
+
+func TestAttachmentMIMEExtensionFallbacks(t *testing.T) {
+	tests := map[string]string{
+		"text/markdown": ".md",
+		"text/csv":      ".csv",
+		"video/mp4":     ".mp4",
+		"video/webm":    ".webm",
+	}
+	for contentType, want := range tests {
+		if got := extForContentType(contentType); got != want {
+			t.Errorf("extForContentType(%q) = %q, want %q", contentType, got, want)
+		}
 	}
 }

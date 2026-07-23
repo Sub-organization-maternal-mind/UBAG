@@ -166,8 +166,21 @@ func (s *SQLiteStore) TransitionStatus(ctx context.Context, id string, from Stat
 	sequence++
 	job.Status = to
 	job.UpdatedAt = now
-	if _, err := tx.ExecContext(ctx, `UPDATE gateway_jobs SET status = ?, event_sequence = ?, updated_at = ? WHERE id = ?`, string(job.Status), sequence, formatSQLiteTime(job.UpdatedAt), job.ID); err != nil {
+	result, err := tx.ExecContext(ctx, `UPDATE gateway_jobs SET status = ?, event_sequence = ?, updated_at = ? WHERE id = ? AND status = ?`,
+		string(job.Status), sequence, formatSQLiteTime(job.UpdatedAt), job.ID, string(from))
+	if err != nil {
 		return Job{}, false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return Job{}, false, err
+	}
+	if affected == 0 {
+		if err := tx.Commit(); err != nil {
+			return Job{}, false, err
+		}
+		current, found, err := s.Get(ctx, id)
+		return current, false, errOrNotFound(found, err)
 	}
 	if err := insertSQLiteEvent(ctx, tx, job, sequence, string(to), map[string]any{
 		"status": string(to),
@@ -179,6 +192,13 @@ func (s *SQLiteStore) TransitionStatus(ctx context.Context, id string, from Stat
 		return Job{}, false, err
 	}
 	return job, true, nil
+}
+
+func errOrNotFound(found bool, err error) error {
+	if err != nil || found {
+		return err
+	}
+	return nil
 }
 
 func (s *SQLiteStore) Get(ctx context.Context, id string) (Job, bool, error) {

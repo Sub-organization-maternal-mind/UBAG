@@ -35,6 +35,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
 	"github.com/ubag/ubag/apps/gateway/internal/appjwt"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
+	"github.com/ubag/ubag/apps/gateway/internal/attachments"
 	"github.com/ubag/ubag/apps/gateway/internal/audit"
 	"github.com/ubag/ubag/apps/gateway/internal/compliance"
 	"github.com/ubag/ubag/apps/gateway/internal/conversations"
@@ -301,6 +302,9 @@ type Server struct {
 	multipartRollbacks         atomic.Int64 // ubag_multipart_rollbacks_total
 	attachmentGateTimeouts     atomic.Int64 // ubag_job_attachment_gate_timeouts_total
 	attachmentDispatchFailures atomic.Int64 // ubag_attachment_dispatch_failures_total
+	attachmentOutcomes         labeledCounter
+	multipartOutcomes          labeledCounter
+	attachmentMutationMu       sync.Mutex
 
 	metrics *metricState
 	mux     chi.Router
@@ -771,11 +775,29 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	artifactCaptures := s.artifactCaptures.Load()
 	_, _ = fmt.Fprintf(w, "ubag_artifact_captures_total{artifact_type=\"file\",outcome=\"success\"} %d\n", artifactCaptures)
 
-	_, _ = fmt.Fprintf(w, "ubag_attachments_total{outcome=\"stored\"} %d\n", s.attachmentsStored.Load())
-	_, _ = fmt.Fprintf(w, "ubag_multipart_jobs_total %d\n", s.multipartJobs.Load())
+	for _, item := range s.attachmentOutcomes.snapshotWithDefaults([]string{"document|stored", "image|stored", "audio|stored", "video|stored", "voice|stored"}) {
+		labels := strings.SplitN(item.key, "|", 2)
+		_, _ = fmt.Fprintf(w, "ubag_attachments_total{kind=\"%s\",outcome=\"%s\"} %d\n", promLabel(labels[0]), promLabel(labels[1]), item.count)
+	}
+	_, _ = fmt.Fprintf(w, "ubag_jobs_awaiting_attachments %d\n", s.awaitingAttachmentJobCount(r.Context()))
+	for _, item := range s.multipartOutcomes.snapshotWithDefaults([]string{"accepted", "rejected"}) {
+		_, _ = fmt.Fprintf(w, "ubag_multipart_jobs_total{outcome=\"%s\"} %d\n", promLabel(item.key), item.count)
+	}
 	_, _ = fmt.Fprintf(w, "ubag_multipart_rollbacks_total %d\n", s.multipartRollbacks.Load())
 	_, _ = fmt.Fprintf(w, "ubag_job_attachment_gate_timeouts_total %d\n", s.attachmentGateTimeouts.Load())
 	_, _ = fmt.Fprintf(w, "ubag_attachment_dispatch_failures_total %d\n", s.attachmentDispatchFailures.Load())
+	materializeFailures := executor.AttachmentMaterializeFailureSnapshot()
+	if _, ok := materializeFailures["artifact_read"]; !ok {
+		materializeFailures["artifact_read"] = 0
+	}
+	reasons := make([]string, 0, len(materializeFailures))
+	for reason := range materializeFailures {
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	for _, reason := range reasons {
+		_, _ = fmt.Fprintf(w, "ubag_attachment_materialize_failures_total{reason=\"%s\"} %d\n", promLabel(reason), materializeFailures[reason])
+	}
 
 	// Adapter-request counters and duration histogram stubs.
 	// These are set to 0 in the gateway; real values come from the worker.
@@ -1264,10 +1286,11 @@ func (s *Server) processBatchEntry(
 	// Attachments require the two-step upload or multipart one-shot, neither of
 	// which fits a JSON batch — reject rather than create a job that would hang
 	// held until its TTL.
-	if jobDeclaresAttachments(req.Job.Input) {
-		e := validationError("UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001", "attachments are not supported in batch submissions; use POST /v1/jobs")
+	if code, msg, ok := validateAttachmentsForCreate(req.Job.Target, req.Job.Input); !ok {
+		e := validationError(code, msg)
 		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
 	}
+	awaitingAttachments := jobDeclaresAttachments(req.Job.Input)
 
 	// Custom-validator plugin hook (matches createJob behaviour).
 	if s.plugins != nil {
@@ -1330,21 +1353,22 @@ func (s *Server) processBatchEntry(
 	}
 
 	job, err := s.jobs.Create(ctx, jobstore.CreateRequest{
-		APIVersion:     apiVersion,
-		TenantID:       tenantID,
-		AppID:          appID,
-		IdempotencyKey: idempKey,
-		Target:         target,
-		CommandType:    cmdType,
-		Client:         clientToMap(req.Client),
-		ConversationID: strings.TrimSpace(req.Job.ConversationID),
-		TemplateID:     strings.TrimSpace(req.Job.TemplateID),
-		Input:          req.Job.Input,
-		Options:        optionsWithProviderConfig(req.Job.Options, req.Job.ModelSettings),
-		Callbacks:      req.Job.Callbacks,
-		Context:        req.Job.Context,
-		TraceID:        traceID,
-		NotBefore:      req.Job.NotBefore,
+		APIVersion:          apiVersion,
+		TenantID:            tenantID,
+		AppID:               appID,
+		IdempotencyKey:      idempKey,
+		Target:              target,
+		CommandType:         cmdType,
+		Client:              clientToMap(req.Client),
+		ConversationID:      strings.TrimSpace(req.Job.ConversationID),
+		TemplateID:          strings.TrimSpace(req.Job.TemplateID),
+		Input:               req.Job.Input,
+		Options:             optionsWithProviderConfig(req.Job.Options, req.Job.ModelSettings),
+		Callbacks:           req.Job.Callbacks,
+		Context:             req.Job.Context,
+		TraceID:             traceID,
+		NotBefore:           req.Job.NotBefore,
+		AwaitingAttachments: awaitingAttachments,
 	})
 	if err != nil {
 		s.releaseConcurrencyToken(tenantID, target, appID)
@@ -1353,6 +1377,9 @@ func (s *Server) processBatchEntry(
 	}
 	// Associate the acquired token with the job before enqueue (see createJob).
 	s.markConcurrencyAcquired(job.ID, tenantID, target, appID)
+	if awaitingAttachments {
+		return batchJobOutcome{Index: index, Status: "accepted", JobID: job.ID}, http.StatusAccepted
+	}
 
 	// Region-aware routing: resolve the dispatch region before enqueue.
 	dispatchCtx := ctx
@@ -1632,6 +1659,9 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-JSON-001", "request body must be valid JSON"))
 		return
 	}
+	if multipartHash := multipartHashFromContext(r.Context()); multipartHash != "" {
+		requestHash = hashString(requestHash + "\n" + multipartHash)
+	}
 
 	scope := idempotency.Scope{
 		TenantID:  tenantID,
@@ -1725,7 +1755,13 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			if !s.storeStagedAttachments(w, r, job, staged, scope) {
 				return
 			}
-			s.maybeDispatchAfterArtifact(r.Context(), job)
+			if err := s.maybeDispatchAfterArtifact(r.Context(), job); err != nil {
+				_, _, _ = s.jobs.TransitionStatus(r.Context(), job.ID, jobstore.StatusCreated, jobstore.StatusFailedRetryable)
+				_ = s.idempotency.Release(r.Context(), scope)
+				s.releaseConcurrencyTokenForJob(job.ID)
+				s.writeError(w, r, http.StatusInternalServerError, internalError("failed to finalize multipart attachments"))
+				return
+			}
 		}
 		if err := s.idempotency.Complete(r.Context(), scope, job.ID, http.StatusAccepted); err != nil {
 			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to complete idempotency record"))
@@ -3149,17 +3185,42 @@ func targetCatalog() []map[string]any {
 }
 
 func adapterCatalog() []map[string]any {
-	return []map[string]any{
+	catalog := []map[string]any{
 		{"key": "mock", "kind": "mock", "stage": "v0", "capabilities": []string{"submit", "stream", "extract", "normalize"}},
-		{"key": "deepseek_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize"}},
-		{"key": "chatgpt_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize"}},
-		{"key": "claude_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize"}},
-		{"key": "gemini_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize"}},
-		{"key": "mistral_lechat", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize"}},
-		{"key": "perplexity_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize"}},
+		{"key": "deepseek_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
+		{"key": "chatgpt_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
+		{"key": "claude_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
+		{"key": "gemini_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
+		{"key": "mistral_lechat", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
+		{"key": "perplexity_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
 		{"key": "generic_chat", "kind": "browser", "stage": "v0", "capabilities": []string{"manual_login", "submit", "extract", "normalize"}},
 		{"key": "generic_form", "kind": "browser", "stage": "v0", "capabilities": []string{"manual_login", "submit", "extract", "normalize"}},
 	}
+	for _, entry := range catalog {
+		key, _ := entry["key"].(string)
+		policy := resolveAttachmentPolicy(key)
+		if !policy.declared {
+			continue
+		}
+		kinds := make([]string, 0, len(policy.accepted))
+		for kind := range policy.accepted {
+			kinds = append(kinds, kind)
+		}
+		sort.Strings(kinds)
+		accepted := make([]map[string]any, 0, len(kinds))
+		for _, kind := range kinds {
+			accepted = append(accepted, map[string]any{
+				"kind":          kind,
+				"content_types": append([]string(nil), policy.accepted[kind]...),
+			})
+		}
+		entry["attachments"] = map[string]any{
+			"max_files":      policy.effectiveMaxFiles(),
+			"max_file_bytes": policy.effectiveMaxFileBytes(),
+			"accepted":       accepted,
+		}
+	}
+	return catalog
 }
 
 // Model catalogs are declared in the adapter manifests (adapters/<target>/
@@ -3815,8 +3876,50 @@ func (s *Server) putJobArtifact(w http.ResponseWriter, r *http.Request, jobID, k
 	if !ok {
 		return
 	}
-	if r.ContentLength > maxArtifactBodyBytes {
-		s.writeError(w, r, http.StatusRequestEntityTooLarge, validationError("UBAG-VALIDATION-BODY-TOO-LARGE-001", "artifact body exceeds 32 MiB gateway limit"))
+	declared, err := attachments.DeclaredAttachments(job.Input)
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, validationError(attachments.ErrorCode(err), err.Error()))
+		return
+	}
+	var matched *attachments.Attachment
+	immutableAfterDispatch := false
+	if len(declared) > 0 {
+		s.attachmentMutationMu.Lock()
+		defer s.attachmentMutationMu.Unlock()
+		if latest, found, loadErr := s.jobs.Get(r.Context(), job.ID); loadErr != nil || !found {
+			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to refresh attachment job"))
+			return
+		} else {
+			job = latest
+		}
+		for i := range declared {
+			if declared[i].Key == key {
+				matched = &declared[i]
+				break
+			}
+		}
+		if matched != nil && job.Status != jobstore.StatusCreated {
+			immutableAfterDispatch = true
+		}
+		if matched == nil && job.Status == jobstore.StatusCreated {
+			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-MULTIPART-PART-UNKNOWN-001", "artifact key is not declared by this held attachment job"))
+			return
+		}
+	}
+	uploadCap := int64(maxArtifactBodyBytes)
+	contentType := safeArtifactContentType(r.Header.Get("Content-Type"))
+	attachmentKind := ""
+	if matched != nil {
+		policy := resolveAttachmentPolicy(job.Target)
+		if !attachmentUploadMIMEAccepted(policy, *matched, contentType) {
+			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001", "artifact Content-Type does not match the declared attachment or target policy"))
+			return
+		}
+		uploadCap = policy.effectiveMaxFileBytes()
+		attachmentKind = matched.Kind
+	}
+	if r.ContentLength > uploadCap {
+		s.writeError(w, r, http.StatusRequestEntityTooLarge, validationError("UBAG-VALIDATION-BODY-TOO-LARGE-001", "artifact body exceeds the gateway or target per-file limit"))
 		return
 	}
 	if r.ContentLength < 0 {
@@ -3824,13 +3927,12 @@ func (s *Server) putJobArtifact(w http.ResponseWriter, r *http.Request, jobID, k
 		return
 	}
 
-	contentType := safeArtifactContentType(r.Header.Get("Content-Type"))
-	body := http.MaxBytesReader(w, r.Body, maxArtifactBodyBytes)
+	body := http.MaxBytesReader(w, r.Body, uploadCap)
 	payload, err := io.ReadAll(body)
 	if err != nil {
 		var maxBytesError *http.MaxBytesError
 		if errors.As(err, &maxBytesError) {
-			s.writeError(w, r, http.StatusRequestEntityTooLarge, validationError("UBAG-VALIDATION-BODY-TOO-LARGE-001", "artifact body exceeds 32 MiB gateway limit"))
+			s.writeError(w, r, http.StatusRequestEntityTooLarge, validationError("UBAG-VALIDATION-BODY-TOO-LARGE-001", "artifact body exceeds the gateway or target per-file limit"))
 			return
 		}
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-BODY-READ-001", "artifact body could not be read"))
@@ -3846,11 +3948,18 @@ func (s *Server) putJobArtifact(w http.ResponseWriter, r *http.Request, jobID, k
 		return
 	}
 	if mutation.replay {
+		if job.Status == jobstore.StatusCreated {
+			if err := s.maybeDispatchAfterArtifactLocked(r.Context(), job); err != nil {
+				s.writeError(w, r, http.StatusInternalServerError, internalError("failed to finalize attachments"))
+				return
+			}
+		}
 		s.replayPutArtifact(w, r, job.ID, key)
-		// A retried final upload must still trip the dispatch gate, or a job whose
-		// last PUT was an idempotent replay would never enqueue (only the TTL
-		// sweeper would reap it). The CAS inside makes this safe to run twice.
-		s.maybeDispatchAfterArtifact(r.Context(), job)
+		return
+	}
+	if immutableAfterDispatch {
+		_ = s.idempotency.Release(r.Context(), mutation.scope)
+		s.writeError(w, r, http.StatusConflict, validationError("UBAG-VALIDATION-ATTACHMENT-IMMUTABLE-001", "declared attachment bytes cannot change after dispatch"))
 		return
 	}
 	sizeBytes := int64(len(payload))
@@ -3872,14 +3981,21 @@ func (s *Server) putJobArtifact(w http.ResponseWriter, r *http.Request, jobID, k
 	}
 
 	s.artifactCaptures.Add(1) // ubag_artifact_captures_total
+	if attachmentKind != "" {
+		s.attachmentsStored.Add(1)
+		s.attachmentOutcomes.add(attachmentKind + "|stored")
+	}
+	if matched != nil {
+		if err := s.maybeDispatchAfterArtifactLocked(r.Context(), job); err != nil {
+			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to finalize attachments"))
+			return
+		}
+	}
 	s.writeJSON(w, http.StatusCreated, map[string]any{
 		"api_version": s.apiVersion,
 		"artifact":    artifactRecordToResponse(rec),
 		"trace_id":    traceIDFromContext(r.Context()),
 	})
-	// If this upload completed a held attachment job's declared set, dispatch it.
-	// The response is already written; the CAS makes concurrent final PUTs safe.
-	s.maybeDispatchAfterArtifact(r.Context(), job)
 }
 
 func (s *Server) getJobArtifact(w http.ResponseWriter, r *http.Request, jobID, key string) {
@@ -3947,6 +4063,30 @@ func (s *Server) deleteJobArtifact(w http.ResponseWriter, r *http.Request, jobID
 	job, ok := s.loadAuthorizedJob(w, r, jobID, "artifact:delete")
 	if !ok {
 		return
+	}
+	declared, err := attachments.DeclaredAttachments(job.Input)
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, validationError(attachments.ErrorCode(err), err.Error()))
+		return
+	}
+	if len(declared) > 0 {
+		for _, att := range declared {
+			if att.Key != key {
+				continue
+			}
+			s.attachmentMutationMu.Lock()
+			defer s.attachmentMutationMu.Unlock()
+			latest, found, loadErr := s.jobs.Get(r.Context(), job.ID)
+			if loadErr != nil || !found {
+				s.writeError(w, r, http.StatusInternalServerError, internalError("failed to refresh attachment job"))
+				return
+			}
+			if latest.Status != jobstore.StatusCreated {
+				s.writeError(w, r, http.StatusConflict, validationError("UBAG-VALIDATION-ATTACHMENT-IMMUTABLE-001", "declared attachment bytes cannot change after dispatch"))
+				return
+			}
+			break
+		}
 	}
 	requestHash := canonicalArtifactMutationHash(r.Method, r.URL.Path, "delete_artifact", job.ID, key, "", nil)
 	mutation, ok := s.reserveArtifactMutation(w, r, "delete_artifact", job.ID, key, requestHash)

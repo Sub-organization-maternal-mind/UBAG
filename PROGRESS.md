@@ -2,6 +2,12 @@
 
 Last updated: 2026-07-23
 
+## 2026-07-23 Gateway attachment hardening
+
+Completed and focused-verified the gateway attachment correctness pass: typed manifest errors and filename bounds; legacy audio MIME gating; fail-closed held PUT/multipart MIME, key, per-file and policy-total caps; multipart preflight, streaming SHA-256 and byte-sensitive idempotency; batch held-gate semantics; six-provider catalog policy; labeled metrics; post-dispatch declared-byte immutability with exact replay; SQLite conditional-update CAS; surfaced artifact-list finalize failures; safe materialized filenames/MIME suffixes; and idempotent outbox recovery for queued attachment jobs.
+
+Focused results: attachment parser 19 passed, executor materialization 8 passed, SQLite CAS 2 passed, gateway attachment/catalog 17 passed; targeted `go vet` clean; changed JSON contracts parsed; `git diff --check` clean. No broad suite was run per project instruction.
+
 ## 2026-07-23 Multi-file attachments (documents / audio / voice / images / video) + faster pipeline
 
 Generalized the previously audio-only, single-file, undocumented attachment path

@@ -8,8 +8,47 @@ package attachments
 
 import (
 	"fmt"
+	"mime"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
+
+const (
+	ErrorShape        = "UBAG-VALIDATION-ATTACHMENTS-SHAPE-001"
+	ErrorKey          = "UBAG-VALIDATION-ATTACHMENT-KEY-001"
+	ErrorKind         = "UBAG-VALIDATION-ATTACHMENT-KIND-001"
+	ErrorDuplicateKey = "UBAG-VALIDATION-ATTACHMENT-DUPLICATE-KEY-001"
+	ErrorCount        = "UBAG-VALIDATION-ATTACHMENTS-COUNT-001"
+	ErrorContentType  = "UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001"
+	ErrorFilename     = "UBAG-VALIDATION-ATTACHMENT-FILENAME-001"
+
+	maxDeclaredAttachments = 32
+	maxFilenameRunes       = 256
+)
+
+// ValidationError preserves the public contract code for a malformed declared
+// attachment. Callers can map it directly into their API error envelope.
+type ValidationError struct {
+	Code    string
+	Message string
+}
+
+func (e *ValidationError) Error() string          { return e.Message }
+func (e *ValidationError) ValidationCode() string { return e.Code }
+
+// ErrorCode returns the public validation code carried by err, or the
+// attachments shape code for an unexpected parser error.
+func ErrorCode(err error) string {
+	if coded, ok := err.(interface{ ValidationCode() string }); ok {
+		return coded.ValidationCode()
+	}
+	return ErrorShape
+}
+
+func validationError(code, format string, args ...any) error {
+	return &ValidationError{Code: code, Message: fmt.Sprintf(format, args...)}
+}
 
 // validKinds enumerates the attachment kinds a client may declare.
 var validKinds = map[string]struct{}{
@@ -27,6 +66,7 @@ type Attachment struct {
 	Filename    string
 	ContentType string
 	Kind        string
+	LegacyAudio bool
 }
 
 // ValidKey mirrors the gateway's artifact-key rule (a single path segment):
@@ -36,7 +76,8 @@ type Attachment struct {
 func ValidKey(key string) bool {
 	key = strings.TrimSpace(key)
 	return key != "" && key != "." && key != ".." &&
-		!strings.ContainsAny(key, "/\\?\x00") && !strings.Contains(key, "%")
+		!strings.ContainsAny(key, "/\\?") && !strings.Contains(key, "%") &&
+		!strings.ContainsFunc(key, unicode.IsControl)
 }
 
 // ValidKind reports whether kind is one of the accepted attachment kinds.
@@ -68,26 +109,51 @@ func DeclaredAttachments(input map[string]any) ([]Attachment, error) {
 	if raw, ok := input["attachments"]; ok && raw != nil {
 		list, ok := raw.([]any)
 		if !ok {
-			return nil, fmt.Errorf("attachments must be an array")
+			return nil, validationError(ErrorShape, "attachments must be an array")
+		}
+		if len(list) > maxDeclaredAttachments {
+			return nil, validationError(ErrorCount, "job declares %d attachments; at most %d are allowed", len(list), maxDeclaredAttachments)
 		}
 		for i, item := range list {
 			entry, ok := item.(map[string]any)
 			if !ok {
-				return nil, fmt.Errorf("attachments[%d] must be an object", i)
+				return nil, validationError(ErrorShape, "attachments[%d] must be an object", i)
 			}
-			key := stringField(entry, "key")
-			if key == "" {
-				return nil, fmt.Errorf("attachments[%d].key is required", i)
+			key, ok := requiredString(entry, "key")
+			if !ok || !ValidKey(key) {
+				return nil, validationError(ErrorKey, "attachments[%d].key must be a valid single path segment", i)
 			}
 			if _, dup := seen[key]; dup {
-				return nil, fmt.Errorf("attachments[%d].key %q is duplicated", i, key)
+				return nil, validationError(ErrorDuplicateKey, "attachments[%d].key %q is duplicated", i, key)
+			}
+			kind, ok := requiredString(entry, "kind")
+			if !ok || !ValidKind(kind) {
+				return nil, validationError(ErrorKind, "attachments[%d].kind must be one of document|image|audio|video|voice", i)
+			}
+			contentType, ok := requiredString(entry, "content_type")
+			if !ok {
+				return nil, validationError(ErrorContentType, "attachments[%d].content_type is required", i)
+			}
+			mediaType, _, err := mime.ParseMediaType(contentType)
+			if err != nil || mediaType == "" {
+				return nil, validationError(ErrorContentType, "attachments[%d].content_type is not a valid MIME type", i)
+			}
+			filename := ""
+			if rawFilename, exists := entry["filename"]; exists {
+				var filenameOK bool
+				filename, filenameOK = rawFilename.(string)
+				filename = strings.TrimSpace(filename)
+				if !filenameOK || filename == "" || utf8.RuneCountInString(filename) > maxFilenameRunes ||
+					strings.ContainsFunc(filename, unicode.IsControl) {
+					return nil, validationError(ErrorFilename, "attachments[%d].filename must be 1..256 characters without control characters", i)
+				}
 			}
 			seen[key] = struct{}{}
 			out = append(out, Attachment{
 				Key:         key,
-				Filename:    stringField(entry, "filename"),
-				ContentType: stringField(entry, "content_type"),
-				Kind:        stringField(entry, "kind"),
+				Filename:    filename,
+				ContentType: strings.ToLower(strings.TrimSpace(mediaType)),
+				Kind:        kind,
 			})
 		}
 	}
@@ -95,12 +161,21 @@ func DeclaredAttachments(input map[string]any) ([]Attachment, error) {
 	// Back-compat: a lone audio_artifact_key folds in as a single audio entry,
 	// unless the same key was already declared in the attachments array.
 	if audio := stringField(input, "audio_artifact_key"); audio != "" {
+		if !ValidKey(audio) {
+			return nil, validationError(ErrorKey, "audio_artifact_key must be a valid single path segment")
+		}
 		if _, dup := seen[audio]; !dup {
-			out = append(out, Attachment{Key: audio, Kind: "audio"})
+			out = append(out, Attachment{Key: audio, Kind: "audio", LegacyAudio: true})
 		}
 	}
 
 	return out, nil
+}
+
+func requiredString(m map[string]any, key string) (string, bool) {
+	value, ok := m[key].(string)
+	value = strings.TrimSpace(value)
+	return value, ok && value != ""
 }
 
 // stringField returns the trimmed string value of m[key], or "" when absent or

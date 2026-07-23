@@ -840,6 +840,7 @@ func (r ProcessWorkerRunner) materializeAttachments(ctx context.Context, envelop
 	}
 	declared, err := attachments.DeclaredAttachments(envelope.Job.Input)
 	if err != nil {
+		recordAttachmentMaterializeFailure("manifest_invalid")
 		return nil, fmt.Errorf("materialize attachments: %w", err)
 	}
 	if len(declared) == 0 {
@@ -847,9 +848,13 @@ func (r ProcessWorkerRunner) materializeAttachments(ctx context.Context, envelop
 	}
 
 	tmpPaths := make([]string, 0, len(declared))
+	tmpDirs := make([]string, 0, len(declared))
 	cleanup := func() {
 		for _, p := range tmpPaths {
 			_ = os.Remove(p)
+		}
+		for _, dir := range tmpDirs {
+			_ = os.Remove(dir)
 		}
 	}
 
@@ -859,34 +864,44 @@ func (r ProcessWorkerRunner) materializeAttachments(ctx context.Context, envelop
 		key := att.Key
 		if !attachments.ValidKey(key) {
 			cleanup()
+			recordAttachmentMaterializeFailure("invalid_key")
 			return nil, fmt.Errorf("materialize attachment: invalid key %q", key)
 		}
 		rc, record, err := r.Artifacts.GetArtifact(ctx, envelope.JobID, key)
 		if err != nil {
 			cleanup()
+			recordAttachmentMaterializeFailure("artifact_read")
 			return nil, fmt.Errorf("materialize attachment %q: %w", key, err)
 		}
-		ext := filepath.Ext(key)
-		if ext == "" {
-			ext = extForContentType(record.ContentType)
-		}
-		tmp, err := os.CreateTemp("", "ubag-attach-*"+ext)
+		filename := materializedAttachmentFilename(att, record.ContentType)
+		tmpDir, err := os.MkdirTemp("", "ubag-attach-*")
 		if err != nil {
 			_ = rc.Close()
 			cleanup()
+			recordAttachmentMaterializeFailure("temp_create")
+			return nil, fmt.Errorf("create temp attachment directory: %w", err)
+		}
+		tmpDirs = append(tmpDirs, tmpDir)
+		tmpPath := filepath.Join(tmpDir, filename)
+		tmp, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			_ = rc.Close()
+			cleanup()
+			recordAttachmentMaterializeFailure("temp_create")
 			return nil, fmt.Errorf("create temp attachment file: %w", err)
 		}
-		tmpPath := tmp.Name()
 		tmpPaths = append(tmpPaths, tmpPath)
 		if _, err := io.Copy(tmp, rc); err != nil {
 			_ = tmp.Close()
 			_ = rc.Close()
 			cleanup()
+			recordAttachmentMaterializeFailure("artifact_write")
 			return nil, fmt.Errorf("write attachment %q: %w", key, err)
 		}
 		if err := tmp.Close(); err != nil {
 			_ = rc.Close()
 			cleanup()
+			recordAttachmentMaterializeFailure("temp_close")
 			return nil, fmt.Errorf("close temp attachment file: %w", err)
 		}
 		_ = rc.Close()
@@ -905,6 +920,18 @@ func (r ProcessWorkerRunner) materializeAttachments(ctx context.Context, envelop
 	return cleanup, nil
 }
 
+func materializedAttachmentFilename(att attachments.Attachment, contentType string) string {
+	candidate := strings.TrimSpace(att.Filename)
+	if candidate == "" || candidate == "." || candidate == ".." ||
+		filepath.Base(candidate) != candidate || strings.ContainsAny(candidate, `/\`) {
+		candidate = att.Key
+	}
+	if filepath.Ext(candidate) == "" {
+		candidate += extForContentType(contentType)
+	}
+	return candidate
+}
+
 // extForContentType maps a stored artifact content type to a file extension when
 // the artifact key carried none. Provider file pickers sniff the upload by
 // extension/MIME, so a sensible extension matters. Unknown types get "".
@@ -914,6 +941,10 @@ func extForContentType(contentType string) string {
 		return ".pdf"
 	case "text/plain":
 		return ".txt"
+	case "text/markdown":
+		return ".md"
+	case "text/csv":
+		return ".csv"
 	case "application/json":
 		return ".json"
 	case "image/png":
@@ -934,6 +965,10 @@ func extForContentType(contentType string) string {
 		return ".m4a"
 	case "audio/ogg":
 		return ".ogg"
+	case "video/mp4":
+		return ".mp4"
+	case "video/webm":
+		return ".webm"
 	default:
 		return ""
 	}
