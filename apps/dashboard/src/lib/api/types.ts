@@ -11,11 +11,14 @@ export interface GwResponse<T = unknown> {
 // Job types
 export interface Job {
   id: string;
+  job_id?: string;
   target: string;
   command_type: string;
   status: string;
   created_at: string;
   updated_at: string;
+  input?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   result?: unknown;
   error?: string;
 }

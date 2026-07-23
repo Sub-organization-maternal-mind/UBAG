@@ -8,6 +8,12 @@ Current status: the repository contains implemented, runnable, or validateable a
 
 Continuation status: future agents should start with `AGENT_HANDOFF.md`, then `PROGRESS.md`, then this coverage ledger. The handoff captures the current worktree state, latest green validation, fixed audit findings, runtime probe evidence, critical invariants, and next coding queue.
 
+2026-07-24 jobs-list response compatibility. Dashboard job collections now
+normalize the gateway's canonical `job_id` plus nested metadata shape before
+rendering, while retaining legacy fixture compatibility. Malformed rows are
+dropped instead of crashing the Svelte update and leaving `Loading...` visible.
+The Jobs, Overview, and Failed/DLQ pages share the corrected boundary.
+
 2026-07-24 dashboard overview resilience. The metric cards and Recent Activity
 now share one jobs-list response, removing the duplicate-request split state
 that could leave activity loading after the cards rendered. Dashboard requests

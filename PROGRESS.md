@@ -2,6 +2,19 @@
 
 Last updated: 2026-07-24
 
+## 2026-07-24 Production Jobs page response-shape fix
+
+Production inspection proved `/v1/jobs?limit=20` returned HTTP 200 in 9 ms,
+but its canonical summary rows expose `job_id` and place `command_type` under
+`metadata`; the dashboard still rendered `job.id.slice(...)`. That Svelte
+render exception left the previous `Loading...` DOM visible.
+
+The dashboard now normalizes canonical and legacy job shapes at one boundary,
+drops malformed rows safely, and shares the normalized shape across Jobs,
+Overview Recent Activity, and Failed/DLQ. Focused dashboard Vitest passed
+25 tests, including three production-shape regressions, and `svelte-check`
+reported 0 errors and 0 warnings. No broad suite or CI ran.
+
 ## 2026-07-24 Dashboard Recent Activity loading fix
 
 Fixed the production overview's split state where metric cards loaded but

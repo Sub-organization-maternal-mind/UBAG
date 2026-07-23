@@ -9,6 +9,14 @@ This ledger maps the UBAG A-Z plan to the current repository implementation. It 
 
 For future agentic AI continuation, read the root `AGENT_HANDOFF.md` first, then `PROGRESS.md`, then this page. The rendered handoff is also available at `operations/agent-handoff`.
 
+## 2026-07-24 Jobs List Response Compatibility
+
+Dashboard job collections now normalize the gateway's canonical `job_id` and
+nested `metadata.command_type` fields before rendering. Legacy fixtures remain
+supported, and malformed rows are skipped instead of crashing Svelte's update
+and leaving the Jobs page visibly stuck on `Loading...`. Jobs, Overview, and
+Failed/DLQ use the same normalization boundary.
+
 ## 2026-07-24 Dashboard Overview Resilience
 
 The overview now shares one jobs-list response between its metric cards and

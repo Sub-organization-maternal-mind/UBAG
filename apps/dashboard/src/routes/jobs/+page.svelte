@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, listOf } from '$lib/api/client';
+  import { normalizeJobs } from '$lib/api/jobs';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
@@ -68,7 +69,7 @@
     loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
-    items = res.data?.jobs ?? [];
+    items = normalizeJobs(res.data?.jobs);
     nextCursor = res.data?.next_cursor;
   }
 

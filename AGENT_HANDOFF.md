@@ -2,6 +2,16 @@
 
 Last updated: 2026-07-24
 
+## Production Jobs page response-shape fix (2026-07-24)
+
+Production `/v1/jobs?limit=20` was healthy (HTTP 200 in 9 ms), but canonical
+list rows use `job_id` and `metadata.command_type`. The dashboard expected
+`id`/top-level `command_type`; `job.id.slice(...)` threw during Svelte's render
+flush and left the old `Loading...` node visible. A shared normalizer now maps
+canonical and legacy shapes, rejects malformed rows, and is used by Jobs,
+Overview, and Failed/DLQ. Focused dashboard validation: 25 Vitest tests passed;
+Svelte diagnostics reported 0 errors and 0 warnings.
+
 ## Dashboard overview loading fix (2026-07-24)
 
 The overview no longer performs duplicate concurrent jobs-list requests for its

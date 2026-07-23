@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { base } from '$app/paths';
   import { api } from '$lib/api/client';
+  import { normalizeJobs } from '$lib/api/jobs';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
@@ -27,7 +28,7 @@
     if (res.denied) { jobsDenied = true; return; }
     if (res.unauthorized) { jobsError = 'Not authenticated — check your gateway login.'; return; }
     if (res.error) { jobsError = res.error; return; }
-    recentJobs = (res.data?.jobs ?? []).slice(0, 5);
+    recentJobs = normalizeJobs(res.data?.jobs).slice(0, 5);
   }
 
   async function loadMetrics(jobsResponse?: JobsResponse) {

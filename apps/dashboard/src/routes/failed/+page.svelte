@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api/client';
+  import { normalizeJobs } from '$lib/api/jobs';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
@@ -29,7 +30,7 @@
     loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
-    allJobs = res.data?.jobs ?? [];
+    allJobs = normalizeJobs(res.data?.jobs);
   }
 
   async function requeue(job: Job) {
@@ -42,7 +43,7 @@
       job: {
         target: job.target,
         command_type: job.command_type,
-        input: (job as unknown as Record<string, unknown>)['input'] ?? null,
+        input: job.input ?? null,
       },
       client: {
         app_id: 'ubag-dashboard',
