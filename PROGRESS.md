@@ -4,6 +4,8 @@ Last updated: 2026-07-23
 
 ## 2026-07-23 Gateway attachment hardening
 
+Review fixes completed: multipart now invokes the exact shared normal-create preparation path (API version, one-time template application, authorization, kill switch, payload/model/attachment validation, and plugin hooks) before staging; runtime manifest bounds now mirror schema `additionalProperties`, 512-code-point key, and 128-code-point content type limits; chunked multipart uses an adjustable policy-derived stream cap with an explicit 8 KiB framing allowance; and stored-success counters move only after the full multipart artifact set commits. Focused review tests: parser 15 passed, review HTTP 5 passed; combined focused regression 22 parser + 36 HTTP passed; targeted vet/diff-check clean.
+
 Completed and focused-verified the gateway attachment correctness pass: typed manifest errors and filename bounds; legacy audio MIME gating; fail-closed held PUT/multipart MIME, key, per-file and policy-total caps; multipart preflight, streaming SHA-256 and byte-sensitive idempotency; batch held-gate semantics; six-provider catalog policy; labeled metrics; post-dispatch declared-byte immutability with exact replay; SQLite conditional-update CAS; surfaced artifact-list finalize failures; safe materialized filenames/MIME suffixes; and idempotent outbox recovery for queued attachment jobs.
 
 Focused results: attachment parser 19 passed, executor materialization 8 passed, SQLite CAS 2 passed, gateway attachment/catalog 17 passed; targeted `go vet` clean; changed JSON contracts parsed; `git diff --check` clean. No broad suite was run per project instruction.

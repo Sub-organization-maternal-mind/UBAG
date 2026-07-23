@@ -121,6 +121,9 @@ func TestDeclaredAttachmentsTypedValidationErrors(t *testing.T) {
 		{"empty filename", map[string]any{"attachments": []any{map[string]any{"key": "x", "filename": "", "content_type": "application/pdf", "kind": "document"}}}, "UBAG-VALIDATION-ATTACHMENT-FILENAME-001"},
 		{"long filename", map[string]any{"attachments": []any{map[string]any{"key": "x", "filename": strings.Repeat("a", 257), "content_type": "application/pdf", "kind": "document"}}}, "UBAG-VALIDATION-ATTACHMENT-FILENAME-001"},
 		{"control filename", map[string]any{"attachments": []any{map[string]any{"key": "x", "filename": "bad\nname", "content_type": "application/pdf", "kind": "document"}}}, "UBAG-VALIDATION-ATTACHMENT-FILENAME-001"},
+		{"unknown property", map[string]any{"attachments": []any{map[string]any{"key": "x", "content_type": "application/pdf", "kind": "document", "extra": true}}}, "UBAG-VALIDATION-ATTACHMENTS-SHAPE-001"},
+		{"key over 512 code points", map[string]any{"attachments": []any{map[string]any{"key": strings.Repeat("é", 513), "content_type": "application/pdf", "kind": "document"}}}, "UBAG-VALIDATION-ATTACHMENT-KEY-001"},
+		{"content type over 128 code points", map[string]any{"attachments": []any{map[string]any{"key": "x", "content_type": "application/" + strings.Repeat("a", 117), "kind": "document"}}}, "UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

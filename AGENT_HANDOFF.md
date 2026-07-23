@@ -4,6 +4,8 @@ Last updated: 2026-07-23
 
 ## Gateway attachment hardening (2026-07-23)
 
+Post-review fixes are included: JSON and multipart create share `prepareCreateJob`, and multipart passes the prepared request through context so templates/plugins are not applied twice; unauthorized or template-invalid multipart requests fail before staging. Chunked bodies are bounded by the job-envelope limit before preflight and by policy bytes plus 8 KiB framing afterward. Rolled-back multipart writes do not increment stored-success metrics. Runtime entry-property/key/content-type bounds match the schema. Focused review regressions passed (15 parser, 5 HTTP; combined regression 22 parser and 36 HTTP), with targeted vet/diff-check clean.
+
 Gateway attachment validation, held dispatch, multipart staging/idempotency, batch semantics, catalog policy, metrics, executor materialization, SQLite CAS, declared-byte immutability, and outbox crash-window recovery are focused-green. Verified from `apps/gateway`: 19 attachment-parser, 8 executor, 2 SQLite CAS, and 17 HTTP attachment/catalog tests; targeted vet and diff-check clean. No broad suite ran. Multi-process deployments still need a store-level immutable write primitive; direct non-outbox enqueue is not crash-replayed because enqueue is not guaranteed idempotent.
 
 This is the resume point for any future agentic AI working in `D:\Projects\UBAG`.

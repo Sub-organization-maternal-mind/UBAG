@@ -52,3 +52,28 @@ Implementation commit SHA: `a2a1ce80e84b57ed2b376ec72b7a229dd3e21be5`.
 `DeclaredAttachments` remains the single declared-key source; bytes remain artifact-store-only; created-state queue/terminal moves remain CAS-based; multipart hashes are sorted and byte-sensitive; exact PUT replay works while new overwrite/delete fails.
 
 Concerns: mutation serialization is process-local, so multi-gateway deployment should add a store-level immutable write primitive. Crash recovery is outbox-only; direct enqueue is not replayed because it is not guaranteed idempotent. Validation was intentionally focused.
+
+## Review-fix follow-up
+
+Addressed all four confirmed review items with TDD:
+
+- Extracted `prepareCreateJob` and made normal JSON and multipart create use it. Multipart resolves API version, applies templates once, checks `job:create`, kill switch, callbacks, payload/model/attachment policy, and both plugin hooks before file staging; the prepared request is passed to `createJob` so preparation is not repeated.
+- Runtime manifest parsing now rejects unknown entry properties, keys over 512 Unicode code points, and content types over 128 Unicode code points with typed codes.
+- Chunked multipart starts with an envelope-plus-8-KiB framing bound, then switches the remaining reader to the adapter policy total plus another explicit 8 KiB framing allowance.
+- Multipart stored-success counters are emitted only after every artifact write succeeds; rollback leaves stored counts at zero and increments rollback.
+
+Red:
+
+- `go test ./internal/attachments -run '^TestDeclaredAttachmentsTypedValidationErrors$' -count=1` — 11 passed, 4 failed; the three new cases were accepted.
+- `go test ./internal/httpapi -run 'Test(MultipartSharedPreflightBeforeBinaryStaging|ChunkedMultipartUsesPolicyDerivedStreamCap|MultipartStoredMetricWaitsForFullCommit)$' -count=1` — 0 passed, 5 failed: authorization returned body-read instead of 403, template defaults were not applied, chunked parsing consumed 262,814 bytes, and rollback reported stored success.
+
+Green:
+
+- The same parser command — 15 passed.
+- The same review HTTP command — 5 passed.
+- `go test ./internal/attachments -run 'TestDeclaredAttachments|TestValid' -count=1` — 22 passed.
+- Focused create/attachment/template/plugin HTTP regression command — 36 passed.
+- `go vet ./internal/attachments ./internal/httpapi` — no issues.
+- `git diff --check` — clean.
+
+Review-fix commit SHA: reported in the completion handoff.

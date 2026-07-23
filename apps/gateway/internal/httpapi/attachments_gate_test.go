@@ -16,6 +16,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/outbox"
+	"github.com/ubag/ubag/apps/gateway/internal/templates"
 )
 
 // A key-reference attachment job is held (status created, not enqueued) until its
@@ -375,6 +376,86 @@ func TestAttachmentMetricsExposePlannedDimensions(t *testing.T) {
 	}
 }
 
+func TestMultipartSharedPreflightBeforeBinaryStaging(t *testing.T) {
+	t.Run("authorization", func(t *testing.T) {
+		server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "viewer"}).Handler()
+		jobJSON := validMultipartJob("idem_preflight_auth_001")
+		rec, reader := doMultipartWithFailingBinary(t, server, jobJSON, "idem_preflight_auth_001")
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
+		}
+		if reader.offset >= reader.failAt {
+			t.Fatalf("authorization consumed binary stream: offset=%d failAt=%d", reader.offset, reader.failAt)
+		}
+	})
+	t.Run("template mutated manifest", func(t *testing.T) {
+		templateStore := templates.NewMemoryStore(templates.Template{
+			ID: "bad.attach.v1", TenantID: "*", AppID: "*",
+			Target: "chatgpt_web", CommandType: "chat.prompt",
+			InputDefaults: map[string]any{"attachments": []any{
+				map[string]any{"key": "report.pdf", "content_type": "application/pdf", "kind": "archive"},
+			}},
+		})
+		server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "developer", Templates: templateStore}).Handler()
+		jobJSON := `{"api_version":"2026-05-22","idempotency_key":"idem_preflight_template","client":{"app_id":"test","app_version":"0.0.0","sdk":{"name":"test","version":"0.0.0"}},"job":{"template_id":"bad.attach.v1","input":{"prompt":"x"}}}`
+		rec, reader := doMultipartWithFailingBinary(t, server, jobJSON, "idem_preflight_template")
+		assertErrorCode(t, rec, http.StatusBadRequest, "UBAG-VALIDATION-ATTACHMENT-KIND-001")
+		if reader.offset >= reader.failAt {
+			t.Fatalf("template validation consumed binary stream: offset=%d failAt=%d", reader.offset, reader.failAt)
+		}
+	})
+}
+
+func TestChunkedMultipartUsesPolicyDerivedStreamCap(t *testing.T) {
+	restore := setAttachmentPolicyForTest("chatgpt_web", attachmentPolicy{
+		declared: true, maxFiles: 1, maxFileBytes: 4,
+		accepted: map[string][]string{"document": {"application/pdf"}},
+	})
+	defer restore()
+	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "developer", MaxBodyBytes: 4096}).Handler()
+	jobJSON := validMultipartJob("idem_chunked_policy_cap")
+	body, contentType := multipartBytes(t, jobJSON, []multipartTestPart{
+		{key: "report.pdf", contentType: "application/pdf", body: strings.Repeat("x", 256<<10)},
+	})
+	reader := &countingReader{data: body}
+	req := httptest.NewRequest(http.MethodPost, "/v1/jobs", reader)
+	req.ContentLength = -1
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Authorization", "Bearer dev-secret")
+	req.Header.Set("Ubag-Api-Version", DefaultAPIVersion)
+	req.Header.Set("Idempotency-Key", "idem_chunked_policy_cap")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413; body=%s", rec.Code, rec.Body.String())
+	}
+	if reader.offset > len(jobJSON)+(64<<10)+4096 {
+		t.Fatalf("chunked parser consumed %d bytes beyond policy/framing bound", reader.offset)
+	}
+}
+
+func TestMultipartStoredMetricWaitsForFullCommit(t *testing.T) {
+	store := &failNthPutArtifactStore{ArtifactStore: artifacts.NewMemoryArtifactStore(), failAt: 2}
+	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "developer", Artifacts: store}).Handler()
+	jobJSON := strings.Replace(validMultipartJob("idem_metric_rollback_01"),
+		`{"key":"report.pdf","content_type":"application/pdf","kind":"document"}`,
+		`{"key":"a.pdf","content_type":"application/pdf","kind":"document"},{"key":"b.pdf","content_type":"application/pdf","kind":"document"}`, 1)
+	resp := doMultipart(t, server, jobJSON, "idem_metric_rollback_01", []multipartTestPart{
+		{key: "a.pdf", contentType: "application/pdf", body: "one"},
+		{key: "b.pdf", contentType: "application/pdf", body: "two"},
+	})
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", resp.Code, resp.Body.String())
+	}
+	metrics := doJSON(server, http.MethodGet, "/v1/metrics", "", nil)
+	if !strings.Contains(metrics.Body.String(), `ubag_attachments_total{kind="document",outcome="stored"} 0`) {
+		t.Fatalf("rolled-back attachment did not leave stored metric at zero:\n%s", metrics.Body.String())
+	}
+	if !strings.Contains(metrics.Body.String(), `ubag_multipart_rollbacks_total 1`) {
+		t.Fatalf("rollback metric missing:\n%s", metrics.Body.String())
+	}
+}
+
 func TestDeclaredAttachmentBytesBecomeImmutableAfterDispatch(t *testing.T) {
 	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "developer"}).Handler()
 	created := createHeldPDFJob(t, server, "idem_immutable_create_1")
@@ -535,6 +616,51 @@ type failAfterReader struct {
 	data   []byte
 	offset int
 	failAt int
+}
+
+func doMultipartWithFailingBinary(t *testing.T, server http.Handler, jobJSON, idem string) (*httptest.ResponseRecorder, *failAfterReader) {
+	t.Helper()
+	body, contentType := multipartBytes(t, jobJSON, []multipartTestPart{
+		{key: "report.pdf", contentType: "application/pdf", body: strings.Repeat("x", 32<<10)},
+	})
+	marker := bytes.Index(body, []byte(strings.Repeat("x", 1024)))
+	reader := &failAfterReader{data: body, failAt: marker + 8192}
+	req := httptest.NewRequest(http.MethodPost, "/v1/jobs", reader)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Authorization", "Bearer dev-secret")
+	req.Header.Set("Ubag-Api-Version", DefaultAPIVersion)
+	req.Header.Set("Idempotency-Key", idem)
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	return rec, reader
+}
+
+type countingReader struct {
+	data   []byte
+	offset int
+}
+
+func (r *countingReader) Read(p []byte) (int, error) {
+	if r.offset >= len(r.data) {
+		return 0, io.EOF
+	}
+	n := copy(p, r.data[r.offset:])
+	r.offset += n
+	return n, nil
+}
+
+type failNthPutArtifactStore struct {
+	artifacts.ArtifactStore
+	puts   int
+	failAt int
+}
+
+func (s *failNthPutArtifactStore) PutArtifact(ctx context.Context, jobID, key, contentType string, body io.Reader, size int64) (artifacts.ArtifactRecord, error) {
+	s.puts++
+	if s.puts == s.failAt {
+		return artifacts.ArtifactRecord{}, fmt.Errorf("forced put failure")
+	}
+	return s.ArtifactStore.PutArtifact(ctx, jobID, key, contentType, body, size)
 }
 
 func (r *failAfterReader) Read(p []byte) (int, error) {

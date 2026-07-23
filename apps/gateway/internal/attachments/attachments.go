@@ -24,7 +24,9 @@ const (
 	ErrorFilename     = "UBAG-VALIDATION-ATTACHMENT-FILENAME-001"
 
 	maxDeclaredAttachments = 32
+	maxKeyRunes            = 512
 	maxFilenameRunes       = 256
+	maxContentTypeRunes    = 128
 )
 
 // ValidationError preserves the public contract code for a malformed declared
@@ -119,8 +121,15 @@ func DeclaredAttachments(input map[string]any) ([]Attachment, error) {
 			if !ok {
 				return nil, validationError(ErrorShape, "attachments[%d] must be an object", i)
 			}
+			for property := range entry {
+				switch property {
+				case "key", "filename", "content_type", "kind":
+				default:
+					return nil, validationError(ErrorShape, "attachments[%d] contains unknown property %q", i, property)
+				}
+			}
 			key, ok := requiredString(entry, "key")
-			if !ok || !ValidKey(key) {
+			if !ok || utf8.RuneCountInString(key) > maxKeyRunes || !ValidKey(key) {
 				return nil, validationError(ErrorKey, "attachments[%d].key must be a valid single path segment", i)
 			}
 			if _, dup := seen[key]; dup {
@@ -131,7 +140,7 @@ func DeclaredAttachments(input map[string]any) ([]Attachment, error) {
 				return nil, validationError(ErrorKind, "attachments[%d].kind must be one of document|image|audio|video|voice", i)
 			}
 			contentType, ok := requiredString(entry, "content_type")
-			if !ok {
+			if !ok || utf8.RuneCountInString(contentType) > maxContentTypeRunes {
 				return nil, validationError(ErrorContentType, "attachments[%d].content_type is required", i)
 			}
 			mediaType, _, err := mime.ParseMediaType(contentType)

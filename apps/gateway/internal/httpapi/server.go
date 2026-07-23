@@ -1536,89 +1536,89 @@ func (s *Server) handleJobSSE(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
-	raw, ok := s.readBody(w, r)
-	if !ok {
-		return
-	}
+type preparedCreateJob struct {
+	request             createJobRequest
+	apiVersion          string
+	tenantID            string
+	appID               string
+	idempotencyKey      string
+	awaitingAttachments bool
+}
 
-	var request createJobRequest
-	if !s.decodeBody(w, r, raw, &request) {
-		return
-	}
+type preparedCreateJobKey struct{}
 
+func (s *Server) prepareCreateJob(w http.ResponseWriter, r *http.Request, request createJobRequest) (preparedCreateJob, bool) {
 	apiVersion, ok := s.resolveAPIVersion(w, r, request.APIVersion)
 	if !ok {
-		return
+		return preparedCreateJob{}, false
 	}
-
 	tenantID, appID := requestScope(r)
 	if !s.applyTemplateForCreate(w, r, tenantID, appID, &request) {
-		return
+		return preparedCreateJob{}, false
 	}
 	if !isTargetKey(request.Job.Target) {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-JOB-TARGET-001", "job.target is required and must match ^[a-z0-9][a-z0-9._-]*$"))
-		return
+		return preparedCreateJob{}, false
 	}
 	if !isTargetKey(request.Job.CommandType) {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-JOB-COMMAND-001", "job.command_type is required and must match ^[a-z0-9][a-z0-9._-]*$"))
-		return
+		return preparedCreateJob{}, false
 	}
 	headerKey := strings.TrimSpace(r.Header.Get(headerIdempotencyKey))
 	bodyKey := strings.TrimSpace(request.IdempotencyKey)
 	if headerKey != "" && bodyKey != "" && headerKey != bodyKey {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-IDEMPOTENCY-KEY-MISMATCH-001", "idempotency_key must match Idempotency-Key"))
-		return
+		return preparedCreateJob{}, false
 	}
 
 	idempotencyKey := firstNonEmpty(headerKey, bodyKey)
 	if idempotencyKey == "" {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-IDEMPOTENCY-KEY-MISSING-001", "Idempotency-Key is required for job creation"))
-		return
+		return preparedCreateJob{}, false
 	}
 	if !isIdempotencyKey(idempotencyKey) {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-IDEMPOTENCY-KEY-001", "Idempotency-Key must be 16-128 characters and contain only letters, numbers, dot, underscore, colon, or dash"))
-		return
+		return preparedCreateJob{}, false
 	}
 	if strings.TrimSpace(request.Client.AppID) == "" {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-CLIENT-APP-ID-001", "client.app_id is required"))
-		return
+		return preparedCreateJob{}, false
 	}
 	if strings.TrimSpace(request.Client.AppVersion) == "" {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-CLIENT-APP-VERSION-001", "client.app_version is required"))
-		return
+		return preparedCreateJob{}, false
 	}
 	if strings.TrimSpace(request.Client.SDK.Name) == "" || strings.TrimSpace(request.Client.SDK.Version) == "" {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-CLIENT-SDK-001", "client.sdk.name and client.sdk.version are required"))
-		return
+		return preparedCreateJob{}, false
 	}
 	if request.Job.Input == nil {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-JOB-INPUT-001", "job.input is required and must be an object"))
-		return
+		return preparedCreateJob{}, false
 	}
 	if !s.authorizeGatewayAction(w, r, "job:create") {
-		return
+		return preparedCreateJob{}, false
 	}
 	if s.killSwitch != nil && !s.killSwitch.IsAcceptingJobs(r.Context()) {
 		w.Header().Set("Retry-After", "60")
 		s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-REGION-DRAINING-001", "this region is not accepting new jobs; try another region or retry later", true))
-		return
+		return preparedCreateJob{}, false
 	}
 	if _, _, err := webhooks.CallbackFromMap(request.Job.Callbacks, s.webhookURLs); err != nil {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WEBHOOK-CALLBACK-001", err.Error()))
-		return
+		return preparedCreateJob{}, false
 	}
 	if err := validateExecutableJobPayload(request); err != nil {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-JOB-PAYLOAD-SAFETY-001", err.Error()))
-		return
+		return preparedCreateJob{}, false
 	}
 	if code, msg, ok := validateModelSettingsForCreate(request.Job.Target, request.Job.ModelSettings); !ok {
 		s.writeError(w, r, http.StatusBadRequest, validationError(code, msg))
-		return
+		return preparedCreateJob{}, false
 	}
 	if code, msg, ok := validateAttachmentsForCreate(request.Job.Target, request.Job.Input); !ok {
 		s.writeError(w, r, http.StatusBadRequest, validationError(code, msg))
-		return
+		return preparedCreateJob{}, false
 	}
 	awaitingAttachments := jobDeclaresAttachments(request.Job.Input)
 
@@ -1627,14 +1627,14 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		inputJSON, _ := json.Marshal(request.Job.Input)
 		if result, err := s.plugins.RunHooks(r.Context(), "validate", inputJSON); err != nil {
 			s.writeError(w, r, http.StatusInternalServerError, internalError("plugin validator error"))
-			return
+			return preparedCreateJob{}, false
 		} else if result.Action == "reject" {
 			reason := result.Reason
 			if reason == "" {
 				reason = "rejected by plugin validator"
 			}
 			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-PLUGIN-REJECT-001", reason))
-			return
+			return preparedCreateJob{}, false
 		}
 	}
 
@@ -1643,16 +1643,44 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		hookPayload, _ := json.Marshal(request.Job)
 		if result, err := s.plugins.RunHooks(r.Context(), "job.pre", hookPayload); err != nil {
 			s.writeError(w, r, http.StatusInternalServerError, internalError("plugin pre-job hook error"))
-			return
+			return preparedCreateJob{}, false
 		} else if result.Action == "reject" {
 			reason := result.Reason
 			if reason == "" {
 				reason = "rejected by plugin"
 			}
 			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-PLUGIN-REJECT-001", reason))
+			return preparedCreateJob{}, false
+		}
+	}
+	return preparedCreateJob{
+		request: request, apiVersion: apiVersion, tenantID: tenantID, appID: appID,
+		idempotencyKey: idempotencyKey, awaitingAttachments: awaitingAttachments,
+	}, true
+}
+
+func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
+	prepared, alreadyPrepared := r.Context().Value(preparedCreateJobKey{}).(preparedCreateJob)
+	if !alreadyPrepared {
+		raw, ok := s.readBody(w, r)
+		if !ok {
+			return
+		}
+		var request createJobRequest
+		if !s.decodeBody(w, r, raw, &request) {
+			return
+		}
+		prepared, ok = s.prepareCreateJob(w, r, request)
+		if !ok {
 			return
 		}
 	}
+	request := prepared.request
+	apiVersion := prepared.apiVersion
+	tenantID := prepared.tenantID
+	appID := prepared.appID
+	idempotencyKey := prepared.idempotencyKey
+	awaitingAttachments := prepared.awaitingAttachments
 
 	requestHash, err := canonicalCreateJobHash(apiVersion, request)
 	if err != nil {

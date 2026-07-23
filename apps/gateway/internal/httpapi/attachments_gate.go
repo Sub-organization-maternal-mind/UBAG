@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,7 +23,6 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
-	"github.com/ubag/ubag/apps/gateway/internal/webhooks"
 )
 
 const (
@@ -37,7 +37,35 @@ const (
 	// waiting for its attachment bytes before the sweeper fails it and frees its
 	// concurrency token.
 	attachmentUploadTTL = 10 * time.Minute
+	// multipartFramingAllowance bounds boundaries and MIME headers separately
+	// from the job envelope and declared attachment bytes.
+	multipartFramingAllowance = 8 << 10
 )
+
+var errMultipartStreamLimit = errors.New("multipart stream exceeds policy-derived limit")
+
+type adjustableLimitReader struct {
+	reader io.Reader
+	read   int64
+	limit  int64
+}
+
+func (r *adjustableLimitReader) Read(p []byte) (int, error) {
+	if r.read >= r.limit {
+		return 0, errMultipartStreamLimit
+	}
+	remaining := r.limit - r.read
+	if int64(len(p)) > remaining {
+		p = p[:remaining]
+	}
+	n, err := r.reader.Read(p)
+	r.read += int64(n)
+	return n, err
+}
+
+func (r *adjustableLimitReader) allowAdditional(bytes int64) {
+	r.limit = r.read + bytes
+}
 
 // attachmentPolicy is the gateway's view of an adapter's manifest attachments
 // block. An absent block (declared=false) means the target accepts no
@@ -397,6 +425,8 @@ func (s *Server) storeStagedAttachments(w http.ResponseWriter, r *http.Request, 
 			return false
 		}
 		stored = append(stored, st.key)
+	}
+	for _, st := range staged {
 		s.artifactCaptures.Add(1)
 		s.attachmentsStored.Add(1)
 		s.attachmentOutcomes.add(st.kind + "|stored")
@@ -422,8 +452,11 @@ func (s *Server) createJobMultipart(w http.ResponseWriter, r *http.Request) {
 	// Bound the transfer at the broad schema/gateway ceiling until the job part
 	// identifies the adapter policy. The tighter policy-derived cap is applied
 	// immediately after that envelope is preflighted.
-	parseCap := int64(maxAttachmentsHardLimit)*maxArtifactBodyBytes + s.maxBody
-	reader := multipart.NewReader(http.MaxBytesReader(w, r.Body, parseCap), boundary)
+	limitedBody := &adjustableLimitReader{
+		reader: r.Body,
+		limit:  s.maxBody + multipartFramingAllowance,
+	}
+	reader := multipart.NewReader(limitedBody, boundary)
 
 	// The first part must be the job JSON envelope.
 	part, err := reader.NextPart()
@@ -443,13 +476,28 @@ func (s *Server) createJobMultipart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	request, declared, policy, code, message := s.preflightMultipartEnvelope(r, jobJSON)
-	if code != "" {
-		s.writeError(w, r, http.StatusBadRequest, validationError(code, message))
+	var request createJobRequest
+	if err := json.Unmarshal(jobJSON, &request); err != nil {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-JSON-001", "job envelope part is not valid JSON"))
 		return
 	}
+	prepared, ok := s.prepareCreateJob(w, r, request)
+	if !ok {
+		return
+	}
+	declared, err := attachments.DeclaredAttachments(prepared.request.Job.Input)
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, validationError(attachments.ErrorCode(err), err.Error()))
+		return
+	}
+	if len(declared) == 0 {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-MULTIPART-PART-MISSING-001", "multipart job must declare at least one attachment"))
+		return
+	}
+	policy := resolveAttachmentPolicy(prepared.request.Job.Target)
 	totalCap := policy.totalBytesCap()
-	if r.ContentLength > 0 && r.ContentLength > totalCap+s.maxBody {
+	limitedBody.allowAdditional(totalCap + multipartFramingAllowance)
+	if r.ContentLength > 0 && r.ContentLength > totalCap+s.maxBody+multipartFramingAllowance {
 		s.writeError(w, r, http.StatusRequestEntityTooLarge, validationError("UBAG-VALIDATION-BODY-TOO-LARGE-001", "multipart body exceeds the target attachment total-size limit"))
 		return
 	}
@@ -547,9 +595,9 @@ func (s *Server) createJobMultipart(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(strings.NewReader(string(jobJSON)))
 	r.ContentLength = int64(len(jobJSON))
 	r.Header.Set("Content-Type", "application/json")
-	_ = request // request was intentionally decoded and validated before staging.
 	ctx := context.WithValue(r.Context(), stagedAttachmentsKey{}, staged)
 	ctx = context.WithValue(ctx, multipartHashKey{}, canonicalMultipartAttachmentsHash(staged))
+	ctx = context.WithValue(ctx, preparedCreateJobKey{}, prepared)
 	recorder := &multipartStatusRecorder{ResponseWriter: w, status: http.StatusOK}
 	s.createJob(recorder, r.WithContext(ctx))
 	if recorder.status >= 200 && recorder.status < 300 {
@@ -565,54 +613,6 @@ type multipartStatusRecorder struct {
 func (w *multipartStatusRecorder) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
-}
-
-func (s *Server) preflightMultipartEnvelope(r *http.Request, jobJSON []byte) (createJobRequest, []attachments.Attachment, attachmentPolicy, string, string) {
-	var request createJobRequest
-	if err := json.Unmarshal(jobJSON, &request); err != nil {
-		return request, nil, attachmentPolicy{}, "UBAG-VALIDATION-JSON-001", "job envelope part is not valid JSON"
-	}
-	if !isTargetKey(request.Job.Target) {
-		return request, nil, attachmentPolicy{}, "UBAG-VALIDATION-JOB-TARGET-001", "job.target is required and invalid"
-	}
-	if !isTargetKey(request.Job.CommandType) {
-		return request, nil, attachmentPolicy{}, "UBAG-VALIDATION-JOB-COMMAND-001", "job.command_type is required and invalid"
-	}
-	if request.Job.Input == nil {
-		return request, nil, attachmentPolicy{}, "UBAG-VALIDATION-JOB-INPUT-001", "job.input is required and must be an object"
-	}
-	if strings.TrimSpace(request.Client.AppID) == "" || strings.TrimSpace(request.Client.AppVersion) == "" ||
-		strings.TrimSpace(request.Client.SDK.Name) == "" || strings.TrimSpace(request.Client.SDK.Version) == "" {
-		return request, nil, attachmentPolicy{}, "UBAG-VALIDATION-CLIENT-SDK-001", "client app and SDK identity fields are required"
-	}
-	headerKey := strings.TrimSpace(r.Header.Get(headerIdempotencyKey))
-	bodyKey := strings.TrimSpace(request.IdempotencyKey)
-	if headerKey != "" && bodyKey != "" && headerKey != bodyKey {
-		return request, nil, attachmentPolicy{}, "UBAG-VALIDATION-IDEMPOTENCY-KEY-MISMATCH-001", "idempotency_key must match Idempotency-Key"
-	}
-	if key := firstNonEmpty(headerKey, bodyKey); !isIdempotencyKey(key) {
-		return request, nil, attachmentPolicy{}, "UBAG-VALIDATION-IDEMPOTENCY-KEY-001", "a valid Idempotency-Key is required"
-	}
-	if err := validateExecutableJobPayload(request); err != nil {
-		return request, nil, attachmentPolicy{}, "UBAG-VALIDATION-JOB-PAYLOAD-SAFETY-001", err.Error()
-	}
-	if _, _, err := webhooks.CallbackFromMap(request.Job.Callbacks, s.webhookURLs); err != nil {
-		return request, nil, attachmentPolicy{}, "UBAG-VALIDATION-WEBHOOK-CALLBACK-001", err.Error()
-	}
-	if code, message, ok := validateModelSettingsForCreate(request.Job.Target, request.Job.ModelSettings); !ok {
-		return request, nil, attachmentPolicy{}, code, message
-	}
-	if code, message, ok := validateAttachmentsForCreate(request.Job.Target, request.Job.Input); !ok {
-		return request, nil, attachmentPolicy{}, code, message
-	}
-	declared, err := attachments.DeclaredAttachments(request.Job.Input)
-	if err != nil {
-		return request, nil, attachmentPolicy{}, attachments.ErrorCode(err), err.Error()
-	}
-	if len(declared) == 0 {
-		return request, nil, attachmentPolicy{}, "UBAG-VALIDATION-MULTIPART-PART-MISSING-001", "multipart job must declare at least one attachment"
-	}
-	return request, declared, resolveAttachmentPolicy(request.Job.Target), "", ""
 }
 
 func attachmentUploadMIMEAccepted(policy attachmentPolicy, att attachments.Attachment, actual string) bool {
