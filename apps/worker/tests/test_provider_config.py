@@ -162,6 +162,28 @@ class NewChatAndConfigTests(unittest.TestCase):
         by_key = {s["key"]: s for s in _event(events, "session.configured")["data"]["settings"]}
         self.assertEqual(by_key["mode"]["desired"], "Vision")
 
+    def test_deepseek_attachment_job_defaults_to_file_capable_instant_mode(self):
+        selectors = get_provider_selectors("deepseek_web")
+        driver = MockPageDriver()
+        payload = _payload("deepseek_web")
+        payload["job"]["input"]["attachments"] = [
+            {
+                "key": "report.txt",
+                "content_type": "text/plain",
+                "kind": "document",
+            }
+        ]
+        payload["job"]["input"]["attachment_local_paths"] = ["/tmp/report.txt"]
+
+        events = LiveSessionEngine(selectors).run(payload, driver=driver)
+
+        by_key = {
+            setting["key"]: setting
+            for setting in _event(events, "session.configured")["data"]["settings"]
+        }
+        self.assertEqual(by_key["mode"]["desired"], "Instant")
+        self.assertEqual(driver.attached_files, ["/tmp/report.txt"])
+
     def test_config_disabled_skips_configured_but_keeps_new_chat(self):
         selectors = get_provider_selectors("deepseek_web")
         driver = MockPageDriver()

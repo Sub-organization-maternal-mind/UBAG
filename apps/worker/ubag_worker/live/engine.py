@@ -745,6 +745,15 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
     # on top so the always-on settings can change without a code release. The
     # reserved keys "_enabled" / "_new_chat" gate the whole phase.
     provider_config = _resolve_provider_config(provider_id, options)
+    if provider_id == "deepseek_web" and attachments:
+        # Live DeepSeek (verified 2026-07-24) removes its <input type=file> in
+        # Expert mode and explicitly labels that mode as not supporting file
+        # uploads. Instant and Vision expose the same multi-file input. Preserve
+        # either compatible explicit choice; otherwise choose Instant so the
+        # adapter's advertised attachment capability is actually usable.
+        deepseek_mode = str(provider_config.get("mode", "")).strip()
+        if deepseek_mode not in {"Instant", "Vision"}:
+            provider_config["mode"] = "Instant"
     new_chat_enabled = _flag(
         provider_config.get("_new_chat"),
         _env_flag("UBAG_NEW_CHAT_ENABLED", True),

@@ -1212,9 +1212,24 @@ func jsonSemanticallyEqual(actual any, expected any) bool {
 	if reflect.DeepEqual(actual, expected) {
 		return true
 	}
+	// Optional JSON objects are tagged omitempty in the dispatch envelope.
+	// Queue serialization therefore turns an empty persisted map into an
+	// omitted field (nil on decode). Both represent the same JSON object state;
+	// rejecting that round-trip poisons a valid lease and stops the consumer.
+	if nilOrEmptyJSONObject(actual) && nilOrEmptyJSONObject(expected) {
+		return true
+	}
 	actualJSON, actualErr := json.Marshal(actual)
 	expectedJSON, expectedErr := json.Marshal(expected)
 	return actualErr == nil && expectedErr == nil && string(actualJSON) == string(expectedJSON)
+}
+
+func nilOrEmptyJSONObject(value any) bool {
+	if value == nil {
+		return true
+	}
+	object, ok := value.(map[string]any)
+	return ok && len(object) == 0
 }
 
 func sanitizeWorkerError(err error) string {

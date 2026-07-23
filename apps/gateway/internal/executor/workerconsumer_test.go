@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -1109,6 +1110,38 @@ func TestWorkerConsumerPoisonsLeaseWhenEnvelopeDoesNotMatchJob(t *testing.T) {
 	}
 	if !lease.poisoned {
 		t.Fatal("lease was not poisoned")
+	}
+}
+
+func TestValidateLeaseEnvelopeTreatsOmittedEmptyOptionsAsEquivalent(t *testing.T) {
+	job := jobstore.Job{
+		ID:          "job_empty_options",
+		APIVersion:  "2026-05-22",
+		TenantID:    "tenant_a",
+		AppID:       "app_a",
+		Target:      "mock",
+		CommandType: "submit",
+		Input:       map[string]any{"prompt": "trusted"},
+		Options:     map[string]any{},
+	}
+	envelope := EnvelopeFromJob(job)
+
+	// DispatchEnvelope uses omitempty, so a queue JSON round-trip turns an
+	// empty optional object into nil while the persisted job store retains {}.
+	raw, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var leased DispatchEnvelope
+	if err := json.Unmarshal(raw, &leased); err != nil {
+		t.Fatal(err)
+	}
+	if leased.Job.Options != nil {
+		t.Fatalf("leased options = %#v, want nil after queue round-trip", leased.Job.Options)
+	}
+
+	if err := validateLeaseEnvelope(job, leased); err != nil {
+		t.Fatalf("semantically empty options rejected: %v", err)
 	}
 }
 
