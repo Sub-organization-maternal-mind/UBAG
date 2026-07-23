@@ -2,6 +2,13 @@
 
 Last updated: 2026-07-23
 
+## 2026-07-23 Full tracked-file parity (local ↔ GitHub ↔ VPS)
+
+- Verified local `main` is level with `origin/main` at `755772a` (0 ahead / 0 behind); the only untracked item is `.serena/` (local LSP cache), so local ↔ GitHub is already exact.
+- Audited production `/opt/docker/ubag` against every GitHub-tracked file using canonical git blob hashes (`git ls-tree -r HEAD` vs `git hash-object` on the VPS) to avoid false CRLF mismatches on the Windows checkout. Result before sync: 1,121 of 1,336 tracked files matched byte-for-byte, 0 mismatches, and 215 files missing — all of them the `.codex/skills/hallmark/` design skill excluded by the prior `1,121`-file sync.
+- Shipped only the 215 missing tracked files via `git archive HEAD -- .codex/skills/hallmark` (canonical LF, tracked-only) and extracted into `/opt/docker/ubag`. Purely additive: no overwrites, no deletions, and no `deploy/vps/env.local`, `.htpasswd`, databases, logs, or runtime artifacts read or touched. No image rebuild (`.codex/` is not part of any container image), so all containers stayed up: `ubag-vps-gateway-1`, `ubag-nginx-dashboard`, `ubag-vps-chat-reaper`, `ubag-vps-browser` remained healthy.
+- Post-sync re-audit over all 1,336 tracked files: `MISSING=0  MISMATCH=0  EXTRA_TRACKED=0`. Production now mirrors GitHub tracked source exactly.
+
 ## 2026-07-23 Gemini 3.6 Flash Standard + three-way source sync
 
 - Rebased the local checkout from `6178968` to GitHub `origin/main` at `9da31f5` (109 commits) while retaining the pre-sync dirty tree in `stash@{0}` as a recovery copy.

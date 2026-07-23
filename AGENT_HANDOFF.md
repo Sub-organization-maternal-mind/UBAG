@@ -12,6 +12,12 @@ Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
 - Preserve `AGENTS.md`, `design.md`, `.codex`, and all current workspace contents.
 - Do not run `git reset`, `git clean`, or destructive checkout commands unless the user explicitly asks.
 
+## Latest Slice: Full tracked-file parity local ↔ GitHub ↔ VPS (2026-07-23)
+
+- Local `main` is level with `origin/main` at `755772a` (0/0); only `.serena/` is untracked. GitHub ↔ local already exact.
+- Production `/opt/docker/ubag` was audited against all 1,336 GitHub-tracked files via canonical git blob hashes. The only gap was the `.codex/skills/hallmark/` design skill (215 files) that earlier syncs excluded; every runtime/code/contract file already matched.
+- Synced the 215 files with `git archive HEAD -- .codex/skills/hallmark` (additive only — no secrets, DBs, runtime files, or containers touched; no rebuild). Final re-audit: `MISSING=0 MISMATCH=0 EXTRA_TRACKED=0`. All four VPS containers stayed healthy.
+
 ## Latest Slice: Gemini 3.6 Standard + source synchronization (2026-07-23)
 
 - Local `main` was fast-forwarded by 109 commits to GitHub `origin/main` at `9da31f5`; the full pre-sync dirty tree remains recoverable in `stash@{0}` (`codex-pre-sync-2026-07-23-local-and-gemini36`).
