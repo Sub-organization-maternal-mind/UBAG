@@ -2,6 +2,54 @@
 
 Last updated: 2026-07-23
 
+## 2026-07-23 Multi-file attachments (documents / audio / voice / images / video) + faster pipeline
+
+Generalized the previously audio-only, single-file, undocumented attachment path
+into first-class multi-file attachments end-to-end (branch `feat/multi-file-attachments`).
+
+- **Contracts (first):** `job-request` gains an `input.attachments` manifest
+  (`{key, filename?, content_type, kind}`); `adapter-manifest` gains an
+  `attachments` policy block (`max_files`, `max_file_bytes`, `accepted` per kind —
+  the model_catalog analog for files); `errors.json` adds
+  `UBAG-VALIDATION-ATTACHMENT(S)-*` and `-MULTIPART-*` codes; OpenAPI adds a
+  `multipart/form-data` one-shot `POST /v1/jobs` (+ 413) and documents both flows;
+  artifact `type` enum gains `attachment`. New conformance fixtures. SDK contract
+  manifests regenerated. `lint:openapi`, `lint:schemas`, `check:contracts`,
+  `check:blueprint` pass.
+- **Gateway (Go):** new `internal/attachments.DeclaredAttachments` is the single
+  source of truth for the declared key set (folds `audio_artifact_key`).
+  `materializeAudioArtifact` → `materializeAttachments` (N files, ordered
+  `attachment_local_paths`, fail-closed, partial-failure cleanup) wired into both
+  process and daemon runners. Jobs that declare attachments are held in
+  `StatusCreated` and enqueued exactly once — via a new `TransitionStatus` CAS
+  primitive (memory/sqlite/postgres) — only after every declared artifact key is
+  uploaded (PUT completion hook on fresh + replay branches) or immediately for the
+  multipart one-shot (staged temp files + rollback). A TTL sweeper fails jobs that
+  never receive their uploads. Per-adapter content-type validation (BOM-tolerant
+  manifest loader); `safeArtifactContentType` allowlist reconciled with the
+  adapter policies. New attachment metrics.
+- **Worker (Python):** the live engine reads `input.attachments` +
+  gateway-injected `attachment_local_paths` and attaches every file in one
+  `driver.attach_files` call, emitting `file.attached` with the declared keys;
+  `audio_artifact_key`/`audio_local_path` keep working as the single-audio alias.
+  Fixed a latent bug: the gateway now intercepts the `file.attached` worker event
+  as telemetry so its non-lifecycle type can never fail a job.
+- **Adapters:** `file_attach` capability + `attachments` policy on all 6 web
+  providers (activated Claude's dormant `file_upload_later`).
+- **SDKs + CLI:** `submitJobWithAttachments` (key-reference + parallel uploads) and
+  `createJobMultipart` (one-shot) in both TypeScript and Go SDKs; CLI
+  `create-job --attach <comma-separated paths>` (multipart, content-type + kind
+  inferred from extension).
+- **Verification run:** gateway `go vet` + `internal/{attachments,jobs,executor,httpapi}`
+  tests (incl. new gate/multipart/materialize tests); worker 212 tests (incl. new
+  `test_attachments.py`); TS SDK typecheck + conformance (49); Go SDK build/vet/tests;
+  CLI build + tests. Full local gate (`pnpm test:v0:local` / `pnpm check`) is the
+  user's to run.
+- **Follow-up flagged:** the adapter manifests carry a UTF-8 BOM that also breaks
+  the Go `loadModelCatalogFromDisk` loader (model_settings silently fail-closed for
+  BOM'd manifests). Attachments loader works around it; a separate task tracks
+  fixing the model-catalog loader.
+
 ## 2026-07-23 Full tracked-file parity (local ↔ GitHub ↔ VPS)
 
 - Verified local `main` is level with `origin/main` at `755772a` (0 ahead / 0 behind); the only untracked item is `.serena/` (local LSP cache), so local ↔ GitHub is already exact.

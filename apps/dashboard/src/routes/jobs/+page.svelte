@@ -41,6 +41,22 @@
   let createLoading = $state(false);
   let createError = $state<string | null>(null);
   let createSuccess = $state<string | null>(null);
+  let createFiles = $state<FileList | null>(null);
+
+  const ATTACH_CONTENT_TYPES: Record<string, string> = {
+    pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown', csv: 'text/csv', json: 'application/json',
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+    webm: 'audio/webm', wav: 'audio/wav', mp3: 'audio/mpeg', m4a: 'audio/mp4', ogg: 'audio/ogg', mp4: 'video/mp4',
+  };
+  function attachContentType(name: string): string {
+    return ATTACH_CONTENT_TYPES[name.toLowerCase().split('.').pop() ?? ''] ?? 'application/octet-stream';
+  }
+  function attachKind(contentType: string): string {
+    if (contentType.startsWith('image/')) return 'image';
+    if (contentType.startsWith('audio/')) return 'voice';
+    if (contentType.startsWith('video/')) return 'video';
+    return 'document';
+  }
 
   let filtered = $derived(
     filter
@@ -172,7 +188,28 @@
       return;
     }
     createLoading = true;
-    const res = await api.post<JobCreateResponse>('/v1/jobs', buildJobEnvelope());
+    const files = createFiles ? Array.from(createFiles) : [];
+    let res;
+    if (files.length > 0) {
+      // Multipart one-shot: job envelope + one file part per attachment (part
+      // name === key). Declare the manifest inline so the gateway can validate it.
+      const envelope = buildJobEnvelope();
+      envelope.job.input = {
+        ...envelope.job.input,
+        attachments: files.map((file) => {
+          const content_type = attachContentType(file.name);
+          return { key: file.name, filename: file.name, content_type, kind: attachKind(content_type) };
+        }),
+      };
+      const form = new FormData();
+      form.append('job', new Blob([JSON.stringify(envelope)], { type: 'application/json' }));
+      for (const file of files) {
+        form.append(file.name, file, file.name);
+      }
+      res = await api.postMultipart<JobCreateResponse>('/v1/jobs', form);
+    } else {
+      res = await api.post<JobCreateResponse>('/v1/jobs', buildJobEnvelope());
+    }
     createLoading = false;
     if (res.error) {
       createError = res.error;
@@ -180,6 +217,7 @@
     }
     createSuccess = `Created job ${res.data?.job_id?.slice(0, 8) ?? ''}`;
     createPrompt = '';
+    createFiles = null;
     await load(currentCursor);
   }
 
@@ -256,6 +294,19 @@
         placeholder="Enter the provider prompt..."
         class="w-full px-3 py-2 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40 resize-y"
       ></textarea>
+    </label>
+
+    <label class="block">
+      <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Attachments</span>
+      <input
+        type="file"
+        multiple
+        bind:files={createFiles}
+        class="w-full text-sm text-ink file:mr-3 file:px-3 file:py-1.5 file:rounded-md file:border-0 file:bg-paper-warm file:text-ink file:text-sm file:font-medium file:cursor-pointer"
+      />
+      <span class="block text-xs text-ink-mute mt-1">
+        Documents, images, audio, voice, or video — 32 MiB per file. Content type is inferred from the file extension. Uses the multipart one-shot flow.
+      </span>
     </label>
 
     <div class="flex items-center gap-3 flex-wrap">

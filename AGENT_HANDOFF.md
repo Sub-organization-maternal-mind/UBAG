@@ -12,6 +12,31 @@ Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
 - Preserve `AGENTS.md`, `design.md`, `.codex`, and all current workspace contents.
 - Do not run `git reset`, `git clean`, or destructive checkout commands unless the user explicitly asks.
 
+## Latest Slice: Multi-file attachments + faster pipeline (2026-07-23)
+
+- Branch `feat/multi-file-attachments` generalizes the audio-only attachment path
+  into first-class multi-file attachments (documents/audio/voice/images/video)
+  end-to-end: contracts → gateway → worker → adapters → SDKs → CLI. See the top
+  slice of `PROGRESS.md` for the full breakdown.
+- Two ingestion flows: **key-reference** (`input.attachments` manifest → the job is
+  held in `StatusCreated` until every artifact key is uploaded via
+  `PUT /v1/jobs/{id}/artifacts/{key}`, then dispatches exactly once) and
+  **multipart one-shot** (`POST /v1/jobs` as `multipart/form-data`: a `job` part +
+  one file part per key; dispatches immediately). The dispatch gate is a
+  `TransitionStatus` CAS (memory/sqlite/postgres); a TTL sweeper reaps jobs whose
+  uploads never arrive.
+- Per-adapter `attachments` policy in each manifest gates content-types
+  (fail-closed: no policy ⇒ attachments rejected). `internal/attachments`
+  (`DeclaredAttachments`) is the single source of truth used by create validation,
+  the gate, and the worker-runner materialize.
+- **Still open in this slice:** dashboard file-upload UI, richer warm-daemon
+  (`UBAG_WORKER_DAEMON`) enablement docs, and live DOM re-baselining of the attach
+  file inputs for ChatGPT/DeepSeek/Gemini against real logged-in sessions.
+- **Known issue (separate task):** adapter manifests have a UTF-8 BOM that breaks
+  the Go `loadModelCatalogFromDisk` loader (model_settings fail-closed). The
+  attachments loader strips the BOM; the model-catalog loader still needs the fix.
+- Not yet merged to `main`; not deployed to the VPS.
+
 ## Latest Slice: Full tracked-file parity local ↔ GitHub ↔ VPS (2026-07-23)
 
 - Local `main` is level with `origin/main` at `755772a` (0/0); only `.serena/` is untracked. GitHub ↔ local already exact.

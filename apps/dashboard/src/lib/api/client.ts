@@ -89,6 +89,54 @@ export function listOf<T = unknown>(
   return [];
 }
 
+/**
+ * POST a multipart/form-data body. Unlike gw(), it never sets Content-Type so the
+ * browser can attach the multipart boundary. Used for the job attachment one-shot.
+ */
+export async function gwMultipart<T = unknown>(path: string, form: FormData): Promise<GwResponse<T>> {
+  if (!browser) return { status: 0, data: null, denied: false, unauthorized: false, error: 'SSR not supported' };
+
+  const s = getSettings();
+  const url = s.gatewayUrl.replace(/\/+$/, '') + path;
+
+  const headers: Record<string, string> = {
+    'Ubag-Api-Version': s.apiVersion,
+    'Idempotency-Key': crypto.randomUUID(),
+  };
+  if (s.appSecret) {
+    headers['Authorization'] = `Bearer ${s.appSecret}`;
+  }
+
+  try {
+    const response = await fetch(url, { method: 'POST', headers, body: form });
+    const text = await response.text();
+    let data: T | null = null;
+    let parseError = false;
+    if (text) {
+      try {
+        data = JSON.parse(text) as T;
+      } catch {
+        parseError = true;
+      }
+    }
+    return {
+      status: response.status,
+      data,
+      denied: response.status === 403,
+      unauthorized: response.status === 401,
+      error: response.ok ? (parseError ? 'Invalid response from gateway' : null) : `HTTP ${response.status}`,
+    };
+  } catch (err) {
+    return {
+      status: -1,
+      data: null,
+      denied: false,
+      unauthorized: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 // Typed convenience wrappers
 export const api = {
   get: <T>(path: string) => gw<T>('GET', path),
@@ -96,4 +144,5 @@ export const api = {
   put: <T>(path: string, body?: unknown) => gw<T>('PUT', path, body),
   patch: <T>(path: string, body?: unknown) => gw<T>('PATCH', path, body),
   delete: <T>(path: string) => gw<T>('DELETE', path),
+  postMultipart: <T>(path: string, form: FormData) => gwMultipart<T>(path, form),
 };
