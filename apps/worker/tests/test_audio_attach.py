@@ -95,7 +95,7 @@ class AudioAttachTests(unittest.TestCase):
         blocked = [e for e in events if e["type"] == "blocked"]
 
         self.assertTrue(blocked)
-        self.assertEqual(blocked[0]["data"]["reason"], "audio_not_supported_by_target")
+        self.assertEqual(blocked[0]["data"]["reason"], "attachment_not_supported_by_target")
         self.assertEqual(driver.attached_files, [])
 
     def test_missing_local_path_is_blocked(self):
@@ -106,7 +106,7 @@ class AudioAttachTests(unittest.TestCase):
         blocked = [e for e in events if e["type"] == "blocked"]
 
         self.assertTrue(blocked)
-        self.assertEqual(blocked[0]["data"]["reason"], "audio_not_supported_by_target")
+        self.assertEqual(blocked[0]["data"]["reason"], "attachment_not_supported_by_target")
 
     def test_artifact_key_with_separator_is_rejected(self):
         selectors = get_provider_selectors("gemini_web")

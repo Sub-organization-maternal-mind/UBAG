@@ -491,29 +491,38 @@ class LiveSessionEngine:
                 "message": "enforced provider model/option settings before submit",
             }))
 
-        if job.audio_artifact_key:
+        attach_paths = list(job.attachment_local_paths)
+        # Back-compat: an older gateway materializes a single dictation-audio job
+        # to audio_local_path only — treat that as one attachment.
+        if not attach_paths and job.audio_local_path:
+            attach_paths = [job.audio_local_path]
+        if job.attachments or job.audio_artifact_key:
             attach_supported = (
-                self._selectors.file_input is not None
-                and bool(job.audio_local_path)
+                self._selectors.file_input is not None and bool(attach_paths)
             )
             if not attach_supported:
                 return {"events": events, "blocked": {
-                    "reason": "audio_not_supported_by_target",
+                    "reason": "attachment_not_supported_by_target",
                     "retryable": False,
                     "message": (
-                        "This target cannot attach audio (no file-input selector, "
-                        "or the audio artifact was not materialized to a local "
-                        "file); refusing to transcribe nothing."
+                        "This target cannot attach files (no file-input selector, "
+                        "or the attachments were not materialized to local files); "
+                        "refusing to submit without the requested attachments."
                     ),
                 }}
             # A missing/drifted file input raises DriftDetectedError, caught by the
-            # existing drift handler — never a silent hang.
-            driver.attach_files(self._selectors, [job.audio_local_path])
+            # existing drift handler — never a silent hang. attach_files takes the
+            # full list, so all files land in one operation.
+            driver.attach_files(self._selectors, attach_paths)
+            attached_keys = [item["key"] for item in job.attachments]
+            if not attached_keys and job.audio_artifact_key:
+                attached_keys = [job.audio_artifact_key]
             events.append(("file.attached", {
                 "status": "file_attached",
                 "target": job.target,
                 "adapter": self._selectors.provider_id,
-                "artifact_key": job.audio_artifact_key,
+                "artifact_keys": attached_keys,
+                "count": len(attach_paths),
             }))
 
         driver.submit_prompt(self._selectors, job.prompt)
@@ -614,6 +623,8 @@ class _NormalizedJob:
         "conversation_on_missing",
         "audio_artifact_key",
         "audio_local_path",
+        "attachments",
+        "attachment_local_paths",
         "wait_for_artifacts",
         "provider_config",
         "new_chat_enabled",
@@ -677,6 +688,15 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
     audio_local_path = _optional_string(
         input_payload.get("audio_local_path") or options.get("audio_local_path")
     )
+    # Generalized multi-file attachments. ``attachments`` is the declared manifest
+    # (documents/images/audio/video/voice); ``attachment_local_paths`` are the
+    # locally-materialized files the gateway resolved those keys to (the engine
+    # never fetches from the gateway itself). Text-only jobs leave both empty.
+    attachments = _attachments_manifest(input_payload)
+    attachment_local_paths = _string_tuple(
+        input_payload.get("attachment_local_paths")
+        or options.get("attachment_local_paths")
+    )
     wait_for_artifacts = _string_tuple(options.get("wait_for_artifacts"))
 
     # Resolve the pre-submit configuration: per-provider UBAG defaults live in the
@@ -720,6 +740,8 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
         conversation_on_missing=conversation_on_missing,
         audio_artifact_key=audio_artifact_key,
         audio_local_path=audio_local_path,
+        attachments=attachments,
+        attachment_local_paths=attachment_local_paths,
         wait_for_artifacts=wait_for_artifacts,
         provider_config=provider_config,
         new_chat_enabled=new_chat_enabled,
@@ -896,6 +918,42 @@ def _audio_artifact_key(input_payload: Mapping[str, Any]) -> Optional[str]:
             "audio_artifact_key must be a single path segment without '/', '\\', or '%'"
         )
     return key
+
+
+def _attachments_manifest(input_payload: Mapping[str, Any]) -> tuple:
+    """Extract + validate ``input.attachments``.
+
+    Returns a tuple of ``{"key","filename","content_type","kind"}`` dicts in
+    declared order. Each key is validated like ``audio_artifact_key`` (a single
+    path segment) so a payload can never coerce the worker outside the artifact
+    namespace. Returns an empty tuple for text jobs.
+    """
+
+    raw = input_payload.get("attachments")
+    if raw is None:
+        return ()
+    if not isinstance(raw, (list, tuple)):
+        raise LiveSessionError("attachments must be an array")
+    manifest = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            raise LiveSessionError("each attachment must be an object")
+        key = str(item.get("key", "")).strip()
+        if not key:
+            raise LiveSessionError("attachment.key is required")
+        if any(ch in key for ch in ("/", "\\", "%", "\x00")):
+            raise LiveSessionError(
+                "attachment.key must be a single path segment without '/', '\\', or '%'"
+            )
+        manifest.append(
+            {
+                "key": key,
+                "filename": str(item.get("filename", "")).strip(),
+                "content_type": str(item.get("content_type", "")).strip(),
+                "kind": str(item.get("kind", "")).strip(),
+            }
+        )
+    return tuple(manifest)
 
 
 def _string_tuple(value: Any) -> tuple:

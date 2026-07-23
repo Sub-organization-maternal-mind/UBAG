@@ -60,6 +60,12 @@ const topologyReportEventType = "browser.topology_reported"
 const newChatEventType = "session.new_chat"
 const configuredEventType = "session.configured"
 
+// fileAttachedEventType reports that the worker attached one or more files to the
+// provider composer before submitting the prompt. It is informational telemetry,
+// not a job-lifecycle transition, so it is logged and skipped — its unknown type
+// must never poison the job (mirrors the session.* handling above).
+const fileAttachedEventType = "file.attached"
+
 // conversation.thread_bound / .thread_rebound / .thread_broken are
 // conversation-affinity telemetry emitted by the live engine after it binds,
 // rebinds, or loses a provider chat thread for a job that carries a conversation
@@ -327,7 +333,8 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			c.recordConversationEvent(ctx, job, normalized)
 			continue
 		}
-		if normalized.Type == newChatEventType || normalized.Type == configuredEventType {
+		if normalized.Type == newChatEventType || normalized.Type == configuredEventType ||
+			normalized.Type == fileAttachedEventType {
 			slog.Info("worker session event",
 				"job_id", normalized.JobID, "event_type", normalized.Type)
 			continue
