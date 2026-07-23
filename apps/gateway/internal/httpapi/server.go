@@ -295,6 +295,13 @@ type Server struct {
 	artifactCaptures   atomic.Int64 // ubag_artifact_captures_total
 	webhookDeliveries  atomic.Int64 // ubag_webhook_deliveries_total
 
+	// Attachment pipeline counters.
+	attachmentsStored          atomic.Int64 // ubag_attachments_total{outcome="stored"}
+	multipartJobs              atomic.Int64 // ubag_multipart_jobs_total
+	multipartRollbacks         atomic.Int64 // ubag_multipart_rollbacks_total
+	attachmentGateTimeouts     atomic.Int64 // ubag_job_attachment_gate_timeouts_total
+	attachmentDispatchFailures atomic.Int64 // ubag_attachment_dispatch_failures_total
+
 	metrics *metricState
 	mux     chi.Router
 }
@@ -764,6 +771,12 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	artifactCaptures := s.artifactCaptures.Load()
 	_, _ = fmt.Fprintf(w, "ubag_artifact_captures_total{artifact_type=\"file\",outcome=\"success\"} %d\n", artifactCaptures)
 
+	_, _ = fmt.Fprintf(w, "ubag_attachments_total{outcome=\"stored\"} %d\n", s.attachmentsStored.Load())
+	_, _ = fmt.Fprintf(w, "ubag_multipart_jobs_total %d\n", s.multipartJobs.Load())
+	_, _ = fmt.Fprintf(w, "ubag_multipart_rollbacks_total %d\n", s.multipartRollbacks.Load())
+	_, _ = fmt.Fprintf(w, "ubag_job_attachment_gate_timeouts_total %d\n", s.attachmentGateTimeouts.Load())
+	_, _ = fmt.Fprintf(w, "ubag_attachment_dispatch_failures_total %d\n", s.attachmentDispatchFailures.Load())
+
 	// Adapter-request counters and duration histogram stubs.
 	// These are set to 0 in the gateway; real values come from the worker.
 	_, _ = fmt.Fprint(w, "ubag_adapter_requests_total{adapter_family=\"mock\",target_family=\"all\",outcome=\"success\",error_class=\"none\"} 0\n")
@@ -1132,6 +1145,10 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s.listJobs(w, r)
 	case http.MethodPost:
+		if mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mediaType == "multipart/form-data" {
+			s.createJobMultipart(w, r)
+			return
+		}
 		s.createJob(w, r)
 	default:
 		s.writeMethodNotAllowed(w, r, http.MethodGet, http.MethodPost)
@@ -1242,6 +1259,13 @@ func (s *Server) processBatchEntry(
 	}
 	if code, msg, ok := validateModelSettingsForCreate(req.Job.Target, req.Job.ModelSettings); !ok {
 		e := validationError(code, msg)
+		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
+	}
+	// Attachments require the two-step upload or multipart one-shot, neither of
+	// which fits a JSON batch — reject rather than create a job that would hang
+	// held until its TTL.
+	if jobDeclaresAttachments(req.Job.Input) {
+		e := validationError("UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001", "attachments are not supported in batch submissions; use POST /v1/jobs")
 		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
 	}
 
@@ -1565,6 +1589,11 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusBadRequest, validationError(code, msg))
 		return
 	}
+	if code, msg, ok := validateAttachmentsForCreate(request.Job.Target, request.Job.Input); !ok {
+		s.writeError(w, r, http.StatusBadRequest, validationError(code, msg))
+		return
+	}
+	awaitingAttachments := jobDeclaresAttachments(request.Job.Input)
 
 	// Custom-validator plugin hook: validate job input before proceeding.
 	if s.plugins != nil {
@@ -1657,21 +1686,22 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	job, err := s.jobs.Create(r.Context(), jobstore.CreateRequest{
-		APIVersion:     apiVersion,
-		TenantID:       tenantID,
-		AppID:          appID,
-		IdempotencyKey: idempotencyKey,
-		Target:         strings.TrimSpace(request.Job.Target),
-		CommandType:    strings.TrimSpace(request.Job.CommandType),
-		Client:         clientToMap(request.Client),
-		ConversationID: strings.TrimSpace(request.Job.ConversationID),
-		TemplateID:     strings.TrimSpace(request.Job.TemplateID),
-		Input:          request.Job.Input,
-		Options:        optionsWithProviderConfig(request.Job.Options, request.Job.ModelSettings),
-		Callbacks:      request.Job.Callbacks,
-		Context:        request.Job.Context,
-		TraceID:        traceIDFromContext(r.Context()),
-		NotBefore:      request.Job.NotBefore,
+		APIVersion:          apiVersion,
+		TenantID:            tenantID,
+		AppID:               appID,
+		IdempotencyKey:      idempotencyKey,
+		Target:              strings.TrimSpace(request.Job.Target),
+		CommandType:         strings.TrimSpace(request.Job.CommandType),
+		Client:              clientToMap(request.Client),
+		ConversationID:      strings.TrimSpace(request.Job.ConversationID),
+		TemplateID:          strings.TrimSpace(request.Job.TemplateID),
+		Input:               request.Job.Input,
+		Options:             optionsWithProviderConfig(request.Job.Options, request.Job.ModelSettings),
+		Callbacks:           request.Job.Callbacks,
+		Context:             request.Job.Context,
+		TraceID:             traceIDFromContext(r.Context()),
+		NotBefore:           request.Job.NotBefore,
+		AwaitingAttachments: awaitingAttachments,
 	})
 	if err != nil {
 		_ = s.idempotency.Release(r.Context(), scope)
@@ -1683,6 +1713,32 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	// it is enqueued (so a worker can never process it before the association
 	// exists). From here the token is released per-job and idempotently.
 	s.markConcurrencyAcquired(job.ID, tenantID, request.Job.Target, appID)
+
+	// Attachment dispatch gate: a job that declares attachments is created in the
+	// held StatusCreated state and is NOT enqueued here. A multipart one-shot
+	// stores its staged file bytes now and dispatches the born-complete job; a
+	// key-reference job stays held until the PUT completion hook sees every
+	// declared artifact key uploaded. Non-attachment jobs fall through to the
+	// unchanged enqueue path below.
+	if awaitingAttachments {
+		if staged := stagedAttachmentsFromContext(r.Context()); len(staged) > 0 {
+			if !s.storeStagedAttachments(w, r, job, staged, scope) {
+				return
+			}
+			s.maybeDispatchAfterArtifact(r.Context(), job)
+		}
+		if err := s.idempotency.Complete(r.Context(), scope, job.ID, http.StatusAccepted); err != nil {
+			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to complete idempotency record"))
+			return
+		}
+		w.Header().Set("Location", fmt.Sprintf("/v1/jobs/%s", job.ID))
+		fresh, ok, _ := s.jobs.Get(r.Context(), job.ID)
+		if !ok {
+			fresh = job
+		}
+		s.writeJSON(w, http.StatusAccepted, jobToResponse(fresh, false, traceIDFromContext(r.Context())))
+		return
+	}
 
 	// Region-aware routing: resolve the dispatch region before enqueue.
 	dispatchCtx := r.Context()
@@ -3779,6 +3835,10 @@ func (s *Server) putJobArtifact(w http.ResponseWriter, r *http.Request, jobID, k
 	}
 	if mutation.replay {
 		s.replayPutArtifact(w, r, job.ID, key)
+		// A retried final upload must still trip the dispatch gate, or a job whose
+		// last PUT was an idempotent replay would never enqueue (only the TTL
+		// sweeper would reap it). The CAS inside makes this safe to run twice.
+		s.maybeDispatchAfterArtifact(r.Context(), job)
 		return
 	}
 	sizeBytes := int64(len(payload))
@@ -3805,6 +3865,9 @@ func (s *Server) putJobArtifact(w http.ResponseWriter, r *http.Request, jobID, k
 		"artifact":    artifactRecordToResponse(rec),
 		"trace_id":    traceIDFromContext(r.Context()),
 	})
+	// If this upload completed a held attachment job's declared set, dispatch it.
+	// The response is already written; the CAS makes concurrent final PUTs safe.
+	s.maybeDispatchAfterArtifact(r.Context(), job)
 }
 
 func (s *Server) getJobArtifact(w http.ResponseWriter, r *http.Request, jobID, key string) {
@@ -3931,14 +3994,17 @@ func safeArtifactContentType(raw string) string {
 		return "application/octet-stream"
 	}
 	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
-	// Audio types support dictation-audio artifacts attached into a chat UI for
-	// transcription. Storing the true MIME (vs coercing to octet-stream) matters
-	// because the worker derives the temp-file extension from it, and provider
-	// file pickers sniff the upload by extension/MIME.
+	// Attachment types (documents/images/audio/video/voice) are attached into a
+	// chat UI. Storing the true MIME (vs coercing to octet-stream) matters because
+	// the worker derives the temp-file extension from it, and provider file
+	// pickers sniff the upload by extension/MIME. This allowlist must stay a
+	// superset of every content type any adapter's attachments.accepted declares.
 	switch mediaType {
-	case "application/json", "application/pdf", "application/octet-stream", "text/plain",
+	case "application/json", "application/pdf", "application/octet-stream",
+		"text/plain", "text/markdown", "text/csv",
 		"image/gif", "image/jpeg", "image/png", "image/webp",
-		"audio/webm", "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/ogg":
+		"audio/webm", "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/ogg",
+		"video/mp4", "video/webm":
 		return mediaType
 	default:
 		return "application/octet-stream"

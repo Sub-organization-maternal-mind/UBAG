@@ -66,6 +66,12 @@ type CreateRequest struct {
 	// with StatusScheduled and the worker consumer nacks+requeues until the
 	// time is reached.
 	NotBefore *time.Time
+	// AwaitingAttachments, when true, creates the job in the held StatusCreated
+	// state and suppresses enqueue at create time. The gateway dispatch gate
+	// enqueues the job (via TransitionStatus StatusCreated -> StatusQueued) only
+	// once every declared attachment artifact key has been uploaded. Default
+	// false is byte-identical to the pre-attachments create path.
+	AwaitingAttachments bool
 }
 
 type Job struct {
@@ -113,6 +119,13 @@ type Store interface {
 	ListEvents(ctx context.Context, jobID string, afterSequence int, limit int) ([]Event, bool, error)
 	WaitEvents(ctx context.Context, jobID string, afterSequence int, limit int) ([]Event, bool, error)
 	UpdateStatus(ctx context.Context, id string, status Status) (Job, bool, error)
+	// TransitionStatus atomically moves a job from `from` to `to` only if its
+	// current status equals `from` (compare-and-set). The bool reports whether
+	// this call performed the transition — exactly one concurrent caller wins.
+	// It is the exactly-once primitive behind the attachment dispatch gate and
+	// its TTL sweeper; unlike UpdateStatus it never advances a job whose status
+	// has already moved on.
+	TransitionStatus(ctx context.Context, id string, from Status, to Status) (Job, bool, error)
 	ApplyWorkerEvent(ctx context.Context, event WorkerEvent) (Job, bool, error)
 	Ready(ctx context.Context) error
 }

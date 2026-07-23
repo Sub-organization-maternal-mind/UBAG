@@ -21,13 +21,25 @@
     "prompt_run",
     "token_streaming",
     "conversation_resume",
-    "drift_baseline_required"
+    "drift_baseline_required",
+    "file_attach"
   ],
   "model_catalog": {
     "settings": {
       "mode": { "kind": "choice", "values": ["Expert"] },
       "deepthink": { "kind": "toggle" }
     }
+  },
+  "attachments": {
+    "max_files": 10,
+    "max_file_bytes": 33554432,
+    "accepted": [
+      { "kind": "document", "content_types": ["application/pdf", "text/plain", "text/markdown", "text/csv", "application/json"] },
+      { "kind": "image", "content_types": ["image/png", "image/jpeg", "image/gif", "image/webp"] },
+      { "kind": "audio", "content_types": ["audio/webm", "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/ogg"] },
+      { "kind": "voice", "content_types": ["audio/webm", "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/ogg"] },
+      { "kind": "video", "content_types": ["video/mp4", "video/webm"] }
+    ]
   },
   "selector_strategy": {
     "type": "provider_specific",

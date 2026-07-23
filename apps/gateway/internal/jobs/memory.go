@@ -51,6 +51,9 @@ func (m *MemoryStore) Create(_ context.Context, request CreateRequest) (Job, err
 	if request.NotBefore != nil && request.NotBefore.After(now) {
 		status = StatusScheduled
 	}
+	if request.AwaitingAttachments {
+		status = StatusCreated
+	}
 	job := Job{
 		ID:             id,
 		APIVersion:     request.APIVersion,
@@ -76,13 +79,48 @@ func (m *MemoryStore) Create(_ context.Context, request CreateRequest) (Job, err
 
 	m.jobs[id] = job
 	m.order = append(m.order, id)
-	m.appendEventLocked(job, "queued", map[string]any{
+	initialEvent := "queued"
+	if job.Status == StatusCreated {
+		initialEvent = "created"
+	}
+	m.appendEventLocked(job, initialEvent, map[string]any{
 		"status":       string(job.Status),
 		"target":       job.Target,
 		"command_type": job.CommandType,
 	})
 
 	return job, nil
+}
+
+// TransitionStatus atomically moves job `id` from `from` to `to` iff its current
+// status equals `from`. The returned bool is true only for the caller that
+// performed the transition; concurrent callers (and the TTL sweeper) that find a
+// different current status get (job, false, nil). See jobs.Store.
+func (m *MemoryStore) TransitionStatus(_ context.Context, id string, from Status, to Status) (Job, bool, error) {
+	if !KnownStatus(to) {
+		return Job{}, false, fmt.Errorf("unknown job status %q", to)
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	job, ok := m.jobs[id]
+	if !ok {
+		return Job{}, false, nil
+	}
+	if job.Status != from {
+		return job, false, nil
+	}
+
+	job.Status = to
+	job.UpdatedAt = m.now().UTC()
+	m.jobs[id] = job
+	m.appendEventLocked(job, string(to), map[string]any{
+		"status": string(to),
+		"target": job.Target,
+	})
+
+	return job, true, nil
 }
 
 func (m *MemoryStore) Get(_ context.Context, id string) (Job, bool, error) {

@@ -75,6 +75,9 @@ func (s *SQLiteStore) Create(ctx context.Context, request CreateRequest) (Job, e
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
+	if request.AwaitingAttachments {
+		job.Status = StatusCreated
+	}
 	clientJSON, err := marshalNullableJSON(job.Client)
 	if err != nil {
 		return Job{}, err
@@ -113,7 +116,11 @@ INSERT INTO gateway_jobs (
 		return Job{}, err
 	}
 
-	if err := insertSQLiteEvent(ctx, tx, job, 1, "queued", map[string]any{
+	initialEvent := "queued"
+	if job.Status == StatusCreated {
+		initialEvent = "created"
+	}
+	if err := insertSQLiteEvent(ctx, tx, job, 1, initialEvent, map[string]any{
 		"status":       string(job.Status),
 		"target":       job.Target,
 		"command_type": job.CommandType,
@@ -125,6 +132,53 @@ INSERT INTO gateway_jobs (
 		return Job{}, err
 	}
 	return job, nil
+}
+
+// TransitionStatus atomically moves job `id` from `from` to `to` iff its current
+// status equals `from` (SELECT ... FOR UPDATE serializes concurrent callers). See
+// jobs.Store.
+func (s *SQLiteStore) TransitionStatus(ctx context.Context, id string, from Status, to Status) (Job, bool, error) {
+	if s == nil || s.db == nil {
+		return Job{}, false, fmt.Errorf("sqlite job store is not configured")
+	}
+	if !KnownStatus(to) {
+		return Job{}, false, fmt.Errorf("unknown job status %q", to)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Job{}, false, err
+	}
+	defer rollbackUnlessCommitted(tx)
+
+	job, sequence, found, err := s.getJobForUpdate(ctx, tx, id)
+	if err != nil || !found {
+		return Job{}, found, err
+	}
+	if job.Status != from {
+		if err := tx.Commit(); err != nil {
+			return Job{}, false, err
+		}
+		return job, false, nil
+	}
+
+	now := s.now().UTC()
+	sequence++
+	job.Status = to
+	job.UpdatedAt = now
+	if _, err := tx.ExecContext(ctx, `UPDATE gateway_jobs SET status = ?, event_sequence = ?, updated_at = ? WHERE id = ?`, string(job.Status), sequence, formatSQLiteTime(job.UpdatedAt), job.ID); err != nil {
+		return Job{}, false, err
+	}
+	if err := insertSQLiteEvent(ctx, tx, job, sequence, string(to), map[string]any{
+		"status": string(to),
+		"target": job.Target,
+	}, now); err != nil {
+		return Job{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Job{}, false, err
+	}
+	return job, true, nil
 }
 
 func (s *SQLiteStore) Get(ctx context.Context, id string) (Job, bool, error) {

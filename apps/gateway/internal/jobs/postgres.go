@@ -62,6 +62,9 @@ func (p *PostgresStore) Create(ctx context.Context, request CreateRequest) (Job,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
+	if request.AwaitingAttachments {
+		job.Status = StatusCreated
+	}
 	clientJSON, err := marshalNullableJSON(job.Client)
 	if err != nil {
 		return Job{}, err
@@ -100,7 +103,11 @@ INSERT INTO gateway_jobs (
 		return Job{}, err
 	}
 
-	if err := insertEvent(ctx, tx, job, 1, "queued", map[string]any{
+	initialEvent := "queued"
+	if job.Status == StatusCreated {
+		initialEvent = "created"
+	}
+	if err := insertEvent(ctx, tx, job, 1, initialEvent, map[string]any{
 		"status":       string(job.Status),
 		"target":       job.Target,
 		"command_type": job.CommandType,
@@ -112,6 +119,53 @@ INSERT INTO gateway_jobs (
 		return Job{}, err
 	}
 	return job, nil
+}
+
+// TransitionStatus atomically moves job `id` from `from` to `to` iff its current
+// status equals `from` (SELECT ... FOR UPDATE serializes concurrent callers). See
+// jobs.Store.
+func (p *PostgresStore) TransitionStatus(ctx context.Context, id string, from Status, to Status) (Job, bool, error) {
+	if p == nil || p.db == nil {
+		return Job{}, false, fmt.Errorf("postgres job store is not configured")
+	}
+	if !KnownStatus(to) {
+		return Job{}, false, fmt.Errorf("unknown job status %q", to)
+	}
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Job{}, false, err
+	}
+	defer rollbackUnlessCommitted(tx)
+
+	job, sequence, found, err := p.getJobForUpdate(ctx, tx, id)
+	if err != nil || !found {
+		return Job{}, found, err
+	}
+	if job.Status != from {
+		if err := tx.Commit(); err != nil {
+			return Job{}, false, err
+		}
+		return job, false, nil
+	}
+
+	now := p.now().UTC()
+	sequence++
+	job.Status = to
+	job.UpdatedAt = now
+	if _, err := tx.ExecContext(ctx, `UPDATE gateway_jobs SET status = $1, event_sequence = $2, updated_at = $3 WHERE id = $4`, string(job.Status), sequence, job.UpdatedAt, job.ID); err != nil {
+		return Job{}, false, err
+	}
+	if err := insertEvent(ctx, tx, job, sequence, string(to), map[string]any{
+		"status": string(to),
+		"target": job.Target,
+	}, now); err != nil {
+		return Job{}, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Job{}, false, err
+	}
+	return job, true, nil
 }
 
 func (p *PostgresStore) Get(ctx context.Context, id string) (Job, bool, error) {

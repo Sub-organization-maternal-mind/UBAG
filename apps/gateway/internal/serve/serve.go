@@ -244,6 +244,10 @@ func Run(ctx context.Context) error {
 		}()
 	}
 
+	// Attachment dispatch-gate TTL sweeper: fails jobs stuck holding for their
+	// attachment uploads past the TTL so their concurrency tokens are freed.
+	go server.RunAttachmentSweeper(ctx)
+
 	grpcServer := grpc.NewServer()
 	ubagv1.RegisterJobServiceServer(grpcServer, grpcapi.NewServer(grpcapi.Config{
 		APIVersion:  getenv("UBAG_API_VERSION", httpapi.DefaultAPIVersion),

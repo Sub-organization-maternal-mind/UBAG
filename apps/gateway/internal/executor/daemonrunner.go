@@ -265,15 +265,15 @@ func (r *DaemonWorkerRunner) RunWorker(
 		maxRuntime = defaultWorkerMaxRuntime
 	}
 
-	// Materialize a dictation audio artifact exactly as the per-job runner does,
-	// so audio jobs behave identically under the daemon.
-	cleanupAudio, err := ProcessWorkerRunner{Artifacts: r.Artifacts}.
-		materializeAudioArtifact(ctx, &envelope)
+	// Materialize any declared attachments exactly as the per-job runner does, so
+	// attachment jobs behave identically under the daemon.
+	cleanupAttachments, err := ProcessWorkerRunner{Artifacts: r.Artifacts}.
+		materializeAttachments(ctx, &envelope)
 	if err != nil {
 		return nil, err
 	}
-	if cleanupAudio != nil {
-		defer cleanupAudio()
+	if cleanupAttachments != nil {
+		defer cleanupAttachments()
 	}
 
 	r.mu.Lock()
