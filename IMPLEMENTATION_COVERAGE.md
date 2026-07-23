@@ -8,6 +8,13 @@ Current status: the repository contains implemented, runnable, or validateable a
 
 Continuation status: future agents should start with `AGENT_HANDOFF.md`, then `PROGRESS.md`, then this coverage ledger. The handoff captures the current worktree state, latest green validation, fixed audit findings, runtime probe evidence, critical invariants, and next coding queue.
 
+2026-07-24 dashboard overview resilience. The metric cards and Recent Activity
+now share one jobs-list response, removing the duplicate-request split state
+that could leave activity loading after the cards rendered. Dashboard requests
+have a 15-second abort guard and render a timeout error instead of spinning
+indefinitely. Focused dashboard tests, Svelte diagnostics, and one targeted
+dashboard build passed; no broad suite or CI ran.
+
 2026-07-24 attachment production release. The full attachment surface is merged,
 pushed, and deployed with the warm daemon enabled. Focused unit/type checks,
 one targeted dashboard build, and the Chromium jobs-page check at

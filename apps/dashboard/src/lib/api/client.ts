@@ -3,6 +3,8 @@ import { browser } from '$app/environment';
 import { settings } from '$lib/stores/settings';
 import type { GwResponse } from './types';
 
+const REQUEST_TIMEOUT_MS = 15_000;
+
 function getSettings() {
   return get(settings);
 }
@@ -31,10 +33,15 @@ export async function gw<T = unknown>(
   }
 
   try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     const response = await fetch(url, {
       method,
       headers,
       body: body != null ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    }).finally(() => {
+      clearTimeout(timeout);
     });
 
     const text = await response.text();
@@ -65,7 +72,9 @@ export async function gw<T = unknown>(
       data: null,
       denied: false,
       unauthorized: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: err instanceof DOMException && err.name === 'AbortError'
+        ? 'Gateway request timed out'
+        : err instanceof Error ? err.message : String(err),
     };
   }
 }
@@ -108,7 +117,16 @@ export async function gwMultipart<T = unknown>(path: string, form: FormData): Pr
   }
 
   try {
-    const response = await fetch(url, { method: 'POST', headers, body: form });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: form,
+      signal: controller.signal,
+    }).finally(() => {
+      clearTimeout(timeout);
+    });
     const text = await response.text();
     let data: T | null = null;
     let parseError = false;
@@ -132,7 +150,9 @@ export async function gwMultipart<T = unknown>(path: string, form: FormData): Pr
       data: null,
       denied: false,
       unauthorized: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: err instanceof DOMException && err.name === 'AbortError'
+        ? 'Gateway request timed out'
+        : err instanceof Error ? err.message : String(err),
     };
   }
 }

@@ -9,6 +9,15 @@ This ledger maps the UBAG A-Z plan to the current repository implementation. It 
 
 For future agentic AI continuation, read the root `AGENT_HANDOFF.md` first, then `PROGRESS.md`, then this page. The rendered handoff is also available at `operations/agent-handoff`.
 
+## 2026-07-24 Dashboard Overview Resilience
+
+The overview now shares one jobs-list response between its metric cards and
+Recent Activity, so the two sections cannot diverge behind duplicate concurrent
+requests. Dashboard gateway calls abort after 15 seconds and display an
+actionable timeout error instead of loading indefinitely. Focused dashboard
+tests, Svelte diagnostics, and a targeted dashboard build passed; no broad suite
+or CI ran.
+
 ## 2026-07-24 Attachment Production Release
 
 The contracts, gateway, worker, six live-adapter policies, TypeScript/Go SDKs,

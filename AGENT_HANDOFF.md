@@ -2,6 +2,15 @@
 
 Last updated: 2026-07-24
 
+## Dashboard overview loading fix (2026-07-24)
+
+The overview no longer performs duplicate concurrent jobs-list requests for its
+metric cards and Recent Activity. Both sections reuse one collection response,
+and the shared dashboard gateway client aborts stalled JSON and multipart
+requests after 15 seconds with an actionable timeout error. Focused evidence:
+22 dashboard tests passed, `svelte-check` returned 0 errors/0 warnings, and the
+targeted dashboard build completed. No broad suite or CI ran.
+
 ## Current release state (2026-07-24)
 
 Multi-file attachments and the warm-browser speed path are complete on `main`,

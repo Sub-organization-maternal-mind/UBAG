@@ -20,7 +20,17 @@
   // Terminal-failure states used to count failed jobs.
   const FAILED_STATES = new Set(['failed', 'error', 'dead', 'dlq']);
 
-  async function loadMetrics() {
+  type JobsResponse = Awaited<ReturnType<typeof api.get<{ jobs?: Job[]; total?: number }>>>;
+
+  function applyJobsResult(res: JobsResponse) {
+    jobsLoading = false;
+    if (res.denied) { jobsDenied = true; return; }
+    if (res.unauthorized) { jobsError = 'Not authenticated — check your gateway login.'; return; }
+    if (res.error) { jobsError = res.error; return; }
+    recentJobs = (res.data?.jobs ?? []).slice(0, 5);
+  }
+
+  async function loadMetrics(jobsResponse?: JobsResponse) {
     // Derive overview metric cards from real JSON endpoints. The Prometheus
     // /v1/metrics endpoint is intentionally blocked at the edge and is not JSON,
     // so we aggregate counts from the resource endpoints instead.
@@ -29,7 +39,7 @@
     metricsDenied = false;
 
     const [jobsRes, targetsRes, browserRes] = await Promise.all([
-      api.get<{ jobs?: Job[]; total?: number }>('/v1/jobs?limit=100'),
+      jobsResponse ?? api.get<{ jobs?: Job[]; total?: number }>('/v1/jobs?limit=100'),
       api.get('/v1/targets'),
       api.get('/v1/browser/summary'),
     ]);
@@ -60,15 +70,23 @@
     jobsLoading = true;
     jobsError = null;
     jobsDenied = false;
-    const res = await api.get<{ jobs: Job[] }>('/v1/jobs?limit=5');
-    jobsLoading = false;
-    if (res.denied) { jobsDenied = true; return; }
-    if (res.error) { jobsError = res.error; return; }
-    recentJobs = res.data?.jobs ?? [];
+    const res = await api.get<{ jobs?: Job[]; total?: number }>('/v1/jobs?limit=100');
+    applyJobsResult(res);
   }
 
   async function load() {
-    await Promise.all([loadMetrics(), loadJobs()]);
+    metricsLoading = true;
+    jobsLoading = true;
+    metricsError = null;
+    jobsError = null;
+    metricsDenied = false;
+    jobsDenied = false;
+
+    // Both sections consume the same collection. Reusing this response prevents
+    // Recent Activity from hanging behind a duplicate concurrent request.
+    const jobsRes = await api.get<{ jobs?: Job[]; total?: number }>('/v1/jobs?limit=100');
+    applyJobsResult(jobsRes);
+    await loadMetrics(jobsRes);
   }
 
   onMount(load);

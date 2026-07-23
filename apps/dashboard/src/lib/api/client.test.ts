@@ -84,6 +84,25 @@ describe('gateway client', () => {
 
     const [, init] = mockFetch.mock.calls[0];
     expect(init.headers['Idempotency-Key']).toBeUndefined();
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('returns a clear error when a gateway request times out', async () => {
+    vi.useFakeTimers();
+    mockFetch.mockImplementation((_url, init) => new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => {
+        reject(new DOMException('Aborted', 'AbortError'));
+      });
+    }));
+
+    const pending = gw('GET', '/v1/jobs');
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    await expect(pending).resolves.toMatchObject({
+      status: -1,
+      error: 'Gateway request timed out',
+    });
+    vi.useRealTimers();
   });
 
   it('returns denied:true on 403 response', async () => {

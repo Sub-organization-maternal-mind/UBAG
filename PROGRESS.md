@@ -2,6 +2,19 @@
 
 Last updated: 2026-07-24
 
+## 2026-07-24 Dashboard Recent Activity loading fix
+
+Fixed the production overview's split state where metric cards loaded but
+Recent Activity remained on `Loading...`. The overview now reuses one
+`GET /v1/jobs?limit=100` response for both job metrics and the five recent rows
+instead of issuing two concurrent collection requests. All dashboard gateway
+requests now abort after 15 seconds and surface `Gateway request timed out`
+rather than leaving a loading state indefinitely.
+
+Focused validation only: dashboard Vitest **22 passed**, `svelte-check` reported
+**0 errors / 0 warnings**, and the already-started targeted dashboard production
+build completed successfully. No broad suite or CI flow ran.
+
 ## 2026-07-24 Multi-file attachment release complete
 
 The contracts-first attachment plan is merged into `main`, pushed to GitHub,
