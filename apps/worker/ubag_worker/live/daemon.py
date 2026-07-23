@@ -91,6 +91,7 @@ class WarmWorkerDaemon:
         selectors = self._selectors_by_target[target]
         key = _driver_key(payload)
 
+        self._evict_other_keys(key)
         driver = self._checkout(key, selectors, payload)
         engine = self._engine_factory(selectors)
         try:
@@ -106,6 +107,19 @@ class WarmWorkerDaemon:
 
         # Only a cleanly finished job may leave its page warm.
         self._warm[key] = driver
+
+    def _evict_other_keys(self, key: DriverKey) -> None:
+        """Keep at most one Sync Playwright manager alive in this thread.
+
+        Real PageDrivers each own a ``sync_playwright().start()`` manager.
+        Playwright refuses to start a second Sync manager while the first
+        manager's asyncio loop is active in the same daemon thread. Same-key
+        jobs retain their warm page; changing tenant/provider/profile closes
+        the old page before the new driver is constructed.
+        """
+        for other_key in list(self._warm):
+            if other_key != key:
+                _close_quietly(self._warm.pop(other_key))
 
     def _checkout(
         self, key: DriverKey, selectors: Any, payload: Mapping[str, Any]

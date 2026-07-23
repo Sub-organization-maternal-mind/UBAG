@@ -79,8 +79,8 @@ def _reset_fake_engine():
     yield
 
 
-def _payload(profile="/profiles/gemini"):
-    return {"job": {"target": "gemini_web"}, "user_data_dir": profile}
+def _payload(profile="/profiles/gemini", target="gemini_web"):
+    return {"job": {"target": target}, "user_data_dir": profile}
 
 
 def _attachment_payload(job_id, key, content_type, kind, local_path):
@@ -163,6 +163,22 @@ class TestWarmReuse:
 
 
 class TestIsolation:
+    def test_switching_provider_closes_the_previous_sync_playwright_driver(self):
+        """Only one Sync Playwright manager may be active in the daemon thread.
+
+        A different provider/profile must go cold, but first it must close the
+        previously warm driver so sync_playwright().start() can safely run.
+        """
+        factory = _RecordingFactory()
+        daemon = _daemon(factory)
+
+        list(daemon.run_job(_payload("/profiles/chatgpt", "chatgpt_web")))
+        list(daemon.run_job(_payload("/profiles/deepseek", "deepseek_web")))
+
+        assert len(factory.built) == 2
+        assert factory.built[0].closed is True
+        assert factory.built[1].closed is False
+
     def test_reused_driver_clears_prior_attachment_state(self):
         factory = _RecordingFactory()
         daemon = _daemon(factory)
