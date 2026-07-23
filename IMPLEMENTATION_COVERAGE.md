@@ -1,6 +1,6 @@
 # UBAG A-Z Implementation Coverage
 
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 The canonical rendered version is in the docs site at `apps/docs/src/content/docs/implementation-coverage.md`.
 
@@ -8,7 +8,15 @@ Current status: the repository contains implemented, runnable, or validateable a
 
 Continuation status: future agents should start with `AGENT_HANDOFF.md`, then `PROGRESS.md`, then this coverage ledger. The handoff captures the current worktree state, latest green validation, fixed audit findings, runtime probe evidence, critical invariants, and next coding queue.
 
-2026-07-23 attachment client/runtime completion. The worker now fail-closes unsafe or inconsistent attachment manifests and clears warm-session file state; the TypeScript/Go SDKs and CLI expose complete key-reference/multipart attachment entry points and limits; the Hallmark/NAJM dashboard jobs form provides accessible multi-file selection, local validation, file removal/clearing, and multipart submission; and VPS worker-daemon mode remains opt-in. Focused worker, SDK, CLI, and dashboard unit/type checks passed, plus one targeted dashboard build. The new 320/375/414/768 Playwright check did not execute because its configured web server missed the readiness deadline, so local runtime breakpoint proof remains outstanding.
+2026-07-24 attachment production release. The full attachment surface is merged,
+pushed, and deployed with the warm daemon enabled. Focused unit/type checks,
+one targeted dashboard build, and the Chromium jobs-page check at
+320/375/414/768 passed. Production acceptance completed for text compatibility,
+the legacy audio alias, ChatGPT multipart and warm reuse, DeepSeek document
+key-reference, Gemini multipart document+WAV, adapter catalog policies, and the
+deployed dashboard bundle. DeepSeek's current live composer supports
+documents/images only, so audio/voice/video now fail closed at create time rather
+than hanging a worker.
 
 Primary validation command:
 

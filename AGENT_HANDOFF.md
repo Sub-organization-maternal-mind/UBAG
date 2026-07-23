@@ -2,6 +2,35 @@
 
 Last updated: 2026-07-24
 
+## Current release state (2026-07-24)
+
+Multi-file attachments and the warm-browser speed path are complete on `main`,
+pushed, and deployed to production. The current gateway image is
+`sha256:c6fdbaed65986850e9dc1374c95865acc6869b26edb6916da56b5def3493c62f`;
+gateway/browser/dashboard are healthy and readiness is fully true. Production
+source is `/opt/docker/ubag`; rollback assets are in
+`/opt/docker/ubag-sync-backups/attachments-bf54c19-20260724`.
+
+Live acceptance evidence: text `job_000000000032`; legacy ChatGPT audio
+`job_000000000034`; ChatGPT multipart + warm reuse `job_000000000036` and
+`job_000000000037`; DeepSeek document key-reference `job_000000000041`; Gemini
+multipart document+WAV `job_000000000043`. Every successful provider job returned
+its unique exact token. DeepSeek Web currently accepts documents/images only:
+its live UI removes uploads in Expert mode and silently drops WAV/MP3-class
+audio even in Instant. UBAG selects Instant for supported DeepSeek attachment
+jobs and rejects audio/voice/video at create with
+`UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001`.
+
+Warm daemon invariants: six live targets use the daemon; mock/generic fall back
+to the process runner; only one Sync Playwright manager may be alive in the
+daemon thread; same-key jobs retain warm reuse; provider/profile changes close
+the prior driver. Queue JSON treats omitted and empty optional objects as
+equivalent but still poisons genuinely tampered envelopes.
+
+Focused checks and responsive/build evidence are recorded at the top of
+`PROGRESS.md`. No broad suite or CI was run, by explicit project/user instruction.
+The only local untracked path is `.serena/`; preserve it.
+
 ## Attachment clients, worker, and dashboard completion (2026-07-23)
 
 The non-gateway attachment implementation is complete on `feat/multi-file-attachments`: the worker rejects unsafe/duplicate manifest keys, count drift, and invalid or mismatched kind/MIME metadata; emits ordered attachment keys and kinds; and clears file-input state between warm-daemon jobs. TypeScript and Go SDKs expose compatibility aliases plus shared limits, and the CLI accepts one repeatable `--attach path[:kind]` flag per file with drive-letter-safe parsing and deterministic MIME validation. The Hallmark/NAJM dashboard jobs form provides an accessible drag/drop picker, ordered remove/clear list, 10-file/32 MiB-per-file/320 MiB-total client validation, all required component states, multipart submission, and horizontal-overflow protection. VPS worker daemon mode remains explicitly opt-in and false by default.
@@ -55,7 +84,8 @@ Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
 - **BOM regression fixed on this branch:** all eight adapter manifests are now
   BOM-free, and the Go model-catalog loader defensively accepts BOM-prefixed
   bytes with focused regression coverage.
-- Not yet merged to `main`; not deployed to the VPS.
+- Superseded by the 2026-07-24 release state above: merged, pushed, deployed,
+  and live-verified.
 
 ## Latest Slice: Full tracked-file parity local ↔ GitHub ↔ VPS (2026-07-23)
 

@@ -2,6 +2,51 @@
 
 Last updated: 2026-07-24
 
+## 2026-07-24 Multi-file attachment release complete
+
+The contracts-first attachment plan is merged into `main`, pushed to GitHub,
+and deployed from `/opt/docker/ubag` on `185.252.233.186`. Production runs the
+warm worker daemon with target routing: the six live browser providers use the
+long-lived daemon, while mock/generic/unknown targets retain the per-job runner.
+Only one Sync Playwright manager is retained in the daemon thread; same-provider
+jobs reuse the warm page, and a provider/profile switch closes the prior driver
+before constructing the next.
+
+Production evidence:
+
+- Gateway image `sha256:c6fdbaed65986850e9dc1374c95865acc6869b26edb6916da56b5def3493c62f`
+  is healthy; `/v1/ready` reports every check true. Browser and dashboard
+  containers are healthy. The deployed dashboard bundle contains the
+  attachment picker/loading-state strings.
+- Text compatibility: `job_000000000032` completed.
+- Legacy `audio_artifact_key`: ChatGPT `job_000000000034` completed with
+  `UBAG_LEGACY_AUDIO_OK`.
+- Multipart document + WAV: ChatGPT `job_000000000036` and warm-reuse follow-up
+  `job_000000000037` both completed with distinct exact tokens.
+- Key-reference document: DeepSeek `job_000000000041` completed with the exact
+  token read from the uploaded file. Live DeepSeek now exposes its file input
+  only in Instant/Vision; UBAG selects Instant for attachment jobs while
+  text-only jobs retain Expert.
+- Multipart document + WAV: Gemini `job_000000000043` completed with the exact
+  token after the live chooser-trigger path.
+- DeepSeek's current live composer accepts documents/images but silently drops
+  audio (verified with real WAV and MPEG probes). Its adapter policy therefore
+  fail-closes audio/voice/video at create time; production returns HTTP 400 with
+  `UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001` instead of leasing a doomed job.
+
+Release hardening completed during production smoke: local artifact-volume
+ownership, daemon routing for non-live targets, cross-provider Playwright
+manager eviction, optional empty-object queue round-trip equivalence, and
+DeepSeek's attachment-aware mode/policy. Focused checks only (per project rule):
+53 gateway attachment tests in four packages; 19 initial worker attachment
+tests; 41 worker provider/attachment/daemon tests; 84 executor tests; 51
+provider-config/live-adapter tests; TypeScript SDK 3; Go SDK 2; CLI 1; dashboard
+state 3; `svelte-check` 0 errors/0 warnings; one dashboard build; Chromium jobs
+page at 320/375/414/768; 11 adapter-registry tests. No broad suite or CI ran.
+
+Rollback assets are retained at
+`/opt/docker/ubag-sync-backups/attachments-bf54c19-20260724`.
+
 ## 2026-07-23 Attachment clients, worker boundary, and dashboard completion
 
 Completed the non-gateway attachment surface across the worker, SDKs, CLI, dashboard, VPS Compose, and operator documentation:

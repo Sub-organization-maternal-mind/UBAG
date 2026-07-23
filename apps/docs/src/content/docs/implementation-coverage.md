@@ -3,17 +3,32 @@ title: A-Z Implementation Coverage
 description: Exact implementation coverage for the UBAG blueprint, with local evidence and external activation requirements.
 ---
 
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 This ledger maps the UBAG A-Z plan to the current repository implementation. It is intentionally evidence-based: a row is marked **implemented** only when code, docs, configuration, and a validation command exist in this repo.
 
 For future agentic AI continuation, read the root `AGENT_HANDOFF.md` first, then `PROGRESS.md`, then this page. The rendered handoff is also available at `operations/agent-handoff`.
 
+## 2026-07-24 Attachment Production Release
+
+The contracts, gateway, worker, six live-adapter policies, TypeScript/Go SDKs,
+CLI, Hallmark/NAJM dashboard, and warm-daemon runtime are merged, pushed, and
+deployed. Focused checks passed, including the real jobs page at
+320/375/414/768 and a targeted dashboard build.
+
+Production acceptance completed for text compatibility, the legacy single-audio
+alias, ChatGPT multipart document+WAV and warm reuse, DeepSeek document
+key-reference, Gemini multipart document+WAV, the live adapter catalog, and the
+deployed dashboard bundle. DeepSeek Web currently exposes documents/images
+only; UBAG selects its file-capable Instant mode for attachment jobs and rejects
+audio/voice/video at create time because the provider silently drops those
+files.
+
 ## 2026-07-23 Attachment Client and Worker Completion
 
 The multi-file attachment path is implemented across the worker, TypeScript/Go SDKs, repeatable CLI flags, and the Hallmark/NAJM dashboard jobs form. The worker fail-closes unsafe or inconsistent manifests, emits ordered attachment telemetry, and clears file state between warm-daemon jobs. The dashboard validates count, per-file/total size, type, and duplicate names before its authenticated, versioned, idempotent multipart request. VPS worker-daemon mode is explicit and opt-in.
 
-Focused worker, SDK, CLI, and dashboard unit/type checks passed, plus one targeted dashboard build. A dedicated 320/375/414/768 Playwright check exists, but its configured web server missed the local readiness deadline before any test executed; those runtime breakpoints are therefore not claimed as proven by this pass.
+Focused worker, SDK, CLI, and dashboard unit/type checks passed, plus one targeted dashboard build. The later 2026-07-24 release pass also completed the dedicated Chromium check at 320/375/414/768.
 
 ## 2026-07-23 Gemini 3.6 Flash Standard-Mode Pin
 
