@@ -16,7 +16,7 @@
     "test": "node --import tsx --test test/manifest.test.mjs test/permissions.test.mjs test/host.test.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "tsx": "^4.19.2"
   }
 }
