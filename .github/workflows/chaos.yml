@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "${{ env.PYTHON_VERSION }}"
       - name: Install test deps (stdlib only)
@@ -51,7 +51,7 @@ jobs:
     needs: chaos-schema-validate
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "${{ env.PYTHON_VERSION }}"
       - name: Smoke — verify schema validation completes within 60s
@@ -75,7 +75,7 @@ jobs:
     needs: chaos-schema-validate
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "${{ env.PYTHON_VERSION }}"
       - name: Full soak — all experiment schemas + steady-state evaluator
