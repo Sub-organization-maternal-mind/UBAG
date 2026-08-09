@@ -117,6 +117,28 @@ class SelectorConfigTests(unittest.TestCase):
         candidates = get_provider_selectors("deepseek_web").authenticated_signal.as_list()
         self.assertIn("textarea[placeholder*='Message']", candidates)
 
+    def test_chatgpt_settings_follow_advanced_model_menu(self):
+        selectors = get_provider_selectors("chatgpt_web")
+        settings = {setting.key: setting for setting in selectors.settings}
+
+        self.assertEqual(selectors.selector_version, "2026-08-10-advanced-model-menu")
+        self.assertIn(
+            "[role='menuitem'][aria-label='Show advanced options']",
+            settings["model"].open_steps[1],
+        )
+        self.assertEqual(
+            settings["model"].open_steps[2],
+            ("[role='menuitem'][aria-haspopup='menu']:has-text(\"Model\")",),
+        )
+        self.assertIn(
+            "[role='menuitem'][aria-label='Show advanced options']",
+            settings["thinking"].open_steps[1],
+        )
+        self.assertEqual(
+            settings["thinking"].open_steps[2],
+            ("[role='menuitem'][aria-haspopup='menu']:has-text(\"Effort\")",),
+        )
+
 
 class EngineHappyPathTests(unittest.TestCase):
     def test_authenticated_session_streams_and_completes(self):

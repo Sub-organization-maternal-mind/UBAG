@@ -211,7 +211,7 @@ CHATGPT_WEB = ProviderSelectors(
     provider_id="chatgpt_web",
     display_name="ChatGPT Web",
     target_url="https://chatgpt.com/",
-    selector_version="2026-07-17-model-pinned",
+    selector_version="2026-08-10-advanced-model-menu",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
@@ -301,23 +301,16 @@ CHATGPT_WEB = ProviderSelectors(
     # Operator default (always-on), superseding the 2026-06-29 "leave the account
     # default" decision: pin GPT-5.6 Sol + Medium intelligence on every job.
     #
-    # Verified 2026-07-17 against live chatgpt.com (DOM re-baselined; the old
-    # data-testid='model-switcher-dropdown-button' no longer exists). Both
-    # controls live behind ONE composer pill whose label is the current
-    # intelligence level ("Medium"). Clicking it opens a menu containing:
-    #   * the intelligence levels as [role=menuitemradio] — Instant 5.5 / Medium /
-    #     High / Pro (Pro renders cursor-not-allowed on this account), and
-    #   * a nested [role=menuitem][aria-haspopup=menu] opener whose label is the
-    #     CURRENT model ("GPT-5.6 Sol"); clicking it (hover is not required —
-    #     _open_control clicks) reveals the models, also [role=menuitemradio]:
-    #     GPT-5.6 Sol / GPT-5.5 / GPT-5.4 / GPT-5.3 / o3.
-    # Selected state on both = aria-checked='true'.
+    # Re-verified 2026-08-10 against live chatgpt.com. The composer pill still
+    # carries the current effort label ("Medium"), but its compact menu now shows
+    # a Power slider and an Advanced toggle. Expanding Advanced reveals separate
+    # Model and Effort submenu openers; their options remain menuitemradio rows
+    # with aria-checked='true' on the selected value. Escape closes the picker and
+    # resets it to compact mode, so each setting follows the complete path.
     #
-    # Why role=menuitemradio (not :has-text alone): the submenu OPENER carries the
-    # same "GPT-5.6 Sol" text as the model row, but is role=menuitem — matching on
-    # menuitemradio disambiguates. Verified on the live DOM: with the pill menu
-    # open, :has-text("Medium") matches exactly 1 row and no model label contains
-    # "Medium", so the two settings cannot cross-match.
+    # role=menuitemradio remains load-bearing: each submenu opener also contains
+    # the current value, so text matching without the role would click the opener
+    # rather than read or apply the actual option.
     #
     # Order matters: model is enforced BEFORE thinking, because switching model can
     # reset the intelligence level (settings are applied in declaration order).
@@ -331,7 +324,11 @@ CHATGPT_WEB = ProviderSelectors(
                     "button.__composer-pill[aria-haspopup='menu']",
                     "button[class*='composer-pill'][aria-haspopup='menu']",
                 ),
-                ("[role='menuitem'][aria-haspopup='menu']",),
+                (
+                    "[role='menuitem'][aria-label='Show advanced options']",
+                    "[role='menuitem'][aria-expanded='false']:has-text(\"Advanced\")",
+                ),
+                ("[role='menuitem'][aria-haspopup='menu']:has-text(\"Model\")",),
             ),
             satisfied_when="[role='menuitemradio'][aria-checked='true']:has-text(\"{value}\")",
             apply_click="[role='menuitemradio']:has-text(\"{value}\")",
@@ -345,6 +342,11 @@ CHATGPT_WEB = ProviderSelectors(
                     "button.__composer-pill[aria-haspopup='menu']",
                     "button[class*='composer-pill'][aria-haspopup='menu']",
                 ),
+                (
+                    "[role='menuitem'][aria-label='Show advanced options']",
+                    "[role='menuitem'][aria-expanded='false']:has-text(\"Advanced\")",
+                ),
+                ("[role='menuitem'][aria-haspopup='menu']:has-text(\"Effort\")",),
             ),
             satisfied_when="[role='menuitemradio'][aria-checked='true']:has-text(\"{value}\")",
             apply_click="[role='menuitemradio']:has-text(\"{value}\")",
