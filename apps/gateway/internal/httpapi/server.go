@@ -311,10 +311,32 @@ type Server struct {
 }
 
 type metricState struct {
-	mu          sync.Mutex
-	requests    map[string]int
-	durationSum map[string]float64
-	sseCurrent  int
+	mu                 sync.Mutex
+	requests           map[string]int
+	durationSum        map[string]float64
+	sseCurrent         int
+	queueWait          durationAggregate
+	workerRuns         map[string]durationAggregate
+	ingestionEvents    map[string]uint64
+	ingestionDurations map[string]durationAggregate
+	jobDurations       map[string]durationAggregate
+	terminalObserved   map[string]struct{}
+	terminalOrder      []string
+	terminalCursor     int
+}
+
+type durationAggregate struct {
+	count   uint64
+	sum     float64
+	buckets [durationBucketCount]uint64
+}
+
+const durationBucketCount = 15
+
+var durationBucketBounds = [durationBucketCount]float64{
+	0.005, 0.01, 0.025, 0.05, 0.1,
+	0.25, 0.5, 1, 2.5, 5,
+	10, 30, 60, 120, 300,
 }
 
 type statusRecorder struct {
@@ -457,8 +479,13 @@ func NewServer(config Config) *Server {
 		jitAdmin:         config.JITAdmin,
 
 		metrics: &metricState{
-			requests:    make(map[string]int),
-			durationSum: make(map[string]float64),
+			requests:           make(map[string]int),
+			durationSum:        make(map[string]float64),
+			workerRuns:         make(map[string]durationAggregate),
+			ingestionEvents:    make(map[string]uint64),
+			ingestionDurations: make(map[string]durationAggregate),
+			jobDurations:       make(map[string]durationAggregate),
+			terminalObserved:   make(map[string]struct{}),
 		},
 		mux: chi.NewRouter(),
 	}
@@ -725,6 +752,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to collect webhook metrics"))
 		return
 	}
+	runtimeMetrics := s.runtimeMetricsSnapshot()
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	w.WriteHeader(http.StatusOK)
@@ -750,16 +778,48 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, "ubag_queue_depth{queue=\"%s\",state=\"%s\"} %d\n", promLabel(queueStats.QueueName), promLabel(state), queueStats.DepthByState[state])
 		_, _ = fmt.Fprintf(w, "ubag_queue_oldest_job_age_seconds{queue=\"%s\",state=\"%s\"} %.6f\n", promLabel(queueStats.QueueName), promLabel(state), queueStats.OldestAgeByState[state].Seconds())
 	}
-	workerSuccess := stateCounts[string(jobstore.StatusCompleted)] + stateCounts[string(jobstore.StatusCompletedWithWarnings)]
-	workerFailure := stateCounts[string(jobstore.StatusFailedRetryable)] + stateCounts[string(jobstore.StatusFailedTerminal)] + stateCounts[string(jobstore.StatusDeadLetter)] + stateCounts[string(jobstore.StatusTimedOut)]
-	_, _ = fmt.Fprintf(w, "ubag_worker_jobs_processed_total{worker_pool=\"local\",adapter_family=\"mock\",outcome=\"success\"} %d\n", workerSuccess)
-	_, _ = fmt.Fprintf(w, "ubag_worker_jobs_processed_total{worker_pool=\"local\",adapter_family=\"mock\",outcome=\"failure\"} %d\n", workerFailure)
-	_, _ = fmt.Fprintf(w, "ubag_worker_job_duration_seconds_count{worker_pool=\"local\",adapter_family=\"mock\",outcome=\"success\"} %d\n", workerSuccess)
-	_, _ = fmt.Fprint(w, "ubag_worker_job_duration_seconds_sum{worker_pool=\"local\",adapter_family=\"mock\",outcome=\"success\"} 0\n")
-	_, _ = fmt.Fprintf(w, "ubag_worker_result_ingestions_total{worker_pool=\"local\",adapter_family=\"mock\",outcome=\"success\",error_class=\"none\"} %d\n", workerSuccess)
-	_, _ = fmt.Fprintf(w, "ubag_worker_result_ingestions_total{worker_pool=\"local\",adapter_family=\"mock\",outcome=\"failure\",error_class=\"worker_execution\"} %d\n", workerFailure)
-	_, _ = fmt.Fprintf(w, "ubag_worker_result_ingestion_duration_seconds_count{worker_pool=\"local\",adapter_family=\"mock\",outcome=\"success\"} %d\n", workerSuccess)
-	_, _ = fmt.Fprint(w, "ubag_worker_result_ingestion_duration_seconds_sum{worker_pool=\"local\",adapter_family=\"mock\",outcome=\"success\"} 0\n")
+	_, _ = fmt.Fprint(w, "# TYPE ubag_queue_job_wait_duration_seconds histogram\n")
+	writeDurationHistogram(
+		w,
+		"ubag_queue_job_wait_duration_seconds",
+		fmt.Sprintf(`queue="%s"`, promLabel(queueStats.QueueName)),
+		runtimeMetrics.queueWait,
+	)
+	_, _ = fmt.Fprint(w, "# TYPE ubag_worker_job_duration_seconds histogram\n")
+	for _, key := range metricKeysWithDefaults(runtimeMetrics.workerRuns, []string{"mock\x00success", "mock\x00failure"}) {
+		parts := strings.Split(key, "\x00")
+		aggregate := runtimeMetrics.workerRuns[key]
+		_, _ = fmt.Fprintf(w, "ubag_worker_jobs_processed_total{worker_pool=\"local\",adapter_family=\"%s\",outcome=\"%s\"} %d\n", promLabel(parts[0]), promLabel(parts[1]), aggregate.count)
+		writeDurationHistogram(
+			w,
+			"ubag_worker_job_duration_seconds",
+			fmt.Sprintf(
+				`worker_pool="local",adapter_family="%s",outcome="%s"`,
+				promLabel(parts[0]),
+				promLabel(parts[1]),
+			),
+			aggregate,
+		)
+	}
+	for _, key := range counterKeysWithDefaults(runtimeMetrics.ingestionEvents, []string{"mock\x00success\x00none", "mock\x00failure\x00worker_execution"}) {
+		parts := strings.Split(key, "\x00")
+		_, _ = fmt.Fprintf(w, "ubag_worker_result_ingestions_total{worker_pool=\"local\",adapter_family=\"%s\",outcome=\"%s\",error_class=\"%s\"} %d\n", promLabel(parts[0]), promLabel(parts[1]), promLabel(parts[2]), runtimeMetrics.ingestionEvents[key])
+	}
+	_, _ = fmt.Fprint(w, "# TYPE ubag_worker_result_ingestion_duration_seconds histogram\n")
+	for _, key := range metricKeysWithDefaults(runtimeMetrics.ingestionDurations, []string{"mock\x00success"}) {
+		parts := strings.Split(key, "\x00")
+		aggregate := runtimeMetrics.ingestionDurations[key]
+		writeDurationHistogram(
+			w,
+			"ubag_worker_result_ingestion_duration_seconds",
+			fmt.Sprintf(
+				`worker_pool="local",adapter_family="%s",outcome="%s"`,
+				promLabel(parts[0]),
+				promLabel(parts[1]),
+			),
+			aggregate,
+		)
+	}
 	for _, state := range webhookMetricStates(webhookStats) {
 		_, _ = fmt.Fprintf(w, "ubag_webhook_outbox_depth{endpoint_kind=\"job_callback\",state=\"%s\"} %d\n", promLabel(state), webhookStats.DepthByState[state])
 		_, _ = fmt.Fprintf(w, "ubag_webhook_outbox_oldest_age_seconds{endpoint_kind=\"job_callback\",state=\"%s\"} %.6f\n", promLabel(state), webhookStats.OldestAgeByState[state].Seconds())
@@ -811,9 +871,19 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "ubag_webhook_delivery_duration_seconds_count{endpoint_kind=\"job_callback\",outcome=\"success\"} %d\n", webhookDeliveries)
 	_, _ = fmt.Fprint(w, "ubag_webhook_delivery_duration_seconds_sum{endpoint_kind=\"job_callback\",outcome=\"success\"} 0\n")
 
-	// Job end-to-end duration histogram stub.
-	_, _ = fmt.Fprint(w, "ubag_jobs_duration_seconds_count{target_family=\"all\",command_type=\"all\",terminal_state=\"completed\"} 0\n")
-	_, _ = fmt.Fprint(w, "ubag_jobs_duration_seconds_sum{target_family=\"all\",command_type=\"all\",terminal_state=\"completed\"} 0\n")
+	_, _ = fmt.Fprint(w, "# TYPE ubag_jobs_duration_seconds histogram\n")
+	for _, status := range metricKeysWithDefaults(runtimeMetrics.jobDurations, []string{string(jobstore.StatusCompleted)}) {
+		aggregate := runtimeMetrics.jobDurations[status]
+		writeDurationHistogram(
+			w,
+			"ubag_jobs_duration_seconds",
+			fmt.Sprintf(
+				`target_family="all",command_type="all",terminal_state="%s"`,
+				promLabel(status),
+			),
+			aggregate,
+		)
+	}
 }
 
 func (s *Server) jobMetricCounts(ctx context.Context) (map[string]int, int, error) {
@@ -2037,6 +2107,9 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if jobstore.TerminalStatus(job.Status) {
+		if !job.CreatedAt.IsZero() && !job.UpdatedAt.Before(job.CreatedAt) {
+			s.ObserveJobEndToEnd(job.ID, job.Status, job.UpdatedAt.Sub(job.CreatedAt))
+		}
 		// Return the job's in-flight token. ReleaseForJob is keyed by job ID and
 		// idempotent, so it is safe against every prior release of this job — a
 		// worker that already failed/completed it, or a concurrent/duplicate
@@ -3449,6 +3522,14 @@ type metricSnapshot struct {
 	durationSum float64
 }
 
+type runtimeMetricSnapshot struct {
+	queueWait          durationAggregate
+	workerRuns         map[string]durationAggregate
+	ingestionEvents    map[string]uint64
+	ingestionDurations map[string]durationAggregate
+	jobDurations       map[string]durationAggregate
+}
+
 type traceContextKey struct{}
 type principalContextKey struct{}
 
@@ -3493,12 +3574,19 @@ func (s *Server) withMetrics(next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		s.recordMetric(routePattern(r.URL.Path), r.Method, status, time.Since(start))
+		route := chi.RouteContext(r.Context()).RoutePattern()
+		if route == "" {
+			route = "unmatched"
+		}
+		s.recordMetric(route, metricMethod(r.Method), status, time.Since(start))
 	})
 }
 
 func (s *Server) recordMetric(route, method string, status int, duration time.Duration) {
-	statusClass := fmt.Sprintf("%dxx", status/100)
+	statusClass := "other"
+	if status >= 100 && status <= 599 {
+		statusClass = fmt.Sprintf("%dxx", status/100)
+	}
 	outcome := "success"
 	if status >= 400 {
 		outcome = "error"
@@ -3509,6 +3597,81 @@ func (s *Server) recordMetric(route, method string, status int, duration time.Du
 	defer s.metrics.mu.Unlock()
 	s.metrics.requests[key]++
 	s.metrics.durationSum[key] += duration.Seconds()
+}
+
+func (s *Server) ObserveQueueWait(duration time.Duration) {
+	if duration < 0 {
+		return
+	}
+	s.metrics.mu.Lock()
+	defer s.metrics.mu.Unlock()
+	s.metrics.queueWait = addDuration(s.metrics.queueWait, duration)
+}
+
+func (s *Server) ObserveWorkerRun(target, outcome string, duration time.Duration) {
+	s.observeDuration(s.metrics.workerRuns, metricKey(adapterFamily(target), metricOutcome(outcome)), duration)
+}
+
+func (s *Server) ObserveWorkerResultIngestion(target, outcome, errorClass string, events int, duration time.Duration) {
+	family := adapterFamily(target)
+	outcome = metricOutcome(outcome)
+	errorClass = metricErrorClass(errorClass)
+	s.metrics.mu.Lock()
+	defer s.metrics.mu.Unlock()
+	if events > 0 {
+		s.metrics.ingestionEvents[metricKey(family, outcome, errorClass)] += uint64(events)
+	}
+	if duration >= 0 {
+		key := metricKey(family, outcome)
+		s.metrics.ingestionDurations[key] = addDuration(
+			s.metrics.ingestionDurations[key],
+			duration,
+		)
+	}
+}
+
+func (s *Server) ObserveJobEndToEnd(jobID string, status jobstore.Status, duration time.Duration) {
+	if strings.TrimSpace(jobID) == "" || !jobstore.TerminalStatus(status) || duration < 0 {
+		return
+	}
+	s.metrics.mu.Lock()
+	defer s.metrics.mu.Unlock()
+	if _, observed := s.metrics.terminalObserved[jobID]; observed {
+		return
+	}
+	const terminalObservationCapacity = 4096
+	if len(s.metrics.terminalOrder) < terminalObservationCapacity {
+		s.metrics.terminalOrder = append(s.metrics.terminalOrder, jobID)
+	} else {
+		evicted := s.metrics.terminalOrder[s.metrics.terminalCursor]
+		delete(s.metrics.terminalObserved, evicted)
+		s.metrics.terminalOrder[s.metrics.terminalCursor] = jobID
+		s.metrics.terminalCursor = (s.metrics.terminalCursor + 1) % terminalObservationCapacity
+	}
+	s.metrics.terminalObserved[jobID] = struct{}{}
+	key := string(status)
+	s.metrics.jobDurations[key] = addDuration(s.metrics.jobDurations[key], duration)
+}
+
+func (s *Server) observeDuration(target map[string]durationAggregate, key string, duration time.Duration) {
+	if duration < 0 {
+		return
+	}
+	s.metrics.mu.Lock()
+	defer s.metrics.mu.Unlock()
+	target[key] = addDuration(target[key], duration)
+}
+
+func addDuration(aggregate durationAggregate, duration time.Duration) durationAggregate {
+	seconds := duration.Seconds()
+	aggregate.count++
+	aggregate.sum += seconds
+	for index, upperBound := range durationBucketBounds {
+		if seconds <= upperBound {
+			aggregate.buckets[index]++
+		}
+	}
+	return aggregate
 }
 
 func (s *Server) incrementSSEConnections() {
@@ -3557,7 +3720,132 @@ func (s *Server) metricsSnapshot() []metricSnapshot {
 	return snapshots
 }
 
+func (s *Server) runtimeMetricsSnapshot() runtimeMetricSnapshot {
+	s.metrics.mu.Lock()
+	defer s.metrics.mu.Unlock()
+	return runtimeMetricSnapshot{
+		queueWait:          s.metrics.queueWait,
+		workerRuns:         cloneDurationAggregates(s.metrics.workerRuns),
+		ingestionEvents:    cloneMetricCounters(s.metrics.ingestionEvents),
+		ingestionDurations: cloneDurationAggregates(s.metrics.ingestionDurations),
+		jobDurations:       cloneDurationAggregates(s.metrics.jobDurations),
+	}
+}
+
+func cloneDurationAggregates(source map[string]durationAggregate) map[string]durationAggregate {
+	result := make(map[string]durationAggregate, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func cloneMetricCounters(source map[string]uint64) map[string]uint64 {
+	result := make(map[string]uint64, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func writeDurationHistogram(
+	writer io.Writer,
+	name string,
+	labels string,
+	aggregate durationAggregate,
+) {
+	for index, upperBound := range durationBucketBounds {
+		_, _ = fmt.Fprintf(
+			writer,
+			"%s_bucket{%s,le=\"%s\"} %d\n",
+			name,
+			labels,
+			strconv.FormatFloat(upperBound, 'g', -1, 64),
+			aggregate.buckets[index],
+		)
+	}
+	_, _ = fmt.Fprintf(
+		writer,
+		"%s_bucket{%s,le=\"+Inf\"} %d\n",
+		name,
+		labels,
+		aggregate.count,
+	)
+	_, _ = fmt.Fprintf(writer, "%s_sum{%s} %.6f\n", name, labels, aggregate.sum)
+	_, _ = fmt.Fprintf(writer, "%s_count{%s} %d\n", name, labels, aggregate.count)
+}
+
+func metricKeysWithDefaults(values map[string]durationAggregate, defaults []string) []string {
+	keys := make(map[string]struct{}, len(values)+len(defaults))
+	for key := range values {
+		keys[key] = struct{}{}
+	}
+	for _, key := range defaults {
+		keys[key] = struct{}{}
+	}
+	return sortedMetricKeys(keys)
+}
+
+func counterKeysWithDefaults(values map[string]uint64, defaults []string) []string {
+	keys := make(map[string]struct{}, len(values)+len(defaults))
+	for key := range values {
+		keys[key] = struct{}{}
+	}
+	for _, key := range defaults {
+		keys[key] = struct{}{}
+	}
+	return sortedMetricKeys(keys)
+}
+
+func sortedMetricKeys(values map[string]struct{}) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func metricKey(parts ...string) string {
+	return strings.Join(parts, "\x00")
+}
+
+func adapterFamily(target string) string {
+	target = strings.ToLower(strings.TrimSpace(target))
+	switch {
+	case target == "mock":
+		return "mock"
+	case strings.HasSuffix(target, "_web"), strings.HasPrefix(target, "generic_"):
+		return "browser"
+	default:
+		return "other"
+	}
+}
+
+func metricOutcome(outcome string) string {
+	switch strings.ToLower(strings.TrimSpace(outcome)) {
+	case "success":
+		return "success"
+	case "cancelled":
+		return "cancelled"
+	default:
+		return "failure"
+	}
+}
+
+func metricErrorClass(errorClass string) string {
+	switch strings.ToLower(strings.TrimSpace(errorClass)) {
+	case "none", "worker_execution", "invalid_event", "store", "missing_job", "empty_result", "missing_terminal":
+		return strings.ToLower(strings.TrimSpace(errorClass))
+	default:
+		return "other"
+	}
+}
+
 func routePattern(path string) string {
+	if path == "/v1/jobs" {
+		return path
+	}
 	segments := splitRouteTail(path, "/")
 	if len(segments) >= 3 && segments[0] == "v1" && segments[1] == "jobs" {
 		if len(segments) == 3 {
@@ -3569,39 +3857,37 @@ func routePattern(path string) string {
 		if len(segments) == 5 && segments[3] == "artifacts" {
 			return "/v1/jobs/{job_id}/artifacts/{key}"
 		}
-		if len(segments) == 4 && (segments[3] == "events" || segments[3] == "cancel" || segments[3] == "retry") {
+		if len(segments) == 4 &&
+			(segments[3] == "events" || segments[3] == "cancel" || segments[3] == "retry") {
 			return "/v1/jobs/{job_id}/" + segments[3]
 		}
 	}
-	if len(segments) == 3 && segments[0] == "v1" && segments[1] == "sse" && segments[2] == "jobs" {
-		return "/v1/sse/jobs/{job_id}"
+	return "unmatched"
+}
+
+func metricMethod(method string) string {
+	switch strings.ToUpper(strings.TrimSpace(method)) {
+	case http.MethodGet:
+		return http.MethodGet
+	case http.MethodHead:
+		return http.MethodHead
+	case http.MethodPost:
+		return http.MethodPost
+	case http.MethodPut:
+		return http.MethodPut
+	case http.MethodPatch:
+		return http.MethodPatch
+	case http.MethodDelete:
+		return http.MethodDelete
+	case http.MethodConnect:
+		return http.MethodConnect
+	case http.MethodOptions:
+		return http.MethodOptions
+	case http.MethodTrace:
+		return http.MethodTrace
+	default:
+		return "OTHER"
 	}
-	if strings.HasPrefix(path, "/v1/sse/jobs/") {
-		return "/v1/sse/jobs/{job_id}"
-	}
-	if len(segments) == 5 && segments[0] == "v1" && segments[1] == "scim" && segments[2] == "v2" {
-		switch segments[3] {
-		case "Users":
-			return "/v1/scim/v2/Users/{id}"
-		case "Groups":
-			return "/v1/scim/v2/Groups/{id}"
-		}
-	}
-	if len(segments) >= 3 && segments[0] == "v1" && segments[1] == "workflows" {
-		if len(segments) == 3 && segments[2] == "runs" {
-			return "/v1/workflows/runs"
-		}
-		if len(segments) == 3 {
-			return "/v1/workflows/{id}"
-		}
-		if len(segments) == 4 && segments[2] == "runs" {
-			return "/v1/workflows/runs/{id}"
-		}
-		if len(segments) == 4 && segments[3] == "runs" {
-			return "/v1/workflows/{id}/runs"
-		}
-	}
-	return path
 }
 
 func (s *Server) withTrace(next http.Handler) http.Handler {

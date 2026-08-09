@@ -154,7 +154,7 @@ func rateLimitAction(method, path string) string {
 	case method == http.MethodGet:
 		return "job:read"
 	default:
-		return method + " " + p
+		return metricMethod(method) + " " + p
 	}
 }
 

@@ -117,6 +117,14 @@ export const OBSERVABILITY_METRICS = Object.freeze([
     description: "Age of the oldest queued job by queue and state."
   }),
   metric({
+    name: "ubag_queue_job_wait_duration_seconds",
+    type: "histogram",
+    owner: "queue",
+    unit: "seconds",
+    labels: ["queue"],
+    description: "Time from a job entering the runnable queue until a worker leases it."
+  }),
+  metric({
     name: "ubag_worker_jobs_processed_total",
     type: "counter",
     owner: "worker",

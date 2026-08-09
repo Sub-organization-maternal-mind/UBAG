@@ -699,9 +699,9 @@ def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _Normali
 
     account_binding_id = _clean_text(context.get("account_binding_id"), "unbound")
     tenant_id = _string_or_default(
-        context.get("tenant_id")
+        payload.get("tenant_id")
         or job_payload.get("tenant_id")
-        or payload.get("tenant_id"),
+        or context.get("tenant_id"),
         "default",
     )
     conversation_id = _optional_string(

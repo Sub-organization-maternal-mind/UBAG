@@ -1,6 +1,62 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-07-24
+Last updated: 2026-08-10
+
+## 2026-08-10 Production performance baseline and hardening
+
+A deterministic, dependency-free benchmark now measures UBAG's canonical mock
+job path without allowing live targets. `acceptance` measures only job creation;
+`mock-e2e` follows the response `Location`, polls to a terminal state, and
+derives queue/worker timings from canonical events. Remote runs require explicit
+authorization and HTTPS. Output is sanitized and contains no secret, prompt,
+tenant, job payload, or response body. The runner reports raw samples plus
+p50/p95/p99/min/max/mean/sample variance.
+
+Matched production measurements on VPS `185.252.233.186` used one warmup, 20
+samples, a 25 ms benchmark poll, and the deterministic `mock` target:
+
+| Worker spool poll | E2E p50 | E2E p95 | Queue p50 | Queue p95 | Worker p50 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 500 ms baseline | 841.8 ms | 1145.8 ms | 469 ms | 504.8 ms | 338 ms |
+| 150 ms optimized | 495.8 ms | 628.8 ms | 122 ms | 143.8 ms | 327.5 ms |
+
+The corrected phase calculation uses persisted `queued -> assigned` events for
+queue wait and `assigned -> completed` for worker processing plus result
+ingestion. The 150 ms poll reduced E2E p50 by 41.1% and p95 by 45.1%; queue p50
+fell 74.0% and p95 fell 71.5%. Matched idle samples after startup were generally
+0.4-0.8% gateway CPU at 150 ms versus 0.1-0.9% at 500 ms. Production retains
+`UBAG_WORKER_POLL_INTERVAL_MS=150` and
+`UBAG_WORKER_MAX_RUNTIME_MS=1500000`; VPS Compose and its env example now carry
+those defaults.
+
+The worker warm path is hardened so reuse identity comes from the live engine's
+canonical payload normalization, including `tenant_id` and resolved browser
+profile. Closed Playwright pages cannot be reused. A hard daemon deadline emits
+one explicit failed terminal marker before process exit instead of surfacing as
+an unexplained EOF. When a required provider setting cannot be selected while a
+sign-in control is visible, the worker now reports `manual_login_required`
+without entering credentials.
+
+Gateway Prometheus output now records real bounded histograms for queue wait,
+worker run, worker-result ingestion, and terminal end-to-end duration. Labels
+are bounded adapter families, outcomes/statuses, and controlled error classes;
+raw targets and identifiers are excluded. The existing zero placeholders for
+worker and end-to-end duration are replaced by observed buckets/counts/sums, and
+the observability contract now includes
+`ubag_queue_job_wait_duration_seconds`.
+
+Gemini live probes established that HTTP CDP health alone did not guarantee a
+responsive Chrome command channel. Restarting only the browser restored CDP,
+and rejecting Google's cookie dialog proved the model selectors still match.
+The persistent Gemini profile is currently signed out, so selecting `3.6 Flash`
+requires a human login and safe-mode forbids automating it. The 300-second
+runtime experiment did not improve the failure; the final 1500-second guard
+covers auth readiness, the manual-login window, up to three bounded 360-second
+reasoning attempts, and cleanup without clipping a valid response.
+
+Focused validation: benchmark **16/16**, worker hardening **40/40**,
+observability contracts **6/6**, and focused gateway executor/httpapi/serve
+packages passed. No broad suite or CI ran per project instruction.
 
 ## 2026-07-24 Production Jobs page response-shape fix
 

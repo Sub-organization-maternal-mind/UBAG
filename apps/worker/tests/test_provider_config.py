@@ -32,6 +32,10 @@ from ubag_worker.live.engine import (  # noqa: E402
     _flag,
     _resolve_provider_config,
 )
+from ubag_worker.live.page_driver import (  # noqa: E402
+    ManualActionRequired,
+    PlaywrightPageDriver,
+)
 from ubag_worker.live.selectors import get_provider_selectors  # noqa: E402
 
 _MANUAL_CONTEXT = {
@@ -76,6 +80,33 @@ class _FlakyDriver(MockPageDriver):
             self._fails -= 1
             raise RuntimeError("transient CDP hiccup")
         return super().submit_prompt(selectors, prompt)
+
+
+class _SettledPage:
+    @staticmethod
+    def wait_for_timeout(_timeout_ms):
+        return None
+
+
+class _LoginRequiredSettingDriver(PlaywrightPageDriver):
+    def __init__(self):
+        super().__init__()
+        self._page = _SettledPage()
+
+    def _open_control(self, _open_steps):
+        return None
+
+    def _setting_satisfied(self, _setting, _desired):
+        return False
+
+    def _apply_setting(self, _setting, _desired):
+        return False
+
+    def _present(self, group, *, timeout_ms=3000):
+        return group.name == "login_signal"
+
+    def _dismiss_menus(self):
+        return None
 
 
 def _types(events):
@@ -127,6 +158,17 @@ class NewChatAndConfigTests(unittest.TestCase):
         self.assertEqual(blocked[0]["data"]["selector_group"], "setting:mode")
         # never proceeds to submit / completion on a config drift
         self.assertNotIn("completed", _types(events))
+
+    def test_unavailable_setting_with_sign_in_visible_requests_manual_login(self):
+        selectors = get_provider_selectors("gemini_web")
+        setting = selectors.settings[0]
+
+        with self.assertRaises(ManualActionRequired) as raised:
+            _LoginRequiredSettingDriver()._ensure_setting(
+                selectors, setting, setting.desired
+            )
+
+        self.assertEqual(raised.exception.reason, "manual_login_required")
 
     def test_gemini_pins_3_6_flash_and_disables_extended_thinking(self):
         selectors = get_provider_selectors("gemini_web")

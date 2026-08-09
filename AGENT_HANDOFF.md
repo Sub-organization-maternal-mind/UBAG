@@ -1,6 +1,32 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-07-24
+Last updated: 2026-08-10
+
+## Production performance state (2026-08-10)
+
+Production VPS `185.252.233.186` retains a 150 ms file-spool worker poll and a
+1500-second worker ceiling. In matched 20-sample deterministic mock runs, E2E
+p50/p95 improved from **841.8/1145.8 ms** to **495.8/628.8 ms**, while queue
+p50/p95 improved from **469/504.8 ms** to **122/143.8 ms**. Queue uses persisted
+`queued -> assigned`; worker processing uses `assigned -> completed`. Idle
+gateway CPU remained low, generally 0.4-0.8% after startup. The benchmark runner is
+`tools/benchmark/run.mjs`; it is mock-only, sanitized, HTTPS-gated for remote
+targets, and covered by 16 tests.
+
+Warm-browser isolation now keys reuse through canonical live-engine
+normalization (trusted gateway `tenant_id`, target, resolved profile), rejects
+closed/unresponsive pages and any non-successful prior job, and emits an
+explicit terminal failure before a hard deadline exit. Provider
+setting failures with visible sign-in UI report `manual_login_required`.
+Gateway metrics now observe real queue, worker, ingestion, and terminal
+end-to-end durations with bounded privacy-safe labels.
+
+Gemini's selectors are valid, but its persistent production Chrome profile is
+currently signed out; a human must log in before `3.6 Flash` can run again.
+Safe-mode forbids automated login, credential storage, and CAPTCHA solving.
+Restarting the browser container restored a hung CDP command channel without
+removing its persistent profile volume. Source deployment verification is the
+remaining step for this slice.
 
 ## Production Jobs page response-shape fix (2026-07-24)
 

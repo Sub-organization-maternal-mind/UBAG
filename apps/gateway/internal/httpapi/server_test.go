@@ -346,6 +346,64 @@ func TestTemplatesCatalogReturnsBuiltIns(t *testing.T) {
 	}
 }
 
+func TestMetricsExposeMeasuredWorkerQueueAndJobDurations(t *testing.T) {
+	server := NewServer(Config{Version: "test", AppSecret: "dev-secret"})
+	server.ObserveQueueWait(125 * time.Millisecond)
+	server.ObserveWorkerRun("gemini_web", "success", 2*time.Second)
+	server.ObserveWorkerResultIngestion("gemini_web", "success", "none", 3, 50*time.Millisecond)
+	server.ObserveJobEndToEnd("job_metrics_1", jobstore.StatusCompleted, 2500*time.Millisecond)
+	server.ObserveJobEndToEnd("job_metrics_1", jobstore.StatusCompleted, 9*time.Second)
+
+	response := doJSON(server.Handler(), http.MethodGet, "/v1/metrics", "", nil)
+	body := response.Body.String()
+	for _, expected := range []string{
+		`# TYPE ubag_queue_job_wait_duration_seconds histogram`,
+		`ubag_queue_job_wait_duration_seconds_bucket{queue="jobs",le="0.25"} 1`,
+		`ubag_queue_job_wait_duration_seconds_count{queue="jobs"} 1`,
+		`ubag_queue_job_wait_duration_seconds_sum{queue="jobs"} 0.125000`,
+		`ubag_worker_job_duration_seconds_bucket{worker_pool="local",adapter_family="browser",outcome="success",le="2.5"} 1`,
+		`ubag_worker_job_duration_seconds_sum{worker_pool="local",adapter_family="browser",outcome="success"} 2.000000`,
+		`ubag_worker_result_ingestions_total{worker_pool="local",adapter_family="browser",outcome="success",error_class="none"} 3`,
+		`ubag_worker_result_ingestion_duration_seconds_sum{worker_pool="local",adapter_family="browser",outcome="success"} 0.050000`,
+		`ubag_jobs_duration_seconds_sum{target_family="all",command_type="all",terminal_state="completed"} 2.500000`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("metrics missing %q:\n%s", expected, body)
+		}
+	}
+	if strings.Contains(body, "gemini_web") {
+		t.Fatalf("metrics leaked raw target label:\n%s", body)
+	}
+}
+
+func TestHTTPMetricsBoundUnmatchedRoutesAndMethods(t *testing.T) {
+	server := NewServer(Config{Version: "test", AppSecret: "dev-secret"})
+	handler := server.Handler()
+	for index := 0; index < 64; index++ {
+		response := doJSON(
+			handler,
+			fmt.Sprintf("CUSTOM-%d", index),
+			fmt.Sprintf("/private/%d/prompt-content", index),
+			"",
+			nil,
+		)
+		if response.Code != http.StatusNotFound && response.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("unmatched status = %d, want 404 or 405", response.Code)
+		}
+	}
+
+	snapshots := server.metricsSnapshot()
+	if len(snapshots) != 1 {
+		t.Fatalf("unmatched requests produced %d metric label sets, want 1: %#v", len(snapshots), snapshots)
+	}
+	if snapshots[0].route != "unmatched" || snapshots[0].method != "OTHER" {
+		t.Fatalf("unbounded metric labels: %#v", snapshots[0])
+	}
+	if snapshots[0].count != 64 {
+		t.Fatalf("unmatched metric count = %d, want 64", snapshots[0].count)
+	}
+}
+
 func TestCollectionsRespectLimitAndCursor(t *testing.T) {
 	server := NewServer(Config{Version: "test", AppSecret: "dev-secret"}).Handler()
 

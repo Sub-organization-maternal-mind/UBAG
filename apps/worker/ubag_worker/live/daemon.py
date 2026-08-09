@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Iterator, Mapping, Optional, Tuple
 
-from .engine import LiveSessionEngine
+from .engine import LiveSessionEngine, _normalize_payload
 from .page_driver import PageDriver, create_default_driver
 from .selectors import PROVIDER_SELECTORS
 
@@ -56,12 +56,9 @@ def _driver_key(payload: Mapping[str, Any]) -> DriverKey:
     logged-in identities -- so it is part of the key. A warm page is NEVER shared
     across keys.
     """
-    job_field = payload.get("job", {})
-    if not isinstance(job_field, Mapping):
-        job_field = {}
-    tenant = str(job_field.get("tenant", payload.get("tenant", "")) or "")
-    profile = str(payload.get("user_data_dir", job_field.get("user_data_dir", "")) or "")
-    return (tenant, _target_from_payload(payload), profile)
+    target = _target_from_payload(payload)
+    normalized = _normalize_payload(payload, target)
+    return (normalized.tenant_id, target, normalized.user_data_dir)
 
 
 class WarmWorkerDaemon:
@@ -94,8 +91,16 @@ class WarmWorkerDaemon:
         self._evict_other_keys(key)
         driver = self._checkout(key, selectors, payload)
         engine = self._engine_factory(selectors)
+        completed = False
         try:
             for event in engine.iter_events(payload, driver=driver):
+                event_type = str(
+                    event.get("type", event.get("event_type", ""))
+                    if isinstance(event, Mapping)
+                    else ""
+                )
+                if event_type in ("completed", "completed_with_warnings"):
+                    completed = True
                 yield event
         except BaseException:
             # Includes GeneratorExit (consumer abandoned the job) and timeouts.
@@ -105,8 +110,12 @@ class WarmWorkerDaemon:
             _close_quietly(driver)
             raise
 
-        # Only a cleanly finished job may leave its page warm.
-        self._warm[key] = driver
+        if completed:
+            self._warm[key] = driver
+        else:
+            # A blocked/manual-action result returns normally from the engine but
+            # can leave menus, overlays, or a partial turn behind. Never reuse it.
+            _close_quietly(driver)
 
     def _evict_other_keys(self, key: DriverKey) -> None:
         """Keep at most one Sync Playwright manager alive in this thread.

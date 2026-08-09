@@ -38,9 +38,11 @@ func TestWorkerConsumerRunOnceIngestsWorkerEventsAndCompletesLease(t *testing.T)
 		t.Fatalf("EnqueueJob returned error: %v", err)
 	}
 
+	metrics := &recordingWorkerMetrics{}
 	consumer := WorkerConsumer{
-		Spool: dispatcher,
-		Jobs:  store,
+		Spool:   dispatcher,
+		Jobs:    store,
+		Metrics: metrics,
 		Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
 			return []jobstore.WorkerEvent{
 				{EventID: "worker_evt_running", JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "running", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{"status": "running"}},
@@ -69,6 +71,18 @@ func TestWorkerConsumerRunOnceIngestsWorkerEventsAndCompletesLease(t *testing.T)
 	}
 	if len(doneEntries) != 1 {
 		t.Fatalf("done entries = %d, want 1", len(doneEntries))
+	}
+	if len(metrics.queueWaits) != 1 {
+		t.Fatalf("queue wait observations = %d, want 1", len(metrics.queueWaits))
+	}
+	if len(metrics.workerRuns) != 1 || metrics.workerRuns[0].target != "mock" || metrics.workerRuns[0].outcome != "success" {
+		t.Fatalf("worker observations = %#v", metrics.workerRuns)
+	}
+	if len(metrics.ingestions) != 1 || metrics.ingestions[0].events != 2 || metrics.ingestions[0].outcome != "success" {
+		t.Fatalf("ingestion observations = %#v", metrics.ingestions)
+	}
+	if len(metrics.terminals) != 1 || metrics.terminals[0].status != jobstore.StatusCompleted {
+		t.Fatalf("terminal observations = %#v", metrics.terminals)
 	}
 }
 
@@ -1223,6 +1237,40 @@ func TestMinimalWorkerEnvIncludesBrowserRuntimeConfigOnly(t *testing.T) {
 
 type fakeWorkerQueue struct {
 	lease *fakeWorkerLease
+}
+
+type metricObservation struct {
+	target     string
+	outcome    string
+	errorClass string
+	events     int
+	status     jobstore.Status
+	duration   time.Duration
+}
+
+type recordingWorkerMetrics struct {
+	queueWaits []time.Duration
+	workerRuns []metricObservation
+	ingestions []metricObservation
+	terminals  []metricObservation
+}
+
+func (m *recordingWorkerMetrics) ObserveQueueWait(duration time.Duration) {
+	m.queueWaits = append(m.queueWaits, duration)
+}
+
+func (m *recordingWorkerMetrics) ObserveWorkerRun(target, outcome string, duration time.Duration) {
+	m.workerRuns = append(m.workerRuns, metricObservation{target: target, outcome: outcome, duration: duration})
+}
+
+func (m *recordingWorkerMetrics) ObserveWorkerResultIngestion(target, outcome, errorClass string, events int, duration time.Duration) {
+	m.ingestions = append(m.ingestions, metricObservation{
+		target: target, outcome: outcome, errorClass: errorClass, events: events, duration: duration,
+	})
+}
+
+func (m *recordingWorkerMetrics) ObserveJobEndToEnd(_ string, status jobstore.Status, duration time.Duration) {
+	m.terminals = append(m.terminals, metricObservation{status: status, duration: duration})
 }
 
 type fakeTerminalNotifier struct {

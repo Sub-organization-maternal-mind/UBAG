@@ -30,6 +30,9 @@ test("metric registry uses stable UBAG names and bounded labels", () => {
   assert.deepEqual(requestCounter.labels, ["service", "route", "method", "status_class", "outcome"]);
   assert.equal(getMetricByName("ubag_queue_depth").type, "gauge");
   assert.equal(getMetricByName("ubag_queue_oldest_job_age_seconds").type, "gauge");
+  const queueWait = getMetricByName("ubag_queue_job_wait_duration_seconds");
+  assert.equal(queueWait.type, "histogram");
+  assert.deepEqual(queueWait.labels, ["queue"]);
   assert.equal(getMetricByName("ubag_worker_jobs_processed_total").type, "counter");
   assert.equal(getMetricByName("ubag_worker_job_duration_seconds").type, "histogram");
   assert.equal(getMetricByName("ubag_worker_result_ingestions_total").type, "counter");

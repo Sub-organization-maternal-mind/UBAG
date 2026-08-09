@@ -8,7 +8,13 @@ would block forever on a job that is already over.
 import io
 import json
 
-from ubag_worker.live.daemon_protocol import JOB_END, serve
+from ubag_worker.live.daemon_protocol import (
+    EXIT_DEADLINE,
+    JOB_END,
+    _JobOutput,
+    _deadline_expired,
+    serve,
+)
 
 
 class _StubDaemon:
@@ -88,3 +94,34 @@ class TestFraming:
         serve(io.StringIO(""), io.StringIO(), daemon)
 
         assert daemon.closed is True
+
+    def test_deadline_emits_a_terminal_failure_before_exiting(self):
+        out = io.StringIO()
+        exit_codes = []
+        output = _JobOutput(out, "job_deadline")
+
+        _deadline_expired(
+            output,
+            seconds=12.5,
+            exit_process=exit_codes.append,
+        )
+
+        end = _lines(out)[-1]
+        assert end[JOB_END] is True
+        assert end["job_id"] == "job_deadline"
+        assert end["status"] == "failed"
+        assert end["reason"] == "worker_deadline_exceeded"
+        assert "12.5" in end["error"]
+        assert exit_codes == [EXIT_DEADLINE]
+
+    def test_only_one_terminal_marker_can_be_emitted_for_a_job(self):
+        out = io.StringIO()
+        output = _JobOutput(out, "job_once")
+
+        assert output.finish("completed") is True
+        assert output.finish("failed", error="too late") is False
+        assert output.emit_event({"type": "completed"}) is False
+
+        ends = [line for line in _lines(out) if line.get(JOB_END)]
+        assert len(ends) == 1
+        assert ends[0]["status"] == "completed"

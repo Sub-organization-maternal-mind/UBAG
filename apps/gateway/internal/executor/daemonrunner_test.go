@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -100,6 +101,30 @@ func TestDaemonJobSurfacesAFailedMarkerAsAnError(t *testing.T) {
 	}
 }
 
+func TestDaemonJobRejectsATerminalMarkerForAnotherJob(t *testing.T) {
+	wrongEnd := strings.Replace(
+		daemonEndLine(t, "completed", ""),
+		"job_daemon_1",
+		"job_daemon_other",
+		1,
+	)
+	stdout := bufio.NewReader(strings.NewReader(wrongEnd + "\n"))
+	var stdin strings.Builder
+
+	if _, err := runDaemonJob(&stdin, stdout, daemonTestEnvelope(), time.Minute); err == nil ||
+		!strings.Contains(err.Error(), "does not match active job") {
+		t.Fatalf("expected a job correlation error, got %v", err)
+	}
+}
+
+func TestDaemonLineReaderRejectsOversizedLinesBeforeReadingTheJob(t *testing.T) {
+	reader := bufio.NewReaderSize(strings.NewReader(strings.Repeat("x", 65)+"\n"), 8)
+	if _, err := readBoundedDaemonLine(reader, 64); err == nil ||
+		!strings.Contains(err.Error(), "exceeded 64 bytes") {
+		t.Fatalf("expected bounded line error, got %v", err)
+	}
+}
+
 // A daemon that dies mid-job yields EOF with no marker. That must fail THIS job
 // rather than hang or silently return a truncated report as if it were complete.
 func TestDaemonJobFailsWhenTheDaemonDiesWithoutAMarker(t *testing.T) {
@@ -158,6 +183,9 @@ func TestHelperDaemon(t *testing.T) {
 		_ = json.Unmarshal(scanner.Bytes(), &request)
 		if os.Getenv("GO_HELPER_DIE") == "1" {
 			os.Exit(3)
+		}
+		if request.JobID == "job_daemon_hang" {
+			time.Sleep(time.Hour)
 		}
 		fmt.Printf(`{"job_id":%q,"api_version":"2026-05-22","type":"completed","sequence":1,"data":{"pid":%d}}`+"\n",
 			request.JobID, os.Getpid())
@@ -247,5 +275,42 @@ func TestDaemonRunnerSerializesConcurrentJobs(t *testing.T) {
 	}
 	if spawns != 1 {
 		t.Fatalf("spawned %d daemons, want 1", spawns)
+	}
+}
+
+func TestDaemonRunnerCancellationKillsAndReplacesTheActiveDaemon(t *testing.T) {
+	var spawns int32
+	runner := helperDaemonRunner(t, &spawns)
+	hanging := daemonTestEnvelope()
+	hanging.JobID = "job_daemon_hang"
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	if _, err := runner.RunWorker(ctx, hanging); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("hanging job error = %v, want context deadline exceeded", err)
+	}
+	if _, err := runner.RunWorker(context.Background(), daemonTestEnvelope()); err != nil {
+		t.Fatalf("job after cancellation should use a replacement daemon: %v", err)
+	}
+	if spawns != 2 {
+		t.Fatalf("spawned %d daemons, want 2 (one cancellation replacement)", spawns)
+	}
+}
+
+func TestDaemonRunnerMaxRuntimeKillsAHungDaemonWithoutCallerDeadline(t *testing.T) {
+	var spawns int32
+	runner := helperDaemonRunner(t, &spawns)
+	runner.MaxRuntime = 500 * time.Millisecond
+	hanging := daemonTestEnvelope()
+	hanging.JobID = "job_daemon_hang"
+
+	if _, err := runner.RunWorker(context.Background(), hanging); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("hanging job error = %v, want context deadline exceeded", err)
+	}
+	if _, err := runner.RunWorker(context.Background(), daemonTestEnvelope()); err != nil {
+		t.Fatalf("job after max-runtime kill should use a replacement daemon: %v", err)
+	}
+	if spawns != 2 {
+		t.Fatalf("spawned %d daemons, want 2 (one max-runtime replacement)", spawns)
 	}
 }

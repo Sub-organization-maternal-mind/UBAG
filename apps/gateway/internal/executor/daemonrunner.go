@@ -102,13 +102,9 @@ func runDaemonJob(
 		bytesRead int
 	)
 	for {
-		line, err := stdout.ReadString('\n')
+		line, err := readBoundedDaemonLine(stdout, maxWorkerOutputBytes)
 		if err != nil {
-			if len(strings.TrimSpace(line)) == 0 {
-				return nil, fmt.Errorf("worker daemon ended without a terminal marker: %w", err)
-			}
-			// A final unterminated line cannot be trusted to be whole.
-			return nil, fmt.Errorf("worker daemon output truncated mid-line")
+			return nil, fmt.Errorf("worker daemon ended without a terminal marker: %w", err)
 		}
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
@@ -116,6 +112,13 @@ func runDaemonJob(
 		}
 
 		if end, ok := parseDaemonJobEnd(trimmed); ok {
+			if end.JobID != envelope.JobID {
+				return nil, fmt.Errorf(
+					"worker daemon terminal marker job_id %q does not match active job %q",
+					end.JobID,
+					envelope.JobID,
+				)
+			}
 			if end.Status != "completed" {
 				if strings.TrimSpace(end.Error) != "" {
 					return nil, fmt.Errorf("worker daemon job failed: %s", end.Error)
@@ -125,12 +128,35 @@ func runDaemonJob(
 			return parseWorkerJSONL(body.Bytes())
 		}
 
-		bytesRead += len(line)
+		bytesRead += len(line) + 1
 		if bytesRead > maxWorkerOutputBytes {
 			return nil, fmt.Errorf("worker daemon stdout exceeded %d bytes", maxWorkerOutputBytes)
 		}
 		body.WriteString(trimmed)
 		body.WriteByte('\n')
+	}
+}
+
+func readBoundedDaemonLine(reader *bufio.Reader, limit int) (string, error) {
+	if limit <= 0 {
+		return "", fmt.Errorf("worker daemon stdout line limit is invalid")
+	}
+	var line bytes.Buffer
+	for {
+		fragment, isPrefix, err := reader.ReadLine()
+		if err != nil {
+			if line.Len() > 0 || len(fragment) > 0 {
+				return "", fmt.Errorf("worker daemon output truncated mid-line")
+			}
+			return "", err
+		}
+		if line.Len()+len(fragment) > limit {
+			return "", fmt.Errorf("worker daemon stdout line exceeded %d bytes", limit)
+		}
+		_, _ = line.Write(fragment)
+		if !isPrefix {
+			return line.String(), nil
+		}
 	}
 }
 
@@ -264,11 +290,13 @@ func (r *DaemonWorkerRunner) RunWorker(
 	if maxRuntime <= 0 {
 		maxRuntime = defaultWorkerMaxRuntime
 	}
+	runCtx, cancel := context.WithTimeout(ctx, maxRuntime)
+	defer cancel()
 
 	// Materialize any declared attachments exactly as the per-job runner does, so
 	// attachment jobs behave identically under the daemon.
 	cleanupAttachments, err := ProcessWorkerRunner{Artifacts: r.Artifacts}.
-		materializeAttachments(ctx, &envelope)
+		materializeAttachments(runCtx, &envelope)
 	if err != nil {
 		return nil, err
 	}
@@ -279,14 +307,33 @@ func (r *DaemonWorkerRunner) RunWorker(
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if err := ctx.Err(); err != nil {
+	if err := runCtx.Err(); err != nil {
 		return nil, err
 	}
 	if err := r.ensureDaemon(); err != nil {
 		return nil, err
 	}
 
-	events, err := runDaemonJob(r.stdin, r.stdout, envelope, maxRuntime)
+	type daemonResult struct {
+		events []jobs.WorkerEvent
+		err    error
+	}
+	resultCh := make(chan daemonResult, 1)
+	stdin, stdout := r.stdin, r.stdout
+	go func() {
+		events, runErr := runDaemonJob(stdin, stdout, envelope, maxRuntime)
+		resultCh <- daemonResult{events: events, err: runErr}
+	}()
+
+	var result daemonResult
+	select {
+	case result = <-resultCh:
+	case <-runCtx.Done():
+		r.discardDaemon()
+		<-resultCh
+		return nil, runCtx.Err()
+	}
+	events, err := result.events, result.err
 	if err != nil {
 		// The daemon is now of unknown state (dead, mid-line, or holding a
 		// half-finished page). Replace it rather than hand it the next job.

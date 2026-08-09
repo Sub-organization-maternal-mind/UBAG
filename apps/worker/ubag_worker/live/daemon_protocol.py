@@ -22,7 +22,7 @@ import json
 import os
 import sys
 import threading
-from typing import Any, Mapping, Optional, TextIO
+from typing import Any, Callable, Mapping, Optional, TextIO
 
 JOB_END = "__ubag_job_end__"
 
@@ -36,9 +36,64 @@ def _dump(event: object) -> str:
 
 
 def _emit(stream: TextIO, event: object) -> None:
-    stream.write(_dump(event))
-    stream.write("\n")
+    stream.write(_dump(event) + "\n")
     stream.flush()
+
+
+class _JobOutput:
+    """Serialize one job's events and let exactly one terminal marker win."""
+
+    def __init__(self, stream: TextIO, job_id: str) -> None:
+        self._stream = stream
+        self._job_id = job_id
+        self._lock = threading.Lock()
+        self._terminal = False
+
+    def emit_event(self, event: object) -> bool:
+        with self._lock:
+            if self._terminal:
+                return False
+            _emit(self._stream, event)
+            return True
+
+    def finish(
+        self,
+        status: str,
+        *,
+        error: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> bool:
+        with self._lock:
+            if self._terminal:
+                return False
+            self._terminal = True
+            end = {JOB_END: True, "job_id": self._job_id, "status": status}
+            if error is not None:
+                end["error"] = error
+            if reason is not None:
+                end["reason"] = reason
+            _emit(self._stream, end)
+            return True
+
+
+def _deadline_expired(
+    output: _JobOutput,
+    *,
+    seconds: float,
+    exit_process: Callable[[int], Any] = os._exit,
+) -> None:
+    """Emit a complete failure marker before the hard process exit."""
+
+    try:
+        output.finish(
+            "failed",
+            reason="worker_deadline_exceeded",
+            error="job deadline exceeded after %g seconds" % seconds,
+        )
+    finally:
+        sys.stderr.write("[ubag-daemon] job exceeded deadline; exiting\n")
+        sys.stderr.flush()
+        exit_process(EXIT_DEADLINE)
 
 
 class _Deadline:
@@ -67,6 +122,8 @@ class _Deadline:
     def __exit__(self, *_exc) -> None:
         if self._timer is not None:
             self._timer.cancel()
+            if self._timer is not threading.current_thread():
+                self._timer.join()
 
     @staticmethod
     def _die() -> None:  # pragma: no cover - terminates the interpreter
@@ -92,35 +149,42 @@ def serve(stdin: TextIO, stdout: TextIO, daemon: Any) -> int:
                 continue
 
             job_id = ""
+            output: Optional[_JobOutput] = None
             try:
                 request = json.loads(line)
                 job_id = str(request.get("job_id", ""))
+                output = _JobOutput(stdout, job_id)
                 payload = request.get("payload")
                 if not isinstance(payload, Mapping):
                     raise ValueError("request.payload must be a JSON object")
             except Exception as exc:  # noqa: BLE001
                 # A malformed request is that request's failure, not the
                 # daemon's: staying up keeps the warm pages for the next job.
-                _emit(stdout, {
-                    JOB_END: True,
-                    "job_id": job_id,
-                    "status": "failed",
-                    "error": "bad request: %s" % exc,
-                })
+                (output or _JobOutput(stdout, job_id)).finish(
+                    "failed", error="bad request: %s" % exc
+                )
                 continue
 
+            assert output is not None
             status, error = "completed", None
             try:
-                with _Deadline(_deadline_seconds(request)):
+                deadline_s = _deadline_seconds(request)
+                with _Deadline(
+                    deadline_s,
+                    on_expire=lambda output=output, deadline_s=deadline_s: (
+                        _deadline_expired(
+                            output,
+                            seconds=deadline_s or 0,
+                        )
+                    ),
+                ):
                     for event in daemon.run_job(payload):
-                        _emit(stdout, event)
+                        if not output.emit_event(event):
+                            break
             except Exception as exc:  # noqa: BLE001
                 status, error = "failed", str(exc)
 
-            end = {JOB_END: True, "job_id": job_id, "status": status}
-            if error is not None:
-                end["error"] = error
-            _emit(stdout, end)
+            output.finish(status, error=error)
     finally:
         daemon.close()
     return 0

@@ -104,10 +104,14 @@ services:
       # on ubag-private below. (The old production setup used an IP for the same
       # reason.)
       UBAG_REMOTE_BROWSER_ENDPOINT: ${UBAG_REMOTE_BROWSER_ENDPOINT:-http://172.28.0.10:9223}
-      UBAG_WORKER_POLL_INTERVAL_MS: ${UBAG_WORKER_POLL_INTERVAL_MS:-500}
+      # Production benchmark (2026-08-10) selected 150 ms for the file-spool
+      # hot path while retaining sub-1% idle gateway CPU.
+      UBAG_WORKER_POLL_INTERVAL_MS: ${UBAG_WORKER_POLL_INTERVAL_MS:-150}
       # Live provider jobs (page loads, streamed responses) need more headroom
       # than mock jobs; matches the verified local live-runtime setting.
-      UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-180000}
+      # Covers auth readiness (57 s), manual login (300 s), three bounded
+      # reasoning attempts (3 x 360 s), and cleanup without clipping a valid job.
+      UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-1500000}
       UBAG_WEBHOOK_WORKER_ENABLED: "false"
       UBAG_WEBHOOK_SECRET: ${UBAG_WEBHOOK_SECRET:-}
       # Record every chat a live job creates, so the chat-reaper below can only

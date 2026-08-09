@@ -8,7 +8,8 @@ prior conversation turn.
 import pytest
 
 from ubag_worker.live.daemon import WarmWorkerDaemon
-from ubag_worker.live.page_driver import MockPageDriver
+from ubag_worker.live.page_driver import MockPageDriver, PlaywrightPageDriver
+from ubag_worker.live.selectors import get_provider_selectors
 
 
 class _RecordingFactory:
@@ -58,6 +59,7 @@ class _FakeEngine:
     seen_drivers = []
     attachment_state_before_run = []
     raise_on_run = False
+    terminal_type = "completed"
 
     def __init__(self, selectors):
         self._selectors = selectors
@@ -68,7 +70,7 @@ class _FakeEngine:
         driver.attached_files = list(payload.get("attachment_local_paths", []))
         if type(self).raise_on_run:
             raise RuntimeError("provider blew up mid-job")
-        yield {"event_type": "completed", "data": {"ok": True}}
+        yield {"type": type(self).terminal_type, "data": {"ok": True}}
 
 
 @pytest.fixture(autouse=True)
@@ -76,11 +78,22 @@ def _reset_fake_engine():
     _FakeEngine.seen_drivers = []
     _FakeEngine.attachment_state_before_run = []
     _FakeEngine.raise_on_run = False
+    _FakeEngine.terminal_type = "completed"
     yield
 
 
 def _payload(profile="/profiles/gemini", target="gemini_web"):
     return {"job": {"target": target}, "user_data_dir": profile}
+
+
+def _gateway_payload(tenant_id, profile, target="gemini_web"):
+    return {
+        "tenant_id": tenant_id,
+        "job": {
+            "target": target,
+            "options": {"user_data_dir": profile},
+        },
+    }
 
 
 def _attachment_payload(job_id, key, content_type, kind, local_path):
@@ -235,6 +248,73 @@ class TestIsolation:
         assert len(factory.built) == 2
         assert _FakeEngine.seen_drivers[0] is not _FakeEngine.seen_drivers[1]
 
+    def test_canonical_gateway_tenant_ids_never_share_a_driver(self):
+        factory = _RecordingFactory()
+        daemon = _daemon(factory)
+
+        list(daemon.run_job(_gateway_payload("tenant_a", "/profiles/shared")))
+        list(daemon.run_job(_gateway_payload("tenant_b", "/profiles/shared")))
+
+        assert len(factory.built) == 2
+        assert _FakeEngine.seen_drivers[0] is not _FakeEngine.seen_drivers[1]
+
+    def test_untrusted_nested_tenant_cannot_override_gateway_tenant(self):
+        factory = _RecordingFactory()
+        daemon = _daemon(factory)
+        first = _gateway_payload("tenant_a", "/profiles/shared")
+        first["job"]["context"] = {"tenant_id": "tenant_spoofed"}
+        second = _gateway_payload("tenant_b", "/profiles/shared")
+        second["job"]["context"] = {"tenant_id": "tenant_spoofed"}
+
+        list(daemon.run_job(first))
+        list(daemon.run_job(second))
+
+        assert len(factory.built) == 2
+        assert _FakeEngine.seen_drivers[0] is not _FakeEngine.seen_drivers[1]
+
+    def test_canonical_gateway_profile_options_never_share_a_driver(self):
+        factory = _RecordingFactory()
+        daemon = _daemon(factory)
+
+        list(daemon.run_job(_gateway_payload("tenant_a", "/profiles/a")))
+        list(daemon.run_job(_gateway_payload("tenant_a", "/profiles/b")))
+
+        assert len(factory.built) == 2
+        assert _FakeEngine.seen_drivers[0] is not _FakeEngine.seen_drivers[1]
+
+    def test_closed_playwright_page_is_not_reusable(self):
+        class _ClosedPage:
+            @staticmethod
+            def is_closed():
+                return True
+
+        driver = PlaywrightPageDriver()
+        driver._page = _ClosedPage()
+        driver.reset = lambda _target_url: None
+        driver.start_new_chat = lambda _selectors: False
+        driver.response_container_present = lambda _selectors: False
+
+        assert driver.prepare_for_next_job(
+            get_provider_selectors("gemini_web")
+        ) is False
+
+    def test_unresponsive_playwright_page_is_not_reusable(self):
+        class _UnresponsivePage:
+            @staticmethod
+            def is_closed():
+                return False
+
+            @staticmethod
+            def goto(*_args, **_kwargs):
+                raise RuntimeError("CDP channel is wedged")
+
+        driver = PlaywrightPageDriver()
+        driver._page = _UnresponsivePage()
+
+        assert driver.prepare_for_next_job(
+            get_provider_selectors("gemini_web")
+        ) is False
+
 
 class TestFailureHandling:
     def test_a_failed_job_never_leaves_its_driver_warm(self):
@@ -251,6 +331,18 @@ class TestFailureHandling:
 
         # The next job must start from a brand-new driver.
         _FakeEngine.raise_on_run = False
+        list(daemon.run_job(_payload()))
+        assert len(factory.built) == 2
+
+    def test_blocked_job_never_leaves_its_driver_warm(self):
+        factory = _RecordingFactory()
+        daemon = _daemon(factory)
+        _FakeEngine.terminal_type = "blocked"
+
+        list(daemon.run_job(_payload()))
+
+        assert factory.built[0].closed is True
+        _FakeEngine.terminal_type = "completed"
         list(daemon.run_job(_payload()))
         assert len(factory.built) == 2
 

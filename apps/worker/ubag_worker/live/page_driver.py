@@ -656,6 +656,30 @@ class PlaywrightPageDriver(PageDriver):
         except Exception:  # noqa: BLE001 - a page we cannot query is not usable
             return False
 
+    def prepare_for_next_job(self, selectors: ProviderSelectors) -> bool:
+        if not self._page_is_live():
+            return False
+        if selectors.new_chat is None:
+            return False
+        try:
+            # A real, bounded navigation proves the CDP command channel responds;
+            # HTTP /json/version health alone does not detect a wedged connection.
+            self._page.goto(
+                selectors.target_url,
+                wait_until="domcontentloaded",
+                timeout=15000,
+            )
+            self._first_visible(selectors.prompt_input, timeout_ms=10000)
+            if not self.start_new_chat(selectors):
+                return False
+            probe_ms = _emptiness_probe_ms()
+            for candidate in selectors.response_container.as_list():
+                if self._page.locator(candidate).first.is_visible(timeout=probe_ms):
+                    return False
+            return True
+        except Exception:  # noqa: BLE001 - any doubt forces a cold page
+            return False
+
     def open(self, *, target_url: str, user_data_dir: str, headless: bool) -> None:
         # Idempotent: the warm-reuse daemon holds ONE driver across jobs, but the
         # engine calls open() on every job. Without this guard each job would
@@ -1131,6 +1155,14 @@ class PlaywrightPageDriver(PageDriver):
                     "desired": desired,
                     "state": "already_set" if attempt == 1 else "set",
                 }
+            if self._present(selectors.login_signal, timeout_ms=500):
+                self._dismiss_menus()
+                raise ManualActionRequired(
+                    "manual_login_required",
+                    "Provider sign-in is required before the requested model or "
+                    "option can be selected. Complete login in the live session; "
+                    "UBAG never enters credentials.",
+                )
             if attempt == attempts[-1]:
                 self._dismiss_menus()
                 if setting.required:

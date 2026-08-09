@@ -115,6 +115,7 @@ type WorkerConsumer struct {
 	LoginState   topology.LoginStateWriter
 	PollInterval time.Duration
 	Plugins      *plugins.Host // optional; nil disables post-job hook
+	Metrics      WorkerMetricsRecorder
 }
 
 type WorkerQueue interface {
@@ -140,6 +141,13 @@ type WorkerRunner interface {
 
 type TerminalJobNotifier interface {
 	EnqueueTerminalJob(ctx context.Context, job jobstore.Job) error
+}
+
+type WorkerMetricsRecorder interface {
+	ObserveQueueWait(duration time.Duration)
+	ObserveWorkerRun(target, outcome string, duration time.Duration)
+	ObserveWorkerResultIngestion(target, outcome, errorClass string, events int, duration time.Duration)
+	ObserveJobEndToEnd(jobID string, status jobstore.Status, duration time.Duration)
 }
 
 type WorkerRunFunc func(ctx context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error)
@@ -213,6 +221,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	if lease == nil {
 		return true, nil
 	}
+	leasedAt := time.Now()
 
 	job, found, err := c.Jobs.Get(ctx, lease.JobID())
 	if err != nil {
@@ -227,8 +236,18 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		_ = lease.Poison(ctx, "lease envelope does not match persisted job")
 		return true, err
 	}
+	queueEnteredAt := job.UpdatedAt
+	if job.Status == jobstore.StatusScheduled && job.NotBefore != nil &&
+		job.NotBefore.After(queueEnteredAt) {
+		queueEnteredAt = *job.NotBefore
+	}
+	if (job.Status == jobstore.StatusQueued || job.Status == jobstore.StatusScheduled) &&
+		!queueEnteredAt.IsZero() && !leasedAt.Before(queueEnteredAt) && c.Metrics != nil {
+		c.Metrics.ObserveQueueWait(leasedAt.Sub(queueEnteredAt))
+	}
 	envelope := EnvelopeFromJobWithConversation(ctx, job, c.Conversations)
 	if jobstore.TerminalStatus(job.Status) {
+		c.observeTerminalJob(job)
 		c.runPostJobHook(ctx, job)
 		if err := c.notifyTerminalJob(ctx, lease, job); err != nil {
 			return true, err
@@ -248,6 +267,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return true, fmt.Errorf("leased job %s does not exist in job store", lease.JobID())
 	}
 	if jobstore.TerminalStatus(assignedJob.Status) {
+		c.observeTerminalJob(assignedJob)
 		c.runPostJobHook(ctx, assignedJob)
 		if err := c.notifyTerminalJob(ctx, lease, assignedJob); err != nil {
 			return true, err
@@ -258,8 +278,15 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return true, lease.Complete(ctx)
 	}
 
+	workerStarted := time.Now()
 	events, err := c.runWorkerWithCancellation(ctx, envelope)
+	workerDuration := time.Since(workerStarted)
 	if err != nil {
+		outcome := "failure"
+		if errors.Is(err, context.Canceled) {
+			outcome = "cancelled"
+		}
+		c.observeWorkerRun(job.Target, outcome, workerDuration)
 		slog.Error("worker execution error", "job_id", envelope.JobID, "error", err)
 		if ctx.Err() != nil {
 			_ = lease.Retry(ctx)
@@ -272,6 +299,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 				return true, finalErr
 			}
 			if found && finalJob.Status == jobstore.StatusCanceled {
+				c.observeTerminalJob(finalJob)
 				return true, lease.Cancel(ctx)
 			}
 			_ = lease.Retry(ctx)
@@ -286,7 +314,10 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		}
 		return true, lease.Fail(ctx)
 	}
+	ingestionStarted := time.Now()
 	if len(events) == 0 {
+		c.observeWorkerRun(job.Target, "failure", workerDuration)
+		c.observeIngestion(job.Target, "failure", "empty_result", 0, time.Since(ingestionStarted))
 		if applyErr := c.applyFailure(ctx, lease, envelope, fmt.Errorf("worker emitted no events")); applyErr != nil {
 			_ = lease.Retry(ctx)
 			return true, applyErr
@@ -297,9 +328,13 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return true, lease.Fail(ctx)
 	}
 
-	for _, event := range events {
+	normalizedEvents := make([]jobstore.WorkerEvent, len(events))
+	terminalEvents := 0
+	for index, event := range events {
 		normalized, err := normalizeWorkerEvent(envelope, event)
 		if err != nil {
+			c.observeWorkerRun(job.Target, "failure", workerDuration)
+			c.observeIngestion(job.Target, "failure", "invalid_event", index+1, time.Since(ingestionStarted))
 			if applyErr := c.applyFailure(ctx, lease, envelope, err); applyErr != nil {
 				_ = lease.Retry(ctx)
 				return true, applyErr
@@ -309,6 +344,34 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			}
 			return true, lease.Fail(ctx)
 		}
+		normalizedEvents[index] = normalized
+		if terminalWorkerEventType(normalized.Type) {
+			terminalEvents++
+		}
+	}
+	if terminalEvents != 1 {
+		c.observeWorkerRun(job.Target, "failure", workerDuration)
+		errorClass := "invalid_event"
+		if terminalEvents == 0 {
+			errorClass = "missing_terminal"
+		}
+		c.observeIngestion(job.Target, "failure", errorClass, len(events), time.Since(ingestionStarted))
+		if applyErr := c.applyFailure(
+			ctx,
+			lease,
+			envelope,
+			fmt.Errorf("worker emitted %d terminal events; expected exactly one", terminalEvents),
+		); applyErr != nil {
+			_ = lease.Retry(ctx)
+			return true, applyErr
+		}
+		if notifyErr := c.notifyCurrentTerminalJob(ctx, lease); notifyErr != nil {
+			return true, notifyErr
+		}
+		return true, lease.Fail(ctx)
+	}
+
+	for index, normalized := range normalizedEvents {
 		// concurrency.cap_changed is orchestration telemetry, not a job-lifecycle
 		// event: record the reported ceiling and skip job-event application so the
 		// unknown type never poisons the job.
@@ -340,6 +403,8 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			continue
 		}
 		if _, found, err := c.Jobs.ApplyWorkerEvent(ctx, normalized); err != nil {
+			c.observeWorkerRun(job.Target, "failure", workerDuration)
+			c.observeIngestion(job.Target, "failure", "store", index+1, time.Since(ingestionStarted))
 			slog.Error("ApplyWorkerEvent failed", "job_id", normalized.JobID, "event_type", normalized.Type, "error", err)
 			if applyErr := c.applyFailure(ctx, lease, envelope, err); applyErr != nil {
 				_ = lease.Retry(ctx)
@@ -350,6 +415,8 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			}
 			return true, lease.Fail(ctx)
 		} else if !found {
+			c.observeWorkerRun(job.Target, "failure", workerDuration)
+			c.observeIngestion(job.Target, "failure", "missing_job", index+1, time.Since(ingestionStarted))
 			_ = lease.Poison(ctx, "worker event referenced missing job")
 			return true, fmt.Errorf("worker event referenced missing job %s", normalized.JobID)
 		}
@@ -359,14 +426,23 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 
 	finalJob, found, err := c.Jobs.Get(ctx, lease.JobID())
 	if err != nil {
+		c.observeWorkerRun(job.Target, "failure", workerDuration)
+		c.observeIngestion(job.Target, "failure", "store", len(events), time.Since(ingestionStarted))
 		_ = lease.Retry(ctx)
 		return true, err
 	}
 	if !found {
+		c.observeWorkerRun(job.Target, "failure", workerDuration)
+		c.observeIngestion(job.Target, "failure", "missing_job", len(events), time.Since(ingestionStarted))
 		_ = lease.Poison(ctx, "job disappeared during worker ingestion")
 		return true, fmt.Errorf("job %s disappeared during worker ingestion", lease.JobID())
 	}
+	if jobstore.TerminalStatus(finalJob.Status) {
+		c.observeWorkerRun(job.Target, workerMetricOutcome(finalJob.Status), workerDuration)
+		c.observeIngestion(job.Target, "success", "none", len(events), time.Since(ingestionStarted))
+	}
 	if finalJob.Status == jobstore.StatusCanceled {
+		c.observeTerminalJob(finalJob)
 		c.releaseConcurrencyToken(finalJob)
 		c.runPostJobHook(ctx, finalJob)
 		if err := c.notifyTerminalJob(ctx, lease, finalJob); err != nil {
@@ -375,6 +451,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return true, lease.Cancel(ctx)
 	}
 	if finalJob.Status == jobstore.StatusCompleted || finalJob.Status == jobstore.StatusCompletedWithWarnings {
+		c.observeTerminalJob(finalJob)
 		c.releaseConcurrencyToken(finalJob)
 		c.runPostJobHook(ctx, finalJob)
 		if err := c.notifyTerminalJob(ctx, lease, finalJob); err != nil {
@@ -383,6 +460,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return true, lease.Complete(ctx)
 	}
 	if jobstore.TerminalStatus(finalJob.Status) {
+		c.observeTerminalJob(finalJob)
 		c.releaseConcurrencyToken(finalJob)
 		c.runPostJobHook(ctx, finalJob)
 		if err := c.notifyTerminalJob(ctx, lease, finalJob); err != nil {
@@ -391,7 +469,9 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return true, lease.Fail(ctx)
 	}
 
-	if applyErr := c.applyFailure(ctx, lease, envelope, fmt.Errorf("worker did not emit a terminal event")); applyErr != nil {
+	c.observeWorkerRun(job.Target, "failure", workerDuration)
+	c.observeIngestion(job.Target, "failure", "missing_terminal", len(events), time.Since(ingestionStarted))
+	if applyErr := c.applyFailure(ctx, lease, envelope, fmt.Errorf("worker did not reach a terminal status")); applyErr != nil {
 		_ = lease.Retry(ctx)
 		return true, applyErr
 	}
@@ -411,6 +491,49 @@ func (c *WorkerConsumer) releaseConcurrencyToken(job jobstore.Job) {
 		return
 	}
 	c.Concurrency.ReleaseForJob(job.ID)
+}
+
+func (c *WorkerConsumer) observeIngestion(target, outcome, errorClass string, events int, duration time.Duration) {
+	if c != nil && c.Metrics != nil {
+		c.Metrics.ObserveWorkerResultIngestion(target, outcome, errorClass, events, duration)
+	}
+}
+
+func (c *WorkerConsumer) observeWorkerRun(target, outcome string, duration time.Duration) {
+	if c != nil && c.Metrics != nil {
+		c.Metrics.ObserveWorkerRun(target, outcome, duration)
+	}
+}
+
+func terminalWorkerEventType(eventType string) bool {
+	switch eventType {
+	case "completed", "completed_with_warnings",
+		"failed", "failed_retryable", "failed_terminal",
+		"dead_letter", "cancelled", "canceled",
+		"timed_out", "timeout", "blocked":
+		return true
+	default:
+		return false
+	}
+}
+
+func workerMetricOutcome(status jobstore.Status) string {
+	switch status {
+	case jobstore.StatusCompleted, jobstore.StatusCompletedWithWarnings:
+		return "success"
+	case jobstore.StatusCanceled:
+		return "cancelled"
+	default:
+		return "failure"
+	}
+}
+
+func (c *WorkerConsumer) observeTerminalJob(job jobstore.Job) {
+	if c == nil || c.Metrics == nil || !jobstore.TerminalStatus(job.Status) ||
+		job.CreatedAt.IsZero() || job.UpdatedAt.Before(job.CreatedAt) {
+		return
+	}
+	c.Metrics.ObserveJobEndToEnd(job.ID, job.Status, job.UpdatedAt.Sub(job.CreatedAt))
 }
 
 // raiseManualActionAlert raises a human-in-the-loop alert when a worker reports
@@ -788,6 +911,7 @@ func (c *WorkerConsumer) notifyCurrentTerminalJob(ctx context.Context, lease Wor
 	// completed/cancelled branches or the cancel API — cannot double-count the
 	// shared lane.
 	if jobstore.TerminalStatus(job.Status) {
+		c.observeTerminalJob(job)
 		c.releaseConcurrencyToken(job)
 	}
 	c.runPostJobHook(ctx, job)

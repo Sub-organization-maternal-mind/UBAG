@@ -212,6 +212,7 @@ func Run(ctx context.Context) error {
 		if err := consumer.Ready(ctx); err != nil {
 			return fmt.Errorf("worker consumer is not ready: %w", err)
 		}
+		consumer.Metrics = server
 		if closer, ok := consumer.Queue.(interface{ Close() }); ok {
 			defer closer.Close()
 		}
