@@ -26,12 +26,17 @@ setting failures with visible sign-in UI report `manual_login_required`.
 Gateway metrics now observe real queue, worker, ingestion, and terminal
 end-to-end durations with bounded privacy-safe labels.
 
+Production is healthy at commit `13dbdfa` on image
+`sha256:cd17408f54bf164cee834b5455051f3538a225a8a4d1fb34e5f14ab06fbd6127`.
+ChatGPT's current picker requires **Advanced -> Model / Effort**; selector
+version `2026-08-10-advanced-model-menu` follows that path. Exact-token job
+`job_000000000241` completed in 52.6 seconds with an exact match after focused
+live-adapter/provider-config tests passed 46/46. Roll back with
+`ubag/gateway:rollback-before-13dbdfa` if needed.
+
 Gemini's selectors are valid, but its persistent production Chrome profile is
 currently signed out; a human must log in before `3.6 Flash` can run again.
 Safe-mode forbids automated login, credential storage, and CAPTCHA solving.
-Restarting the browser container restored a hung CDP command channel without
-removing its persistent profile volume. Source deployment verification is the
-remaining step for this slice.
 
 ## Production Jobs page response-shape fix (2026-07-24)
 

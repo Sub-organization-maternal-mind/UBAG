@@ -60,11 +60,11 @@ add a **Proxy Host**:
 
 | service         | cpus | mem_limit |
 |------------------|------|-----------|
-| gateway          | 0.60 | 1300m     |
+| gateway          | 1.00 | 1300m     |
 | nginx-dashboard  | 0.15 | 96m       |
 | browser          | 1.00 | 1900m     |
 | chat-reaper      | 0.10 | 256m      |
-| **total**        | **1.85** | **~3.5G** |
+| **total**        | **2.25** | **~3.5G** |
 
 (Postgres is shared platform capacity at `/opt/platform`, not part of this
 budget.)

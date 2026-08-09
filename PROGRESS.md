@@ -65,6 +65,17 @@ Focused validation: benchmark **16/16**, worker hardening **40/40**,
 observability contracts **6/6**, and focused gateway executor/httpapi/serve
 packages passed. No broad suite or CI ran per project instruction.
 
+Production is deployed and healthy at commit `13dbdfa` on image
+`sha256:cd17408f54bf164cee834b5455051f3538a225a8a4d1fb34e5f14ab06fbd6127`.
+The first post-hardening ChatGPT probe (`job_000000000240`) authenticated but
+failed closed because the model picker had moved behind **Advanced -> Model /
+Effort**. The live DOM was re-baselined, selector version
+`2026-08-10-advanced-model-menu` now follows that complete path, and 46 focused
+live-adapter/provider-config tests pass. Production exact-token job
+`job_000000000241` then completed in 52.6 seconds with an exact response match.
+Rollback assets are image `ubag/gateway:rollback-before-13dbdfa` and source
+backup `/opt/docker/ubag-sync-backups/selector-before-13dbdfa-20260809T204854Z`.
+
 ## 2026-07-24 Production Jobs page response-shape fix
 
 Production inspection proved `/v1/jobs?limit=20` returned HTTP 200 in 9 ms,

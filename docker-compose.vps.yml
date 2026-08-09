@@ -9,20 +9,19 @@
 # apps/gateway/internal/serve/serve.go + executor/{filespool,workerconsumer}.go:
 # UBAG_EXECUTOR_MODE=file builds a FileSpoolWorkerQueue that never touches NATS).
 #
-# Live-browser (added 2026-07-17, owner-approved lifting the earlier 1-core/2GB
-# cap to ~2 cores/4GB): a headed Google Chrome runs on the VPS (deploy/vps/
+# Live-browser (added 2026-07-17): a headed Google Chrome runs on the VPS (deploy/vps/
 # browser) so provider logins live on the server and jobs run 24/7 with the
 # operator's laptop off. The operator signs in once via the dashboard's Browser
 # Sessions widget (streamed by tools/live-browser/bridge.mjs over /live-ws); the
 # gateway's live worker attaches to that same Chrome over CDP. Safe-mode intact:
 # a human does the login, UBAG never types credentials or solves CAPTCHAs.
 #
-# Resource budget (cpus / mem_limit), under the ~2-core/4GB owner-approved cap on
-# a box with 6 cores / 11GB (~7GB free):
-#   gateway......... 0.60 cpu / 1300m  (Go binary + Python live worker + Playwright CDP client)
+# Current resource budget (cpus / mem_limit) on a box with 6 cores / 11GB:
+#   gateway......... 1.00 cpu / 1300m  (Go binary + Python live worker + Playwright CDP client)
 #   nginx-dashboard.. 0.15 cpu /   96m
 #   browser......... 1.00 cpu / 1900m  (headed Chrome + Xvfb)
-#   TOTAL........... 1.75 cpu / 3296m  (under ~2 cores / 4096m)
+#   chat-reaper...... 0.10 cpu /  256m
+#   TOTAL........... 2.25 cpu / 3552m
 #
 # Postgres comes from the shared platform stack at /opt/platform since
 # 2026-07-17 (one instance for every project on the box — see
