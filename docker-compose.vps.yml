@@ -55,7 +55,8 @@ services:
       context: .
       dockerfile: deploy/small/gateway.Dockerfile
     image: ${UBAG_GATEWAY_IMAGE:-ubag/gateway:vps-local}
-    cpus: "0.60"
+    # One full core avoids throttling the embedded Python worker on a 6-vCPU VPS.
+    cpus: "${UBAG_GATEWAY_CPUS:-1.00}"
     mem_limit: 1300m
     restart: unless-stopped
     environment:

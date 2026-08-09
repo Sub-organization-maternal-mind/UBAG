@@ -29,6 +29,13 @@ fell 74.0% and p95 fell 71.5%. Matched idle samples after startup were generally
 `UBAG_WORKER_MAX_RUNTIME_MS=1500000`; VPS Compose and its env example now carry
 those defaults.
 
+The deployed gateway's prior 0.6-core limit then became the dominant mock-worker
+constraint. An immediate matched 20-sample check on the 6-vCPU host reduced E2E
+p50/p95 from **648.0/979.3 ms** at 0.6 core to **491.2/716.0 ms** at one core;
+worker p50/p95 fell from **497.0/794.9 ms** to **332.0/603.4 ms**. The host had
+roughly 5.3 GiB available memory and a load average near 3 across six CPUs, so
+VPS Compose now defaults `UBAG_GATEWAY_CPUS=1.00`.
+
 The worker warm path is hardened so reuse identity comes from the live engine's
 canonical payload normalization, including `tenant_id` and resolved browser
 profile. Closed Playwright pages cannot be reused. A hard daemon deadline emits

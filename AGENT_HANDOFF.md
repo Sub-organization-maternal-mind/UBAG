@@ -13,6 +13,11 @@ gateway CPU remained low, generally 0.4-0.8% after startup. The benchmark runner
 `tools/benchmark/run.mjs`; it is mock-only, sanitized, HTTPS-gated for remote
 targets, and covered by 16 tests.
 
+The gateway now receives one full CPU on this six-vCPU host. In an immediate
+matched production check, moving from 0.6 to 1.0 core reduced E2E p50/p95 from
+**648.0/979.3 ms** to **491.2/716.0 ms** and worker p50/p95 from
+**497.0/794.9 ms** to **332.0/603.4 ms**.
+
 Warm-browser isolation now keys reuse through canonical live-engine
 normalization (trusted gateway `tenant_id`, target, resolved profile), rejects
 closed/unresponsive pages and any non-successful prior job, and emits an
