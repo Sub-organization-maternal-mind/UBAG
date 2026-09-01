@@ -170,14 +170,14 @@ class NewChatAndConfigTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.reason, "manual_login_required")
 
-    def test_gemini_pins_3_6_flash_and_disables_extended_thinking(self):
+    def test_gemini_pins_3_7_flash_with_extended_thinking_enabled(self):
         selectors = get_provider_selectors("gemini_web")
         driver = MockPageDriver(response_text="9")
         events = LiveSessionEngine(selectors).run(_payload("gemini_web"), driver=driver)
         settings = selectors.settings
         self.assertEqual(
             [(setting.key, setting.kind, setting.desired) for setting in settings],
-            [("model", "choice", "3.6 Flash"), ("thinking", "toggle", False)],
+            [("model", "choice", "3.7 Flash"), ("thinking", "toggle", True)],
         )
         self.assertEqual(
             settings[1].on_when,
@@ -187,11 +187,11 @@ class NewChatAndConfigTests(unittest.TestCase):
             settings[1].toggle_click,
             ("gem-menu-item:has-text('Extended thinking')",),
         )
-        self.assertFalse(selectors.reasoning)
+        self.assertTrue(selectors.reasoning)
         configured = _event(events, "session.configured")["data"]["settings"]
         self.assertEqual(
             [(setting["key"], setting["desired"]) for setting in configured],
-            [("model", "3.6 Flash"), ("thinking", False)],
+            [("model", "3.7 Flash"), ("thinking", True)],
         )
 
     def test_provider_config_overrides_desired_value(self):

@@ -3407,14 +3407,52 @@ func loadModelCatalogFromDisk(target string) jobcore.ModelCatalog {
 		return jobcore.ModelCatalog{}
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, target, "manifest.json"))
-	if err != nil {
-		return jobcore.ModelCatalog{}
+	if err == nil {
+		if catalog, decErr := decodeModelCatalog(raw); decErr == nil {
+			return catalog
+		}
 	}
-	catalog, err := decodeModelCatalog(raw)
-	if err != nil {
-		return jobcore.ModelCatalog{}
+	// Alias-aware fallback: a caller may use an adapter alias (e.g. "gemini"
+	// for "gemini_web" or "chatgpt" for "chatgpt_web"). The direct path above
+	// covers the canonical id; this scan covers aliases without hardcoding them.
+	if entries, readErr := os.ReadDir(dir); readErr == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			candidate := filepath.Join(dir, entry.Name(), "manifest.json")
+			candRaw, candErr := os.ReadFile(candidate)
+			if candErr != nil {
+				continue
+			}
+			candRaw = bytes.TrimPrefix(candRaw, []byte{0xEF, 0xBB, 0xBF})
+			var meta struct {
+				ID      string   `json:"id"`
+				Aliases []string `json:"aliases"`
+			}
+			if jsonErr := json.Unmarshal(candRaw, &meta); jsonErr != nil {
+				continue
+			}
+			matched := meta.ID == target
+			if !matched {
+				for _, alias := range meta.Aliases {
+					if alias == target {
+						matched = true
+						break
+					}
+				}
+			}
+			if matched {
+				if catalog, decErr := decodeModelCatalog(candRaw); decErr == nil {
+					return catalog
+				}
+				// Alias matched but catalog failed to decode — treat as empty
+				// (fail-closed) rather than falling through to another alias.
+				return jobcore.ModelCatalog{}
+			}
+		}
 	}
-	return catalog
+	return jobcore.ModelCatalog{}
 }
 
 func decodeModelCatalog(raw []byte) (jobcore.ModelCatalog, error) {

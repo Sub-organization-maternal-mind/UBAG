@@ -25,8 +25,8 @@
   ],
   "model_catalog": {
     "settings": {
-      "model": { "kind": "choice", "values": ["3.5 Flash", "3.1 Flash-Lite", "3.1 Pro"] },
-      "thinking": { "kind": "choice", "values": ["Extended"] }
+      "model": { "kind": "choice", "values": ["3.7 Flash", "3.6 Flash", "3.5 Flash", "3.1 Flash-Lite", "3.1 Pro"] },
+      "thinking": { "kind": "toggle" }
     }
   },
   "attachments": {

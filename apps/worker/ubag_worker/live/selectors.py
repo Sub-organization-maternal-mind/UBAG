@@ -550,7 +550,7 @@ GEMINI_WEB = ProviderSelectors(
     provider_id="gemini_web",
     display_name="Gemini Web",
     target_url="https://gemini.google.com/app",
-    selector_version="2026-07-23-gemini-3.6-standard",
+    selector_version="2026-09-02-gemini-3.7-extended",
     # Re-baselined 2026-07-15 against live gemini.google.com/app. Gemini's
     # composer is a Quill editor whose <rich-textarea> holds TWO contenteditable
     # divs: the real composer (div.ql-editor, ~439x24) and an invisible
@@ -664,13 +664,13 @@ GEMINI_WEB = ProviderSelectors(
             "[data-test-id='new-chat-button']",
         ),
     ),
-    # Operator default (always-on): "3.6 Flash" with Standard thinking.
+    # Operator default (always-on): "3.7 Flash" with Extended thinking.
     #
     # Re-baselined 2026-07-17 against live gemini.google.com. Google FLATTENED the
     # mode picker: the nested "Thinking level" gem-menu-item (whose submenu offered
     # Standard / Extended) is GONE, and "Extended thinking" is now a sibling entry
     # in the single menu opened by data-test-id='bard-mode-menu-button':
-    #     3.5 Flash-Lite | 3.6 Flash | 3.1 Pro | Extended thinking
+    #     3.7 Flash | 3.6 Flash | 3.5 Flash-Lite | 3.1 Pro | Extended thinking
     # "Standard" no longer exists as a label at all.
     #
     # Crucially the model and Extended thinking are NOT mutually exclusive —
@@ -679,13 +679,14 @@ GEMINI_WEB = ProviderSelectors(
     # independent Extended toggle is OFF.
     #
     # Both settings are idempotent. The model is a labelled choice; thinking is
-    # represented as a toggle whose desired state is False, so a persisted
-    # Extended selection is clicked exactly once to return to Standard.
+    # represented as a toggle whose desired state is True (Extended), so a
+    # Standard-persisted toggle is clicked exactly once to reach Extended.
+    # Updated 2026-09-02: operator requires 3.7 Flash with Extended thinking enabled.
     settings=(
         ProviderSetting(
             key="model",
             kind="choice",
-            desired="3.6 Flash",
+            desired="3.7 Flash",
             open_steps=(
                 (
                     "button[data-test-id='bard-mode-menu-button']",
@@ -699,7 +700,7 @@ GEMINI_WEB = ProviderSelectors(
         ProviderSetting(
             key="thinking",
             kind="toggle",
-            desired=False,
+            desired=True,
             open_steps=(
                 (
                     "button[data-test-id='bard-mode-menu-button']",
@@ -711,7 +712,7 @@ GEMINI_WEB = ProviderSelectors(
             toggle_click=("gem-menu-item:has-text('Extended thinking')",),
         ),
     ),
-    reasoning=False,
+    reasoning=True,
 )
 
 MISTRAL_LECHAT = ProviderSelectors(
