@@ -16,7 +16,7 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.44.0
 	go.opentelemetry.io/otel/sdk v1.44.0
 	go.opentelemetry.io/otel/trace v1.44.0
-	google.golang.org/grpc v1.82.1
+	google.golang.org/grpc v1.83.1
 	modernc.org/sqlite v1.54.0
 )
 
@@ -52,7 +52,7 @@ require (
 replace github.com/ubag/ubag/packages/proto/gen/go => ../../packages/proto/gen/go
 
 require (
-	cel.dev/expr v0.25.1 // indirect
+	cel.dev/expr v0.25.2 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.1.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
