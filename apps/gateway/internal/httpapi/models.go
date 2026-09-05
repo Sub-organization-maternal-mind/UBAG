@@ -76,7 +76,8 @@ type jobRequest struct {
 // JobOptions is the typed view of jobRequest.Options (blueprint §6.1).
 // Parsed from the raw map via parseJobOptions; never serialised directly.
 type JobOptions struct {
-	// Priority maps to the 5 orchestration lanes: critical|high|normal|low|bulk (§14.4).
+	// Priority carries the contract enum low|normal|high|urgent, dispatched
+	// onto the lanes low|norm|high|crit (§14.4).
 	Priority string `json:"priority,omitempty"`
 	// TimeoutSeconds is the per-job maximum wall-clock time in the worker (§13.9).
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`

@@ -25,9 +25,11 @@ const (
 var priorityLanes = [5]string{"crit", "high", "norm", "low", "bulk"}
 
 // laneFromPriority maps a job options.priority string to its lane name.
+// The contract enum is low|normal|high|urgent; urgent dispatches on the crit
+// lane. The crit/bulk aliases keep worker-side lane names accepted.
 func laneFromPriority(priority string) string {
 	switch strings.ToLower(strings.TrimSpace(priority)) {
-	case "critical", "crit":
+	case "critical", "crit", "urgent":
 		return "crit"
 	case "high":
 		return "high"
