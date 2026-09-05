@@ -483,12 +483,13 @@ func workerEventKey(event WorkerEvent) string {
 }
 
 func statusFromWorkerEvent(event WorkerEvent, fallback Status) Status {
-	// data.status may only steer the state machine to a status the transition
-	// rules allow from the current status — the event.Type mapping stays
-	// authoritative for lifecycle changes.
+	// data.status may only steer within forward non-terminal moves: the
+	// event.Type mapping stays authoritative for terminal transitions, so an
+	// unvalidated payload string can never jump the state machine to a
+	// terminal status without a matching terminal event type.
 	if status, ok := event.Data["status"].(string); ok {
 		candidate := Status(status)
-		if KnownStatus(candidate) && shouldAdvanceStatus(fallback, candidate) {
+		if KnownStatus(candidate) && !TerminalStatus(candidate) && shouldAdvanceStatus(fallback, candidate) {
 			return candidate
 		}
 	}

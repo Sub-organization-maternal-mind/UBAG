@@ -49,12 +49,13 @@ func TestUpdateStatusRejectsBackwardsTransition(t *testing.T) {
 }
 
 // TestStatusFromWorkerEventDataStatusBounded pins the trust-hole fix: a
-// worker event's data.status may only steer the state machine to a status the
-// transition rules allow from the current status — never backwards, never a
-// terminal jump from an early state.
+// worker event's data.status may only steer forward, non-terminal moves —
+// never a terminal jump. The event.Type mapping is authoritative for terminal
+// transitions.
 func TestStatusFromWorkerEventDataStatusBounded(t *testing.T) {
 	// A queued job receives a "session.opening" event whose data claims
-	// "completed": the data.status shortcut must not apply.
+	// "completed": the terminal shortcut must not apply — only a real
+	// "completed" event type may complete a job.
 	event := WorkerEvent{
 		Type: "session.opening",
 		Data: map[string]any{"status": "completed"},
@@ -64,7 +65,7 @@ func TestStatusFromWorkerEventDataStatusBounded(t *testing.T) {
 		t.Fatalf("unbounded data.status applied: %q, want %q (fallback)", got, StatusQueued)
 	}
 
-	// A legitimately-forward data.status still applies.
+	// A legitimately-forward non-terminal data.status still applies.
 	event = WorkerEvent{
 		Type: "session.authenticated",
 		Data: map[string]any{"status": "running"},
@@ -72,6 +73,16 @@ func TestStatusFromWorkerEventDataStatusBounded(t *testing.T) {
 	got = statusFromWorkerEvent(event, StatusQueued)
 	if got != StatusRunning {
 		t.Fatalf("legitimate data.status rejected: %q, want %q (running)", got, StatusRunning)
+	}
+
+	// The event.Type mapping remains authoritative for terminal statuses.
+	event = WorkerEvent{
+		Type: "completed",
+		Data: map[string]any{},
+	}
+	got = statusFromWorkerEvent(event, StatusRunning)
+	if got != StatusCompleted {
+		t.Fatalf("terminal type mapping lost: %q, want %q (completed)", got, StatusCompleted)
 	}
 }
 

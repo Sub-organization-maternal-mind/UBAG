@@ -52,7 +52,7 @@ var workerEventTypes = map[string]struct{}{
 	"failed_retryable":               {},
 	"failed_terminal":                {},
 	"dead_letter":                    {},
-	"cancelled":                     {},
+	"cancelled":                      {},
 	"canceled":                       {},
 	"timed_out":                      {},
 	"timeout":                        {},
@@ -66,22 +66,19 @@ func knownWorkerEventType(eventType string) bool {
 	return ok
 }
 
-
-
 // failureEventTypes are the worker event types that represent job failure for
 // signal reconstruction and error classification — derived from the
 // workerEventStatus mapping, never re-enumerated at call sites.
 func failureEventTypes() map[string]struct{} {
-	failure := map[string]struct{}{
-		"failed":          {},
+	return map[string]struct{}{
+		"failed":           {},
 		"failed_retryable": {},
-		"failed_terminal": {},
+		"failed_terminal":  {},
 		"dead_letter":      {},
 		"timed_out":        {},
 		"timeout":          {},
 		"blocked":          {},
 	}
-	return failure
 }
 
 // IsFailureEventType reports whether a worker event type represents job
