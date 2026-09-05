@@ -14,6 +14,10 @@ type ManifestErrorCode struct {
 	RetryAfterMs int64
 }
 
+type ManifestJobStatus struct {
+	Terminal bool
+}
+
 var UbagEndpoints = map[string]ManifestEndpoint{
 	"GET /v1/health": {Method: "GET", Path: "/v1/health"},
 	"GET /v1/ready": {Method: "GET", Path: "/v1/ready"},
@@ -197,6 +201,64 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 	"UBAG-INTERNAL-DB-003": {Category: "internal", Retryable: true, RetryAfterMs: 0},
 	"UBAG-INTERNAL-QUEUE-004": {Category: "internal", Retryable: true, RetryAfterMs: 0},
 	"UBAG-INTERNAL-CRYPTO-005": {Category: "internal", Retryable: true, RetryAfterMs: 0},
+}
+
+var UbagJobStatuses = map[string]ManifestJobStatus{
+	"created": {Terminal: false},
+	"queued": {Terminal: false},
+	"assigned": {Terminal: false},
+	"running": {Terminal: false},
+	"token_streaming": {Terminal: false},
+	"completing": {Terminal: false},
+	"completed": {Terminal: true},
+	"completed_with_warnings": {Terminal: true},
+	"failed_retryable": {Terminal: true},
+	"failed_terminal": {Terminal: true},
+	"dead_letter": {Terminal: true},
+	"cancelled": {Terminal: true},
+	"timed_out": {Terminal: true},
+}
+
+var UbagJobEventTypes = []string{
+	"created",
+	"queued",
+	"assigned",
+	"running",
+	"browser_opened",
+	"session.manual_action_required",
+	"prompt_submitted",
+	"token",
+	"token_streaming",
+	"completing",
+	"completed",
+	"completed_with_warnings",
+	"failed_retryable",
+	"failed_terminal",
+	"dead_letter",
+	"cancelled",
+	"timed_out",
+	"artifact_created",
+	"blocked",
+	"warning",
+}
+
+var UbagErrorCategories = []string{
+	"auth",
+	"authz",
+	"validation",
+	"quota",
+	"rate",
+	"queue",
+	"worker",
+	"browser",
+	"adapter",
+	"target",
+	"template",
+	"cache",
+	"webhook",
+	"artifact",
+	"sidecar",
+	"internal",
 }
 
 var UbagSchemaFingerprints = map[string]string{
