@@ -41,12 +41,10 @@ def _close_quietly(driver: Optional[PageDriver]) -> None:
 
 
 def _target_from_payload(payload: object) -> str:
-    if not isinstance(payload, Mapping):
-        return "mock"
-    job_field = payload.get("job", {})
-    if not isinstance(job_field, Mapping):
-        job_field = {}
-    return str(job_field.get("target", payload.get("target", "mock")))
+    # Shared tolerant target extraction (envelope module; never raises).
+    from .envelope import _target_from_payload
+
+    return _target_from_payload(payload)
 
 
 def _driver_key(payload: Mapping[str, Any]) -> DriverKey:

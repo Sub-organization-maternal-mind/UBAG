@@ -290,6 +290,21 @@ def _safe_session_id(value: Any, job_id: str, target: str) -> str:
     return "sess_" + digest(job_id + target)[:16]
 
 
+def _target_from_payload(payload: Any) -> str:
+    """Tolerant target extraction shared by the live entrypoints.
+
+    Checks ``payload["job"]["target"]`` first (the standard API envelope
+    shape), then ``payload["target"]``, then defaults to ``"mock"``. Never
+    raises — the strict (raising) variant lives in adapter_registry.
+    """
+    if not isinstance(payload, Mapping):
+        return "mock"
+    job_field = payload.get("job", {})
+    if not isinstance(job_field, Mapping):
+        job_field = {}
+    return str(job_field.get("target", payload.get("target", "mock")))
+
+
 def _derive_job_id(payload: Mapping[str, Any], job_payload: Mapping[str, Any]) -> str:
     explicit_id = payload.get("job_id", job_payload.get("job_id", job_payload.get("id")))
     if explicit_id is not None:

@@ -42,6 +42,7 @@ if str(_WORKER_DIR) not in sys.path:
 
 from ubag_worker.live import chat_ledger  # noqa: E402
 from ubag_worker.live.engine import LiveSessionEngine  # noqa: E402
+from ubag_worker.live.envelope import _target_from_payload  # noqa: E402
 from ubag_worker.live.selectors import PROVIDER_SELECTORS  # noqa: E402
 from ubag_worker.runner import emit_jsonl, load_payload_from_text  # noqa: E402
 from ubag_worker.runtime.shutdown import GracefulDrainer, install_shutdown_handler  # noqa: E402
@@ -121,21 +122,6 @@ def _read_payload_text(
 
 def _dump_event(event: object) -> str:
     return json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-
-
-def _target_from_payload(payload: object) -> str:
-    """Extract the target adapter ID from a job payload.
-
-    Checks ``payload["job"]["target"]`` first (the standard API envelope shape),
-    then falls back to ``payload["target"]``, then defaults to ``"mock"``.
-    Mirrors adapter_registry._target_from_payload.
-    """
-    if not isinstance(payload, dict):
-        return "mock"
-    job_field = payload.get("job", {})
-    if not isinstance(job_field, dict):
-        job_field = {}
-    return str(job_field.get("target", payload.get("target", "mock")))
 
 
 def _flag_enabled(name: str) -> bool:
