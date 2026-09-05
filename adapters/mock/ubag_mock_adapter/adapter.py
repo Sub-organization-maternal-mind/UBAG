@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
-
 JsonObject = Dict[str, Any]
 _BASE_CLOCK = datetime(2026, 1, 1, 0, 0, 0)
 _DISALLOWED_SECRET_KEYS = {

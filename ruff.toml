@@ -1,0 +1,11 @@
+# Ruff configuration for the whole Python surface: apps/worker + adapters/.
+# Lives at the repo root so `ruff check apps/worker adapters` (the CI
+# invocation) resolves ONE ruleset for both trees — previously adapters/ had
+# no config ancestor and new ruff releases enabled their widening default
+# rule sets (UP/DTZ/SIM...), breaking CI on unrelated code.
+line-length = 100
+target-version = "py39"
+
+[lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
