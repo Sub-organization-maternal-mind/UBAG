@@ -331,6 +331,14 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
   matching event type; httpapi signal reconstruction consumes
   IsFailureEventType instead of re-listing failure types. 3 new vocabulary
   tests pin it; `go test -race` green; gofmt clean; full CI green.
+- **T10 (#67 / ADR-0005)**: orchestration wired — `run_live_worker` and
+  `WarmWorkerDaemon` construct `LiveOrchestrator` behind
+  `UBAG_ORCHESTRATOR_ENABLED` (inert by default, byte-identical off-path,
+  covered by new wiring tests); `LiveOrchestrator.leased()` context manager
+  owns the release protocol (engine sets outcome_success/outcome_signal on
+  the lease; record_outcome + cap-state projection happen on exit); the
+  never-emitted `drift` alert kind and the inert `tabbed` conversation-model
+  alias deleted (CONTEXT.md updated). 415/415 worker tests; full CI green.
 
 ## 2026-07-17 PAT (Personal Access Tokens) wired into serve + made persistent
 
