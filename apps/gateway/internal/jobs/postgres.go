@@ -322,6 +322,14 @@ func (p *PostgresStore) UpdateStatus(ctx context.Context, id string, status Stat
 		}
 		return job, true, nil
 	}
+	// The API mutation path honors the same transition validation as the
+	// worker-event path: never backwards, never out of a terminal status.
+	if !shouldAdvanceStatus(job.Status, status) {
+		if err := tx.Commit(); err != nil {
+			return Job{}, false, err
+		}
+		return job, true, nil
+	}
 
 	now := p.now().UTC()
 	sequence++

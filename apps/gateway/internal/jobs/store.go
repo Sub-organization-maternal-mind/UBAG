@@ -163,43 +163,18 @@ func reverseEvents(events []Event) {
 }
 
 func KnownStatus(status Status) bool {
-	switch status {
-	case StatusCreated,
-		StatusScheduled,
-		StatusQueued,
-		StatusAssigned,
-		StatusRunning,
-		StatusTokenStreaming,
-		StatusCompleting,
-		StatusCompleted,
-		StatusCompletedWithWarnings,
-		StatusFailedRetryable,
-		StatusFailedTerminal,
-		StatusDeadLetter,
-		StatusCanceled,
-		StatusTimedOut:
-		return true
-	default:
-		return false
-	}
+	_, ok := statusTable[status]
+	return ok
 }
 
 func TerminalStatus(status Status) bool {
-	switch status {
-	case StatusCompleted,
-		StatusCompletedWithWarnings,
-		StatusFailedRetryable,
-		StatusFailedTerminal,
-		StatusDeadLetter,
-		StatusCanceled,
-		StatusTimedOut:
-		return true
-	default:
-		return false
-	}
+	meta, ok := statusTable[status]
+	return ok && meta.terminal
 }
 
 func LifecycleStatuses() []Status {
+	// Declared order = rank order (see statusTable); statuses sharing a rank
+	// keep their switch order.
 	return []Status{
 		StatusCreated,
 		StatusScheduled,

@@ -2765,8 +2765,7 @@ func signInRequiredMessage(data map[string]any) string {
 func jobSignalsFromEvents(events []jobstore.Event) jobSignals {
 	var signals jobSignals
 	for _, event := range events {
-		switch event.Type {
-		case "failed", "failed_retryable", "failed_terminal", "dead_letter", "timed_out", "timeout", "blocked":
+		if jobstore.IsFailureEventType(event.Type) {
 			class := eventDataString(event.Data, "error_class")
 			message := eventDataString(event.Data, "message")
 			// A logged-out provider session is a distinct, human-actionable
@@ -2782,7 +2781,9 @@ func jobSignalsFromEvents(events []jobstore.Event) jobSignals {
 				signals.ErrorClass = class
 				signals.ErrorMessage = message
 			}
-		case "session.manual_action_required":
+			continue
+		}
+		if event.Type == "session.manual_action_required" {
 			// Prefer the human-readable message; fall back to the reason code.
 			if message := eventDataString(event.Data, "message"); message != "" {
 				signals.ManualAction = message
