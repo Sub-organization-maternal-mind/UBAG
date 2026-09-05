@@ -62,7 +62,7 @@ The caller-owned logical thread with a target.
 The conversation's identifier — wire field `conversation_id`, store column `conversation_key` — scoped to (tenant, app, target); reusing it resumes the same provider chat.
 
 **Conversation Model**:
-How a target supports parallel chats: `url` (default), `tabbed` (inert alias of `url` today), `spa-singleton` (one provider context per tab; not yet wired in the live path).
+How a target supports parallel chats: `url` (default) or `spa-singleton` (one provider context per tab; not yet wired in the live path).
 
 **Provider Chat Thread**:
 The provider-side thread a conversation maps to, referenced by its **Thread Ref** (chat URL only; `provider_thread_ref` / `thread_ref`).

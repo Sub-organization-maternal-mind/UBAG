@@ -42,11 +42,10 @@ const (
 
 // Alert kinds describing the manual action a human must perform.
 const (
-	KindCaptcha      = "captcha"
-	KindManualLogin  = "manual_login"
-	KindVerification = "verification"
-	KindDrift        = "drift"
-	KindOther        = "other"
+	KindCaptcha       = "captcha"
+	KindManualLogin   = "manual_login"
+	KindVerification  = "verification"
+	KindOther         = "other"
 )
 
 // defaultDispatchTimeout bounds how long a single notification dispatch may run
@@ -122,8 +121,7 @@ var validKinds = map[string]struct{}{
 	KindCaptcha:      {},
 	KindManualLogin:  {},
 	KindVerification: {},
-	KindDrift:        {},
-	KindOther:        {},
+	KindOther:       {},
 }
 
 func normalizeKind(kind string) string {

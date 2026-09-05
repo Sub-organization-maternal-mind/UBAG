@@ -68,11 +68,16 @@ class WarmWorkerDaemon:
         driver_factory: Callable[[Any], PageDriver] = create_default_driver,
         engine_factory: Callable[[Any], Any] = LiveSessionEngine,
         selectors_by_target: Mapping[str, Any] = PROVIDER_SELECTORS,
+        orchestrator: Optional[Any] = None,
     ) -> None:
         self._driver_factory = driver_factory
         self._engine_factory = engine_factory
         self._selectors_by_target = selectors_by_target
         self._warm: Dict[DriverKey, PageDriver] = {}
+        # Optional process-level orchestrator (Fleet + ChannelPool + AIMD).
+        # None (the default, and what run_worker_daemon constructs unless
+        # UBAG_ORCHESTRATOR_ENABLED is truthy) keeps behavior byte-identical.
+        self._orchestrator = orchestrator
 
     def run_job(self, payload: Mapping[str, Any]) -> Iterator[JsonObject]:
         """Drive one job, yielding the engine's events verbatim.
@@ -88,7 +93,12 @@ class WarmWorkerDaemon:
 
         self._evict_other_keys(key)
         driver = self._checkout(key, selectors, payload)
-        engine = self._engine_factory(selectors)
+        if self._orchestrator is None:
+            engine = self._engine_factory(selectors)
+        else:
+            # Factories default to LiveSessionEngine(selectors) — a single
+            # positional arg. Only inject the orchestrator when one is wired.
+            engine = self._engine_factory(selectors, orchestrator=self._orchestrator)
         completed = False
         try:
             for event in engine.iter_events(payload, driver=driver):

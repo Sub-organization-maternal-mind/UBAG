@@ -14,6 +14,7 @@ provider account concurrently.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -29,8 +30,19 @@ from ubag_worker.live.daemon import WarmWorkerDaemon  # noqa: E402
 from ubag_worker.live.daemon_protocol import serve  # noqa: E402
 
 
+def _orchestrator_if_enabled(worker_id: str = "worker-daemon"):
+    """LiveOrchestrator only when UBAG_ORCHESTRATOR_ENABLED is truthy (inert
+    by default — matches the repo convention for risky runtime features)."""
+    raw = os.environ.get("UBAG_ORCHESTRATOR_ENABLED", "").strip().lower()
+    if raw not in ("1", "true", "yes", "on"):
+        return None
+    from ubag_worker.live.orchestrator import LiveOrchestrator
+
+    return LiveOrchestrator(worker_id=worker_id)
+
+
 def main() -> int:
-    return serve(sys.stdin, sys.stdout, WarmWorkerDaemon())
+    return serve(sys.stdin, sys.stdout, WarmWorkerDaemon(orchestrator=_orchestrator_if_enabled()))
 
 
 if __name__ == "__main__":

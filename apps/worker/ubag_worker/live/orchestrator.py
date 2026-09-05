@@ -23,10 +23,11 @@ and contexts are keyed by tenant and never shared across tenants).
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Tuple
 
 from ..orchestration.aimd import AIMDController, CapChange, NegativeSignal
 from ..orchestration.bulkhead import (
@@ -74,6 +75,14 @@ class LiveLease:
     pool: Optional[ChannelPool]
     context: Optional[ProviderContext]
     result: AssignResult
+    # Filled by LiveOrchestrator.leased: the caller sets ``outcome_success`` /
+    # ``outcome_signal`` inside the with-block; on exit the context manager
+    # performs record_outcome and fills ``cap_change`` (plus the pre-release
+    # ``cap_state`` projection for telemetry).
+    outcome_success: bool = True
+    outcome_signal: "Optional[NegativeSignal]" = None
+    cap_change: "Optional[CapChange]" = None
+    cap_state: "Optional[ConcurrencyState]" = None
 
     @property
     def tab(self) -> Optional[ChannelTab]:
@@ -341,6 +350,52 @@ class LiveOrchestrator:
                 maximum=pool.config.max_tabs,
                 in_flight=in_flight,
             )
+
+    @contextlib.contextmanager
+    def leased(
+        self,
+        *,
+        tenant_id: str,
+        provider_id: str,
+        identity_ref: str,
+        job_id: str,
+        conversation_id: Optional[str] = None,
+        lane: Lane = Lane.NORMAL,
+        conversation_model: ConversationModel = ConversationModel.URL,
+    ) -> Iterator[LiveLease]:
+        """Own the whole lease lifecycle: acquire, yield the lease, then release.
+
+        This is the seam callers use: instead of knowing the four-method release
+        protocol (lease -> concurrency_state + record_outcome -> optional cap-change
+        telemetry), a caller enters ``with orchestrator.leased(...) as lease:`` and
+        this method performs the release and returns the emitted CapChange (if
+        any) on ``lease.cap_change`` when the block exits.
+        """
+
+        lease = self.lease(
+            tenant_id=tenant_id,
+            provider_id=provider_id,
+            identity_ref=identity_ref,
+            job_id=job_id,
+            conversation_id=conversation_id,
+            lane=lane,
+            conversation_model=conversation_model,
+        )
+        state: Optional[ConcurrencyState] = None
+        if lease.pool is not None:
+            state = self.concurrency_state(lease)
+        lease.cap_change = None
+        lease.cap_state = state
+        try:
+            yield lease
+        finally:
+            success = getattr(lease, "outcome_success", True)
+            signal = getattr(lease, "outcome_signal", None)
+            try:
+                change = self.record_outcome(lease, success=success, signal=signal)
+            except Exception:  # noqa: BLE001 - release must never mask the job outcome
+                change = None
+            lease.cap_change = change
 
     def topology_snapshot(self, tenant_id: Optional[str] = None) -> Dict[str, List[dict]]:
         """Build a tenant-scoped browser→context→tab snapshot for telemetry.

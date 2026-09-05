@@ -192,6 +192,7 @@ class LiveSessionEngine:
         # lease is acquired *after* authentication so a manual-login block never
         # consumes a tab. ``orch_success``/``orch_signal`` drive the AIMD outcome.
         orch_lease = None
+        orch_ctx = None
         orch_success = True
         orch_signal = None
 
@@ -299,15 +300,17 @@ class LiveSessionEngine:
             })
 
             # Acquire an orchestration lease (Fleet context + ChannelPool tab)
-            # for this job, then report the live browser→context→tab topology.
+            # for this job. The context manager owns the release protocol;
+            # the engine only sets the AIMD outcome fields on the lease.
             if self._orchestrator is not None:
-                orch_lease = self._orchestrator.lease(
+                orch_ctx = self._orchestrator.leased(
                     tenant_id=job.tenant_id,
                     provider_id=self._selectors.provider_id,
                     identity_ref=job.account_binding_id,
                     job_id=job.job_id,
                     conversation_id=job.conversation_id,
                 )
+                orch_lease = orch_ctx.__enter__()
 
             yield emit("running", {
                 "status": "running",
@@ -426,15 +429,19 @@ class LiveSessionEngine:
                 "message": str(exc),
             })
         finally:
-            # Release the orchestration lease and surface any AIMD cap change as
-            # a trailing ``concurrency.cap_changed`` telemetry event. Computed
-            # before release so ``in_flight`` reflects this job's busy tab.
+            # Release the orchestration lease via the context manager (which
+            # performs record_outcome) and surface any AIMD cap change as a
+            # trailing ``concurrency.cap_changed`` telemetry event.
             if self._orchestrator is not None and orch_lease is not None:
-                state = self._orchestrator.concurrency_state(orch_lease)
-                change = self._orchestrator.record_outcome(
-                    orch_lease, success=orch_success, signal=orch_signal
-                )
-                if change is not None:
+                orch_lease.outcome_success = orch_success
+                orch_lease.outcome_signal = orch_signal
+                try:
+                    orch_ctx.__exit__(None, None, None)
+                except Exception:  # noqa: BLE001 - release must never mask the job outcome
+                    pass
+                change = orch_lease.cap_change
+                state = orch_lease.cap_state
+                if change is not None and state is not None:
                     from ..orchestration.telemetry import concurrency_change_data
 
                     yield emit(

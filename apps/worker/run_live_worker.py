@@ -131,6 +131,21 @@ def _flag_enabled(name: str) -> bool:
     return raw.strip().lower() not in ("", "0", "false", "no", "off")
 
 
+def _orchestrator_if_enabled(worker_id: str = "worker-1"):
+    """Construct a LiveOrchestrator when UBAG_ORCHESTRATOR_ENABLED is truthy.
+
+    Inert by default (matching the repo convention for risky runtime features):
+    unset/false keeps today's byte-identical behavior — no lease, no AIMD,
+    no topology telemetry. Opt-in wires the blueprint §12 model so the
+    Fleet/ChannelPool/AIMD stack actually executes on live jobs.
+    """
+    if not _flag_enabled("UBAG_ORCHESTRATOR_ENABLED"):
+        return None
+    from ubag_worker.live.orchestrator import LiveOrchestrator
+
+    return LiveOrchestrator(worker_id=worker_id)
+
+
 def _emit_live_jsonl(payload: object, stream) -> int:
     """Drive a live session and emit each event as a JSONL line."""
     target = _target_from_payload(payload)
@@ -151,7 +166,9 @@ def _emit_live_jsonl(payload: object, stream) -> int:
                 conversation_key=conversation_key,
             )
 
-    engine = LiveSessionEngine(selectors, chat_sink=chat_sink)
+    engine = LiveSessionEngine(
+        selectors, chat_sink=chat_sink, orchestrator=_orchestrator_if_enabled()
+    )
     count = 0
     for event in engine.iter_events(payload):
         stream.write(_dump_event(event))

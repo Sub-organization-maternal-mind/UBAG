@@ -178,7 +178,6 @@ func TestNormalizeKindAllowlist(t *testing.T) {
 		"CAPTCHA":         KindCaptcha,
 		" manual_login ":  KindManualLogin,
 		"verification":    KindVerification,
-		"drift":           KindDrift,
 		"something-weird": KindOther,
 		"":                KindOther,
 	}
