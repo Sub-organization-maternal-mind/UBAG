@@ -1,6 +1,6 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-08-10
+Last updated: 2026-09-05
 
 ## 2026-08-10 Production performance baseline and hardening
 
@@ -244,6 +244,42 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
 - Pushed shared commit `acec1ed` to GitHub `main`, then synchronized all 1,121 GitHub-tracked files into `/opt/docker/ubag`; a hash audit reported zero missing files and zero mismatches. The prior production source and dashboard artifact are recoverable under `/opt/docker/ubag-sync-backups`.
 - Rebuilt the exact synchronized gateway image (`sha256:dde174b3d9422bba95c4022c753171f7b0ae830a3617acec6a798875eec52559`) and recreated gateway, chat-reaper, and nginx-dashboard. Gateway and nginx-dashboard are healthy; the existing browser remains healthy.
 - Final post-sync production smoke `job_000000000029` completed with exact output `UBAG_SYNCED_GEMINI_36_STANDARD_OK` and selector version `2026-07-23-gemini-3.6-standard`.
+
+## 2026-09-05 Domain glossary, ADRs, architecture survey, rectification backlog
+
+- **CONTEXT.md** (repo root, single-context glossary, ~40 terms) resolves the corpus's
+  worst overloads: session → Gateway Session / Provider Context; target vs provider;
+  the conversation family (Conversation Key, Provider Chat Thread, Thread Ref);
+  job vs run; 14-value Job Status; Safe Mode vs Privacy Mode; Account Binding /
+  identity_ref; seven canonical roles. **docs/adr/**: 0001 contracts-first,
+  0002 safe-mode hard constraint, 0003 blueprint v2.1 canonical (§12 model),
+  0004 one vocabulary source (schemas → generated SDK sets), 0005 orchestration
+  wired behind an inert-by-default flag.
+- **docs/agents/**: GitHub Issues via `gh` (remote:
+  Sub-organization-maternal-mind/UBAG), default five triage labels,
+  single-context domain docs layout. `CLAUDE.md` gained the Agent skills section.
+- **Architecture survey** (4 explorations: httpapi core, worker live path,
+  status/event vocabulary chain, store wiring): 6 deepening candidates in
+  `architecture-review-20260905.html` (temp). Measured highlights: server.go
+  4,189 lines / 53 routes / duplicated per-handler scaffolding; PAT cost ~14
+  touch sites; 10+ hand-copied status vocabularies (6 of 11 drift bugs share
+  this failure mode); `scheduled` settable in memory store but rejected by the
+  Postgres CHECK; ~1,600 lines of orchestration unreachable in production;
+  16 store-kind switches + 15 byte-identical to_regclass assertions.
+- **Drift backlog filed**: issues #48–#58 (needs-triage). **Rectification
+  mandate (user, 2026-09-05): fix everything.** 13 ready-for-agent tickets
+  published with native blocking edges (lane fix; docs pointers; manifest
+  vocabularies; contract catch-up; SDK consumption; conformance alignment;
+  gateway seam; dashboard consumption; worker normalization module;
+  orchestration wiring; credential seam; route table; store-kit).
+- **T1 (#59) urgent→crit lane fix**: `laneFromPriority` gains the `urgent`
+  case (contract enum low|normal|high|urgent maps to low|norm|high|crit);
+  red-first pin test `nats_lanes_test.go` covers all four contract values +
+  case/trim behavior; models.go lane comment reconciled. Go toolchain is
+  unavailable on this workstation — verification per user decision runs via
+  GitHub Actions (`ci.yml` gateway job, go test -race) on `feat/**` push.
+  First CI run: gateway job GREEN (fix + test verified); branch rebased onto
+  main (4 commits behind, workerconsumer/attachment pipeline had moved).
 
 ## 2026-07-17 PAT (Personal Access Tokens) wired into serve + made persistent
 

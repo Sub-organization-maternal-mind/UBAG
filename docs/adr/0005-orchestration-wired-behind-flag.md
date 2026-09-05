@@ -1,0 +1,5 @@
+# Orchestration is wired behind an inert-by-default flag; dead variants are removed
+
+The §12 orchestration stack (Fleet, ChannelPool, AIMD, scheduler, pacer, bulkhead, LiveOrchestrator) is adopted production code, wired into `run_live_worker`/`daemon` behind `UBAG_ORCHESTRATOR_ENABLED` (default off, matching the repo convention that risky runtime features land behind env flags, inert by default); `lease()` becomes a context manager owning its release protocol; (tenant, target, identity) uses one key shape across orchestrator, pool, and scheduler. Dead variants are deleted rather than documented: the never-emitted `drift` alert kind, the inert `tabbed` conversation-model alias; the spa-singleton path gets its `context_factory` wiring when enabled. Decided 2026-09-05: ADR-0003 made the §12 model canonical, so deleting the implementation would contradict a recorded decision, while an unwired 1,600-line stack is the shallowest possible shape. Consequence: production behavior is unchanged until the flag is live-verified.
+
+Status: accepted

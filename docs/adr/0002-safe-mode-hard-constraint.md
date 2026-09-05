@@ -1,0 +1,3 @@
+# Safe Mode is a hard product constraint
+
+UBAG operates user-owned sessions only: automated login, credential scraping, credential storage, and CAPTCHA solving are forbidden — enforced structurally through `adapters/registry.json` safe-mode manifests rather than review discipline, and adapter work must never weaken it. This deliberately forgoes capabilities commercial automation tools ship, for target ToS compliance and account safety. Consequences: provider login is manual (Live Login/noVNC with human-in-the-loop alerts), storage-state extraction is disallowed, and events carry only safe references (thread refs are chat URLs only).
