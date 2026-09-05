@@ -313,6 +313,24 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
   (`v1=`-prefixed base64url HMAC over `timestamp.nonce.body`, signing.go) —
   the old helpers could never verify real gateway webhooks. Conformance
   validates; TS SDK 75 green.
+- **T9 (#66)**: one shared envelope module (`live/envelope.py`) parses the
+  dispatch envelope for the live engine, registry stub path, and entrypoints;
+  the secret scanner moved to a leaf module (`live/secret_scan.py`) breaking
+  the engine→registry import cycle; registry/daemon/run_live_worker duplicates
+  (_manual_context, _safe_session_id, event envelope, _worker_event,
+  _target_from_payload, job-id derivation) collapsed onto it. engine.py
+  −449 lines; 411/411 worker tests; ruff clean. CI green.
+- **T7 (#64)**: gateway worker-event seam deepened — `jobs/vocabulary.go` is
+  the single declaration (statusTable with rank+terminal flags,
+  workerEventTypes set, workerEventStatus alias mapping, failure predicate);
+  KnownStatus/TerminalStatus/LifecycleStatuses derive from the table instead
+  of restating 14 statuses 3×; UpdateStatus in ALL THREE stores now honors
+  shouldAdvanceStatus (the API mutation path can no longer bypass transition
+  validation); the data.status trust hole closed — a payload status string
+  can only steer forward NON-TERMINAL moves, terminal transitions require a
+  matching event type; httpapi signal reconstruction consumes
+  IsFailureEventType instead of re-listing failure types. 3 new vocabulary
+  tests pin it; `go test -race` green; gofmt clean; full CI green.
 
 ## 2026-07-17 PAT (Personal Access Tokens) wired into serve + made persistent
 
