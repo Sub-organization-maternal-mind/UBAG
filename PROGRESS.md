@@ -280,6 +280,39 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
   GitHub Actions (`ci.yml` gateway job, go test -race) on `feat/**` push.
   First CI run: gateway job GREEN (fix + test verified); branch rebased onto
   main (4 commits behind, workerconsumer/attachment pipeline had moved).
+- **Main's broken CI repaired** (pre-existing, not caused by the branch):
+  ruff (root `ruff.toml` — adapters/ had no config and new ruff defaults
+  widened; +10 real lint fixes incl. a missing `SelectorGroup` import and a
+  F821), stale SDK manifests (attachment error codes never regenerated), and
+  the dashboard e2e webServer timeout (Playwright polled 4178 while vite
+  preview pins 58180 strictPort — URL fixed, timeout 60s; 41/41 e2e pass
+  locally). Five consecutive fully-green CI runs since.
+- **T3 (#61)**: manifest generator now emits `UBAG_JOB_STATUSES` (terminal
+  flags), `UBAG_JOB_EVENT_TYPES`, `UBAG_ERROR_CATEGORIES`,
+  `UBAG_TERMINAL_JOB_STATUSES` to both SDKs; freshness check fails when a
+  schema enum is mutated (verified red-then-green).
+- **T4 (#62)**: contracts gained `scheduled` status + `not_before` (matches
+  the gateway's existing behavior); error-category enum aligned to the
+  catalog (context/tab/concurrency added — emitted UBAG-TAB errors now
+  validate). CI green.
+- **T5 (#71)**: both SDKs consume the generated vocabularies — phantom
+  statuses (accepted/failed/retrying) removed, terminal sets contract-true
+  (covers failed_retryable/failed_terminal/timed_out/completed_with_warnings),
+  final_and_stream restored, invented retry/cache unions replaced by contract
+  free strings. TS 75 tests green; Go verified via CI (test:sdk green).
+- **T8 (#65)**: dashboard consumes the SDK's generated manifest via a new
+  `@ubag/sdk/contract-manifest` subpath export (avoids the grpc barrel);
+  Failed/DLQ filters, homepage + metrics FAILED_STATES, jobs cancel guard, and
+  StatusBadge keys all use real contract statuses; requeue now calls
+  POST /v1/jobs/{id}/retry. svelte-check 0 errors; 25 unit + 41 e2e green;
+  CI green.
+- **T6 (#63)**: conformance fixtures now match the contract shapes the gateway
+  actually serves (alerts list/config/mutations with kind envelopes + 200s,
+  audit export stats/records/head_hash, SSO logout revoked+200); webhook
+  verify helpers in BOTH SDKs fixed to the gateway's real signing
+  (`v1=`-prefixed base64url HMAC over `timestamp.nonce.body`, signing.go) —
+  the old helpers could never verify real gateway webhooks. Conformance
+  validates; TS SDK 75 green.
 
 ## 2026-07-17 PAT (Personal Access Tokens) wired into serve + made persistent
 
