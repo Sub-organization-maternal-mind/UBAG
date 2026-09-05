@@ -3,18 +3,21 @@
 
 export interface VerifyWebhookOptions {
   timestamp: string;
+  nonce: string;
   toleranceSeconds?: number;
 }
 
 const DEFAULT_TOLERANCE_SECONDS = 300;
+const SIGNATURE_VERSION = "v1";
 
-function hexEncode(buf: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+function base64UrlEncode(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-async function hmacSha256Hex(secret: string, message: string): Promise<string> {
+async function hmacSha256B64Url(secret: string, message: string): Promise<string> {
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
     "raw",
@@ -24,7 +27,7 @@ async function hmacSha256Hex(secret: string, message: string): Promise<string> {
     ["sign"],
   );
   const sig = await crypto.subtle.sign("HMAC", key, enc.encode(message));
-  return hexEncode(sig);
+  return base64UrlEncode(sig);
 }
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -37,8 +40,9 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-// verifyWebhookSignature checks an HMAC-SHA256 signature over
-// `${timestamp}.${body}` and enforces a timestamp tolerance window.
+// verifyWebhookSignature checks the gateway's webhook signature: HMAC-SHA256
+// over `${timestamp}.${nonce}.${body}`, base64url-encoded and `v1=`-prefixed
+// (gateway internal/webhooks signing.go), within a timestamp tolerance window.
 // Returns a Promise<boolean> because Web Crypto is async.
 export async function verifyWebhookSignature(
   payload: ArrayBuffer | Uint8Array,
@@ -53,7 +57,7 @@ export async function verifyWebhookSignature(
   if (ageSeconds > tolerance) return false;
 
   const body = new TextDecoder().decode(payload);
-  const base = `${options.timestamp}.${body}`;
-  const expected = await hmacSha256Hex(secret, base);
-  return timingSafeEqual(expected, signature);
+  const base = `${options.timestamp}.${options.nonce}.${body}`;
+  const expected = await hmacSha256B64Url(secret, base);
+  return timingSafeEqual(`${SIGNATURE_VERSION}=${expected}`, signature);
 }

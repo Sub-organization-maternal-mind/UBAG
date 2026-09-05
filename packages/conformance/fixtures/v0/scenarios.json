@@ -4282,11 +4282,15 @@
           "data": [
             {
               "alert_id": "alert_captcha_01",
-              "kind": "captcha",
+              "tenant_id": "tenant_fixture",
+              "app_id": "app_fixture",
               "job_id": "job_mock_018",
-              "target": "chatgpt_web · acct-alpha",
+              "session_id": "sess_fixture_01",
+              "target_id": "chatgpt_web",
+              "kind": "captcha",
               "status": "open",
-              "detail": "CAPTCHA wall detected mid-job. A human operator must solve it via noVNC; UBAG never auto-solves."
+              "message": "CAPTCHA wall detected mid-job. A human operator must solve it via noVNC; UBAG never auto-solves.",
+              "created_at": "2026-05-22T10:00:00Z"
             }
           ],
           "next_cursor": null,
@@ -4316,10 +4320,12 @@
         "body": {
           "api_version": "2026-05-22",
           "kind": "alert_config",
-          "sink": "smtp+dashboard",
+          "sink_type": "smtp",
           "smtp_configured": true,
-          "recipient": "mindreader420123@gmail.com",
-          "resolution": "Human-solved (noVNC takeover) — no automated CAPTCHA bypass",
+          "smtp_host": "smtp.example.com",
+          "store_kind": "sqlite",
+          "recipient_count": 1,
+          "recipients": ["mindreader420123@gmail.com"],
           "trace_id": "trace_alert_config"
         }
       },
@@ -4347,19 +4353,29 @@
         }
       },
       "response": {
-        "status": 202,
+        "status": 200,
         "body": {
           "api_version": "2026-05-22",
-          "alert_id": "alert_captcha_01",
-          "status": "acknowledged",
-          "idempotent_replay": false,
-          "audit_event": "alert.acknowledged",
+          "kind": "alert",
+          "data": {
+            "alert_id": "alert_captcha_01",
+            "tenant_id": "tenant_fixture",
+            "app_id": "app_fixture",
+            "job_id": "job_mock_018",
+            "session_id": "sess_fixture_01",
+            "target_id": "chatgpt_web",
+            "kind": "captcha",
+            "status": "acknowledged",
+            "message": "CAPTCHA wall detected mid-job. A human operator must solve it via noVNC; UBAG never auto-solves.",
+            "created_at": "2026-05-22T10:00:00Z",
+            "acknowledged_at": "2026-05-22T10:01:00Z"
+          },
           "trace_id": "trace_alert_ack"
         }
       },
       "expect": {
         "ok": true,
-        "body.status": "acknowledged"
+        "body.data.status": "acknowledged"
       }
     },
     {
@@ -4380,19 +4396,30 @@
         }
       },
       "response": {
-        "status": 202,
+        "status": 200,
         "body": {
           "api_version": "2026-05-22",
-          "alert_id": "alert_captcha_01",
-          "status": "resolved",
-          "idempotent_replay": false,
-          "audit_event": "alert.resolved",
+          "kind": "alert",
+          "data": {
+            "alert_id": "alert_captcha_01",
+            "tenant_id": "tenant_fixture",
+            "app_id": "app_fixture",
+            "job_id": "job_mock_018",
+            "session_id": "sess_fixture_01",
+            "target_id": "chatgpt_web",
+            "kind": "captcha",
+            "status": "resolved",
+            "message": "CAPTCHA wall detected mid-job. A human operator must solve it via noVNC; UBAG never auto-solves.",
+            "created_at": "2026-05-22T10:00:00Z",
+            "acknowledged_at": "2026-05-22T10:01:00Z",
+            "resolved_at": "2026-05-22T10:02:00Z"
+          },
           "trace_id": "trace_alert_resolve"
         }
       },
       "expect": {
         "ok": true,
-        "body.status": "resolved"
+        "body.data.status": "resolved"
       }
     },
     {
@@ -4421,23 +4448,42 @@
         "status": 200,
         "body": {
           "api_version": "2026-05-22",
-          "kind": "audit_export",
+          "status": "accepted",
+          "stats": {
+            "enqueued": 2,
+            "exported": 2,
+            "dropped": 0,
+            "failed": 0
+          },
           "chain_valid": true,
-          "anchor": "sha256_anchor_fixture",
-          "entries": [
+          "head_hash": "sha256_entry_02",
+          "count": 2,
+          "records": [
             {
-              "event_id": "audit_01",
-              "type": "job.created",
-              "sequence": 1,
+              "id": "audit_01",
+              "seq": 1,
+              "tenant_id": "tenant_fixture",
+              "app_id": "app_fixture",
+              "actor": "fixture-app",
+              "action": "job.created",
+              "resource": "job_mock_018",
+              "outcome": "allow",
+              "occurred_at": "2026-05-22T10:00:00Z",
               "prev_hash": "0000000000000000",
-              "hash": "sha256_entry_01"
+              "record_hash": "sha256_entry_01"
             },
             {
-              "event_id": "audit_02",
-              "type": "alert.resolved",
-              "sequence": 2,
+              "id": "audit_02",
+              "seq": 2,
+              "tenant_id": "tenant_fixture",
+              "app_id": "app_fixture",
+              "actor": "fixture-app",
+              "action": "alert.resolved",
+              "resource": "alert_captcha_01",
+              "outcome": "allow",
+              "occurred_at": "2026-05-22T10:02:00Z",
               "prev_hash": "sha256_entry_01",
-              "hash": "sha256_entry_02"
+              "record_hash": "sha256_entry_02"
             }
           ],
           "trace_id": "trace_audit_export"
@@ -4446,7 +4492,7 @@
       "expect": {
         "ok": true,
         "body.chain_valid": true,
-        "body.kind": "audit_export"
+        "body.status": "accepted"
       }
     },
     {
@@ -4467,20 +4513,16 @@
         }
       },
       "response": {
-        "status": 202,
+        "status": 200,
         "body": {
           "api_version": "2026-05-22",
-          "status": "logged_out",
-          "session_revoked": true,
-          "idempotent_replay": false,
-          "audit_event": "sso.session_revoked",
+          "revoked": true,
           "trace_id": "trace_sso_logout"
         }
       },
       "expect": {
         "ok": true,
-        "body.session_revoked": true,
-        "body.status": "logged_out"
+        "body.revoked": true
       }
     }
   ],
