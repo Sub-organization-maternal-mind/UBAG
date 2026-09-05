@@ -99,3 +99,15 @@ export {
   type TracerLike, type SpanLike, type TelemetryOptions, type ParsedTraceparent,
 } from "./telemetry.js";
 export { UbagGrpcClient, grpcStatusToUbagCode, type UbagGrpcOptions } from "./grpc.js";
+// Generated contract vocabularies (ADR-0004): single source for statuses,
+// event types, and error categories across SDKs and the dashboard.
+export {
+  UBAG_API_VERSION,
+  UBAG_ENDPOINTS,
+  UBAG_ERROR_CODES,
+  UBAG_ERROR_CATEGORIES,
+  UBAG_JOB_STATUSES,
+  UBAG_JOB_EVENT_TYPES,
+  UBAG_TERMINAL_JOB_STATUSES,
+  UBAG_SCHEMA_FINGERPRINTS,
+} from "./generated/contract-manifest.js";

@@ -6,6 +6,7 @@
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import type { MetricsResponse } from '$lib/api/types';
+  import { FAILED_STATES as FAILED_STATUS_LIST } from '$lib/api/statuses';
   import Chart from 'chart.js/auto';
 
   let metrics = $state<MetricsResponse | null>(null);
@@ -51,7 +52,8 @@
     });
   }
 
-  const FAILED_STATES = new Set(['failed', 'error', 'dead', 'dlq']);
+  // Terminal-failure states from the contract vocabulary.
+const FAILED_STATES = new Set(FAILED_STATUS_LIST);
 
   async function load() {
     // The Prometheus /v1/metrics endpoint is edge-blocked and is not JSON, so

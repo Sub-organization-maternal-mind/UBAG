@@ -38,6 +38,7 @@
     "vitest": "^2.1.8"
   },
   "dependencies": {
+    "@ubag/sdk": "workspace:*",
     "@xterm/xterm": "^6.0.0"
   }
 }
