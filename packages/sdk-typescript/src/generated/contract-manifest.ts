@@ -720,9 +720,12 @@ export const UBAG_ERROR_CODES = {
     "retryable": true
   }
 } as const;
-export const UBAG_ERROR_CATEGORIES = ["auth","authz","validation","quota","rate","queue","worker","browser","adapter","target","template","cache","webhook","artifact","sidecar","internal"] as const;
+export const UBAG_ERROR_CATEGORIES = ["auth","authz","validation","quota","rate","queue","worker","browser","context","tab","concurrency","adapter","target","template","cache","webhook","artifact","sidecar","internal"] as const;
 export const UBAG_JOB_STATUSES = {
   "created": {
+    "terminal": false
+  },
+  "scheduled": {
     "terminal": false
   },
   "queued": {
@@ -765,6 +768,6 @@ export const UBAG_JOB_STATUSES = {
 export const UBAG_JOB_EVENT_TYPES = ["created","queued","assigned","running","browser_opened","session.manual_action_required","prompt_submitted","token","token_streaming","completing","completed","completed_with_warnings","failed_retryable","failed_terminal","dead_letter","cancelled","timed_out","artifact_created","blocked","warning"] as const;
 export const UBAG_TERMINAL_JOB_STATUSES = ["completed","completed_with_warnings","failed_retryable","failed_terminal","dead_letter","cancelled","timed_out"] as const;
 export const UBAG_SCHEMA_FINGERPRINTS = {
-  "job-request": "26baa2dc5fa812ea5c2c0a661af3c4a052af1aafa9f3175dad533819a71ad60a",
-  "job-response": "d5f405bbb722fe3f7284e687978c11c87c5806f5a5920fed35d81297034adadf"
+  "job-request": "c97e105265015aee85de030cfc1721260eb3492ea75fefb501e2c0bdb2336138",
+  "job-response": "9376a48605e7b6d11a4199253308188e48831a48482c2070a5ac7f9f4f7a9018"
 } as const;

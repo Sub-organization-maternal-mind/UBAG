@@ -1072,6 +1072,7 @@ paths:
                     command_type: medical_report_generation
                     conversation_id: conv_123
                     template_id: radiology_ct_brain_v3
+                    not_before: "2026-07-01T09:30:00Z"
                     input: {}
                     options:
                       priority: normal
@@ -2440,6 +2441,7 @@ components:
       type: string
       enum:
         - created
+        - scheduled
         - queued
         - assigned
         - running

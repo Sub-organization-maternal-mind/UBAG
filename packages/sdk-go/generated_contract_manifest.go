@@ -205,6 +205,7 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 
 var UbagJobStatuses = map[string]ManifestJobStatus{
 	"created": {Terminal: false},
+	"scheduled": {Terminal: false},
 	"queued": {Terminal: false},
 	"assigned": {Terminal: false},
 	"running": {Terminal: false},
@@ -251,6 +252,9 @@ var UbagErrorCategories = []string{
 	"queue",
 	"worker",
 	"browser",
+	"context",
+	"tab",
+	"concurrency",
 	"adapter",
 	"target",
 	"template",
@@ -262,6 +266,6 @@ var UbagErrorCategories = []string{
 }
 
 var UbagSchemaFingerprints = map[string]string{
-	"job-request": "26baa2dc5fa812ea5c2c0a661af3c4a052af1aafa9f3175dad533819a71ad60a",
-	"job-response": "d5f405bbb722fe3f7284e687978c11c87c5806f5a5920fed35d81297034adadf",
+	"job-request": "c97e105265015aee85de030cfc1721260eb3492ea75fefb501e2c0bdb2336138",
+	"job-response": "9376a48605e7b6d11a4199253308188e48831a48482c2070a5ac7f9f4f7a9018",
 }

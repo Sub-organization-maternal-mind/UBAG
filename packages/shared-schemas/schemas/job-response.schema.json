@@ -79,6 +79,7 @@
       "type": "string",
       "enum": [
         "created",
+        "scheduled",
         "queued",
         "assigned",
         "running",
