@@ -15,7 +15,7 @@ type statusMeta struct {
 // terminal via a data.status shortcut without a matching event type.
 var statusTable = map[Status]statusMeta{
 	StatusCreated:               {rank: 0, terminal: false},
-	StatusScheduled:            {rank: 5, terminal: false},
+	StatusScheduled:             {rank: 5, terminal: false},
 	StatusQueued:                {rank: 10, terminal: false},
 	StatusAssigned:              {rank: 20, terminal: false},
 	StatusRunning:               {rank: 30, terminal: false},
