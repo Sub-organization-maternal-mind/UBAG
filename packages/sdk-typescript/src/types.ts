@@ -1,3 +1,8 @@
+import {
+  UBAG_JOB_STATUSES,
+  UBAG_TERMINAL_JOB_STATUSES,
+} from "./generated/contract-manifest.js";
+
 export const UBAG_DEFAULT_API_VERSION = "2026-05-22";
 export const UBAG_SDK_NAME = "ubag-typescript";
 export const UBAG_SDK_VERSION = "0.0.0";
@@ -23,9 +28,10 @@ export interface UbagClientMetadata {
 }
 
 export type UbagJobPriority = "low" | "normal" | "high" | "urgent" | (string & {});
-export type UbagReturnMode = "accepted" | "final" | "stream" | (string & {});
-export type UbagRetryPolicy = "none" | "default" | "aggressive" | (string & {});
-export type UbagCachePolicy = "none" | "semantic_30d" | (string & {});
+export type UbagReturnMode = "accepted" | "final" | "stream" | "final_and_stream" | (string & {});
+/** Free strings per the contract (job-request.schema.json); the shown values are the documented defaults/examples. */
+export type UbagRetryPolicy = string;
+export type UbagCachePolicy = string;
 export type UbagConversationMissing = "fail" | "restart" | (string & {});
 
 /**
@@ -91,24 +97,15 @@ export interface UbagAttachmentUpload extends UbagJobAttachment {
   body: BlobPart;
 }
 
-export type UbagJobStatus =
-  | "created"
-  | "queued"
-  | "accepted"
-  | "assigned"
-  | "running"
-  | "token_streaming"
-  | "completing"
-  | "completed"
-  | "completed_with_warnings"
-  | "failed"
-  | "failed_retryable"
-  | "failed_terminal"
-  | "dead_letter"
-  | "cancelled"
-  | "timed_out"
-  | "retrying"
-  | (string & {});
+/** Job statuses, generated from the contract schema (job-response.schema.json). */
+export type UbagJobStatus = keyof typeof UBAG_JOB_STATUSES | (string & {});
+
+/** The terminal statuses a job never leaves (contract-derived). */
+export const UBAG_TERMINAL_STATUSES: ReadonlySet<string> = new Set(UBAG_TERMINAL_JOB_STATUSES);
+
+export function isTerminalJobStatus(status: string): boolean {
+  return UBAG_TERMINAL_STATUSES.has(status);
+}
 
 export interface UbagJobOutput {
   text?: string;

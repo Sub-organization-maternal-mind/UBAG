@@ -17,10 +17,23 @@ func TestParseSSEChunk(t *testing.T) {
 }
 
 func TestIsTerminalEvent(t *testing.T) {
-	if !IsTerminalEvent("completed") || !IsTerminalEvent("dead_letter") {
-		t.Fatal("expected terminal types to be recognised")
+	// Contract terminal job statuses double as terminal event types.
+	terminal := []string{
+		"completed", "completed_with_warnings", "failed_retryable",
+		"failed_terminal", "dead_letter", "cancelled", "timed_out",
 	}
-	if IsTerminalEvent("token") {
-		t.Fatal("token must not be terminal")
+	for _, typ := range terminal {
+		if !IsTerminalEvent(typ) {
+			t.Fatalf("expected %s to be terminal", typ)
+		}
+	}
+	nonTerminal := []string{"token", "running", "created"}
+	for _, typ := range nonTerminal {
+		if IsTerminalEvent(typ) {
+			t.Fatalf("expected %s to NOT be terminal", typ)
+		}
+	}
+	if IsTerminalEvent("failed") {
+		t.Fatal(`"failed" is not a contract event type; the contract emits failed_retryable/failed_terminal`)
 	}
 }

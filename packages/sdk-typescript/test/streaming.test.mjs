@@ -16,9 +16,16 @@ test("parseSseChunk handles multiple events in one chunk", () => {
 });
 
 test("isTerminalEvent recognises terminal types", () => {
+  // Contract terminal job statuses double as terminal event types.
   assert.equal(isTerminalEvent({ type: "completed" }), true);
-  assert.equal(isTerminalEvent({ type: "failed" }), true);
-  assert.equal(isTerminalEvent({ type: "cancelled" }), true);
+  assert.equal(isTerminalEvent({ type: "completed_with_warnings" }), true);
+  assert.equal(isTerminalEvent({ type: "failed_retryable" }), true);
+  assert.equal(isTerminalEvent({ type: "failed_terminal" }), true);
   assert.equal(isTerminalEvent({ type: "dead_letter" }), true);
+  assert.equal(isTerminalEvent({ type: "cancelled" }), true);
+  assert.equal(isTerminalEvent({ type: "timed_out" }), true);
+  // Non-terminal lifecycle and streaming types.
   assert.equal(isTerminalEvent({ type: "token" }), false);
+  assert.equal(isTerminalEvent({ type: "running" }), false);
+  assert.equal(isTerminalEvent({ type: "created" }), false);
 });
