@@ -114,11 +114,14 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 	"UBAG-VALIDATION-ATTACHMENT-DUPLICATE-KEY-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-ATTACHMENTS-COUNT-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-ATTACHMENT-FILENAME-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-ATTACHMENT-IMMUTABLE-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-MULTIPART-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-MULTIPART-PART-ORDER-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-MULTIPART-PART-MISSING-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-MULTIPART-PART-UNKNOWN-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-MULTIPART-PART-DUPLICATE-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-QUOTA-DAILY-001": {Category: "quota", Retryable: true, RetryAfterMs: 0},
 	"UBAG-QUOTA-CREDITS-002": {Category: "quota", Retryable: false, RetryAfterMs: 0},
 	"UBAG-QUOTA-CONCURRENT-003": {Category: "quota", Retryable: true, RetryAfterMs: 0},
@@ -197,6 +200,6 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 }
 
 var UbagSchemaFingerprints = map[string]string{
-	"job-request": "e81755a9dfd5fa641b6734adbe7ac4baac6da84258514e2c8cb43bf80776f9e0",
-	"job-response": "1be5e6556e2e9822e083ba7f168435010b0aed95beb82893e8c6a7e13d545e53",
+	"job-request": "26baa2dc5fa812ea5c2c0a661af3c4a052af1aafa9f3175dad533819a71ad60a",
+	"job-response": "d5f405bbb722fe3f7284e687978c11c87c5806f5a5920fed35d81297034adadf",
 }
