@@ -8,12 +8,12 @@ package authz
 
 // RoleAllows reports whether a role may perform an action. The one table.
 func RoleAllows(role string, action string) bool {
-	allowed, ok := roleActions[role]
+	actions, ok := roleActions[role]
 	if !ok {
 		return false
 	}
-	_, allowed = allowed[action]
-	return allowed
+	_, permitted := actions[action]
+	return permitted
 }
 
 // Actions returns the sorted action list a role may perform (introspection
@@ -40,26 +40,26 @@ func sortStrings(s []string) {
 }
 
 var roleActions = map[string]map[string]struct{}{
-	"viewer": {
+	"viewer":    {
 		"job:read": {},
 	},
-	"developer": {
-		"job:create":       {},
-		"job:read":         {},
-		"job:cancel":       {},
-		"job:retry":        {},
-		"artifact:write":   {},
+	"developer":          {
+		"job:create":        {},
+		"job:read":          {},
+		"job:cancel":        {},
+		"job:retry":         {},
+		"artifact:write":    {},
 		"artifact:delete":   {},
 		"webhook:configure": {},
 		"browser:read":      {},
 		"concurrency:read":  {},
 	},
-	"operator": {
-		"job:create":       {},
-		"job:read":         {},
-		"job:cancel":       {},
-		"job:retry":        {},
-		"artifact:write":   {},
+	"operator":           {
+		"job:create":        {},
+		"job:read":          {},
+		"job:cancel":        {},
+		"job:retry":         {},
+		"artifact:write":    {},
 		"artifact:delete":   {},
 		"device:enroll":     {},
 		"device:revoke":     {},
@@ -71,13 +71,13 @@ var roleActions = map[string]map[string]struct{}{
 		"browser:read":      {},
 		"concurrency:read":  {},
 	},
-	"admin": {
+	"admin":              {
 		"job:create":        {},
 		"job:read":          {},
 		"job:cancel":        {},
 		"job:retry":         {},
 		"artifact:write":    {},
-		"artifact:delete":    {},
+		"artifact:delete":   {},
 		"device:enroll":     {},
 		"device:revoke":     {},
 		"secret:rotate":     {},
@@ -93,15 +93,15 @@ var roleActions = map[string]map[string]struct{}{
 		"concurrency:read":  {},
 		"region:manage":     {},
 	},
-	"superadmin": allActions(),
-	"service":    {
-		"job:create":     {},
-		"job:read":       {},
-		"job:cancel":     {},
-		"job:retry":      {},
+	"superadmin":       allActions(),
+	"service":          {
+		"job:create":      {},
+		"job:read":        {},
+		"job:cancel":      {},
+		"job:retry":       {},
 		"artifact:write":  {},
 		"artifact:delete": {},
-		"webhook:replay": {},
+		"webhook:replay":  {},
 	},
 }
 
