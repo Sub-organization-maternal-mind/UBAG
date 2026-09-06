@@ -25,6 +25,8 @@ const ALL_ROUTES = [
   { path: '/cache', name: 'cache' },
   { path: '/audit', name: 'audit' },
   { path: '/users', name: 'users-roles' },
+  { path: '/security', name: 'security' },
+  { path: '/admin', name: 'administration' },
   { path: '/quotas', name: 'quotas-billing' },
   { path: '/settings', name: 'settings' },
   { path: '/metrics', name: 'metrics' },
@@ -42,7 +44,7 @@ test.describe('Shell navigation', () => {
 
     const navLinks = page.locator('aside nav a[href]');
     const count = await navLinks.count();
-    expect(count).toBe(18);
+    expect(count).toBe(20);
 
     // Verify key hrefs are present
     for (const route of ALL_ROUTES) {
@@ -172,7 +174,7 @@ test.describe('Accessibility (axe-core)', () => {
 });
 
 test.describe('§24.2 page set completeness', () => {
-  test('all 18 §24.2 pages have nav entries', async ({ page }) => {
+  test('all 20 §24.2 pages have nav entries', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -185,11 +187,11 @@ test.describe('§24.2 page set completeness', () => {
     }
   });
 
-  test('§24.2 count is exactly 18', async ({ page }) => {
+  test('§24.2 count is exactly 20', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
     const count = await page.locator('aside nav a[href]').count();
-    expect(count).toBe(18);
+    expect(count).toBe(20);
   });
 });
