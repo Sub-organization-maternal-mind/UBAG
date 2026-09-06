@@ -44,14 +44,36 @@ func AssertMigrationParity(t *testing.T, migrationFile string, tables []string, 
 	bootstrapped.SetMaxOpenConns(1)
 	t.Cleanup(func() { _ = bootstrapped.Close() })
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "migrations", "sqlite", migrationFile))
+	// Apply the migration chain 0001..target in order, exactly as
+	// `ubag db-migrate` does — a file may rely on objects an earlier file
+	// creates (e.g. 0005/0006 rely on 0004's gateway_schema_migrations).
+	entries, err := os.ReadDir(filepath.Join("..", "..", "..", "..", "migrations", "sqlite"))
 	if err != nil {
-		t.Fatalf("read migration file: %v", err)
+		t.Fatalf("read migrations dir: %v", err)
 	}
-	// The file is self-contained (tracking-table CREATE included, like the
-	// edge series) — exec it exactly as `ubag db-migrate` would.
-	if _, err := migrated.ExecContext(ctx, string(raw)); err != nil {
-		t.Fatalf("apply migration file: %v", err)
+	var chain []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if !entry.IsDir() && strings.HasSuffix(name, ".sql") && name <= migrationFile {
+			chain = append(chain, name)
+		}
+	}
+	sort.Strings(chain)
+	applied := false
+	for _, name := range chain {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "migrations", "sqlite", name))
+		if err != nil {
+			t.Fatalf("read migration file %s: %v", name, err)
+		}
+		if _, err := migrated.ExecContext(ctx, string(raw)); err != nil {
+			t.Fatalf("apply migration file %s: %v", name, err)
+		}
+		if name == migrationFile {
+			applied = true
+		}
+	}
+	if !applied {
+		t.Fatalf("migration file %s not found in chain", migrationFile)
 	}
 	if err := bootstrap(bootstrapped); err != nil {
 		t.Fatalf("runtime bootstrap: %v", err)
