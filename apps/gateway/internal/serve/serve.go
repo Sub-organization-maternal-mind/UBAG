@@ -45,6 +45,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/session"
 	"github.com/ubag/ubag/apps/gateway/internal/siem"
 	"github.com/ubag/ubag/apps/gateway/internal/sqlitestore"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"github.com/ubag/ubag/apps/gateway/internal/sso"
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
 	"github.com/ubag/ubag/apps/gateway/internal/webhooks"
@@ -569,22 +570,14 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 	// Rate limiting (gated by UBAG_RATE_LIMIT_ENABLED, default off).
 	out.rateResolver = ratelimit.DefaultPolicyResolver()
 	out.rateLimitEnabled = envBool("UBAG_RATE_LIMIT_ENABLED")
-	var rlStore ratelimit.Store
-	switch {
-	case storeKind == "sqlite" && db != nil:
-		store, err := ratelimit.NewSQLiteStore(ctx, db)
-		if err != nil {
-			return enterpriseStores{}, fmt.Errorf("rate limit sqlite store: %w", err)
-		}
-		rlStore = store
-	case storeKind == "postgres" && db != nil:
-		store, err := ratelimit.NewPostgresStore(ctx, db)
-		if err != nil {
-			return enterpriseStores{}, fmt.Errorf("rate limit postgres store: %w", err)
-		}
-		rlStore = store
-	default:
-		rlStore = ratelimit.NewMemoryStore()
+	rlStore, err := storekit.Pick(
+		storekit.Kind(storeKind), db, "rate limit",
+		func(db *sql.DB) (ratelimit.Store, error) { return ratelimit.NewSQLiteStore(ctx, db) },
+		func(db *sql.DB) (ratelimit.Store, error) { return ratelimit.NewPostgresStore(ctx, db) },
+		func() ratelimit.Store { return ratelimit.NewMemoryStore() },
+	)
+	if err != nil {
+		return enterpriseStores{}, fmt.Errorf("rate limit store: %w", err)
 	}
 	out.rateLimiter = ratelimit.New(rlStore, out.rateResolver.Default())
 
@@ -594,98 +587,122 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 	if err != nil {
 		return enterpriseStores{}, fmt.Errorf("invalid UBAG_CACHE_TTL_MS: %w", err)
 	}
-	var cacheStore responsecache.Store
-	switch {
-	case storeKind == "sqlite" && db != nil:
-		sqliteCache := responsecache.NewSQLiteStore(db)
-		if err := sqliteCache.EnsureSchema(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("response cache sqlite schema: %w", err)
-		}
-		cacheStore = sqliteCache
-	case storeKind == "postgres" && db != nil:
-		pgCache := responsecache.NewPostgresStore(db)
-		if err := pgCache.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("response cache postgres store: %w", err)
-		}
-		cacheStore = pgCache
-	default:
-		cacheStore = responsecache.NewMemoryStore()
+	cacheStore, err := storekit.Pick(
+		storekit.Kind(storeKind), db, "response cache",
+		func(db *sql.DB) (responsecache.Store, error) {
+			sqliteCache := responsecache.NewSQLiteStore(db)
+			if err := sqliteCache.EnsureSchema(ctx); err != nil {
+				return nil, fmt.Errorf("response cache sqlite schema: %w", err)
+			}
+			return sqliteCache, nil
+		},
+		func(db *sql.DB) (responsecache.Store, error) {
+			pgCache := responsecache.NewPostgresStore(db)
+			if err := pgCache.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("response cache postgres store: %w", err)
+			}
+			return pgCache, nil
+		},
+		func() responsecache.Store { return responsecache.NewMemoryStore() },
+	)
+	if err != nil {
+		return enterpriseStores{}, err
 	}
 	out.responseCache = responsecache.New(cacheStore, responsecache.Options{TTL: cacheTTL, Enabled: cacheEnabled})
 
 	// Workflow orchestration store.
-	switch {
-	case storeKind == "sqlite" && db != nil:
-		wfStore := workflow.NewSQLiteStore(db)
-		if err := wfStore.Migrate(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("workflow sqlite migrate: %w", err)
-		}
-		out.workflows = wfStore
-	case storeKind == "postgres" && db != nil:
-		wfStore := workflow.NewPostgresStore(db)
-		if err := wfStore.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("workflow postgres store: %w", err)
-		}
-		out.workflows = wfStore
-	default:
-		out.workflows = workflow.NewMemoryStore()
+	out.workflows, err = storekit.Pick(
+		storekit.Kind(storeKind), db, "workflow",
+		func(db *sql.DB) (workflow.Store, error) {
+			wfStore := workflow.NewSQLiteStore(db)
+			if err := wfStore.Migrate(ctx); err != nil {
+				return nil, fmt.Errorf("workflow sqlite migrate: %w", err)
+			}
+			return wfStore, nil
+		},
+		func(db *sql.DB) (workflow.Store, error) {
+			wfStore := workflow.NewPostgresStore(db)
+			if err := wfStore.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("workflow postgres store: %w", err)
+			}
+			return wfStore, nil
+		},
+		func() workflow.Store { return workflow.NewMemoryStore() },
+	)
+	if err != nil {
+		return enterpriseStores{}, err
 	}
 
 	// SSO configuration store.
-	switch {
-	case storeKind == "sqlite" && db != nil:
-		ssoStore := sso.NewSQLiteStore(db)
-		if err := ssoStore.Migrate(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("sso sqlite migrate: %w", err)
-		}
-		out.sso = ssoStore
-	case storeKind == "postgres" && db != nil:
-		ssoStore := sso.NewPostgresStore(db)
-		if err := ssoStore.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("sso postgres store: %w", err)
-		}
-		out.sso = ssoStore
-	default:
-		out.sso = sso.NewMemoryStore()
+	out.sso, err = storekit.Pick(
+		storekit.Kind(storeKind), db, "sso",
+		func(db *sql.DB) (sso.Store, error) {
+			ssoStore := sso.NewSQLiteStore(db)
+			if err := ssoStore.Migrate(ctx); err != nil {
+				return nil, fmt.Errorf("sso sqlite migrate: %w", err)
+			}
+			return ssoStore, nil
+		},
+		func(db *sql.DB) (sso.Store, error) {
+			ssoStore := sso.NewPostgresStore(db)
+			if err := ssoStore.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("sso postgres store: %w", err)
+			}
+			return ssoStore, nil
+		},
+		func() sso.Store { return sso.NewMemoryStore() },
+	)
+	if err != nil {
+		return enterpriseStores{}, err
 	}
 
 	// SCIM provisioning store.
-	switch {
-	case storeKind == "sqlite" && db != nil:
-		scimStore, err := scim.NewSQLiteStore(db)
-		if err != nil {
-			return enterpriseStores{}, fmt.Errorf("scim sqlite store: %w", err)
-		}
-		out.scim = scimStore
-	case storeKind == "postgres" && db != nil:
-		scimStore, err := scim.NewPostgresStore(db)
-		if err != nil {
-			return enterpriseStores{}, fmt.Errorf("scim postgres store: %w", err)
-		}
-		if err := scimStore.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("scim postgres store: %w", err)
-		}
-		out.scim = scimStore
-	default:
-		out.scim = scim.NewMemoryStore()
+	out.scim, err = storekit.Pick(
+		storekit.Kind(storeKind), db, "scim",
+		func(db *sql.DB) (scim.Store, error) {
+			scimStore, err := scim.NewSQLiteStore(db)
+			if err != nil {
+				return nil, fmt.Errorf("scim sqlite store: %w", err)
+			}
+			return scimStore, nil
+		},
+		func(db *sql.DB) (scim.Store, error) {
+			scimStore, err := scim.NewPostgresStore(db)
+			if err != nil {
+				return nil, fmt.Errorf("scim postgres store: %w", err)
+			}
+			if err := scimStore.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("scim postgres store: %w", err)
+			}
+			return scimStore, nil
+		},
+		func() scim.Store { return scim.NewMemoryStore() },
+	)
+	if err != nil {
+		return enterpriseStores{}, err
 	}
 
 	// SIEM sink configuration store.
-	switch {
-	case storeKind == "sqlite" && db != nil:
-		siemStore := siem.NewSQLiteStore(db)
-		if err := siemStore.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("siem sqlite schema: %w", err)
-		}
-		out.siemConfig = siemStore
-	case storeKind == "postgres" && db != nil:
-		siemStore := siem.NewPostgresStore(db)
-		if err := siemStore.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("siem postgres schema: %w", err)
-		}
-		out.siemConfig = siemStore
-	default:
-		out.siemConfig = siem.NewMemoryStore()
+	out.siemConfig, err = storekit.Pick(
+		storekit.Kind(storeKind), db, "siem",
+		func(db *sql.DB) (siem.Store, error) {
+			siemStore := siem.NewSQLiteStore(db)
+			if err := siemStore.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("siem sqlite schema: %w", err)
+			}
+			return siemStore, nil
+		},
+		func(db *sql.DB) (siem.Store, error) {
+			siemStore := siem.NewPostgresStore(db)
+			if err := siemStore.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("siem postgres schema: %w", err)
+			}
+			return siemStore, nil
+		},
+		func() siem.Store { return siem.NewMemoryStore() },
+	)
+	if err != nil {
+		return enterpriseStores{}, err
 	}
 
 	// SIEM exporter: only built when a file sink path is configured.
@@ -700,39 +717,49 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 	}
 
 	// Webhook secret rotation store.
-	switch {
-	case storeKind == "sqlite" && db != nil:
-		secretStore := httpapi.NewSQLiteWebhookSecretStore(db)
-		if err := secretStore.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("webhook secret sqlite schema: %w", err)
-		}
-		out.webhookSecrets = secretStore
-	case storeKind == "postgres" && db != nil:
-		secretStore := httpapi.NewPostgresWebhookSecretStore(db)
-		if err := secretStore.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("webhook secret postgres schema: %w", err)
-		}
-		out.webhookSecrets = secretStore
-	default:
-		out.webhookSecrets = httpapi.NewMemoryWebhookSecretStore()
+	out.webhookSecrets, err = storekit.Pick(
+		storekit.Kind(storeKind), db, "webhook secrets",
+		func(db *sql.DB) (httpapi.WebhookSecretStore, error) {
+			secretStore := httpapi.NewSQLiteWebhookSecretStore(db)
+			if err := secretStore.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("webhook secret sqlite schema: %w", err)
+			}
+			return secretStore, nil
+		},
+		func(db *sql.DB) (httpapi.WebhookSecretStore, error) {
+			secretStore := httpapi.NewPostgresWebhookSecretStore(db)
+			if err := secretStore.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("webhook secret postgres schema: %w", err)
+			}
+			return secretStore, nil
+		},
+		func() httpapi.WebhookSecretStore { return httpapi.NewMemoryWebhookSecretStore() },
+	)
+	if err != nil {
+		return enterpriseStores{}, err
 	}
 
 	// Audit log store (Merkle-chained, per-tenant).
-	switch {
-	case storeKind == "sqlite" && db != nil:
-		auditStore := audit.NewSQLiteStore(db)
-		if err := auditStore.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("audit sqlite schema: %w", err)
-		}
-		out.audit = auditStore
-	case storeKind == "postgres" && db != nil:
-		auditStore := audit.NewPostgresStore(db)
-		if err := auditStore.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("audit postgres schema: %w", err)
-		}
-		out.audit = auditStore
-	default:
-		out.audit = audit.NewMemoryStore()
+	out.audit, err = storekit.Pick(
+		storekit.Kind(storeKind), db, "audit",
+		func(db *sql.DB) (audit.Store, error) {
+			auditStore := audit.NewSQLiteStore(db)
+			if err := auditStore.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("audit sqlite schema: %w", err)
+			}
+			return auditStore, nil
+		},
+		func(db *sql.DB) (audit.Store, error) {
+			auditStore := audit.NewPostgresStore(db)
+			if err := auditStore.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("audit postgres schema: %w", err)
+			}
+			return auditStore, nil
+		},
+		func() audit.Store { return audit.NewMemoryStore() },
+	)
+	if err != nil {
+		return enterpriseStores{}, err
 	}
 
 	// Server-side SSO session store.
@@ -741,21 +768,26 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 		return enterpriseStores{}, err
 	}
 	out.sessionTTL = sessionTTL
-	switch {
-	case storeKind == "sqlite" && db != nil:
-		sessionStore := session.NewSQLiteStore(db)
-		if err := sessionStore.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("session sqlite schema: %w", err)
-		}
-		out.sessions = sessionStore
-	case storeKind == "postgres" && db != nil:
-		sessionStore := session.NewPostgresStore(db)
-		if err := sessionStore.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("session postgres schema: %w", err)
-		}
-		out.sessions = sessionStore
-	default:
-		out.sessions = session.NewMemoryStore()
+	out.sessions, err = storekit.Pick(
+		storekit.Kind(storeKind), db, "session",
+		func(db *sql.DB) (session.Store, error) {
+			sessionStore := session.NewSQLiteStore(db)
+			if err := sessionStore.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("session sqlite schema: %w", err)
+			}
+			return sessionStore, nil
+		},
+		func(db *sql.DB) (session.Store, error) {
+			sessionStore := session.NewPostgresStore(db)
+			if err := sessionStore.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("session postgres schema: %w", err)
+			}
+			return sessionStore, nil
+		},
+		func() session.Store { return session.NewMemoryStore() },
+	)
+	if err != nil {
+		return enterpriseStores{}, err
 	}
 
 	// Personal Access Token store (§11): opaque ubag_pat_ bearer tokens issued
@@ -770,87 +802,100 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 			return enterpriseStores{}, fmt.Errorf("invalid UBAG_PAT_DEFAULT_TTL_MS: %w", err)
 		}
 		out.patDefaultTTL = patTTL
-		switch {
-		case storeKind == "sqlite" && db != nil:
-			patStore := pat.NewSQLiteStore(db)
-			if err := patStore.Ready(ctx); err != nil {
-				return enterpriseStores{}, fmt.Errorf("pat sqlite schema: %w", err)
-			}
-			out.pat = patStore
-		case storeKind == "postgres" && db != nil:
-			patStore := pat.NewPostgresStore(db)
-			if err := patStore.Ready(ctx); err != nil {
-				return enterpriseStores{}, fmt.Errorf("pat postgres schema: %w", err)
-			}
-			out.pat = patStore
-		default:
-			out.pat = pat.NewMemoryStore()
+		out.pat, err = storekit.Pick(
+			storekit.Kind(storeKind), db, "pat",
+			func(db *sql.DB) (pat.Store, error) {
+				patStore := pat.NewSQLiteStore(db)
+				if err := patStore.Ready(ctx); err != nil {
+					return nil, fmt.Errorf("pat sqlite schema: %w", err)
+				}
+				return patStore, nil
+			},
+			func(db *sql.DB) (pat.Store, error) {
+				patStore := pat.NewPostgresStore(db)
+				if err := patStore.Ready(ctx); err != nil {
+					return nil, fmt.Errorf("pat postgres schema: %w", err)
+				}
+				return patStore, nil
+			},
+			func() pat.Store { return pat.NewMemoryStore() },
+		)
+		if err != nil {
+			return enterpriseStores{}, err
 		}
 	}
 
 	// Human-in-the-loop manual-action alert store + notification sink.
 	sink, summary := alerts.SinkFromEnv(slog.Default(), storeKind)
-	var alertStore alerts.Store
-	switch {
-	case storeKind == "sqlite" && db != nil:
-		sqliteAlerts := alerts.NewSQLiteStore(db)
-		if err := sqliteAlerts.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("alerts sqlite schema: %w", err)
-		}
-		alertStore = sqliteAlerts
-	case storeKind == "postgres" && db != nil:
-		postgresAlerts := alerts.NewPostgresStore(db)
-		if err := postgresAlerts.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("alerts postgres schema: %w", err)
-		}
-		alertStore = postgresAlerts
-	default:
-		alertStore = alerts.NewMemoryStore()
+	alertStore, err := storekit.Pick(
+		storekit.Kind(storeKind), db, "alerts",
+		func(db *sql.DB) (alerts.Store, error) {
+			sqliteAlerts := alerts.NewSQLiteStore(db)
+			if err := sqliteAlerts.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("alerts sqlite schema: %w", err)
+			}
+			return sqliteAlerts, nil
+		},
+		func(db *sql.DB) (alerts.Store, error) {
+			postgresAlerts := alerts.NewPostgresStore(db)
+			if err := postgresAlerts.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("alerts postgres schema: %w", err)
+			}
+			return postgresAlerts, nil
+		},
+		func() alerts.Store { return alerts.NewMemoryStore() },
+	)
+	if err != nil {
+		return enterpriseStores{}, err
 	}
 	out.alerts = alerts.NewManager(alertStore, sink, slog.Default(), summary)
 
-	// Conversation-affinity store (gated by UBAG_CONVERSATIONS_ENABLED, default
-	// off). Flag off ⇒ out.conversations stays nil ⇒ the /v1/conversations route
-	// returns 501 and no conversation block is ever injected into the worker
-	// envelope, so behavior is byte-identical to before the feature. When enabled
-	// the backend follows the same storeKind thread as alerts.
 	if envBool("UBAG_CONVERSATIONS_ENABLED") {
-		var conversationStore conversations.Store
-		switch {
-		case storeKind == "sqlite" && db != nil:
-			sqliteConversations := conversations.NewSQLiteStore(db)
-			if err := sqliteConversations.Ready(ctx); err != nil {
-				return enterpriseStores{}, fmt.Errorf("conversations sqlite schema: %w", err)
-			}
-			conversationStore = sqliteConversations
-		case storeKind == "postgres" && db != nil:
-			postgresConversations := conversations.NewPostgresStore(db)
-			if err := postgresConversations.Ready(ctx); err != nil {
-				return enterpriseStores{}, fmt.Errorf("conversations postgres schema: %w", err)
-			}
-			conversationStore = postgresConversations
-		default:
-			conversationStore = conversations.NewMemoryStore()
+		conversationStore, err := storekit.Pick(
+			storekit.Kind(storeKind), db, "conversations",
+			func(db *sql.DB) (conversations.Store, error) {
+				sqliteConversations := conversations.NewSQLiteStore(db)
+				if err := sqliteConversations.Ready(ctx); err != nil {
+					return nil, fmt.Errorf("conversations sqlite schema: %w", err)
+				}
+				return sqliteConversations, nil
+			},
+			func(db *sql.DB) (conversations.Store, error) {
+				postgresConversations := conversations.NewPostgresStore(db)
+				if err := postgresConversations.Ready(ctx); err != nil {
+					return nil, fmt.Errorf("conversations postgres schema: %w", err)
+				}
+				return postgresConversations, nil
+			},
+			func() conversations.Store { return conversations.NewMemoryStore() },
+		)
+		if err != nil {
+			return enterpriseStores{}, err
 		}
 		out.conversations = conversations.NewManager(conversationStore, slog.Default(), storeKind)
 	}
 
 	// Read-only v2.1 browser topology store + adaptive-concurrency view.
-	switch {
-	case storeKind == "sqlite" && db != nil:
-		topologyStore := topology.NewSQLiteStore(db)
-		if err := topologyStore.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("browser topology sqlite schema: %w", err)
-		}
-		out.topology = topologyStore
-	case storeKind == "postgres" && db != nil:
-		topologyStore := topology.NewPostgresStore(db)
-		if err := topologyStore.Ready(ctx); err != nil {
-			return enterpriseStores{}, fmt.Errorf("browser topology postgres schema: %w", err)
-		}
-		out.topology = topologyStore
-	default:
-		out.topology = topology.NewMemoryStore()
+	out.topology, err = storekit.Pick(
+		storekit.Kind(storeKind), db, "browser topology",
+		func(db *sql.DB) (topology.Store, error) {
+			topologyStore := topology.NewSQLiteStore(db)
+			if err := topologyStore.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("browser topology sqlite schema: %w", err)
+			}
+			return topologyStore, nil
+		},
+		func(db *sql.DB) (topology.Store, error) {
+			topologyStore := topology.NewPostgresStore(db)
+			if err := topologyStore.Ready(ctx); err != nil {
+				return nil, fmt.Errorf("browser topology postgres schema: %w", err)
+			}
+			return topologyStore, nil
+		},
+		func() topology.Store { return topology.NewMemoryStore() },
+	)
+	if err != nil {
+		return enterpriseStores{}, err
 	}
 	// The concurrency registry is always available; it is populated by the
 	// worker-event ingestion path and never mutated via HTTP.
