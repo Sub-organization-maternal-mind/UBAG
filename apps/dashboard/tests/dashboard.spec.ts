@@ -114,7 +114,7 @@ test.describe('Visual snapshots', () => {
   // (matches CI Ubuntu + playwright version, per 1710f34), then commit the
   // linux file and drop the name from this set. The routing suite above
   // still covers these pages on Linux.
-  const MISSING_LINUX_BASELINES = new Set(['conversations']);
+  const MISSING_LINUX_BASELINES = new Set(['conversations', 'security', 'administration']);
 
   for (const route of ALL_ROUTES) {
     test(`${route.name} desktop snapshot`, async ({ page }) => {
