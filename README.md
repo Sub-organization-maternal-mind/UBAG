@@ -88,6 +88,6 @@ Future agentic AI work should start with `AGENT_HANDOFF.md`, then `PROGRESS.md`,
 
 The implementation plan is based on:
 
-`UBAG_World_Class_Blueprint_v2.md`
+`UBAG_World_Class_Blueprint_v2.1.md`
 
-Audit attachments may provide an external copy, but the repository-local blueprint is the canonical checked-in reference.
+This version supersedes `UBAG_World_Class_Blueprint_v2.md` (per ADR-0003); the repository-local blueprint is the canonical checked-in reference.

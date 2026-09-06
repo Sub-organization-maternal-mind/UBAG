@@ -45,7 +45,6 @@ const (
 	KindCaptcha      = "captcha"
 	KindManualLogin  = "manual_login"
 	KindVerification = "verification"
-	KindDrift        = "drift"
 	KindOther        = "other"
 )
 
@@ -122,7 +121,6 @@ var validKinds = map[string]struct{}{
 	KindCaptcha:      {},
 	KindManualLogin:  {},
 	KindVerification: {},
-	KindDrift:        {},
 	KindOther:        {},
 }
 

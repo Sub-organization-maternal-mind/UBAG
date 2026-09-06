@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"time"
 )
 
@@ -28,7 +29,7 @@ func (s *PostgresStore) Ready(ctx context.Context) error {
 	if err := s.db.PingContext(ctx); err != nil {
 		return err
 	}
-	return requirePostgresObject(ctx, s.db, "gateway_audit_log")
+	return storekit.RequirePostgresObject(ctx, s.db, "gateway_audit_log")
 }
 
 func (s *PostgresStore) Append(ctx context.Context, rec Record) (Record, error) {
@@ -154,15 +155,4 @@ func scanPostgresRecords(rows *sql.Rows) ([]Record, error) {
 		out = append(out, rec)
 	}
 	return out, rows.Err()
-}
-
-func requirePostgresObject(ctx context.Context, db *sql.DB, objectName string) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, objectName).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%s is missing", objectName)
-	}
-	return nil
 }

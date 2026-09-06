@@ -7,6 +7,7 @@
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import type { MetricsResponse, Job } from '$lib/api/types';
+  import { FAILED_STATES as FAILED_STATUS_LIST } from '$lib/api/statuses';
 
   let metrics = $state<MetricsResponse | null>(null);
   let recentJobs = $state<Job[]>([]);
@@ -18,8 +19,8 @@
   let jobsDenied = $state(false);
   let jobsError = $state<string | null>(null);
 
-  // Terminal-failure states used to count failed jobs.
-  const FAILED_STATES = new Set(['failed', 'error', 'dead', 'dlq']);
+  // Terminal-failure states used to count failed jobs (contract vocabulary).
+  const FAILED_STATES = new Set(FAILED_STATUS_LIST);
 
   type JobsResponse = Awaited<ReturnType<typeof api.get<{ jobs?: Job[]; total?: number }>>>;
 

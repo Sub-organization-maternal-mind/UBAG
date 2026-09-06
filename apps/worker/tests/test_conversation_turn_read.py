@@ -16,7 +16,6 @@ wrong text).
 These tests drive the real ``PlaywrightPageDriver`` DOM logic through a fake
 Playwright page that models a chronological transcript; no browser is launched.
 """
-import pytest
 
 from ubag_worker.live.page_driver import PlaywrightPageDriver
 from ubag_worker.live.selectors import CHATGPT_WEB, DEEPSEEK_WEB

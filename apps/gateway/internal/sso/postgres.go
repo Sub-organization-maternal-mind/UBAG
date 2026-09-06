@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"time"
 )
 
@@ -36,7 +37,7 @@ func (p *PostgresStore) Ready(ctx context.Context) error {
 		return err
 	}
 	for _, objectName := range []string{"gateway_sso_oidc_config", "gateway_sso_saml_config"} {
-		if err := requirePostgresObject(ctx, p.db, objectName); err != nil {
+		if err := storekit.RequirePostgresObject(ctx, p.db, objectName); err != nil {
 			return err
 		}
 	}
@@ -170,15 +171,4 @@ func (p *PostgresStore) ListSAML(ctx context.Context) ([]StoredSAML, error) {
 		out = append(out, StoredSAML{TenantID: tenantID, Config: cfg, UpdatedAt: updatedAt.UTC()})
 	}
 	return out, rows.Err()
-}
-
-func requirePostgresObject(ctx context.Context, db *sql.DB, objectName string) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, objectName).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%s is missing", objectName)
-	}
-	return nil
 }

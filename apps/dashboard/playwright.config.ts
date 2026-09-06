@@ -13,14 +13,14 @@ export default defineConfig({
   },
   reporter: [['html', { open: 'never' }], ['list']],
   use: {
-    baseURL: 'http://localhost:4178',
+    baseURL: 'http://localhost:58180',
     trace: 'on-first-retry',
   },
   webServer: {
     command: 'npm run preview',
-    url: 'http://localhost:4178',
+    url: 'http://localhost:58180',
     reuseExistingServer: !process.env.CI,
-    timeout: 30_000,
+    timeout: 60_000,
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },

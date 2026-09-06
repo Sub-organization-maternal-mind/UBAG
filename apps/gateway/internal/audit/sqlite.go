@@ -22,7 +22,7 @@ func NewSQLiteStore(db *sql.DB) *SQLiteStore {
 
 const sqliteCreateAuditTable = `
 CREATE TABLE IF NOT EXISTS gateway_audit_log (
-	id TEXT PRIMARY KEY,
+	id TEXT NOT NULL PRIMARY KEY,
 	seq INTEGER NOT NULL,
 	tenant_id TEXT NOT NULL,
 	app_id TEXT NOT NULL DEFAULT '',

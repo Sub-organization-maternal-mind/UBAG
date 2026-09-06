@@ -53,3 +53,17 @@ Self-hostable platform that lets applications drive web-based AI and automation 
 ## Code navigation
 
 Prefer semantic tools over grepping or reading whole files: Serena's symbol tools (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `search_for_pattern`) for navigation/edits, and CodeGraph queries for dependency/impact questions. Fall back to Grep/Read only when the semantic tools can't answer.
+
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked in GitHub Issues (`github.com/Sub-organization-maternal-mind/UBAG`) via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five canonical labels (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`), strings equal to role names. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: root `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.

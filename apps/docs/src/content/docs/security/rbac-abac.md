@@ -24,15 +24,17 @@ Every protected request should evaluate:
 
 ## Roles
 
-Milestone 0 role names are placeholders until product surfaces are finalized:
+The canonical role set (enforced in `packages/security` and the gateway) is:
 
 | Role | Intended scope | Notes |
 | --- | --- | --- |
-| Owner | Tenant administration and billing-sensitive settings | Requires stronger audit coverage. |
-| Admin | Operational management within a tenant | Cannot bypass privacy mode or tenant boundaries. |
-| Member | Normal authenticated product use | Least privilege by default. |
-| Support | Time-bound support access | Requires explicit reason and audit event. |
-| Service | Backend automation or integration | Must use scoped credentials and non-human audit identity. |
+| viewer | Read-only access to jobs, events, and dashboards | Least privilege by default. |
+| developer | Job creation and template use within a tenant | Cannot manage secrets or roles. |
+| operator | Operational management within a tenant | Cannot bypass privacy mode or tenant boundaries. |
+| admin | Tenant administration | Requires stronger audit coverage. |
+| superadmin | Platform-wide administration incl. PAT issuance and role management | Strongest audit coverage. |
+| support | Time-bound support access | Requires explicit reason and audit event. |
+| service | Backend automation or integration | Must use scoped credentials and non-human audit identity. |
 
 ## ABAC Requirements
 

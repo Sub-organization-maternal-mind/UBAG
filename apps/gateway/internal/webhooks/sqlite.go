@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"strings"
 	"time"
 )
@@ -35,7 +36,7 @@ func (s *SQLiteStore) Ready(ctx context.Context) error {
 		return err
 	}
 	for _, objectName := range []string{"gateway_webhook_deliveries", "gateway_webhook_attempts"} {
-		if err := requireSQLiteObject(ctx, s.db, objectName); err != nil {
+		if err := storekit.RequireSQLiteObject(ctx, s.db, objectName); err != nil {
 			return err
 		}
 	}
@@ -320,15 +321,6 @@ func scanSQLiteDeliveryValue(row deliveryScanner) (Delivery, error) {
 	delivery.CreatedAt = parseSQLiteTime(createdAt)
 	delivery.UpdatedAt = parseSQLiteTime(updatedAt)
 	return delivery, nil
-}
-
-func requireSQLiteObject(ctx context.Context, db *sql.DB, objectName string) error {
-	var name string
-	err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE name = ? LIMIT 1`, objectName).Scan(&name)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("%s is missing", objectName)
-	}
-	return err
 }
 
 func formatSQLiteTime(t time.Time) string {

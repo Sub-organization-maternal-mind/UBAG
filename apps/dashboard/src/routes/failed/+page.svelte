@@ -7,8 +7,11 @@
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import type { Job, JobsResponse } from '$lib/api/types';
+  import { FAILED_STATES } from '$lib/api/statuses';
 
-  const TERMINAL_STATES = new Set(['failed', 'error', 'dead', 'dlq']);
+  // Real terminal-failure statuses from the contract vocabulary
+  // (failed_retryable, failed_terminal, dead_letter, timed_out).
+  const TERMINAL_STATES = FAILED_STATES;
 
   let allJobs = $state<Job[]>([]);
   let loading = $state(true);
@@ -33,23 +36,16 @@
     allJobs = normalizeJobs(res.data?.jobs);
   }
 
+  // Requeue retries the failed job itself (POST /v1/jobs/{id}/retry) instead
+  // of minting a brand-new job — the gateway links the retry via retry_of.
   async function requeue(job: Job) {
     requeueState = {
       ...requeueState,
       [job.id]: { loading: true, success: null, error: null },
     };
 
-    const res = await api.post<{ job: Job }>('/v1/jobs', {
-      job: {
-        target: job.target,
-        command_type: job.command_type,
-        input: job.input ?? null,
-      },
-      client: {
-        app_id: 'ubag-dashboard',
-        app_version: '1.0.0',
-        sdk: { name: 'dashboard', version: '1.0.0' },
-      },
+    const res = await api.post<{ job: Job }>(`/v1/jobs/${job.id}/retry`, {
+      reason: 'dashboard-requeue',
     });
 
     if (res.error) {
@@ -82,7 +78,7 @@
   <div class="flex items-center justify-between">
     <div>
       <h1 class="text-2xl font-display font-bold text-ink">Failed / DLQ</h1>
-      <p class="text-xs text-ink-mute mt-0.5">Jobs in terminal failure states: failed, error, dead, dlq</p>
+      <p class="text-xs text-ink-mute mt-0.5">Jobs in terminal failure states: {[...FAILED_STATES].join(', ')}</p>
     </div>
     <button onclick={() => load()} class="text-sm text-accent-deep hover:underline">Refresh</button>
   </div>

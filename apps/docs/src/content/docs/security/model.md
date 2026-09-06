@@ -13,7 +13,7 @@ v0 starts with app-secret authentication. Short-lived RS256 app JWTs are availab
 
 ## Authorization
 
-RBAC roles are viewer, developer, operator, admin, and superadmin. ABAC checks include tenant, target, command type, quota, data classification, and app permissions.
+RBAC roles are viewer, developer, operator, admin, superadmin, support, and service. ABAC checks include tenant, target, command type, quota, data classification, and app permissions.
 
 ## Secrets
 

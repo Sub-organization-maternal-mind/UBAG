@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"time"
 )
 
@@ -120,14 +121,7 @@ func (p *PostgresStore) Ready(ctx context.Context) error {
 	if err := p.db.PingContext(ctx); err != nil {
 		return err
 	}
-	var exists bool
-	if err := p.db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, "gateway_idempotency_records").Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("gateway_idempotency_records is missing")
-	}
-	return nil
+	return storekit.RequirePostgresObject(ctx, p.db, "gateway_idempotency_records")
 }
 
 func (p *PostgresStore) loadForUpdate(ctx context.Context, tx *sql.Tx, scope Scope) (Record, bool, error) {

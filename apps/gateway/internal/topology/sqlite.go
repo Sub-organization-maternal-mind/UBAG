@@ -62,7 +62,35 @@ CREATE TABLE IF NOT EXISTS gateway_browser_tabs (
 	last_health_at  TEXT,
 	created_at      TEXT NOT NULL,
 	recycle_at      TEXT
-);`
+);
+-- v2.0 compatibility table (single-tab session shape) retained for backwards-compat.
+-- Mirrors migrations/sqlite/0004_browser_topology.sql; nothing in the gateway
+-- reads it, but both provisioning paths must produce identical databases.
+CREATE TABLE IF NOT EXISTS gateway_browser_sessions (
+	session_id      TEXT PRIMARY KEY,
+	tenant_id       TEXT NOT NULL,
+	target_id       TEXT NOT NULL,
+	worker_id       TEXT NOT NULL,
+	profile_dir     TEXT NOT NULL,
+	state           TEXT NOT NULL,
+	login_state     TEXT NOT NULL,
+	current_job_id  TEXT,
+	jobs_completed  INTEGER NOT NULL DEFAULT 0,
+	last_health_at  TEXT,
+	recycle_at      TEXT,
+	created_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gateway_browser_instances_tenant_state
+	ON gateway_browser_instances (tenant_id, state);
+CREATE INDEX IF NOT EXISTS idx_gateway_provider_contexts_instance
+	ON gateway_provider_contexts (instance_id);
+CREATE INDEX IF NOT EXISTS idx_gateway_browser_tabs_context_state
+	ON gateway_browser_tabs (context_id, state);
+CREATE INDEX IF NOT EXISTS idx_gateway_browser_tabs_conversation
+	ON gateway_browser_tabs (conversation_id)
+	WHERE conversation_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_gateway_browser_sessions_tenant_state
+	ON gateway_browser_sessions (tenant_id, state);`
 
 func (s *SQLiteStore) Ready(ctx context.Context) error {
 	if s == nil || s.db == nil {

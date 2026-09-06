@@ -1,4 +1,10 @@
-const TERMINAL_TYPES = new Set(["completed", "failed", "cancelled", "dead_letter"]);
+import { UBAG_TERMINAL_JOB_STATUSES } from "./generated/contract-manifest.js";
+
+// Terminal statuses are the contract's terminal job statuses (completed,
+// completed_with_warnings, failed_retryable, failed_terminal, dead_letter,
+// cancelled, timed_out). Job events reuse these status strings for their
+// terminal event types.
+const TERMINAL_TYPES: ReadonlySet<string> = new Set(UBAG_TERMINAL_JOB_STATUSES);
 
 export interface SseEvent {
   type: string;

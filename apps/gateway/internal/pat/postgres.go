@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"time"
 )
 
@@ -29,7 +29,7 @@ func (s *PostgresStore) Ready(ctx context.Context) error {
 	if err := s.db.PingContext(ctx); err != nil {
 		return err
 	}
-	return requirePostgresObject(ctx, s.db, "gateway_pats")
+	return storekit.RequirePostgresObject(ctx, s.db, "gateway_pats")
 }
 
 func (s *PostgresStore) Save(ctx context.Context, token Token) error {
@@ -100,15 +100,4 @@ func (s *PostgresStore) Revoke(ctx context.Context, id string) error {
 	}
 	_, err := s.db.ExecContext(ctx, `UPDATE gateway_pats SET revoked = true WHERE token_hash = $1`, hashToken(id))
 	return err
-}
-
-func requirePostgresObject(ctx context.Context, db *sql.DB, objectName string) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, objectName).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%s is missing", objectName)
-	}
-	return nil
 }

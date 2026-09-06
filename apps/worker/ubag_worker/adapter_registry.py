@@ -2,22 +2,34 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib
 import json
 import os
-import re
 import sys
-from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Mapping
+
+from .live.events import digest
+
+# Shared safe-mode scanner (leaf module, no import cycle).
+from .live.secret_scan import (  # noqa: F401 - re-exported for historical callers
+    _BEARER_VALUE_PATTERN,
+    _CAPTCHA_SOLVER_PATTERN,
+    _DISALLOWED_COMPACT_SECRET_MARKERS,
+    _DISALLOWED_SECRET_KEYS,
+    _DISALLOWED_SECRET_SEGMENTS,
+    _PRIVATE_KEY_VALUE_PATTERN,
+    _contains_disallowed_secret_material,
+    _is_disallowed_secret_key,
+    _is_secret_reference_key,
+    _normalize_secret_key,
+)
 
 JsonObject = Dict[str, Any]
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _ADAPTERS_ROOT = _REPO_ROOT / "adapters"
 _REGISTRY_PATH = _ADAPTERS_ROOT / "registry.json"
-_BASE_CLOCK = datetime(2026, 1, 1, 0, 0, 0)
 
 REQUIRED_ADAPTER_IDS = (
     "mock",
@@ -37,65 +49,6 @@ _FORBIDDEN_SAFE_MODE_FIELDS = (
     "credential_storage",
     "captcha_solving",
     "captcha_bypass",
-)
-
-_DISALLOWED_SECRET_KEYS = {
-    "access_token",
-    "api_key",
-    "apikey",
-    "auth_token",
-    "cookie",
-    "cookies",
-    "credential",
-    "credentials",
-    "captcha_response",
-    "captcha_solution",
-    "captcha_token",
-    "id_token",
-    "mfa_code",
-    "novnc_url",
-    "password",
-    "private_key",
-    "refresh_token",
-    "secret",
-    "session",
-    "session_cookie",
-    "session_state",
-    "storage_state",
-    "authorization",
-    "bearer",
-    "set_cookie",
-    "totp",
-    "x_api_key",
-}
-_DISALLOWED_SECRET_SEGMENTS = {
-    "authorization",
-    "bearer",
-    "captcha",
-    "cookie",
-    "cookies",
-    "credential",
-    "credentials",
-    "mfa",
-    "password",
-    "secret",
-    "token",
-    "totp",
-}
-_DISALLOWED_COMPACT_SECRET_MARKERS = (
-    "apikey",
-    "privatekey",
-    "storagestate",
-    "sessionstate",
-    "sessiontoken",
-    "accesskey",
-)
-
-_BEARER_VALUE_PATTERN = re.compile(r"\bbearer\s+[A-Za-z0-9._~+/=-]{12,}", re.IGNORECASE)
-_PRIVATE_KEY_VALUE_PATTERN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----", re.IGNORECASE | re.DOTALL)
-_CAPTCHA_SOLVER_PATTERN = re.compile(
-    r"\b(solve|bypass|delegate|outsource)\b.{0,40}\bcaptcha\b|\bcaptcha\b.{0,40}\b(solver|solving|bypass)\b",
-    re.IGNORECASE,
 )
 
 _REQUIRED_MANUAL_CONTEXT_FIELDS = (
@@ -299,27 +252,11 @@ def _target_from_payload(payload: Mapping[str, Any]) -> str:
     return target_text if target_text else "mock"
 
 
-def _contains_disallowed_secret_material(value: Any) -> bool:
-    if isinstance(value, Mapping):
-        for key, child in value.items():
-            normalized_key = _normalize_secret_key(str(key))
-            if _is_disallowed_secret_key(normalized_key):
-                return True
-            if _contains_disallowed_secret_material(child):
-                return True
-    elif isinstance(value, list):
-        for child in value:
-            if _contains_disallowed_secret_material(child):
-                return True
-    elif isinstance(value, str):
-        if _BEARER_VALUE_PATTERN.search(value) or _PRIVATE_KEY_VALUE_PATTERN.search(value) or _CAPTCHA_SOLVER_PATTERN.search(value):
-            return True
-    return False
-
-
 def _validate_manual_session_context(manifest: Mapping[str, Any], payload: Mapping[str, Any]) -> None:
     if manifest.get("status") != "stub":
         return
+
+    from .live.envelope import manual_context as _manual_context
 
     context = _manual_context(payload)
     if _single_user_edge_enabled():
@@ -342,13 +279,24 @@ def _validate_manual_session_context(manifest: Mapping[str, Any], payload: Mappi
 
 
 def _manual_session_required_events(manifest: Mapping[str, Any], payload: Mapping[str, Any]) -> List[JsonObject]:
+    # Shared normalization from live.envelope (lazy: envelope imports this
+    # module's secret scanner at module level, so we cannot import it eagerly).
+    from .live.envelope import (
+        _derive_job_id,
+        _safe_session_id,
+        _worker_event,
+    )
+    from .live.envelope import (
+        manual_context as _manual_context,
+    )
+
     job_payload = payload.get("job", {})
     if not isinstance(job_payload, Mapping):
         job_payload = {}
     context = _manual_context(payload)
     api_version = str(payload.get("api_version", "2026-05-22"))
-    job_id = str(payload.get("job_id", job_payload.get("job_id", "job_" + _digest(_canonical_json(payload))[:16])))
-    trace_id = str(payload.get("trace_id", "trace_" + _digest(job_id)[:16]))
+    job_id = _derive_job_id(payload, job_payload)
+    trace_id = str(payload.get("trace_id", "trace_" + digest(job_id)[:16]))
     target = str(job_payload.get("target", manifest["id"]))
     session_id = _safe_session_id(context.get("session_id"), job_id, target)
     novnc_url = "http://127.0.0.1:7900/session/%s" % session_id
@@ -384,50 +332,6 @@ def _manual_session_required_events(manifest: Mapping[str, Any], payload: Mappin
     ]
 
 
-def _worker_event(
-    api_version: str,
-    job_id: str,
-    trace_id: str,
-    sequence: int,
-    event_type: str,
-    data: Mapping[str, Any],
-) -> JsonObject:
-    return {
-        "api_version": api_version,
-        "event_id": "evt_" + _digest("%s:%s" % (job_id, sequence))[:16],
-        "job_id": job_id,
-        "trace_id": trace_id,
-        "type": event_type,
-        "sequence": sequence,
-        "created_at": (_BASE_CLOCK + timedelta(milliseconds=250 * (sequence - 1))).isoformat(timespec="milliseconds") + "Z",
-        "data": dict(data),
-    }
-
-
-def _manual_context(payload: Mapping[str, Any]) -> Mapping[str, Any]:
-    job_payload = payload.get("job", {})
-    if not isinstance(job_payload, Mapping):
-        job_payload = {}
-    candidates = [
-        payload.get("ownership"),
-        payload.get("context"),
-        job_payload.get("ownership"),
-        job_payload.get("context"),
-        job_payload,
-        payload,
-    ]
-    merged: Dict[str, Any] = {}
-    for candidate in candidates:
-        if isinstance(candidate, Mapping):
-            nested = candidate.get("manual_session")
-            if isinstance(nested, Mapping):
-                for key, value in nested.items():
-                    merged.setdefault(str(key), value)
-            for key, value in candidate.items():
-                merged.setdefault(str(key), value)
-    return merged
-
-
 def _single_user_edge_enabled() -> bool:
     return os.environ.get("UBAG_WORKER_SINGLE_USER_EDGE", "").strip().lower() in ("1", "true", "yes")
 
@@ -461,22 +365,6 @@ def _effective_manual_context(context: Mapping[str, Any]) -> JsonObject:
             else ["manual_login", "submit_prompt", "read_response"]
         ),
     }
-
-
-def _safe_session_id(value: Any, job_id: str, target: str) -> str:
-    if isinstance(value, str):
-        candidate = value.strip()
-        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,95}", candidate):
-            return candidate
-    return "sess_" + _digest(job_id + target)[:16]
-
-
-def _canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-
-
-def _digest(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _require_policy_value(policy: Mapping[str, Any], adapter_id: str, field: str, expected: str) -> None:
@@ -522,32 +410,6 @@ def _required_text(value: Mapping[str, Any], field: str, context: str) -> str:
 
 def _normalize_target_key(value: str) -> str:
     return value.strip().lower().replace("-", "_")
-
-
-def _normalize_secret_key(value: str) -> str:
-    value = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", value.strip())
-    value = re.sub(r"[^A-Za-z0-9]+", "_", value)
-    value = re.sub(r"_+", "_", value)
-    return value.strip("_").lower()
-
-
-def _is_disallowed_secret_key(normalized_key: str) -> bool:
-    if normalized_key in ("manual_session", "session_id"):
-        return False
-    if _is_secret_reference_key(normalized_key):
-        return False
-    if normalized_key in _DISALLOWED_SECRET_KEYS:
-        return True
-    if any(segment in _DISALLOWED_SECRET_SEGMENTS for segment in normalized_key.split("_")):
-        return True
-    compact = normalized_key.replace("_", "")
-    return any(marker in compact for marker in _DISALLOWED_COMPACT_SECRET_MARKERS)
-
-
-def _is_secret_reference_key(normalized_key: str) -> bool:
-    return normalized_key in ("secret_id", "secret_ref") or normalized_key.endswith(
-        ("_secret_id", "_secret_ref")
-    )
 
 
 __all__ = [

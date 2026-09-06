@@ -113,6 +113,12 @@
           "maxLength": 160,
           "examples": ["radiology_ct_brain_v3"]
         },
+        "not_before": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Defer execution until this UTC time (RFC3339). A future value creates the job in the scheduled status and the gateway dispatches it only once the time is reached; a past or omitted value executes immediately.",
+          "examples": ["2026-07-01T09:30:00Z"]
+        },
         "model_settings": {
           "type": ["object", "null"],
           "description": "Optional per-job provider UI settings, keyed by the target adapter's own setting keys (e.g. gemini_web: model, thinking; deepseek_web: mode, deepthink). Validated against the target adapter's model_catalog at job creation; discover the available keys and values from /v1/adapters. Omitted means the adapter's operator defaults apply. Must not contain credentials or secrets.",

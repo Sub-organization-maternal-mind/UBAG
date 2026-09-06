@@ -42,6 +42,7 @@ if str(_WORKER_DIR) not in sys.path:
 
 from ubag_worker.live import chat_ledger  # noqa: E402
 from ubag_worker.live.engine import LiveSessionEngine  # noqa: E402
+from ubag_worker.live.envelope import _target_from_payload  # noqa: E402
 from ubag_worker.live.selectors import PROVIDER_SELECTORS  # noqa: E402
 from ubag_worker.runner import emit_jsonl, load_payload_from_text  # noqa: E402
 from ubag_worker.runtime.shutdown import GracefulDrainer, install_shutdown_handler  # noqa: E402
@@ -123,26 +124,26 @@ def _dump_event(event: object) -> str:
     return json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 
-def _target_from_payload(payload: object) -> str:
-    """Extract the target adapter ID from a job payload.
-
-    Checks ``payload["job"]["target"]`` first (the standard API envelope shape),
-    then falls back to ``payload["target"]``, then defaults to ``"mock"``.
-    Mirrors adapter_registry._target_from_payload.
-    """
-    if not isinstance(payload, dict):
-        return "mock"
-    job_field = payload.get("job", {})
-    if not isinstance(job_field, dict):
-        job_field = {}
-    return str(job_field.get("target", payload.get("target", "mock")))
-
-
 def _flag_enabled(name: str) -> bool:
     raw = os.environ.get(name)
     if raw is None:
         return False
     return raw.strip().lower() not in ("", "0", "false", "no", "off")
+
+
+def _orchestrator_if_enabled(worker_id: str = "worker-1"):
+    """Construct a LiveOrchestrator when UBAG_ORCHESTRATOR_ENABLED is truthy.
+
+    Inert by default (matching the repo convention for risky runtime features):
+    unset/false keeps today's byte-identical behavior — no lease, no AIMD,
+    no topology telemetry. Opt-in wires the blueprint §12 model so the
+    Fleet/ChannelPool/AIMD stack actually executes on live jobs.
+    """
+    if not _flag_enabled("UBAG_ORCHESTRATOR_ENABLED"):
+        return None
+    from ubag_worker.live.orchestrator import LiveOrchestrator
+
+    return LiveOrchestrator(worker_id=worker_id)
 
 
 def _emit_live_jsonl(payload: object, stream) -> int:
@@ -165,7 +166,9 @@ def _emit_live_jsonl(payload: object, stream) -> int:
                 conversation_key=conversation_key,
             )
 
-    engine = LiveSessionEngine(selectors, chat_sink=chat_sink)
+    engine = LiveSessionEngine(
+        selectors, chat_sink=chat_sink, orchestrator=_orchestrator_if_enabled()
+    )
     count = 0
     for event in engine.iter_events(payload):
         stream.write(_dump_event(event))

@@ -9,6 +9,7 @@
   import AttachmentPicker from '$lib/components/AttachmentPicker.svelte';
   import type { SelectedAttachment } from '$lib/attachments';
   import type { BrowserContext, Job, JobCreateResponse, JobEnvelope, JobsResponse, Template } from '$lib/api/types';
+  import { isTerminalStatus } from '$lib/api/statuses';
 
   const API_VERSION = '2026-05-22';
   const PROVIDERS = [
@@ -478,7 +479,7 @@
         <div class="flex items-center gap-3 pt-2">
           <button
             onclick={cancelJob}
-            disabled={cancelLoading || ['cancelled', 'completed', 'done', 'failed'].includes(selectedJob.status?.toLowerCase())}
+            disabled={cancelLoading || isTerminalStatus(selectedJob.status)}
             class="px-4 py-2 rounded-md border border-danger/40 bg-danger-soft text-danger text-sm font-medium hover:bg-danger/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           >
             {cancelLoading ? 'Cancelling…' : 'Cancel Job'}

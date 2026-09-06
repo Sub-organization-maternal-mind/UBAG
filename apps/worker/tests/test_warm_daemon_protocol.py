@@ -11,8 +11,8 @@ import json
 from ubag_worker.live.daemon_protocol import (
     EXIT_DEADLINE,
     JOB_END,
-    _JobOutput,
     _deadline_expired,
+    _JobOutput,
     serve,
 )
 
@@ -51,7 +51,7 @@ class TestFraming:
         serve(io.StringIO(_request() + "\n"), out, daemon)
 
         lines = _lines(out)
-        assert [l.get("event_type") for l in lines[:2]] == ["queued", "completed"]
+        assert [ln.get("event_type") for ln in lines[:2]] == ["queued", "completed"]
         assert lines[-1][JOB_END] is True
         assert lines[-1]["status"] == "completed"
         assert lines[-1]["job_id"] == "j1"
@@ -62,7 +62,7 @@ class TestFraming:
 
         serve(io.StringIO(_request("a") + "\n" + _request("b") + "\n"), out, daemon)
 
-        ends = [l for l in _lines(out) if l.get(JOB_END)]
+        ends = [ln for ln in _lines(out) if ln.get(JOB_END)]
         assert [e["job_id"] for e in ends] == ["a", "b"]
         assert len(daemon.jobs) == 2
 
@@ -74,7 +74,7 @@ class TestFraming:
 
         serve(io.StringIO(_request("a") + "\n"), out, daemon)
 
-        end = [l for l in _lines(out) if l.get(JOB_END)][-1]
+        end = [ln for ln in _lines(out) if ln.get(JOB_END)][-1]
         assert end["status"] == "failed"
         assert "boom" in end["error"]
 
@@ -84,7 +84,7 @@ class TestFraming:
 
         serve(io.StringIO("{not json\n" + _request("b") + "\n"), out, daemon)
 
-        ends = [l for l in _lines(out) if l.get(JOB_END)]
+        ends = [ln for ln in _lines(out) if ln.get(JOB_END)]
         assert ends[-1]["job_id"] == "b"
         assert ends[-1]["status"] == "completed"
 

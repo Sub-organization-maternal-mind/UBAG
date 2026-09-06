@@ -1,16 +1,23 @@
 <script lang="ts">
   let { status }: { status: string } = $props();
 
+  // Keys are real gateway job statuses (contract vocabulary). The fallback
+  // tone covers non-job statuses (alerts, contexts) without inventing words.
   const tone: Record<string, string> = {
-    running: 'bg-marine-soft text-marine',
-    active: 'bg-marine-soft text-marine',
-    pending: 'bg-saffron-soft text-saffron',
+    created: 'bg-rule-soft text-ink-mute',
+    scheduled: 'bg-saffron-soft text-saffron',
     queued: 'bg-saffron-soft text-saffron',
+    assigned: 'bg-marine-soft text-marine',
+    running: 'bg-marine-soft text-marine',
+    token_streaming: 'bg-marine-soft text-marine',
+    completing: 'bg-marine-soft text-marine',
     completed: 'bg-success-soft text-success',
-    done: 'bg-success-soft text-success',
-    failed: 'bg-danger-soft text-danger',
-    error: 'bg-danger-soft text-danger',
+    completed_with_warnings: 'bg-saffron-soft text-saffron',
+    failed_retryable: 'bg-danger-soft text-danger',
+    failed_terminal: 'bg-danger-soft text-danger',
+    dead_letter: 'bg-danger-soft text-danger',
     cancelled: 'bg-rule-soft text-ink-mute',
+    timed_out: 'bg-danger-soft text-danger',
   };
 
   let cls = $derived(tone[status?.toLowerCase()] ?? 'bg-rule-soft text-ink-mute');

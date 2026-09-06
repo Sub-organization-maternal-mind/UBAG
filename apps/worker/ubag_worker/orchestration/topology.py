@@ -45,7 +45,6 @@ class ConversationModel(Enum):
     """How a target handles parallel conversations (correctness gate, §12.9)."""
 
     URL = "url"  # new conversation == new route; safe for shared-context multi-tab
-    TABBED = "tabbed"  # same as URL for orchestration purposes
     SPA_SINGLETON = "spa-singleton"  # one active conversation per login; fan out to contexts
 
 

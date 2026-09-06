@@ -41,12 +41,10 @@ def _close_quietly(driver: Optional[PageDriver]) -> None:
 
 
 def _target_from_payload(payload: object) -> str:
-    if not isinstance(payload, Mapping):
-        return "mock"
-    job_field = payload.get("job", {})
-    if not isinstance(job_field, Mapping):
-        job_field = {}
-    return str(job_field.get("target", payload.get("target", "mock")))
+    # Shared tolerant target extraction (envelope module; never raises).
+    from .envelope import _target_from_payload
+
+    return _target_from_payload(payload)
 
 
 def _driver_key(payload: Mapping[str, Any]) -> DriverKey:
@@ -70,11 +68,16 @@ class WarmWorkerDaemon:
         driver_factory: Callable[[Any], PageDriver] = create_default_driver,
         engine_factory: Callable[[Any], Any] = LiveSessionEngine,
         selectors_by_target: Mapping[str, Any] = PROVIDER_SELECTORS,
+        orchestrator: Optional[Any] = None,
     ) -> None:
         self._driver_factory = driver_factory
         self._engine_factory = engine_factory
         self._selectors_by_target = selectors_by_target
         self._warm: Dict[DriverKey, PageDriver] = {}
+        # Optional process-level orchestrator (Fleet + ChannelPool + AIMD).
+        # None (the default, and what run_worker_daemon constructs unless
+        # UBAG_ORCHESTRATOR_ENABLED is truthy) keeps behavior byte-identical.
+        self._orchestrator = orchestrator
 
     def run_job(self, payload: Mapping[str, Any]) -> Iterator[JsonObject]:
         """Drive one job, yielding the engine's events verbatim.
@@ -90,7 +93,12 @@ class WarmWorkerDaemon:
 
         self._evict_other_keys(key)
         driver = self._checkout(key, selectors, payload)
-        engine = self._engine_factory(selectors)
+        if self._orchestrator is None:
+            engine = self._engine_factory(selectors)
+        else:
+            # Factories default to LiveSessionEngine(selectors) — a single
+            # positional arg. Only inject the orchestrator when one is wired.
+            engine = self._engine_factory(selectors, orchestrator=self._orchestrator)
         completed = False
         try:
             for event in engine.iter_events(payload, driver=driver):

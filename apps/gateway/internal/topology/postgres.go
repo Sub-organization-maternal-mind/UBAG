@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"time"
 )
 
@@ -28,7 +29,7 @@ func (p *PostgresStore) Ready(ctx context.Context) error {
 		return err
 	}
 	for _, objectName := range []string{"gateway_browser_instances", "gateway_provider_contexts", "gateway_browser_tabs"} {
-		if err := requirePostgresObject(ctx, p.db, objectName); err != nil {
+		if err := storekit.RequirePostgresObject(ctx, p.db, objectName); err != nil {
 			return err
 		}
 	}
@@ -270,15 +271,4 @@ func nullTime(value sql.NullTime) *time.Time {
 	}
 	v := value.Time.UTC()
 	return &v
-}
-
-func requirePostgresObject(ctx context.Context, db *sql.DB, objectName string) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, objectName).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%s is missing", objectName)
-	}
-	return nil
 }

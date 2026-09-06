@@ -28,7 +28,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Iterator, List, Mapping, Optional, Sequence
 
-from .selectors import ProviderSelectors
+from .selectors import ProviderSelectors, SelectorGroup
 
 # Login-state constants.
 AUTHENTICATED = "authenticated"

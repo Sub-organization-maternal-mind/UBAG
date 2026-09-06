@@ -1,6 +1,6 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-08-10
+Last updated: 2026-09-05
 
 ## 2026-08-10 Production performance baseline and hardening
 
@@ -244,6 +244,147 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
 - Pushed shared commit `acec1ed` to GitHub `main`, then synchronized all 1,121 GitHub-tracked files into `/opt/docker/ubag`; a hash audit reported zero missing files and zero mismatches. The prior production source and dashboard artifact are recoverable under `/opt/docker/ubag-sync-backups`.
 - Rebuilt the exact synchronized gateway image (`sha256:dde174b3d9422bba95c4022c753171f7b0ae830a3617acec6a798875eec52559`) and recreated gateway, chat-reaper, and nginx-dashboard. Gateway and nginx-dashboard are healthy; the existing browser remains healthy.
 - Final post-sync production smoke `job_000000000029` completed with exact output `UBAG_SYNCED_GEMINI_36_STANDARD_OK` and selector version `2026-07-23-gemini-3.6-standard`.
+
+## 2026-09-05 Domain glossary, ADRs, architecture survey, rectification backlog
+
+- **CONTEXT.md** (repo root, single-context glossary, ~40 terms) resolves the corpus's
+  worst overloads: session → Gateway Session / Provider Context; target vs provider;
+  the conversation family (Conversation Key, Provider Chat Thread, Thread Ref);
+  job vs run; 14-value Job Status; Safe Mode vs Privacy Mode; Account Binding /
+  identity_ref; seven canonical roles. **docs/adr/**: 0001 contracts-first,
+  0002 safe-mode hard constraint, 0003 blueprint v2.1 canonical (§12 model),
+  0004 one vocabulary source (schemas → generated SDK sets), 0005 orchestration
+  wired behind an inert-by-default flag.
+- **docs/agents/**: GitHub Issues via `gh` (remote:
+  Sub-organization-maternal-mind/UBAG), default five triage labels,
+  single-context domain docs layout. `CLAUDE.md` gained the Agent skills section.
+- **Architecture survey** (4 explorations: httpapi core, worker live path,
+  status/event vocabulary chain, store wiring): 6 deepening candidates in
+  `architecture-review-20260905.html` (temp). Measured highlights: server.go
+  4,189 lines / 53 routes / duplicated per-handler scaffolding; PAT cost ~14
+  touch sites; 10+ hand-copied status vocabularies (6 of 11 drift bugs share
+  this failure mode); `scheduled` settable in memory store but rejected by the
+  Postgres CHECK; ~1,600 lines of orchestration unreachable in production;
+  16 store-kind switches + 15 byte-identical to_regclass assertions.
+- **Drift backlog filed**: issues #48–#58 (needs-triage). **Rectification
+  mandate (user, 2026-09-05): fix everything.** 13 ready-for-agent tickets
+  published with native blocking edges (lane fix; docs pointers; manifest
+  vocabularies; contract catch-up; SDK consumption; conformance alignment;
+  gateway seam; dashboard consumption; worker normalization module;
+  orchestration wiring; credential seam; route table; store-kit).
+- **T1 (#59) urgent→crit lane fix**: `laneFromPriority` gains the `urgent`
+  case (contract enum low|normal|high|urgent maps to low|norm|high|crit);
+  red-first pin test `nats_lanes_test.go` covers all four contract values +
+  case/trim behavior; models.go lane comment reconciled. Go toolchain is
+  unavailable on this workstation — verification per user decision runs via
+  GitHub Actions (`ci.yml` gateway job, go test -race) on `feat/**` push.
+  First CI run: gateway job GREEN (fix + test verified); branch rebased onto
+  main (4 commits behind, workerconsumer/attachment pipeline had moved).
+- **Main's broken CI repaired** (pre-existing, not caused by the branch):
+  ruff (root `ruff.toml` — adapters/ had no config and new ruff defaults
+  widened; +10 real lint fixes incl. a missing `SelectorGroup` import and a
+  F821), stale SDK manifests (attachment error codes never regenerated), and
+  the dashboard e2e webServer timeout (Playwright polled 4178 while vite
+  preview pins 58180 strictPort — URL fixed, timeout 60s; 41/41 e2e pass
+  locally). Five consecutive fully-green CI runs since.
+- **T3 (#61)**: manifest generator now emits `UBAG_JOB_STATUSES` (terminal
+  flags), `UBAG_JOB_EVENT_TYPES`, `UBAG_ERROR_CATEGORIES`,
+  `UBAG_TERMINAL_JOB_STATUSES` to both SDKs; freshness check fails when a
+  schema enum is mutated (verified red-then-green).
+- **T4 (#62)**: contracts gained `scheduled` status + `not_before` (matches
+  the gateway's existing behavior); error-category enum aligned to the
+  catalog (context/tab/concurrency added — emitted UBAG-TAB errors now
+  validate). CI green.
+- **T5 (#71)**: both SDKs consume the generated vocabularies — phantom
+  statuses (accepted/failed/retrying) removed, terminal sets contract-true
+  (covers failed_retryable/failed_terminal/timed_out/completed_with_warnings),
+  final_and_stream restored, invented retry/cache unions replaced by contract
+  free strings. TS 75 tests green; Go verified via CI (test:sdk green).
+- **T8 (#65)**: dashboard consumes the SDK's generated manifest via a new
+  `@ubag/sdk/contract-manifest` subpath export (avoids the grpc barrel);
+  Failed/DLQ filters, homepage + metrics FAILED_STATES, jobs cancel guard, and
+  StatusBadge keys all use real contract statuses; requeue now calls
+  POST /v1/jobs/{id}/retry. svelte-check 0 errors; 25 unit + 41 e2e green;
+  CI green.
+- **T6 (#63)**: conformance fixtures now match the contract shapes the gateway
+  actually serves (alerts list/config/mutations with kind envelopes + 200s,
+  audit export stats/records/head_hash, SSO logout revoked+200); webhook
+  verify helpers in BOTH SDKs fixed to the gateway's real signing
+  (`v1=`-prefixed base64url HMAC over `timestamp.nonce.body`, signing.go) —
+  the old helpers could never verify real gateway webhooks. Conformance
+  validates; TS SDK 75 green.
+- **T9 (#66)**: one shared envelope module (`live/envelope.py`) parses the
+  dispatch envelope for the live engine, registry stub path, and entrypoints;
+  the secret scanner moved to a leaf module (`live/secret_scan.py`) breaking
+  the engine→registry import cycle; registry/daemon/run_live_worker duplicates
+  (_manual_context, _safe_session_id, event envelope, _worker_event,
+  _target_from_payload, job-id derivation) collapsed onto it. engine.py
+  −449 lines; 411/411 worker tests; ruff clean. CI green.
+- **T7 (#64)**: gateway worker-event seam deepened — `jobs/vocabulary.go` is
+  the single declaration (statusTable with rank+terminal flags,
+  workerEventTypes set, workerEventStatus alias mapping, failure predicate);
+  KnownStatus/TerminalStatus/LifecycleStatuses derive from the table instead
+  of restating 14 statuses 3×; UpdateStatus in ALL THREE stores now honors
+  shouldAdvanceStatus (the API mutation path can no longer bypass transition
+  validation); the data.status trust hole closed — a payload status string
+  can only steer forward NON-TERMINAL moves, terminal transitions require a
+  matching event type; httpapi signal reconstruction consumes
+  IsFailureEventType instead of re-listing failure types. 3 new vocabulary
+  tests pin it; `go test -race` green; gofmt clean; full CI green.
+- **T10 (#67 / ADR-0005)**: orchestration wired — `run_live_worker` and
+  `WarmWorkerDaemon` construct `LiveOrchestrator` behind
+  `UBAG_ORCHESTRATOR_ENABLED` (inert by default, byte-identical off-path,
+  covered by new wiring tests); `LiveOrchestrator.leased()` context manager
+  owns the release protocol (engine sets outcome_success/outcome_signal on
+  the lease; record_outcome + cap-state projection happen on exit); the
+  never-emitted `drift` alert kind and the inert `tabbed` conversation-model
+  alias deleted (CONTEXT.md updated). 415/415 worker tests; full CI green.
+- **T11 (#68)**: credential-to-principal seam deepened — `internal/authz`
+  is the one shared RBAC policy (`RoleAllows`; superadmin fast path keeps the
+  historical allow-all for credential-minting actions like auth:pat:issue),
+  consumed by httpapi AND grpcapi (gRPC's stale 10-action-behind table
+  deleted); `withAuth` is now an ordered credential-resolver chain
+  (resolveAppSecret / resolveAppJWT / resolvePAT / resolveSSOSession) —
+  adding a credential type is one small resolver, no table edits;
+  `packages/security` gained `auth.app_jwt.*` +
+  `auth.personal_access_token.*` audit names (parity for the two live auth
+  paths PROGRESS had flagged as open) and UBAG_ACTIONS synced to the
+  gateway's real action surface (artifact/alerts/browser/concurrency/region/
+  pat actions). 4 authz tests incl. the superadmin union invariant;
+  full CI green (3 fix-up rounds caught by CI: a shadowed lookup var, an
+  init cycle, and the superadmin semantics — all real findings).
+- **T12 (#69)**: route table — `httpapi/routes.go` declares every route
+  once (registration loop + `routePattern` metric patterns derive from the
+  same declaration; the hand-rolled second routing table deleted);
+  `jobReservation` (reservation.go) owns createJob's cleanup — fail() /
+  release() replace the five hand-repeated idempotency+token+status release
+  triplets. `check-contracts` route-parity reads the route table.
+- **T13 (#70)**: `internal/storekit` — shared `RequirePostgresObject` /
+  `RequireSQLiteObject` schema assertions and the generic `Pick` (memory/
+  sqlite/postgres trio selection, nil-db => memory, error paths preserved);
+  serve.go's 13 copy-paste store-kind switch blocks became one-line Picks
+  (sso/siem use their real ConfigStore type names); storekit has its own
+  tests. Follow-on sweep done: 19 schema-assertion copies (13 pg helpers +
+  2 sqlite helpers + 4 inline Ready blocks across 19 files) collapsed onto
+  the shared helpers (~200 lines deleted, behavior-identical — first CI run
+  caught only a SQLITE_BUSY flake in the unrelated CAS concurrency test,
+  green on re-run, filed as a tracking issue). Full CI green — **all 13
+  rectification tickets T1–T13 complete, all 18 filed drift issues closed.**
+- **DDL single-source decision**: evidence showed NEITHER side could be
+  deleted — the gateway runtime self-bootstraps sqlite on every boot while
+  `ubag db-migrate --store sqlite` provisions offline (deploy flows only ever
+  apply postgres migrations; sqlite files serve the manual CLI path). Kept
+  both sources and closed the drift hole instead: new `internal/sqlitetest`
+  parity helper + 4 tests requiring migration-file DDL and Go bootstrap DDL
+  to produce identical tables/indexes. The tests immediately caught real
+  drift and fixed the offline path: (1) sqlite 0004-0006 referenced a
+  `gateway_schema_migrations` tracking table nothing created — `db-migrate
+  --store sqlite` was broken at 0004; 0004 now creates it (mirroring pg
+  0001 and the edge series' self-contained pattern). (2) Reconciled three
+  divergences toward the stricter/correct side: `gateway_browser_sessions`
+  compat table + 5 missing indexes added to the topology bootstrap (real
+  production sqlite perf win), explicit NOT NULL on audit.id and
+  session.token_hash PKs (fresh DBs only). Full CI green.
 
 ## 2026-07-17 PAT (Personal Access Tokens) wired into serve + made persistent
 

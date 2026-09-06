@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"time"
 )
 
@@ -27,7 +28,7 @@ func (s *PostgresStore) Ready(ctx context.Context) error {
 	if err := s.db.PingContext(ctx); err != nil {
 		return err
 	}
-	return requirePostgresObject(ctx, s.db, "gateway_sessions")
+	return storekit.RequirePostgresObject(ctx, s.db, "gateway_sessions")
 }
 
 func (s *PostgresStore) Create(ctx context.Context, sess Session) (Session, string, error) {
@@ -103,15 +104,4 @@ func scanPostgresSession(row rowScanner) (Session, error) {
 	sess.IssuedAt = issuedAt.UTC()
 	sess.ExpiresAt = expiresAt.UTC()
 	return sess, nil
-}
-
-func requirePostgresObject(ctx context.Context, db *sql.DB, objectName string) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, objectName).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%s is missing", objectName)
-	}
-	return nil
 }

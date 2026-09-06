@@ -315,6 +315,11 @@ func (m *MemoryStore) UpdateStatus(_ context.Context, id string, status Status) 
 	if TerminalStatus(job.Status) {
 		return job, true, nil
 	}
+	// The API mutation path honors the same transition validation as the
+	// worker-event path: never backwards, never out of a terminal status.
+	if !shouldAdvanceStatus(job.Status, status) {
+		return job, true, nil
+	}
 
 	job.Status = status
 	job.UpdatedAt = m.now().UTC()
@@ -478,70 +483,24 @@ func workerEventKey(event WorkerEvent) string {
 }
 
 func statusFromWorkerEvent(event WorkerEvent, fallback Status) Status {
-	if status, ok := event.Data["status"].(string); ok && KnownStatus(Status(status)) {
-		return Status(status)
-	}
-	switch event.Type {
-	case "created":
-		return StatusCreated
-	case "queued":
-		return StatusQueued
-	case "assigned":
-		return StatusAssigned
-	case "running":
-		return StatusRunning
-	case "token", "token_streaming":
-		return StatusTokenStreaming
-	case "completing":
-		return StatusCompleting
-	case "completed":
-		return StatusCompleted
-	case "completed_with_warnings":
-		return StatusCompletedWithWarnings
-	case "failed", "failed_retryable":
-		if retryable, ok := event.Data["retryable"].(bool); ok && !retryable {
-			return StatusFailedTerminal
+	// data.status may only steer within forward non-terminal moves: the
+	// event.Type mapping stays authoritative for terminal transitions, so an
+	// unvalidated payload string can never jump the state machine to a
+	// terminal status without a matching terminal event type.
+	if status, ok := event.Data["status"].(string); ok {
+		candidate := Status(status)
+		if KnownStatus(candidate) && !TerminalStatus(candidate) && shouldAdvanceStatus(fallback, candidate) {
+			return candidate
 		}
-		return StatusFailedRetryable
-	case "failed_terminal":
-		return StatusFailedTerminal
-	case "blocked":
-		return StatusFailedRetryable
-	case "dead_letter":
-		return StatusDeadLetter
-	case "cancelled", "canceled":
-		return StatusCanceled
-	case "timed_out", "timeout":
-		return StatusTimedOut
-	default:
-		return fallback
 	}
-}
-
-func shouldAdvanceStatus(current Status, next Status) bool {
-	if current == next || !KnownStatus(next) || TerminalStatus(current) {
-		return false
+	retryable := true
+	if r, ok := event.Data["retryable"].(bool); ok {
+		retryable = r
 	}
-	return statusRank(next) >= statusRank(current)
-}
-
-func statusRank(status Status) int {
-	switch status {
-	case StatusQueued:
-		return 10
-	case StatusAssigned:
-		return 20
-	case StatusRunning:
-		return 30
-	case StatusTokenStreaming:
-		return 40
-	case StatusCompleting:
-		return 50
-	case StatusCompleted, StatusCompletedWithWarnings, StatusFailedRetryable, StatusFailedTerminal, StatusDeadLetter, StatusCanceled, StatusTimedOut:
-		return 100
-	default:
-		return 0
+	if mapped, ok := workerEventStatus(event.Type, retryable); ok {
+		return mapped
 	}
+	return fallback
 }
 
 func resultFromWorkerEvent(event WorkerEvent, data map[string]any) any {
@@ -576,39 +535,6 @@ func resultFromWorkerEvent(event WorkerEvent, data map[string]any) any {
 		},
 		"cached":       false,
 		"cache_source": nil,
-	}
-}
-
-func knownWorkerEventType(eventType string) bool {
-	switch eventType {
-	case "created",
-		"queued",
-		"assigned",
-		"running",
-		"browser_opened",
-		"session.opening",
-		"session.authenticated",
-		"session.manual_action_required",
-		"prompt_submitted",
-		"token",
-		"token_streaming",
-		"completing",
-		"completed",
-		"completed_with_warnings",
-		"failed",
-		"failed_retryable",
-		"failed_terminal",
-		"dead_letter",
-		"cancelled",
-		"canceled",
-		"timed_out",
-		"timeout",
-		"artifact_created",
-		"blocked",
-		"warning":
-		return true
-	default:
-		return false
 	}
 }
 

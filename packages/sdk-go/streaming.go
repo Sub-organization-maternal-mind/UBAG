@@ -11,9 +11,17 @@ type SSEEvent struct {
 	Data     map[string]any `json:"data,omitempty"`
 }
 
-var terminalTypes = map[string]bool{
-	"completed": true, "failed": true, "cancelled": true, "dead_letter": true,
-}
+// terminalTypes is derived from the generated manifest's terminal job statuses:
+// the contract's terminal job statuses double as terminal event types.
+var terminalTypes = func() map[string]bool {
+	m := make(map[string]bool, len(UbagJobStatuses))
+	for status, meta := range UbagJobStatuses {
+		if meta.Terminal {
+			m[status] = true
+		}
+	}
+	return m
+}()
 
 func IsTerminalEvent(eventType string) bool { return terminalTypes[eventType] }
 

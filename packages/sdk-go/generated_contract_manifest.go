@@ -14,6 +14,10 @@ type ManifestErrorCode struct {
 	RetryAfterMs int64
 }
 
+type ManifestJobStatus struct {
+	Terminal bool
+}
+
 var UbagEndpoints = map[string]ManifestEndpoint{
 	"GET /v1/health": {Method: "GET", Path: "/v1/health"},
 	"GET /v1/ready": {Method: "GET", Path: "/v1/ready"},
@@ -114,11 +118,14 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 	"UBAG-VALIDATION-ATTACHMENT-DUPLICATE-KEY-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-ATTACHMENTS-COUNT-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-ATTACHMENT-FILENAME-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-ATTACHMENT-IMMUTABLE-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-MULTIPART-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-MULTIPART-PART-ORDER-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-MULTIPART-PART-MISSING-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-MULTIPART-PART-UNKNOWN-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-MULTIPART-PART-DUPLICATE-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-QUOTA-DAILY-001": {Category: "quota", Retryable: true, RetryAfterMs: 0},
 	"UBAG-QUOTA-CREDITS-002": {Category: "quota", Retryable: false, RetryAfterMs: 0},
 	"UBAG-QUOTA-CONCURRENT-003": {Category: "quota", Retryable: true, RetryAfterMs: 0},
@@ -196,7 +203,69 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 	"UBAG-INTERNAL-CRYPTO-005": {Category: "internal", Retryable: true, RetryAfterMs: 0},
 }
 
+var UbagJobStatuses = map[string]ManifestJobStatus{
+	"created": {Terminal: false},
+	"scheduled": {Terminal: false},
+	"queued": {Terminal: false},
+	"assigned": {Terminal: false},
+	"running": {Terminal: false},
+	"token_streaming": {Terminal: false},
+	"completing": {Terminal: false},
+	"completed": {Terminal: true},
+	"completed_with_warnings": {Terminal: true},
+	"failed_retryable": {Terminal: true},
+	"failed_terminal": {Terminal: true},
+	"dead_letter": {Terminal: true},
+	"cancelled": {Terminal: true},
+	"timed_out": {Terminal: true},
+}
+
+var UbagJobEventTypes = []string{
+	"created",
+	"queued",
+	"assigned",
+	"running",
+	"browser_opened",
+	"session.manual_action_required",
+	"prompt_submitted",
+	"token",
+	"token_streaming",
+	"completing",
+	"completed",
+	"completed_with_warnings",
+	"failed_retryable",
+	"failed_terminal",
+	"dead_letter",
+	"cancelled",
+	"timed_out",
+	"artifact_created",
+	"blocked",
+	"warning",
+}
+
+var UbagErrorCategories = []string{
+	"auth",
+	"authz",
+	"validation",
+	"quota",
+	"rate",
+	"queue",
+	"worker",
+	"browser",
+	"context",
+	"tab",
+	"concurrency",
+	"adapter",
+	"target",
+	"template",
+	"cache",
+	"webhook",
+	"artifact",
+	"sidecar",
+	"internal",
+}
+
 var UbagSchemaFingerprints = map[string]string{
-	"job-request": "e81755a9dfd5fa641b6734adbe7ac4baac6da84258514e2c8cb43bf80776f9e0",
-	"job-response": "1be5e6556e2e9822e083ba7f168435010b0aed95beb82893e8c6a7e13d545e53",
+	"job-request": "c97e105265015aee85de030cfc1721260eb3492ea75fefb501e2c0bdb2336138",
+	"job-response": "9376a48605e7b6d11a4199253308188e48831a48482c2070a5ac7f9f4f7a9018",
 }

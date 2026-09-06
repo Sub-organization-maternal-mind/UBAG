@@ -120,9 +120,13 @@ if (openApi) {
 }
 
 const gatewayServer = requireFile('apps/gateway/internal/httpapi/server.go');
+// Route declarations live in routes.go (the route table); parity is checked
+// across the package's httpapi files.
+const gatewayRoutes = requireFile('apps/gateway/internal/httpapi/routes.go');
+const gatewayHTTP = [gatewayServer, gatewayRoutes].filter(Boolean).join('\n');
 if (gatewayServer) {
   for (const path of requiredOpenApiPaths.filter((path) => !path.includes('{'))) {
-    if (!gatewayServer.includes(`"${path}"`)) {
+    if (!gatewayHTTP.includes(`"${path}"`)) {
       failures.push(`Gateway runtime missing route string ${path}`);
     }
   }

@@ -19,7 +19,8 @@ The full UBAG Gateway REST API reference is available in machine-readable OpenAP
 | GET | /v1/health | Health check |
 | POST | /v1/jobs | Create a job |
 | GET | /v1/jobs/{id} | Get job by ID |
-| POST | /v1/jobs/{id}:cancel | Cancel a job |
+| POST | /v1/jobs/{id}/cancel | Cancel a job |
+| POST | /v1/jobs/{id}/retry | Retry a failed job |
 | GET | /v1/targets | List targets |
 | GET | /v1/adapters | List adapters |
 | GET | /v1/browser/instances | List browser instances |
@@ -80,17 +81,21 @@ requests with missing or unknown version strings.
 
 ## Error format
 
-All errors follow RFC 7807 Problem Details:
+All errors follow the stable UBAG error envelope (`error.schema.json`):
 
 ```json
 {
-  "type": "https://ubag.io/errors/job-not-found",
-  "title": "Job not found",
-  "status": 404,
-  "detail": "No job with ID abc-123 exists in this tenant",
-  "instance": "/v1/jobs/abc-123",
-  "request_id": "req_01HZ..."
+  "error": {
+    "code": "UBAG-AUTH-001",
+    "category": "auth",
+    "message": "Missing or invalid bearer credential",
+    "retryable": false,
+    "doc_url": "https://docs.ubag.dev/contracts/error-catalog",
+    "trace_id": "trace_01HZ..."
+  }
 }
 ```
+
+See [Error Catalog](/contracts/error-catalog) for the full list of error codes.
 
 See [Error Catalog](/contracts/error-catalog) for the full list of error types.

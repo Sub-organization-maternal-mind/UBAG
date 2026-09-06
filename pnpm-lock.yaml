@@ -14,6 +14,9 @@ importers:
 
   apps/dashboard:
     dependencies:
+      '@ubag/sdk':
+        specifier: workspace:*
+        version: link:../../packages/sdk-typescript
       '@xterm/xterm':
         specifier: ^6.0.0
         version: 6.0.0
