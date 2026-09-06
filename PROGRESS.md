@@ -2,6 +2,53 @@
 
 Last updated: 2026-09-07
 
+## 2026-09-07 Dashboard Group B gaps complete + deployed
+
+Second half of the dashboard gap program (group A was `ac9694e`): every gateway
+route with zero dashboard wiring now has an operator surface, built per
+design.md (NAJM tokens, 8-state discipline, denied/501/empty/error states).
+
+- **NEW Security page** (`/security`, KeyRound nav): PAT issuance
+  (`POST /v1/auth/pat` — tenant/app/role/TTL overrides, token displayed once
+  with copy button, superadmin-403 explained), MFA session verify
+  (`POST /v1/mfa/verify` with one-time-code input), SSO logout
+  (`POST /v1/sso/logout` revokes the current gateway session).
+- **NEW Administration page** (`/admin`, ServerCog nav): GDPR subject requests
+  (`POST /v1/privacy/{export,erase}` → receipt table), JIT elevation
+  request + approve (`POST /v1/admin/elevation`, `POST
+  /v1/admin/elevation/{id}/approve`, pending→approved badges), region
+  kill-switch (`POST /v1/admin/regions/{region}/state`, active/draining/
+  disabled).
+- **Jobs page**: batch submit (`POST /v1/jobs/batch`) — one job per line
+  ("command type | prompt"), 100-cap, per-entry accepted/rejected table with
+  job ids and error codes.
+- **Browser page**: adaptive concurrency ceilings table (`GET
+  /v1/concurrency`) with denied/unavailable/empty states.
+- **Settings page**: SIEM sink list + enable/disable toggle
+  (`GET/PUT /v1/siem/config`, single-sink upsert shape).
+- **Webhooks replay fixed to the contract route**: group A had wired an
+  invented `/v1/webhooks/{id}/deliveries/{id}/replay` path that does not
+  exist; now `POST /v1/webhooks/replay` with `delivery_id` + `webhook_id` +
+  audit `reason` (openapi `replayWebhookDelivery`).
+- **Guard tests** (`groupb-routes.test.ts`) pin every Group B route and the
+  replay body fields so an invented path cannot regress.
+- Skipped deliberately: `/v1/stream` (5-second heartbeat WebSocket demo — a
+  UI panel would be theater).
+
+Commits `6eae769` (pages, +970 lines), `74bdcd1` (CI fix:
+`actions/cache@v7` from the perf commits does not exist → v4),
+`6a24bbb` (e2e: nav 18→20 + win32 snapshot baselines), `01b66b1` (linux
+snapshot skips per the established conversations pattern). Verification:
+vitest **44/44**, svelte-check **0/0**, e2e **47/47** (local, incl. visual
+snapshots), CI **green** on `01b66b1`.
+
+**Production**: source synced to `/opt/docker/ubag`, gateway image rebuilt +
+recreated (healthy), dashboard bundle synced and nginx-dashboard
+force-recreated (the dist bind mount had gone stale — `ls /srv/dashboard`
+showed the container root until force-recreate). Smoke: mock job
+**`job_000000000254`** completed with exact output `UBAG_GROUP_B_LIVE_OK`.
+All four containers healthy.
+
 ## 2026-09-07 Ponytail cuts landed + deployed to production
 
 The dead-weight removal is complete on `main` (CI fully green, incl. Gateway
