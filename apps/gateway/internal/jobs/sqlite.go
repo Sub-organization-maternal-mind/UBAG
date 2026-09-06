@@ -55,6 +55,13 @@ func (s *SQLiteStore) Create(ctx context.Context, request CreateRequest) (Job, e
 	}
 
 	now := s.now().UTC()
+	status := StatusQueued
+	if request.NotBefore != nil && request.NotBefore.After(now) {
+		status = StatusScheduled
+	}
+	if request.AwaitingAttachments {
+		status = StatusCreated
+	}
 	job := Job{
 		ID:             fmt.Sprintf("job_%012d", numericID),
 		APIVersion:     request.APIVersion,
@@ -70,14 +77,12 @@ func (s *SQLiteStore) Create(ctx context.Context, request CreateRequest) (Job, e
 		Options:        cloneMap(request.Options),
 		Callbacks:      cloneMap(request.Callbacks),
 		Context:        cloneMap(request.Context),
-		Status:         StatusQueued,
+		Status:         status,
 		TraceID:        request.TraceID,
 		RetryOf:        request.RetryOf,
+		NotBefore:      request.NotBefore,
 		CreatedAt:      now,
 		UpdatedAt:      now,
-	}
-	if request.AwaitingAttachments {
-		job.Status = StatusCreated
 	}
 	clientJSON, err := marshalNullableJSON(job.Client)
 	if err != nil {
@@ -104,15 +109,15 @@ func (s *SQLiteStore) Create(ctx context.Context, request CreateRequest) (Job, e
 INSERT INTO gateway_jobs (
 	id, api_version, tenant_id, app_id, idempotency_key, target, command_type,
 	client_json, conversation_id, template_id, input_json, options_json, callbacks_json, context_json,
-	status, result_json, trace_id, retry_of, event_sequence, created_at, updated_at
+	status, result_json, trace_id, retry_of, event_sequence, created_at, updated_at, not_before
 ) VALUES (
 	?, ?, ?, ?, nullif(?, ''), ?, ?,
 	?, nullif(?, ''), nullif(?, ''), ?, ?, ?, ?,
-	?, NULL, nullif(?, ''), nullif(?, ''), 1, ?, ?
+	?, NULL, nullif(?, ''), nullif(?, ''), 1, ?, ?, ?
 )`,
 		job.ID, job.APIVersion, job.TenantID, job.AppID, job.IdempotencyKey, job.Target, job.CommandType,
 		clientJSON, job.ConversationID, job.TemplateID, inputJSON, optionsJSON, callbacksJSON, contextJSON,
-		string(job.Status), job.TraceID, job.RetryOf, formatSQLiteTime(job.CreatedAt), formatSQLiteTime(job.UpdatedAt))
+		string(job.Status), job.TraceID, job.RetryOf, formatSQLiteTime(job.CreatedAt), formatSQLiteTime(job.UpdatedAt), formatNullableSQLiteTime(job.NotBefore))
 	if err != nil {
 		return Job{}, err
 	}
@@ -632,7 +637,7 @@ VALUES (?, ?, ?, ?, ?, ?, nullif(?, ''), ?)`,
 func selectSQLiteJobSQL() string {
 	return `SELECT id, api_version, tenant_id, app_id, coalesce(idempotency_key, ''), target, command_type,
 client_json, coalesce(conversation_id, ''), coalesce(template_id, ''), input_json, options_json, callbacks_json, context_json,
-status, result_json, coalesce(trace_id, ''), coalesce(retry_of, ''), created_at, updated_at, event_sequence
+status, result_json, coalesce(trace_id, ''), coalesce(retry_of, ''), created_at, updated_at, event_sequence, not_before
 FROM gateway_jobs`
 }
 
@@ -646,11 +651,12 @@ func scanSQLiteJobWithSequence(row jobScanner) (Job, int, bool, error) {
 	var clientJSON, inputJSON, optionsJSON, callbacksJSON, contextJSON, resultJSON []byte
 	var status string
 	var createdAt, updatedAt string
+	var notBefore sql.NullString
 	var sequence int
 	err := row.Scan(
 		&job.ID, &job.APIVersion, &job.TenantID, &job.AppID, &job.IdempotencyKey, &job.Target, &job.CommandType,
 		&clientJSON, &job.ConversationID, &job.TemplateID, &inputJSON, &optionsJSON, &callbacksJSON, &contextJSON,
-		&status, &resultJSON, &job.TraceID, &job.RetryOf, &createdAt, &updatedAt, &sequence,
+		&status, &resultJSON, &job.TraceID, &job.RetryOf, &createdAt, &updatedAt, &sequence, &notBefore,
 	)
 	if err == sql.ErrNoRows {
 		return Job{}, 0, false, nil
@@ -667,6 +673,11 @@ func scanSQLiteJobWithSequence(row jobScanner) (Job, int, bool, error) {
 	job.Result = decodeAny(resultJSON)
 	job.CreatedAt = parseSQLiteTime(createdAt)
 	job.UpdatedAt = parseSQLiteTime(updatedAt)
+	if notBefore.Valid && strings.TrimSpace(notBefore.String) != "" {
+		if parsed := parseSQLiteTime(notBefore.String); !parsed.IsZero() {
+			job.NotBefore = &parsed
+		}
+	}
 	return job, sequence, true, nil
 }
 
@@ -691,6 +702,15 @@ func scanSQLiteEvent(rows *sql.Rows) (Event, error) {
 
 func formatSQLiteTime(t time.Time) string {
 	return t.UTC().Format(sqliteTimeLayout)
+}
+
+// formatNullableSQLiteTime maps an optional timestamp to a driver value: nil
+// becomes SQL NULL so absent optionals never write a zero time.
+func formatNullableSQLiteTime(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return formatSQLiteTime(*t)
 }
 
 func parseSQLiteTime(value string) time.Time {

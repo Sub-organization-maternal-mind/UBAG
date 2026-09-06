@@ -170,15 +170,60 @@ func openPostgresTestDB(t *testing.T, dsn string) *sql.DB {
 	return db
 }
 
+// TestPostgresCreateScheduledPersistsNotBefore mirrors the sqlite/memory
+// round-trip on Postgres (runs only with UBAG_TEST_POSTGRES_DSN, like every
+// other test in this file).
+func TestPostgresCreateScheduledPersistsNotBefore(t *testing.T) {
+	dsn := os.Getenv("UBAG_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("UBAG_TEST_POSTGRES_DSN is not set")
+	}
+	db := openPostgresTestDB(t, dsn)
+	defer db.Close()
+	applyPostgresGatewayMigration(t, db)
+
+	store := NewPostgresStore(db)
+	tenantID := "tenant_pg_sched_" + time.Now().UTC().Format("20060102150405")
+	defer cleanupPostgresJobs(t, db, tenantID)
+
+	future := time.Now().UTC().Add(time.Hour).Truncate(time.Millisecond)
+	scheduled, err := store.Create(context.Background(), CreateRequest{
+		APIVersion:  "2026-05-22",
+		TenantID:    tenantID,
+		AppID:       "app_pg_sched",
+		Target:      "mock",
+		CommandType: "submit",
+		Input:       map[string]any{},
+		NotBefore:   &future,
+	})
+	if err != nil {
+		t.Fatalf("create scheduled: %v", err)
+	}
+	if scheduled.Status != StatusScheduled {
+		t.Fatalf("status = %s, want %s", scheduled.Status, StatusScheduled)
+	}
+	loaded, found, err := store.Get(context.Background(), scheduled.ID)
+	if err != nil || !found {
+		t.Fatalf("get scheduled: found=%v err=%v", found, err)
+	}
+	if loaded.NotBefore == nil || !loaded.NotBefore.Equal(future) {
+		t.Fatalf("reloaded NotBefore = %v, want %v", loaded.NotBefore, future)
+	}
+}
+
 func applyPostgresGatewayMigration(t *testing.T, db *sql.DB) {
 	t.Helper()
-	path := filepath.Join("..", "..", "..", "..", "migrations", "postgres", "0001_gateway_stores.sql")
-	sqlBytes, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read migration: %v", err)
-	}
-	if _, err := db.ExecContext(context.Background(), string(sqlBytes)); err != nil {
-		t.Fatalf("apply migration: %v", err)
+	// Mirrors `ubag db-migrate`: 0001 creates the stores, 0012 adds the
+	// scheduled-job shape (not_before column + widened status CHECK).
+	for _, file := range []string{"0001_gateway_stores.sql", "0012_gateway_jobs_not_before.sql"} {
+		path := filepath.Join("..", "..", "..", "..", "migrations", "postgres", file)
+		sqlBytes, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read migration: %v", err)
+		}
+		if _, err := db.ExecContext(context.Background(), string(sqlBytes)); err != nil {
+			t.Fatalf("apply migration %s: %v", file, err)
+		}
 	}
 }
 

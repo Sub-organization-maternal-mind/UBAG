@@ -42,6 +42,13 @@ func (p *PostgresStore) Create(ctx context.Context, request CreateRequest) (Job,
 	}
 
 	now := p.now().UTC()
+	status := StatusQueued
+	if request.NotBefore != nil && request.NotBefore.After(now) {
+		status = StatusScheduled
+	}
+	if request.AwaitingAttachments {
+		status = StatusCreated
+	}
 	job := Job{
 		ID:             fmt.Sprintf("job_%012d", numericID),
 		APIVersion:     request.APIVersion,
@@ -57,14 +64,12 @@ func (p *PostgresStore) Create(ctx context.Context, request CreateRequest) (Job,
 		Options:        cloneMap(request.Options),
 		Callbacks:      cloneMap(request.Callbacks),
 		Context:        cloneMap(request.Context),
-		Status:         StatusQueued,
+		Status:         status,
 		TraceID:        request.TraceID,
 		RetryOf:        request.RetryOf,
+		NotBefore:      request.NotBefore,
 		CreatedAt:      now,
 		UpdatedAt:      now,
-	}
-	if request.AwaitingAttachments {
-		job.Status = StatusCreated
 	}
 	clientJSON, err := marshalNullableJSON(job.Client)
 	if err != nil {
@@ -91,15 +96,15 @@ func (p *PostgresStore) Create(ctx context.Context, request CreateRequest) (Job,
 INSERT INTO gateway_jobs (
 	id, api_version, tenant_id, app_id, idempotency_key, target, command_type,
 	client_json, conversation_id, template_id, input_json, options_json, callbacks_json, context_json,
-	status, result_json, trace_id, retry_of, event_sequence, created_at, updated_at
+	status, result_json, trace_id, retry_of, event_sequence, created_at, updated_at, not_before
 ) VALUES (
 	$1, $2, $3, $4, nullif($5, ''), $6, $7,
 	$8, nullif($9, ''), nullif($10, ''), $11, $12, $13, $14,
-	$15, NULL, nullif($16, ''), nullif($17, ''), 1, $18, $19
+	$15, NULL, nullif($16, ''), nullif($17, ''), 1, $18, $19, $20
 )`,
 		job.ID, job.APIVersion, job.TenantID, job.AppID, job.IdempotencyKey, job.Target, job.CommandType,
 		clientJSON, job.ConversationID, job.TemplateID, inputJSON, optionsJSON, callbacksJSON, contextJSON,
-		string(job.Status), job.TraceID, job.RetryOf, job.CreatedAt, job.UpdatedAt)
+		string(job.Status), job.TraceID, job.RetryOf, job.CreatedAt, job.UpdatedAt, nullableTime(job.NotBefore))
 	if err != nil {
 		return Job{}, err
 	}
@@ -611,7 +616,7 @@ VALUES ($1, $2, $3, $4, $5, $6, nullif($7, ''), $8)`,
 func selectJobSQL() string {
 	return `SELECT id, api_version, tenant_id, app_id, coalesce(idempotency_key, ''), target, command_type,
 client_json, coalesce(conversation_id, ''), coalesce(template_id, ''), input_json, options_json, callbacks_json, context_json,
-status, result_json, coalesce(trace_id, ''), coalesce(retry_of, ''), created_at, updated_at, event_sequence
+status, result_json, coalesce(trace_id, ''), coalesce(retry_of, ''), created_at, updated_at, event_sequence, not_before
 FROM gateway_jobs`
 }
 
@@ -629,10 +634,11 @@ func scanJobWithSequence(row jobScanner) (Job, int, bool, error) {
 	var clientJSON, inputJSON, optionsJSON, callbacksJSON, contextJSON, resultJSON []byte
 	var status string
 	var sequence int
+	var notBefore sql.NullTime
 	err := row.Scan(
 		&job.ID, &job.APIVersion, &job.TenantID, &job.AppID, &job.IdempotencyKey, &job.Target, &job.CommandType,
 		&clientJSON, &job.ConversationID, &job.TemplateID, &inputJSON, &optionsJSON, &callbacksJSON, &contextJSON,
-		&status, &resultJSON, &job.TraceID, &job.RetryOf, &job.CreatedAt, &job.UpdatedAt, &sequence,
+		&status, &resultJSON, &job.TraceID, &job.RetryOf, &job.CreatedAt, &job.UpdatedAt, &sequence, &notBefore,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, 0, false, nil
@@ -641,6 +647,10 @@ func scanJobWithSequence(row jobScanner) (Job, int, bool, error) {
 		return Job{}, 0, false, err
 	}
 	job.Status = Status(status)
+	if notBefore.Valid {
+		t := notBefore.Time.UTC()
+		job.NotBefore = &t
+	}
 	job.Client = decodeMap(clientJSON)
 	job.Input = decodeMap(inputJSON)
 	job.Options = decodeMap(optionsJSON)
@@ -664,6 +674,15 @@ func marshalNullableJSON(value any) (any, error) {
 		return nil, err
 	}
 	return payload, nil
+}
+
+// nullableTime maps an optional timestamp to a driver value: nil becomes SQL
+// NULL so absent optionals never write a zero time.
+func nullableTime(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return *t
 }
 
 func decodeMap(payload []byte) map[string]any {

@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS gateway_jobs (
   status TEXT NOT NULL CHECK (
     status IN (
       'created',
+      'scheduled',
       'queued',
       'assigned',
       'running',
@@ -58,7 +59,8 @@ CREATE TABLE IF NOT EXISTS gateway_jobs (
   retry_of TEXT,
   event_sequence INTEGER NOT NULL DEFAULT 0 CHECK (event_sequence >= 0),
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  not_before TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_gateway_jobs_tenant_app_created
