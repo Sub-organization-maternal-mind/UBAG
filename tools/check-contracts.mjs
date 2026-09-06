@@ -137,7 +137,7 @@ if (gatewayServer) {
     'handleWebSocketUpgrade',
     'Sec-WebSocket-Accept',
     'constantTimeEqual',
-    'authorizeJobAccess',
+    'authorizeGatewayAction',
     'ListEvents',
     'replayWebhook',
     'ubag_gateway_http_requests_total',
