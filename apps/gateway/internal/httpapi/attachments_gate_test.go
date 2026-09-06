@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/textproto"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
@@ -492,7 +493,7 @@ func TestAttachmentFinalizeReportsListFailure(t *testing.T) {
 }
 
 func TestRecoverQueuedAttachmentOutbox(t *testing.T) {
-	outboxStore := outbox.NewMemoryStore()
+	outboxStore := &recordingOutbox{}
 	srv := NewServer(Config{AppSecret: "dev-secret", ActorRole: "developer", Outbox: outboxStore})
 	job, err := srv.jobs.Create(context.Background(), jobstore.CreateRequest{
 		APIVersion: DefaultAPIVersion, TenantID: "tenant_default", AppID: "app_default",
@@ -508,13 +509,25 @@ func TestRecoverQueuedAttachmentOutbox(t *testing.T) {
 		t.Fatalf("seed queued status changed=%v err=%v", changed, err)
 	}
 	srv.recoverQueuedAttachmentOutbox(context.Background())
-	pending, err := outboxStore.Pending(context.Background(), 10)
-	if err != nil {
-		t.Fatal(err)
+	outboxStore.mu.Lock()
+	defer outboxStore.mu.Unlock()
+	if len(outboxStore.events) != 1 || outboxStore.events[0].ID != job.ID || outboxStore.events[0].Topic != "jobs.dispatch" {
+		t.Fatalf("recovered outbox events = %#v", outboxStore.events)
 	}
-	if len(pending) != 1 || pending[0].ID != job.ID || pending[0].Topic != "jobs.dispatch" {
-		t.Fatalf("recovered outbox events = %#v", pending)
-	}
+}
+
+// recordingOutbox implements outbox.Store by capturing Append calls, so tests
+// can assert dispatch events without depending on store drain-side internals.
+type recordingOutbox struct {
+	mu     sync.Mutex
+	events []outbox.Event
+}
+
+func (r *recordingOutbox) Append(_ context.Context, id, topic string, payload []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.events = append(r.events, outbox.Event{ID: id, Topic: topic, Payload: payload})
+	return nil
 }
 
 type listFailingArtifactStore struct {
