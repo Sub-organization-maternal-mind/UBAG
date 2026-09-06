@@ -1,0 +1,22 @@
+apiVersion: helm.toolkit.fluxcd.io/v2beta2
+kind: HelmRelease
+metadata:
+  name: ubag
+  namespace: ubag
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: deploy/helm/ubag
+      sourceRef:
+        kind: GitRepository
+        name: ubag
+        namespace: flux-system
+      version: "0.1.0"
+  valuesFrom:
+    - kind: Secret
+      name: ubag-secret
+      valuesKey: values.yaml
+  values:
+    image:
+      tag: v0.1.0
