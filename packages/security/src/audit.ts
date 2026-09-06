@@ -4,6 +4,10 @@ import type { AuthzDecision } from "./rbac.js";
 export const AUDIT_EVENT_NAMES = [
   "auth.app_secret.accepted",
   "auth.app_secret.rejected",
+  "auth.app_jwt.accepted",
+  "auth.app_jwt.rejected",
+  "auth.personal_access_token.accepted",
+  "auth.personal_access_token.rejected",
   "auth.device_token.accepted",
   "auth.device_token.rejected",
   "authz.allow",

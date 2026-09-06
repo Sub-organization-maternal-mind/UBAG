@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/ubag/ubag/apps/gateway/internal/authz"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
 	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
@@ -720,21 +721,9 @@ func jobsAfterCursor(jobs []jobstore.Job, cursor string) []jobstore.Job {
 	return jobs
 }
 
+// allowGatewayAction delegates to the one shared RBAC policy (internal/authz).
 func allowGatewayAction(role, action string) bool {
-	switch role {
-	case "developer":
-		return action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry"
-	case "operator", "service":
-		return action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry"
-	case "admin":
-		return action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry"
-	case "superadmin":
-		return true
-	case "viewer":
-		return action == "job:read"
-	default:
-		return false
-	}
+	return authz.RoleAllows(role, action)
 }
 
 func validBearerToken(header string, expectedSecret string) bool {

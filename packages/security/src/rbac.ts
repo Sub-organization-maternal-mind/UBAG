@@ -16,7 +16,17 @@ export const UBAG_ACTIONS = [
   "role:manage",
   "policy:manage",
   "data:export",
-  "support:access"
+  "support:access",
+  // Gateway-enforced actions (internal/authz roleActions is the source of
+  // truth; this list is kept in sync with it).
+  "artifact:write",
+  "artifact:delete",
+  "alerts:read",
+  "alerts:manage",
+  "browser:read",
+  "concurrency:read",
+  "region:manage",
+  "auth:pat:issue"
 ] as const;
 export type UbagAction = (typeof UBAG_ACTIONS)[number];
 

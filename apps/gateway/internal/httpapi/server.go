@@ -37,6 +37,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/attachments"
 	"github.com/ubag/ubag/apps/gateway/internal/audit"
+	"github.com/ubag/ubag/apps/gateway/internal/authz"
 	"github.com/ubag/ubag/apps/gateway/internal/compliance"
 	"github.com/ubag/ubag/apps/gateway/internal/conversations"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
@@ -3182,25 +3183,8 @@ func (s *Server) authorizeGatewayAction(w http.ResponseWriter, r *http.Request, 
 		return false
 	}
 
-	role := principal.Role
-	allowed := false
-	switch role {
-	case "developer":
-		allowed = action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry" || action == "artifact:write" || action == "artifact:delete" || action == "webhook:configure" || action == "browser:read" || action == "concurrency:read"
-	case "operator":
-		allowed = action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry" || action == "artifact:write" || action == "artifact:delete" || action == "device:enroll" || action == "device:revoke" || action == "webhook:configure" || action == "webhook:replay" || action == "audit:read" || action == "alerts:read" || action == "alerts:manage" || action == "browser:read" || action == "concurrency:read"
-	case "admin":
-		allowed = action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry" || action == "artifact:write" || action == "artifact:delete" || action == "device:enroll" || action == "device:revoke" || action == "secret:rotate" || action == "webhook:configure" || action == "webhook:replay" || action == "audit:read" || action == "rate_limit:manage" || action == "role:manage" || action == "data:export" || action == "alerts:read" || action == "alerts:manage" || action == "browser:read" || action == "concurrency:read" || action == "region:manage"
-	case "superadmin":
-		allowed = true
-	case "service":
-		allowed = action == "job:create" || action == "job:read" || action == "job:cancel" || action == "job:retry" || action == "artifact:write" || action == "artifact:delete" || action == "webhook:replay"
-	case "viewer":
-		allowed = action == "job:read"
-	default:
-		allowed = false
-	}
-	if !allowed {
+	// One shared RBAC policy for both transports (internal/authz).
+	if !authz.RoleAllows(principal.Role, action) {
 		s.emitAuthorizationAudit(r, principal, action, "deny")
 		s.writeError(w, r, http.StatusForbidden, authzError("UBAG-AUTHZ-ROLE-DENIED-001", "actor role is not allowed to perform this action"))
 		return false
@@ -3971,74 +3955,100 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		if validBearerToken(r.Header.Get("Authorization"), s.appSecret) {
-			principal := authenticatedPrincipal{
-				Role:     s.actorRole,
-				TenantID: s.tenantID,
-				AppID:    s.appID,
-			}
-			principal = s.applyJITElevation(r.Context(), principal)
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
-			return
-		}
-
-		// App JWT: validate RS256 Bearer token.
-		if s.appJWTPublicKey != nil {
-			if bearer := bearerToken(r.Header.Get("Authorization")); bearer != "" {
-				if claims, err := appjwt.Verify(bearer, s.appJWTPublicKey); err == nil && validAppJWTClaims(claims) {
-					principal := authenticatedPrincipal{
-						Role:     claims.Role,
-						TenantID: claims.TenantID,
-						AppID:    claims.AppID,
-					}
-					principal = s.applyJITElevation(r.Context(), principal)
-					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
-					return
-				}
-			}
-		}
-
-		// PAT: resolve a personal access token (ubag_pat_... Bearer).
-		if s.patStore != nil {
-			if bearer := bearerToken(r.Header.Get("Authorization")); pat.IsValidFormat(bearer) {
-				token, ok, err := s.patStore.Resolve(r.Context(), bearer, time.Now())
-				if err == nil && ok {
-					principal := authenticatedPrincipal{
-						Role:     token.Role,
-						TenantID: token.TenantID,
-						AppID:    token.AppID,
-					}
-					principal = s.applyJITElevation(r.Context(), principal)
-					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
-					return
-				}
-			}
-		}
-
-		// Additive: resolve a server-side SSO session from a cookie or bearer
-		// token when the static app-secret did not match. Sessions never replace
-		// the app-secret path; they extend it.
-		if s.sessions != nil {
-			if token := sessionTokenFromRequest(r); token != "" {
-				sess, ok, err := s.sessions.Resolve(r.Context(), token, time.Now())
-				if err == nil && ok {
-					principal := authenticatedPrincipal{
-						Role:         sess.Role,
-						TenantID:     sess.TenantID,
-						AppID:        sess.AppID,
-						Subject:      sess.Subject,
-						MFAVerified:  s.mfaSessions.Contains(token),
-						SessionBased: true,
-					}
-					principal = s.applyJITElevation(r.Context(), principal)
-					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
-					return
-				}
+		// Ordered credential-resolver chain: the first resolver that
+		// recognizes the presented credential yields the principal. Adding
+		// a credential type means adding one resolver here — no other edits.
+		for _, resolve := range []func(*http.Request) (authenticatedPrincipal, bool){
+			s.resolveAppSecret,
+			s.resolveAppJWT,
+			s.resolvePAT,
+			s.resolveSSOSession,
+		} {
+			if principal, ok := resolve(r); ok {
+				principal = s.applyJITElevation(r.Context(), principal)
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
+				return
 			}
 		}
 
 		s.writeError(w, r, http.StatusUnauthorized, authError("UBAG-AUTH-MISSING-001", "missing or invalid credentials"))
 	})
+}
+
+// resolveAppSecret authenticates the static configured app-secret bearer.
+func (s *Server) resolveAppSecret(r *http.Request) (authenticatedPrincipal, bool) {
+	if !validBearerToken(r.Header.Get("Authorization"), s.appSecret) {
+		return authenticatedPrincipal{}, false
+	}
+	return authenticatedPrincipal{
+		Role:     s.actorRole,
+		TenantID: s.tenantID,
+		AppID:    s.appID,
+	}, true
+}
+
+// resolveAppJWT authenticates an RS256 App JWT bearer (per-client identity).
+func (s *Server) resolveAppJWT(r *http.Request) (authenticatedPrincipal, bool) {
+	if s.appJWTPublicKey == nil {
+		return authenticatedPrincipal{}, false
+	}
+	bearer := bearerToken(r.Header.Get("Authorization"))
+	if bearer == "" {
+		return authenticatedPrincipal{}, false
+	}
+	claims, err := appjwt.Verify(bearer, s.appJWTPublicKey)
+	if err != nil || !validAppJWTClaims(claims) {
+		return authenticatedPrincipal{}, false
+	}
+	return authenticatedPrincipal{
+		Role:     claims.Role,
+		TenantID: claims.TenantID,
+		AppID:    claims.AppID,
+	}, true
+}
+
+// resolvePAT authenticates a personal access token (ubag_pat_... bearer).
+func (s *Server) resolvePAT(r *http.Request) (authenticatedPrincipal, bool) {
+	if s.patStore == nil {
+		return authenticatedPrincipal{}, false
+	}
+	bearer := bearerToken(r.Header.Get("Authorization"))
+	if !pat.IsValidFormat(bearer) {
+		return authenticatedPrincipal{}, false
+	}
+	token, ok, err := s.patStore.Resolve(r.Context(), bearer, time.Now())
+	if err != nil || !ok {
+		return authenticatedPrincipal{}, false
+	}
+	return authenticatedPrincipal{
+		Role:     token.Role,
+		TenantID: token.TenantID,
+		AppID:    token.AppID,
+	}, true
+}
+
+// resolveSSOSession authenticates a server-side SSO session from a cookie or
+// bearer token. Sessions never replace the app-secret path; they extend it.
+func (s *Server) resolveSSOSession(r *http.Request) (authenticatedPrincipal, bool) {
+	if s.sessions == nil {
+		return authenticatedPrincipal{}, false
+	}
+	token := sessionTokenFromRequest(r)
+	if token == "" {
+		return authenticatedPrincipal{}, false
+	}
+	sess, ok, err := s.sessions.Resolve(r.Context(), token, time.Now())
+	if err != nil || !ok {
+		return authenticatedPrincipal{}, false
+	}
+	return authenticatedPrincipal{
+		Role:         sess.Role,
+		TenantID:     sess.TenantID,
+		AppID:        sess.AppID,
+		Subject:      sess.Subject,
+		MFAVerified:  s.mfaSessions.Contains(token),
+		SessionBased: true,
+	}, true
 }
 
 // applyJITElevation checks whether there is an active JIT elevation grant for
