@@ -21,7 +21,7 @@ func NewSQLiteStore(db *sql.DB) *SQLiteStore {
 
 const sqliteCreateSessionsTable = `
 CREATE TABLE IF NOT EXISTS gateway_sessions (
-	token_hash TEXT PRIMARY KEY,
+	token_hash TEXT NOT NULL PRIMARY KEY,
 	id TEXT NOT NULL,
 	tenant_id TEXT NOT NULL,
 	app_id TEXT NOT NULL DEFAULT '',
