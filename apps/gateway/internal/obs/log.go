@@ -181,32 +181,6 @@ func startLevelReloader(ctx context.Context, lv *slog.LevelVar) {
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
 
-// ServiceLogger returns a *slog.Logger pre-seeded with service and environment.
-// It does not set the global default; callers may use it directly or pass it to
-// InitLogger.
-func ServiceLogger(ctx context.Context, w io.Writer) *slog.Logger {
-	env := os.Getenv("UBAG_ENVIRONMENT")
-	if env == "" {
-		env = "local"
-	}
-	raw := os.Getenv("UBAG_LOG_LEVEL")
-	lv := &slog.LevelVar{}
-	lv.Set(parseLevel(raw))
-
-	jsonHandler := slog.NewJSONHandler(w, &slog.HandlerOptions{
-		Level:       lv,
-		ReplaceAttr: replaceContractAttrs,
-	})
-
-	// Pre-seed service and environment as WithAttrs so they appear in every record.
-	seededHandler := jsonHandler.WithAttrs([]slog.Attr{
-		slog.String("service", "ubag-gateway"),
-		slog.String("environment", env),
-	})
-
-	return slog.New(NewRedactingHandler(seededHandler))
-}
-
 // InitLogger configures the default slog logger with the JSON+redaction handler
 // and starts a background goroutine that re-reads UBAG_LOG_LEVEL on SIGHUP.
 // Call once from serve.Run.

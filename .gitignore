@@ -83,3 +83,6 @@ apps/worker/*.log
 
 # Stray local Python distribution accidentally extracted inside the gateway - never commit
 apps/gateway/internal/executor/Python/
+
+# Understand-Anything analysis data
+.ua/

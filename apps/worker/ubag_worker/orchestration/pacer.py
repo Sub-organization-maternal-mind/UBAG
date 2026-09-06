@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import random
 import time
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Optional
 
 
 class SubmitPacer:
@@ -77,36 +77,4 @@ class SubmitPacer:
         return proceed_at
 
 
-class SubmitPacerRegistry:
-    """Lazily creates and caches one :class:`SubmitPacer` per provider+identity."""
-
-    def __init__(
-        self,
-        *,
-        base_gap: float = 0.8,
-        jitter: float = 0.4,
-        rng_factory: Optional[Callable[[Tuple[str, str]], random.Random]] = None,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        self._base_gap = base_gap
-        self._jitter = jitter
-        self._rng_factory = rng_factory
-        self._clock = clock
-        self._pacers: Dict[Tuple[str, str], SubmitPacer] = {}
-
-    def get(self, provider_id: str, identity_ref: str) -> SubmitPacer:
-        key = (provider_id, identity_ref)
-        pacer = self._pacers.get(key)
-        if pacer is None:
-            rng = self._rng_factory(key) if self._rng_factory is not None else None
-            pacer = SubmitPacer(
-                base_gap=self._base_gap,
-                jitter=self._jitter,
-                rng=rng,
-                clock=self._clock,
-            )
-            self._pacers[key] = pacer
-        return pacer
-
-
-__all__ = ["SubmitPacer", "SubmitPacerRegistry"]
+__all__ = ["SubmitPacer"]

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 )
 
 type MemoryStore struct {
@@ -45,8 +47,8 @@ func (m *MemoryStore) Enqueue(_ context.Context, request EnqueueRequest) (Delive
 		AppID:         request.AppID,
 		JobID:         request.JobID,
 		EventName:     request.EventName,
-		EndpointID:    firstNonEmpty(request.EndpointID, StableID("whe", request.URL, request.SecretID)),
-		EndpointKind:  firstNonEmpty(request.EndpointKind, "job_callback"),
+		EndpointID:    jobcore.FirstNonEmpty(request.EndpointID, StableID("whe", request.URL, request.SecretID)),
+		EndpointKind:  jobcore.FirstNonEmpty(request.EndpointKind, "job_callback"),
 		URL:           request.URL,
 		SecretID:      request.SecretID,
 		DedupeKey:     request.DedupeKey,
@@ -222,14 +224,6 @@ func dedupeScope(tenantID string, appID string, dedupeKey string) string {
 	return stringsTrim(tenantID) + "\x00" + stringsTrim(appID) + "\x00" + stringsTrim(dedupeKey)
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if stringsTrim(value) != "" {
-			return stringsTrim(value)
-		}
-	}
-	return ""
-}
 
 func stringsTrim(value string) string {
 	return strings.TrimSpace(value)

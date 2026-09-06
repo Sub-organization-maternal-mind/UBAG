@@ -453,7 +453,6 @@ class LiveWebTemplateTests(unittest.TestCase):
 
 def test_provider_config_value_with_selector_metacharacters_is_rejected():
     import pytest
-
     from ubag_worker.live.engine import _sanitize_provider_config_value
     # Only characters that break out of the double-quoted has-text("{value}")
     # context are rejected: the double quote, a backslash, and newlines.

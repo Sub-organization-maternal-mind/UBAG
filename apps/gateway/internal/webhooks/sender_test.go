@@ -15,7 +15,7 @@ import (
 func makeSender(server *httptest.Server, breakers *resilience.Registry) HTTPSender {
 	return HTTPSender{
 		Client:         server.Client(),
-		SecretResolver: StaticSecretResolver{"wh_sec_test": "secret_fixture"},
+		SecretResolver: testSecretResolver{"wh_sec_test": "secret_fixture"},
 		URLPolicy:      URLPolicy{AllowInsecureHTTP: true, AllowPrivateHosts: true, AllowedHosts: []string{"127.0.0.1"}},
 		Now:            func() time.Time { return time.Unix(1700000000, 0) },
 		Breakers:       breakers,
@@ -93,7 +93,7 @@ func TestHTTPSender_CircuitOpenAfterThreshold(t *testing.T) {
 		t.Fatalf("expected 3 dials before open, got %d", dialCount)
 	}
 
-	// The breaker should now be open — the next Send must not dial.
+	// The breaker should now be open â€” the next Send must not dial.
 	result, err := sender.Send(context.Background(), delivery)
 	if err != nil {
 		t.Fatalf("circuit_open send unexpected error: %v", err)
@@ -163,7 +163,7 @@ func TestHTTPSender_BreakerReclosesAfterCooldown(t *testing.T) {
 	// Re-use same registry but point to the ok host so the same breaker is
 	// probed via half-open. We swap URL on the delivery to the ok server.
 	// (The breaker is keyed by host; the ok server uses a different ephemeral
-	// port on 127.0.0.1 — so the host portion (127.0.0.1) is the same and the
+	// port on 127.0.0.1 â€” so the host portion (127.0.0.1) is the same and the
 	// same breaker entry is reused.)
 	deliveryOK := makeDelivery(okServer.URL)
 	// Force the ok server's client to be used as well.

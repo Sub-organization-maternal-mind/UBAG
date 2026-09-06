@@ -33,16 +33,6 @@ The model is governed by five invariants (blueprint §12.6) honored throughout:
 from __future__ import annotations
 
 from .aimd import AIMDController, CapChange, NegativeSignal
-from .bulkhead import (
-    BulkheadConfig,
-    BulkheadRegistry,
-    CrashLevel,
-    RecoveryAction,
-    RecoveryPlan,
-    ReloginTicket,
-    SingleFlightRelogin,
-    compute_recovery,
-)
 from .channel_pool import (
     AssignOutcome,
     AssignResult,
@@ -50,8 +40,7 @@ from .channel_pool import (
     Job,
     PoolConfig,
 )
-from .pacer import SubmitPacer, SubmitPacerRegistry
-from .scheduler import Lane, ScheduledJob, WeightedScheduler
+from .pacer import SubmitPacer
 from .telemetry import CONCURRENCY_CHANGE_EVENT_TYPE, concurrency_change_data
 from .topology import (
     BrowserInstance,
@@ -74,14 +63,12 @@ __all__ = [
     "ProviderContext",
     "TabState",
     "TenantIsolationError",
-    "Lane",
     # aimd
     "AIMDController",
     "CapChange",
     "NegativeSignal",
     # pacer
     "SubmitPacer",
-    "SubmitPacerRegistry",
     # telemetry
     "CONCURRENCY_CHANGE_EVENT_TYPE",
     "concurrency_change_data",
@@ -91,16 +78,4 @@ __all__ = [
     "ChannelPool",
     "Job",
     "PoolConfig",
-    # bulkhead
-    "BulkheadConfig",
-    "BulkheadRegistry",
-    "CrashLevel",
-    "RecoveryAction",
-    "RecoveryPlan",
-    "ReloginTicket",
-    "SingleFlightRelogin",
-    "compute_recovery",
-    # scheduler
-    "ScheduledJob",
-    "WeightedScheduler",
 ]

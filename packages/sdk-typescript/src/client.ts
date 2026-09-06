@@ -554,57 +554,15 @@ export class UbagClient {
   }
 
   private async request<T>(method: string, path: string, options: InternalRequestOptions = {}): Promise<T> {
-    const url = new URL(path, this.baseUrl);
-    const headers = new Headers({
-      Accept: JSON_CONTENT_TYPE,
-      "Ubag-Api-Version": options.apiVersion ?? this.apiVersion,
-      "Ubag-Sdk-Name": UBAG_SDK_NAME,
-      "Ubag-Sdk-Version": UBAG_SDK_VERSION,
-      ...this.defaultHeaders,
-      ...options.headers
-    });
-
-    if (this.appSecret !== undefined && !headers.has("Authorization")) {
-      headers.set("Authorization", `Bearer ${this.appSecret}`);
-    }
-
-    if (options.idempotencyKey !== undefined) {
-      headers.set("Idempotency-Key", options.idempotencyKey);
-    }
-
-    const init: RequestInit = {
-      method,
-      headers
-    };
-
-    if (options.signal !== undefined) {
-      init.signal = options.signal;
-    }
-
-    if (options.body !== undefined) {
-      headers.set("Content-Type", JSON_CONTENT_TYPE);
-      init.body = JSON.stringify(options.body);
-    }
-
-    let response: Response;
-    try {
-      response = await this.fetchImpl(url, init);
-    } catch (cause) {
-      throw new UbagTransportError("UBAG API request could not be sent.", {
-        url: url.toString(),
-        method,
-        cause
-      });
-    }
-
-    if (!response.ok) {
-      throw await buildApiError(response, url.toString(), method);
-    }
-
+    const { body, ...rest } = options;
+    const init: RawRequestOptions =
+      body === undefined
+        ? rest
+        : { ...rest, body: JSON.stringify(body), contentType: JSON_CONTENT_TYPE };
+    const response = await this.fetchRaw(method, path, init);
     if (response.status === 204) {
       return undefined as T;
     }
-
     return (await response.json()) as T;
   }
 
@@ -670,8 +628,8 @@ export function createUbagClient(options: UbagClientOptions): UbagClient {
   return new UbagClient(options);
 }
 
-export function generateIdempotencyKey(now = Date.now()): string {
-  return encodeBase32(BigInt(now), 10) + encodeRandomBase32(10);
+export function generateIdempotencyKey(): string {
+  return crypto.randomUUID().replace(/-/g, "");
 }
 
 async function buildApiError(response: Response, url: string, method: string): Promise<UbagApiError> {
@@ -726,45 +684,4 @@ function headersToRecord(headers: Headers): Record<string, string> {
     record[key.toLowerCase()] = value;
   }
   return record;
-}
-
-const CROCKFORD_BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-
-function encodeBase32(value: bigint, length: number): string {
-  let output = "";
-  let remaining = value;
-  for (let index = 0; index < length; index += 1) {
-    output = CROCKFORD_BASE32[Number(remaining % 32n)] + output;
-    remaining = remaining / 32n;
-  }
-  return output;
-}
-
-function encodeRandomBase32(byteLength: number): string {
-  const bytes = new Uint8Array(byteLength);
-  const crypto = globalThis.crypto;
-
-  if (crypto?.getRandomValues !== undefined) {
-    crypto.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * 256);
-    }
-  }
-
-  let output = "";
-  let buffer = 0;
-  let bits = 0;
-
-  for (const byte of bytes) {
-    buffer = (buffer << 8) | byte;
-    bits += 8;
-
-    while (bits >= 5) {
-      output += CROCKFORD_BASE32[(buffer >> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-
-  return output;
 }

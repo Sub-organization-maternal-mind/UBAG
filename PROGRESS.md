@@ -1,6 +1,62 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-09-06
+Last updated: 2026-09-07
+
+## 2026-09-07 Ponytail ultra dead-weight removal (−2,300 LOC, behavior-identical)
+
+Full-repo audit (understand knowledge graph: 709 nodes/752 edges; 4 parallel
+audit slices) followed by applied deletion of verified-dead code. Every target
+was grep-verified to have zero production callers before removal; all surviving
+behavior is byte-identical (worker/envelope, SIEM wire format, SDK headers
+unchanged).
+
+**Deleted entirely:** worker `obs/`, `normalize/`, `drift/`, `adapters/` SDK,
+`orchestration/{bulkhead,scheduler}.py`, `live/{humanized,recording,remote}.py`
++ their 10 test files; gateway `internal/apikey` package, `_hostname_probe.go`
+(dup of `plugins/permissions.go hostnameOf`), `obs/slo.go`,
+`outbox/relay.go` + drain-side `MarkPublished/Pending/Ready` (outbox Append-only
+in production), dashboard `legacy/` vanilla app + 5 orphan pre-SvelteKit
+scripts; deploy: `gitops/sample-config/`, `e2e_probe.py`, `coraza.conf`,
+`.github/workflows/load.yml`, `grafana/vector.yaml`; compose dragonfly service
++ pyroscope/glitchtip/vector observability profile (nothing in gateway/worker
+emits to them) + their volumes + `DRAGONFLY_PORT` env example line.
+
+**Shrunk:** `live/engines.py` 467→80 lines (kept `engine_spec_from_env`; the
+Engine ABC/pluggable layer/`select_engine` had zero production callers;
+`page_driver` duck-types `kind.value/is_remote/remote_endpoint/headed` only);
+`orchestrator.record_outcome` lost the never-constructed bulkhead/crash_level/
+requeue_callback plumbing; envelope `_worker_event` now delegates to
+`events.worker_event` (byte-identical output) and the dead
+`wait_for_artifacts` field is gone; dead env var `UBAG_BROWSER_PROTOCOL` no
+longer parsed (removed from env example).
+
+**Dedup:** SDK `request()` delegates to `fetchRaw()` (−53);
+`generateIdempotencyKey` → `crypto.randomUUID()` (gateway accepts
+`[A-Za-z0-9._:-]{16,128}`; SDK format was untested; sidecar TS got the same
+stdlib swap + test format update); dashboard `gwMultipart` delegates to `gw()`;
+triplicated `firstNonEmpty` collapsed into `jobcore.FirstNonEmpty`
+(executor/webhooks/httpapi; original untrimmed-return semantics preserved);
+`obs/middleware.go` trimmed to Trace/TraceID (server chain only uses those)
+with `webhooks.StaticSecretResolver` replaced by a test-file double; obs
+`otel.go` keeps only `InitTracer`; siem keeps only `FileSink` (serve wires
+nothing else). Worker `pyproject.toml [tool.ruff]` block removed (root
+`ruff.toml` is the single ruleset).
+
+**Deferred with reasons:** `semanticcache` package + 501-only
+`/v1/cache/invalidate` route and TS SDK `grpc.ts` stub (both are served
+contract surface — deleting them is a contracts-first change touching openapi
++ conformance fixtures, not a code cut); CLI parseArgs→`util.parseArgs`
+(wholesale arg-layer rewrite, violates no-rewrite rule); executor
+single-impl interfaces; Rust sidecar ULID key (deliberate design, no cargo
+locally); mock-adapter "dup" of secret_scan (implementations differ subtly:
+`_extract_prompt` default and `_mapping_or_empty` semantics — merging would
+change mock event output).
+
+Verification (focused, per project rule): worker **245/245**, dashboard
+svelte-check **0/0** + Vitest **37/37**, TS SDK **73/73**, sidecar **7/7**,
+CLI **4/4**, ruff clean. Go changes (outbox/siem/obs/middleware/httpapi/jobcore
+trims) are grep-verified with no local toolchain — verified via CI
+(`go vet` + `go test -race`) on push.
 
 ## 2026-08-10 Production performance baseline and hardening
 

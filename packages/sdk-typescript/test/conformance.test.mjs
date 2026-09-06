@@ -343,7 +343,6 @@ const CAPABILITY_FOR_CATEGORY = {
   sidecar:       () => typeof sdk.discoverSidecar === 'function',
   offline_queue: () => typeof sdk.OfflineQueue === 'function',
   otel:          () => typeof sdk.buildTraceparent === 'function',
-  grpc:          () => typeof sdk.UbagGrpcClient === 'function',
 };
 
 test('conformance suite has at least 250 scenarios', () => {

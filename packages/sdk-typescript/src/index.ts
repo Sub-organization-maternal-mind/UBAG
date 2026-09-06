@@ -98,7 +98,6 @@ export {
   buildTraceparent, parseTraceparent, withSpan,
   type TracerLike, type SpanLike, type TelemetryOptions, type ParsedTraceparent,
 } from "./telemetry.js";
-export { UbagGrpcClient, grpcStatusToUbagCode, type UbagGrpcOptions } from "./grpc.js";
 // Generated contract vocabularies (ADR-0004): single source for statuses,
 // event types, and error categories across SDKs and the dashboard.
 export {

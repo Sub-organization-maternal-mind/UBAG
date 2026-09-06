@@ -39,16 +39,6 @@ func (r EnvSecretResolver) ResolveWebhookSecret(_ context.Context, secretID stri
 	return nil, false, nil
 }
 
-type StaticSecretResolver map[string]string
-
-func (r StaticSecretResolver) ResolveWebhookSecret(_ context.Context, secretID string) ([]byte, bool, error) {
-	value := strings.TrimSpace(r[strings.TrimSpace(secretID)])
-	if value == "" {
-		return nil, false, nil
-	}
-	return []byte(value), true, nil
-}
-
 func secretEnvSuffix(secretID string) string {
 	value := regexp.MustCompile(`[^A-Za-z0-9]+`).ReplaceAllString(secretID, "_")
 	value = strings.Trim(value, "_")

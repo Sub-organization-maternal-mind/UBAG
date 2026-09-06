@@ -12,7 +12,8 @@ function getSettings() {
 export async function gw<T = unknown>(
   method: string,
   path: string,
-  body?: unknown
+  body?: unknown,
+  multipartForm?: FormData
 ): Promise<GwResponse<T>> {
   if (!browser) return { status: 0, data: null, denied: false, unauthorized: false, error: 'SSR not supported' };
 
@@ -21,8 +22,10 @@ export async function gw<T = unknown>(
 
   const headers: Record<string, string> = {
     'Ubag-Api-Version': s.apiVersion,
-    'Content-Type': 'application/json',
   };
+  if (multipartForm == null) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   if (s.appSecret) {
     headers['Authorization'] = `Bearer ${s.appSecret}`;
@@ -32,13 +35,15 @@ export async function gw<T = unknown>(
     headers['Idempotency-Key'] = crypto.randomUUID();
   }
 
+  const requestBody = multipartForm ?? (body != null ? JSON.stringify(body) : undefined);
+
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     const response = await fetch(url, {
       method,
       headers,
-      body: body != null ? JSON.stringify(body) : undefined,
+      body: requestBody,
       signal: controller.signal,
     }).finally(() => {
       clearTimeout(timeout);
@@ -99,62 +104,11 @@ export function listOf<T = unknown>(
 }
 
 /**
- * POST a multipart/form-data body. Unlike gw(), it never sets Content-Type so the
- * browser can attach the multipart boundary. Used for the job attachment one-shot.
+ * POST a multipart/form-data body. Delegates to gw() with the multipart form;
+ * gw() omits Content-Type so the browser can attach the multipart boundary.
  */
-export async function gwMultipart<T = unknown>(path: string, form: FormData): Promise<GwResponse<T>> {
-  if (!browser) return { status: 0, data: null, denied: false, unauthorized: false, error: 'SSR not supported' };
-
-  const s = getSettings();
-  const url = s.gatewayUrl.replace(/\/+$/, '') + path;
-
-  const headers: Record<string, string> = {
-    'Ubag-Api-Version': s.apiVersion,
-    'Idempotency-Key': crypto.randomUUID(),
-  };
-  if (s.appSecret) {
-    headers['Authorization'] = `Bearer ${s.appSecret}`;
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: form,
-      signal: controller.signal,
-    }).finally(() => {
-      clearTimeout(timeout);
-    });
-    const text = await response.text();
-    let data: T | null = null;
-    let parseError = false;
-    if (text) {
-      try {
-        data = JSON.parse(text) as T;
-      } catch {
-        parseError = true;
-      }
-    }
-    return {
-      status: response.status,
-      data,
-      denied: response.status === 403,
-      unauthorized: response.status === 401,
-      error: response.ok ? (parseError ? 'Invalid response from gateway' : null) : `HTTP ${response.status}`,
-    };
-  } catch (err) {
-    return {
-      status: -1,
-      data: null,
-      denied: false,
-      unauthorized: false,
-      error: err instanceof DOMException && err.name === 'AbortError'
-        ? 'Gateway request timed out'
-        : err instanceof Error ? err.message : String(err),
-    };
-  }
+export function gwMultipart<T = unknown>(path: string, form: FormData): Promise<GwResponse<T>> {
+  return gw<T>('POST', path, undefined, form);
 }
 
 // Typed convenience wrappers

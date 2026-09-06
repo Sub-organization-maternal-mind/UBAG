@@ -215,29 +215,8 @@ function traceId(): string {
   return `trace_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function generateIdempotencyKey(now = Date.now()): string {
-  return encodeBase32(BigInt(now), 10) + encodeRandomBase32();
-}
-
-function encodeRandomBase32(): string {
-  const bytes = new Uint8Array(10);
-  crypto.getRandomValues(bytes);
-  let value = 0n;
-  for (const byte of bytes) {
-    value = (value << 8n) | BigInt(byte);
-  }
-  return encodeBase32(value, 16).slice(-16);
-}
-
-function encodeBase32(value: bigint, minLength: number): string {
-  const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-  let current = value;
-  let output = "";
-  do {
-    output = alphabet[Number(current % 32n)] + output;
-    current /= 32n;
-  } while (current > 0n);
-  return output.padStart(minLength, "0");
+function generateIdempotencyKey(): string {
+  return crypto.randomUUID().replace(/-/g, "");
 }
 
 function parseArgs(argv: string[]): SidecarOptions {

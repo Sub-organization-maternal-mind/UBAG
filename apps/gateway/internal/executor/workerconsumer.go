@@ -20,6 +20,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/attachments"
 	"github.com/ubag/ubag/apps/gateway/internal/conversations"
+	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/plugins"
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
@@ -44,7 +45,7 @@ const sessionAuthenticatedEventType = "session.authenticated"
 const concurrencyChangeEventType = "concurrency.cap_changed"
 
 // topologyReportEventType is the worker event that reports a live
-// browser→context→tab topology snapshot for a job. The worker owns the live
+// browserÃ¢â€ â€™contextÃ¢â€ â€™tab topology snapshot for a job. The worker owns the live
 // Fleet; the gateway projects the snapshot into an in-memory topology store
 // (when configured) so /v1/browser/* reflects live state for the default
 // embedded deployment. SQLite/Postgres topology stores are written by the
@@ -55,14 +56,14 @@ const topologyReportEventType = "browser.topology_reported"
 // by the live engine before a prompt is submitted: the worker started a fresh
 // conversation and enforced the provider's model/option settings (e.g. DeepSeek
 // Expert + DeepThink, Gemini 3.5 Flash + Extended thinking). They are NOT
-// job-lifecycle transitions, so — like the orchestration telemetry above — they
+// job-lifecycle transitions, so Ã¢â‚¬â€ like the orchestration telemetry above Ã¢â‚¬â€ they
 // are logged for audit and skipped so their type never poisons the job.
 const newChatEventType = "session.new_chat"
 const configuredEventType = "session.configured"
 
 // fileAttachedEventType reports that the worker attached one or more files to the
 // provider composer before submitting the prompt. It is informational telemetry,
-// not a job-lifecycle transition, so it is logged and skipped — its unknown type
+// not a job-lifecycle transition, so it is logged and skipped Ã¢â‚¬â€ its unknown type
 // must never poison the job (mirrors the session.* handling above).
 const fileAttachedEventType = "file.attached"
 
@@ -81,7 +82,7 @@ const conversationThreadBrokenEventType = "conversation.thread_broken"
 // conversationThreadRefField is the ONLY field the gateway reads from a
 // conversation.* event payload: the provider chat URL. Every identity field
 // (tenant, app, target, conversation key) is forced from the trusted job record,
-// never the worker payload — the redaction boundary that keeps a buggy or
+// never the worker payload Ã¢â‚¬â€ the redaction boundary that keeps a buggy or
 // compromised worker from binding another tenant's conversation or persisting
 // non-URL material (cookies, storage state, noVNC URLs). It mirrors the
 // thread_ref field the gateway sends down in the dispatch envelope.
@@ -516,7 +517,7 @@ func (c *WorkerConsumer) raiseManualActionAlert(ctx context.Context, job jobstor
 		AppID:      job.AppID,
 		JobID:      job.ID,
 		SessionID:  stringFromEventData(data, "session_id"),
-		TargetID:   firstNonEmpty(stringFromEventData(data, "target"), job.Target),
+		TargetID:   jobcore.FirstNonEmpty(stringFromEventData(data, "target"), job.Target),
 		Kind:       manualActionKind(stringFromEventData(data, "reason")),
 		Message:    stringFromEventData(data, "message"),
 		Attributes: manualActionAttributes(data),
@@ -529,9 +530,9 @@ func (c *WorkerConsumer) raiseManualActionAlert(ctx context.Context, job jobstor
 // recordLoginState projects the live engine's real login state for a provider
 // context into the SERVED topology store so /v1/browser/contexts reflects the
 // user-owned session's actual auth state instead of the deploy-time seed. It maps
-// session.authenticated → "authenticated" and session.manual_action_required →
+// session.authenticated Ã¢â€ â€™ "authenticated" and session.manual_action_required Ã¢â€ â€™
 // "login_required" (the worker's own detect_login_state vocabulary), keyed by the
-// job's tenant + the event's target — the same join consumers use to match a
+// job's tenant + the event's target Ã¢â‚¬â€ the same join consumers use to match a
 // context to a target. Events arrive in order, so a job that surfaces a manual
 // action and is then completed after the human logs in ends "authenticated".
 //
@@ -551,12 +552,12 @@ func (c *WorkerConsumer) recordLoginState(ctx context.Context, job jobstore.Job,
 	default:
 		return
 	}
-	target := firstNonEmpty(stringFromEventData(event.Data, "target"), job.Target)
+	target := jobcore.FirstNonEmpty(stringFromEventData(event.Data, "target"), job.Target)
 	if target == "" {
 		return
 	}
 	// last_health_at records when the gateway OBSERVED this login state, so it is
-	// stamped with wall-clock now — not event.CreatedAt, which the live worker
+	// stamped with wall-clock now Ã¢â‚¬â€ not event.CreatedAt, which the live worker
 	// derives from a deterministic synthetic clock (a fixed early-2026 value).
 	if _, err := c.LoginState.UpdateContextLoginState(ctx, job.TenantID, target, loginState, time.Now().UTC()); err != nil {
 		slog.Warn("topology login-state projection failed",
@@ -574,7 +575,7 @@ func (c *WorkerConsumer) recordConcurrencyChange(job jobstore.Job, event jobstor
 		return
 	}
 	data := event.Data
-	target := firstNonEmpty(stringFromEventData(data, "target"), job.Target)
+	target := jobcore.FirstNonEmpty(stringFromEventData(data, "target"), job.Target)
 	if target == "" {
 		return
 	}
@@ -591,7 +592,7 @@ func (c *WorkerConsumer) recordConcurrencyChange(job jobstore.Job, event jobstor
 	c.Concurrency.Report(job.TenantID, view)
 }
 
-// recordTopologyReport projects a worker-reported browser→context→tab snapshot
+// recordTopologyReport projects a worker-reported browserÃ¢â€ â€™contextÃ¢â€ â€™tab snapshot
 // into the in-memory topology store so /v1/browser/* reflects live state for the
 // default embedded deployment. It is best-effort and nil-safe: a nil ingestor or
 // malformed payload never interrupts ingestion. Tenant identity is always taken
@@ -642,7 +643,7 @@ func (c *WorkerConsumer) recordTopologyReport(job jobstore.Job, event jobstore.W
 // interrupts ingestion.
 //
 // Tenant, app, target, and the conversation key are ALWAYS taken from the
-// trusted job record — never the worker payload — so a buggy or compromised
+// trusted job record Ã¢â‚¬â€ never the worker payload Ã¢â‚¬â€ so a buggy or compromised
 // worker cannot bind another tenant's conversation. The ONLY field read from the
 // payload is the provider chat URL (conversationThreadRefField); no other payload
 // field is ever persisted (redaction), keeping the store within the safe-mode
@@ -678,7 +679,7 @@ func (c *WorkerConsumer) recordConversationEvent(ctx context.Context, job jobsto
 		return
 	}
 
-	// thread_bound / thread_rebound → upsert. Only the thread URL comes from the
+	// thread_bound / thread_rebound Ã¢â€ â€™ upsert. Only the thread URL comes from the
 	// payload; every identity field is forced from the job above.
 	if _, err := c.Conversations.Bind(ctx, conversations.Conversation{
 		TenantID:          job.TenantID,
@@ -779,14 +780,6 @@ func intFromEventData(data map[string]any, key string) int {
 	return 0
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
 
 func (c *WorkerConsumer) workerQueue() (WorkerQueue, error) {
 	if c == nil {
@@ -873,8 +866,8 @@ func (c *WorkerConsumer) notifyCurrentTerminalJob(ctx context.Context, lease Wor
 	// Every path that reaches this helper does so via applyFailure, which drives
 	// the job to a terminal failure status; releasing here closes the token leak
 	// on the worker failure paths. Release is per-job and idempotent
-	// (ReleaseForJob), so overlapping with any other terminal owner — the RunOnce
-	// completed/cancelled branches or the cancel API — cannot double-count the
+	// (ReleaseForJob), so overlapping with any other terminal owner Ã¢â‚¬â€ the RunOnce
+	// completed/cancelled branches or the cancel API Ã¢â‚¬â€ cannot double-count the
 	// shared lane.
 	if jobstore.TerminalStatus(job.Status) {
 		c.observeTerminalJob(job)
@@ -946,15 +939,15 @@ func (c *WorkerConsumer) runPostJobHook(ctx context.Context, job jobstore.Job) {
 // worker subprocess can attach the files. For the single audio alias it also sets
 // input.audio_local_path, keeping the pre-existing dictation path working. The
 // gateway already holds the bytes in its artifact store, so it writes them locally
-// and hands the worker paths only — the worker never needs gateway credentials.
+// and hands the worker paths only Ã¢â‚¬â€ the worker never needs gateway credentials.
 //
 // It returns one cleanup func that removes all temp files. It is a no-op
-// (nil, nil) when the runner has no store or the job declares no attachments — so
+// (nil, nil) when the runner has no store or the job declares no attachments Ã¢â‚¬â€ so
 // text jobs are completely unaffected. It fails closed: an invalid key or a
 // missing/unreadable artifact returns an error (and cleans up any temp files it
 // already wrote) rather than silently attaching nothing. Because the dispatch
 // gate only enqueues a job once every declared key is present, a missing artifact
-// here means the gate was bypassed — a bug, not a normal race.
+// here means the gate was bypassed Ã¢â‚¬â€ a bug, not a normal race.
 func (r ProcessWorkerRunner) materializeAttachments(ctx context.Context, envelope *DispatchEnvelope) (func(), error) {
 	if r.Artifacts == nil || envelope == nil || envelope.Job.Input == nil {
 		return nil, nil
@@ -1115,7 +1108,7 @@ func (r ProcessWorkerRunner) RunWorker(ctx context.Context, envelope DispatchEnv
 	// Materialize any declared attachments (documents/images/audio/video/voice)
 	// to local temp files the worker subprocess can attach. The gateway already
 	// holds the bytes in its artifact store, so it writes them locally and injects
-	// attachment_local_paths (and audio_local_path for the single-audio alias) —
+	// attachment_local_paths (and audio_local_path for the single-audio alias) Ã¢â‚¬â€
 	// the worker never needs gateway credentials. No-op for text jobs.
 	cleanupAttachments, err := r.materializeAttachments(runCtx, &envelope)
 	if err != nil {
@@ -1409,7 +1402,7 @@ func minimalWorkerEnv() []string {
 		"UBAG_WORKER_SINGLE_USER_EDGE": {},
 		// Chat ledger: lets the worker record the chats it creates so the chat
 		// reaper can only ever delete UBAG's own (never the operator's). Both are
-		// non-secret — a boolean and a file path — so they respect the reason this
+		// non-secret Ã¢â‚¬â€ a boolean and a file path Ã¢â‚¬â€ so they respect the reason this
 		// allowlist exists: keep credentials (app secret, DSNs) out of the worker
 		// process, not withhold benign operational config.
 		"UBAG_CHAT_LEDGER_ENABLED": {},

@@ -39,7 +39,7 @@ func TestDeliveryWorkerSignsAndDeliversWebhook(t *testing.T) {
 		Store: store,
 		Sender: HTTPSender{
 			Client:         server.Client(),
-			SecretResolver: StaticSecretResolver{"wh_sec_test": "secret_fixture"},
+			SecretResolver: testSecretResolver{"wh_sec_test": "secret_fixture"},
 			URLPolicy:      URLPolicy{AllowInsecureHTTP: true, AllowPrivateHosts: true, AllowedHosts: []string{"127.0.0.1"}},
 			Now:            func() time.Time { return time.Unix(1700000000, 0) },
 			APIVersion:     "2026-05-22",
@@ -103,7 +103,7 @@ func TestDeliveryWorker_CircuitOpenUsesMarkRetry(t *testing.T) {
 	registry := resilience.NewRegistry(cfg)
 	sender := HTTPSender{
 		Client:         server.Client(),
-		SecretResolver: StaticSecretResolver{"wh_sec_test": "secret_fixture"},
+		SecretResolver: testSecretResolver{"wh_sec_test": "secret_fixture"},
 		URLPolicy:      URLPolicy{AllowInsecureHTTP: true, AllowPrivateHosts: true, AllowedHosts: []string{"127.0.0.1"}},
 		Now:            func() time.Time { return now },
 		Breakers:       registry,
@@ -129,7 +129,7 @@ func TestDeliveryWorker_CircuitOpenUsesMarkRetry(t *testing.T) {
 		}
 	}
 
-	// Third run: breaker should be open — worker must call MarkRetry, not MarkDeadLetter.
+	// Third run: breaker should be open â€” worker must call MarkRetry, not MarkDeadLetter.
 	loaded, _, _ := store.Get(context.Background(), "tenant_a", "app_a", delivery.ID)
 	now = loaded.NextAttemptAt
 	if _, err := worker.RunOnce(context.Background()); err != nil {
@@ -175,7 +175,7 @@ func TestDeliveryWorkerRetriesThenDeadLetters(t *testing.T) {
 		Store: store,
 		Sender: HTTPSender{
 			Client:         server.Client(),
-			SecretResolver: StaticSecretResolver{"wh_sec_test": "secret_fixture"},
+			SecretResolver: testSecretResolver{"wh_sec_test": "secret_fixture"},
 			URLPolicy:      URLPolicy{AllowInsecureHTTP: true, AllowPrivateHosts: true, AllowedHosts: []string{"127.0.0.1"}},
 		},
 		WorkerID:    "worker-a",

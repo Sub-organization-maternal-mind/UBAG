@@ -95,7 +95,7 @@ type Config struct {
 	// this one origin and answers preflight OPTIONS requests with 204. It
 	// exists solely for local development where the dashboard and gateway run
 	// on different localhost ports; production deploys the two behind a single
-	// nginx origin and never need this. Empty (the default) is a no-op — the
+	// nginx origin and never need this. Empty (the default) is a no-op Ã¢â‚¬â€ the
 	// gateway never sends CORS headers unless an operator opts in.
 	DevCORSOrigin string
 
@@ -188,13 +188,13 @@ type Config struct {
 	Outbox outbox.Store
 
 	// PAT, when non-nil, enables Personal Access Token issuance and validation
-	// (§11). POST /v1/auth/pat issues tokens; Bearer ubag_pat_... authenticates.
+	// (Ã‚Â§11). POST /v1/auth/pat issues tokens; Bearer ubag_pat_... authenticates.
 	PAT pat.Store
 
 	// PATDefaultTTL is the default TTL for issued PATs. Zero means no expiry.
 	PATDefaultTTL time.Duration
 
-	// AppJWTPublicKey, when non-nil, enables App JWT authentication (§11).
+	// AppJWTPublicKey, when non-nil, enables App JWT authentication (Ã‚Â§11).
 	// Requests bearing a Bearer RS256 JWT signed with the matching private key
 	// are accepted. The JWT must carry tid (tenant_id), sub (app_id), and role.
 	AppJWTPublicKey *crypto_rsa.PublicKey
@@ -203,12 +203,12 @@ type Config struct {
 	// check in authorizeGatewayAction. A nil enforcer is permissive (RBAC only).
 	ABACEnforcer *abac.Enforcer
 
-	// SemanticCache provides the §17 semantic response cache (SHA-256 exact +
+	// SemanticCache provides the Ã‚Â§17 semantic response cache (SHA-256 exact +
 	// pgvector cosine similarity). When nil, the legacy ResponseCache remains
 	// active. Both may be configured simultaneously.
 	SemanticCache semanticcache.Store
 
-	// PrivacyStore backs POST /v1/privacy/export and /v1/privacy/erase (§28).
+	// PrivacyStore backs POST /v1/privacy/export and /v1/privacy/erase (Ã‚Â§28).
 	// When nil, the routes return 501.
 	PrivacyStore compliance.Store
 
@@ -230,7 +230,7 @@ type Config struct {
 	// When nil the gateway acts as if the current region is always active.
 	KillSwitch *region.KillSwitch
 
-	// MFA, when non-nil, enables TOTP-based multi-factor authentication (§MFA).
+	// MFA, when non-nil, enables TOTP-based multi-factor authentication (Ã‚Â§MFA).
 	// POST /v1/mfa/enroll and POST /v1/mfa/verify are active only when this is set.
 	// When nil, both routes return 501.
 	MFA *mfa.Service
@@ -285,7 +285,7 @@ type Server struct {
 	abacEnforcer        *abac.Enforcer
 	semanticCache       semanticcache.Store
 	privacyStore        compliance.Store
-	plugins             *plugins.Host // nil-safe: no host → no hooks run
+	plugins             *plugins.Host // nil-safe: no host Ã¢â€ â€™ no hooks run
 	regionRouter        *region.Router
 	killSwitch          *region.KillSwitch
 	mfaSvc              *mfa.Service
@@ -293,7 +293,7 @@ type Server struct {
 	jitAdmin            jitadmin.Store
 	credentialResolvers []func(*http.Request) (authenticatedPrincipal, bool)
 
-	// §18 contract counters (Task 2.3) — updated atomically on the hot path.
+	// Ã‚Â§18 contract counters (Task 2.3) Ã¢â‚¬â€ updated atomically on the hot path.
 	idempotencyReplays atomic.Int64 // ubag_idempotency_replays_total
 	artifactCaptures   atomic.Int64 // ubag_artifact_captures_total
 	webhookDeliveries  atomic.Int64 // ubag_webhook_deliveries_total
@@ -503,27 +503,27 @@ func NewServer(config Config) *Server {
 }
 
 func (s *Server) Handler() http.Handler {
-	// Blueprint §7.2 middleware chain is applied in routes() via s.mux.Use() so
+	// Blueprint Ã‚Â§7.2 middleware chain is applied in routes() via s.mux.Use() so
 	// that it is set up once at construction time and only once. Handler() just
 	// returns the fully configured chi router.
 	return s.mux
 }
 
 func (s *Server) routes() {
-	// Blueprint §7.2 middleware chain: trace → recover → log → auth → rate-limit → handle.
+	// Blueprint Ã‚Â§7.2 middleware chain: trace Ã¢â€ â€™ recover Ã¢â€ â€™ log Ã¢â€ â€™ auth Ã¢â€ â€™ rate-limit Ã¢â€ â€™ handle.
 	// Registered via chi.Use() so the chain is applied exactly once, at construction.
 	s.mux.Use(
 		s.withMetrics,                     // outermost: always records request timing
 		s.withRecovery,                    // catches panics before they propagate
-		mw.Trace,                          // injects/extracts W3C trace ID (§18.3)
-		mw.RequestLog(serviceName),        // structured JSON request log line (§18.1)
-		s.withDevCORS,                     // opt-in cross-origin dev shim (§7.2 note above); no-op unless configured
+		mw.Trace,                          // injects/extracts W3C trace ID (Ã‚Â§18.3)
+		mw.RequestLog(serviceName),        // structured JSON request log line (Ã‚Â§18.1)
+		s.withDevCORS,                     // opt-in cross-origin dev shim (Ã‚Â§7.2 note above); no-op unless configured
 		s.withAuth,                        // authenticates bearer / device / SSO session
-		s.withRateLimit,                   // IETF token-bucket rate-limiting (§10.6)
-		mw.APIVersionHeader(s.apiVersion), // sets Ubag-Api-Version-Used (§6.5)
+		s.withRateLimit,                   // IETF token-bucket rate-limiting (Ã‚Â§10.6)
+		mw.APIVersionHeader(s.apiVersion), // sets Ubag-Api-Version-Used (Ã‚Â§6.5)
 	)
 
-	// Custom not-found handler — chi's default writes plain text; we need JSON.
+	// Custom not-found handler Ã¢â‚¬â€ chi's default writes plain text; we need JSON.
 	s.mux.NotFound(s.handleNotFound)
 	// Custom method-not-allowed handler.
 	s.mux.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
@@ -531,7 +531,7 @@ func (s *Server) routes() {
 	})
 
 	// Route table: every route is declared once in routes.go; this loop is the
-	// single registration (no parallel hand-maintained table for metrics —
+	// single registration (no parallel hand-maintained table for metrics Ã¢â‚¬â€
 	// routePattern derives from the same declaration).
 	s.registerRoutes()
 	// Note: catch-all 404 is handled via s.mux.NotFound() registered above.
@@ -785,7 +785,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = fmt.Fprintf(w, "ubag_sse_connections_current{service=\"ubag-gateway\"} %d\n", s.currentSSEConnections())
 
-	// §18 contract metrics — missing from original handler (Task 2.3).
+	// Ã‚Â§18 contract metrics Ã¢â‚¬â€ missing from original handler (Task 2.3).
 	// Idempotency replay counter (incremented in the idempotency replay path).
 	idempotencyReplays := s.idempotencyReplays.Load()
 	_, _ = fmt.Fprintf(w, "ubag_idempotency_replays_total{service=\"ubag-gateway\",outcome=\"replayed\"} %d\n", idempotencyReplays)
@@ -1022,7 +1022,7 @@ func (s *Server) replayWebhook(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-IDEMPOTENCY-KEY-MISMATCH-001", "idempotency_key must match Idempotency-Key"))
 		return
 	}
-	idempotencyKey := firstNonEmpty(headerKey, bodyKey)
+	idempotencyKey := jobcore.FirstNonEmpty(headerKey, bodyKey)
 	if idempotencyKey == "" {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-IDEMPOTENCY-KEY-MISSING-001", "Idempotency-Key is required for webhook replay"))
 		return
@@ -1055,7 +1055,7 @@ func (s *Server) replayWebhook(w http.ResponseWriter, r *http.Request) {
 			Status:           "accepted",
 			IdempotentReplay: true,
 			WebhookID:        request.WebhookID,
-			DeliveryID:       firstNonEmpty(decision.Record.ResourceID, request.DeliveryID),
+			DeliveryID:       jobcore.FirstNonEmpty(decision.Record.ResourceID, request.DeliveryID),
 			AuditEvent:       "webhook.delivery_replayed",
 			Metadata: map[string]any{
 				"idempotency_key":   idempotencyKey,
@@ -1206,9 +1206,9 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleBatchJobs implements POST /v1/jobs/batch (blueprint §10, §19.2).
+// handleBatchJobs implements POST /v1/jobs/batch (blueprint Ã‚Â§10, Ã‚Â§19.2).
 // Accepts up to 100 job submissions in one HTTP round-trip and returns an
-// outcome for each one. Individual failures do not abort the batch — each
+// outcome for each one. Individual failures do not abort the batch Ã¢â‚¬â€ each
 // entry carries its own status and error.
 func (s *Server) handleBatchJobs(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -1288,7 +1288,7 @@ func (s *Server) processBatchEntry(
 	apiVersion, tenantID, appID, traceID string,
 	req createJobRequest,
 ) (batchJobOutcome, int) {
-	// Basic validation mirrors createJob — inline here to avoid the full HTTP
+	// Basic validation mirrors createJob Ã¢â‚¬â€ inline here to avoid the full HTTP
 	// request/response cycle.
 	target := strings.TrimSpace(req.Job.Target)
 	if target == "" {
@@ -1313,7 +1313,7 @@ func (s *Server) processBatchEntry(
 		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
 	}
 	// Attachments require the two-step upload or multipart one-shot, neither of
-	// which fits a JSON batch — reject rather than create a job that would hang
+	// which fits a JSON batch Ã¢â‚¬â€ reject rather than create a job that would hang
 	// held until its TTL.
 	if code, msg, ok := validateAttachmentsForCreate(req.Job.Target, req.Job.Input); !ok {
 		e := validationError(code, msg)
@@ -1358,7 +1358,7 @@ func (s *Server) processBatchEntry(
 		idempKey = generatedTraceID() // unique per entry
 	}
 
-	// §14 backpressure: reject this entry when the queue is too deep.
+	// Ã‚Â§14 backpressure: reject this entry when the queue is too deep.
 	if s.maxQueueDepth > 0 {
 		if stats, err := s.executor.Stats(ctx); err == nil {
 			pending := 0
@@ -1373,7 +1373,7 @@ func (s *Server) processBatchEntry(
 		}
 	}
 
-	// §14 concurrency ceiling: acquire a token before creating the job.
+	// Ã‚Â§14 concurrency ceiling: acquire a token before creating the job.
 	if s.concurrency != nil {
 		if !s.concurrency.Acquire(tenantID, target, appID) {
 			e := concurrencyError("UBAG-CONCURRENCY-001", "concurrency ceiling reached for this target", nil)
@@ -1462,7 +1462,7 @@ func (s *Server) handleJobByID(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(segments) == 1 && r.Method == http.MethodGet:
 		s.getJob(w, r, segments[0])
-	// DELETE /v1/jobs/{id} — hard cancel: cooperative signal + immediate status force
+	// DELETE /v1/jobs/{id} Ã¢â‚¬â€ hard cancel: cooperative signal + immediate status force
 	case len(segments) == 1 && r.Method == http.MethodDelete:
 		s.cancelJob(w, r, segments[0])
 	case len(segments) == 2 && segments[1] == "events" && r.Method == http.MethodGet:
@@ -1600,7 +1600,7 @@ func (s *Server) prepareCreateJob(w http.ResponseWriter, r *http.Request, reques
 		return preparedCreateJob{}, false
 	}
 
-	idempotencyKey := firstNonEmpty(headerKey, bodyKey)
+	idempotencyKey := jobcore.FirstNonEmpty(headerKey, bodyKey)
 	if idempotencyKey == "" {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-IDEMPOTENCY-KEY-MISSING-001", "Idempotency-Key is required for job creation"))
 		return preparedCreateJob{}, false
@@ -1746,7 +1746,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// §14 backpressure: reject new jobs when the queue is too deep.
+	// Ã‚Â§14 backpressure: reject new jobs when the queue is too deep.
 	if s.maxQueueDepth > 0 {
 		stats, err := s.executor.Stats(r.Context())
 		if err == nil {
@@ -1766,7 +1766,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// §14 concurrency ceiling: acquire a token before creating the job.
+	// Ã‚Â§14 concurrency ceiling: acquire a token before creating the job.
 	if s.concurrency != nil {
 		if !s.concurrency.Acquire(tenantID, request.Job.Target, appID) {
 			reservation.release(r.Context())
@@ -1858,7 +1858,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to marshal job envelope"))
 			return
 		}
-		// Outbox path: write to the reliable local buffer — the relay dispatcher handles
+		// Outbox path: write to the reliable local buffer Ã¢â‚¬â€ the relay dispatcher handles
 		// the actual enqueue, and the breaker wraps the relay's EnqueueJob call.
 		// No breaker check is needed here; the outbox write itself cannot be circuit-broken.
 		if err := s.outbox.Append(r.Context(), job.ID, "jobs.dispatch", envelopeBytes); err != nil {
@@ -2041,7 +2041,7 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	reason := firstNonEmpty(mutation.reason, "caller_cancelled")
+	reason := jobcore.FirstNonEmpty(mutation.reason, "caller_cancelled")
 	if err := s.executor.CancelJob(r.Context(), existing, reason); err != nil {
 		_ = s.idempotency.Release(r.Context(), mutation.scope)
 		s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-CANCEL-001", "failed to cancel job execution", true))
@@ -2064,9 +2064,9 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, id string) {
 			s.ObserveJobEndToEnd(job.ID, job.Status, job.UpdatedAt.Sub(job.CreatedAt))
 		}
 		// Return the job's in-flight token. ReleaseForJob is keyed by job ID and
-		// idempotent, so it is safe against every prior release of this job — a
+		// idempotent, so it is safe against every prior release of this job Ã¢â‚¬â€ a
 		// worker that already failed/completed it, or a concurrent/duplicate
-		// cancel — without ever under-counting the shared (tenant,target,app) lane.
+		// cancel Ã¢â‚¬â€ without ever under-counting the shared (tenant,target,app) lane.
 		s.releaseConcurrencyTokenForJob(job.ID)
 		notifier := webhooks.JobOutbox{Store: s.webhooks, URLPolicy: s.webhookURLs}
 		if err := notifier.EnqueueTerminalJob(r.Context(), job); err != nil {
@@ -2201,7 +2201,7 @@ func (s *Server) reserveMutation(w http.ResponseWriter, r *http.Request, operati
 		return mutationReservation{}, false
 	}
 
-	idempotencyKey := firstNonEmpty(headerKey, bodyKey)
+	idempotencyKey := jobcore.FirstNonEmpty(headerKey, bodyKey)
 	if idempotencyKey == "" {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-IDEMPOTENCY-KEY-MISSING-001", "Idempotency-Key is required for mutating job routes"))
 		return mutationReservation{}, false
@@ -2423,22 +2423,6 @@ func (s *Server) releaseConcurrencyToken(tenantID, target, identityRef string) {
 	}
 }
 
-func canonicalHash(raw []byte) (string, error) {
-	var payload any
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&payload); err != nil {
-		return "", err
-	}
-
-	canonical, err := json.Marshal(payload)
-	if err != nil {
-		return "", err
-	}
-
-	return hashBytes(canonical), nil
-}
-
 func canonicalCreateJobHash(apiVersion string, request createJobRequest) (string, error) {
 	return jobcore.CanonicalCreateHash(apiVersion, jobcoreClient(request.Client), jobcoreSpec(request.Job))
 }
@@ -2504,15 +2488,7 @@ func requestScope(r *http.Request) (string, string) {
 	return defaultTenantID, defaultAppID
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
 
-	return ""
-}
 
 func (s *Server) isSupportedAPIVersion(value string) bool {
 	return apiVersionPattern.MatchString(value) && value == s.apiVersion
@@ -2539,12 +2515,12 @@ func (s *Server) parseLimit(w http.ResponseWriter, r *http.Request, raw string, 
 }
 
 func jobToResponse(job jobstore.Job, replay bool, traceID string) jobResponse {
-	// Build the structured §6.2 result envelope from whatever the job store
+	// Build the structured Ã‚Â§6.2 result envelope from whatever the job store
 	// holds. If the worker has populated dedicated output fields we use them;
 	// if it returned an opaque map we attempt to project it into the envelope.
 	result := buildJobResultEnvelope(job)
 
-	// Build the structured §6.2 metadata envelope.
+	// Build the structured Ã‚Â§6.2 metadata envelope.
 	meta := JobMetadataEnvelope{
 		CommandType:    job.CommandType,
 		AppID:          job.AppID,
@@ -2586,9 +2562,9 @@ func jobToResponse(job jobstore.Job, replay bool, traceID string) jobResponse {
 }
 
 // buildJobResultEnvelope converts the job store's opaque Result value into the
-// structured §6.2 result envelope. The worker populates Result as either a
+// structured Ã‚Â§6.2 result envelope. The worker populates Result as either a
 // map[string]any or nil; future workers may populate the dedicated output fields
-// in the blueprint §22 schema directly.
+// in the blueprint Ã‚Â§22 schema directly.
 func buildJobResultEnvelope(job jobstore.Job) *JobResultEnvelope {
 	env := &JobResultEnvelope{}
 
@@ -2613,7 +2589,7 @@ func buildJobResultEnvelope(job jobstore.Job) *JobResultEnvelope {
 			}
 			env.Output = o
 		} else if text, ok := m["text"].(string); ok {
-			// Flat result from a simple worker — promote to output.text.
+			// Flat result from a simple worker Ã¢â‚¬â€ promote to output.text.
 			env.Output = &JobOutput{Text: text}
 		}
 		if cached, ok := m["cached"].(bool); ok {
@@ -3011,7 +2987,7 @@ func _canonicalWebhookReplayPayload(request webhookReplayRequest) string {
 }
 
 func webhookReplayResourceID(request webhookReplayRequest) string {
-	resourceID := firstNonEmpty(request.DeliveryID, request.WebhookID)
+	resourceID := jobcore.FirstNonEmpty(request.DeliveryID, request.WebhookID)
 	if resourceID == "" {
 		return "webhook_replay:" + hashString(_canonicalWebhookReplayPayload(request))[:16]
 	}
@@ -3115,19 +3091,6 @@ func (s *Server) loadAuthorizedJob(w http.ResponseWriter, r *http.Request, id st
 	return job, true
 }
 
-func (s *Server) authorizeJobAccess(w http.ResponseWriter, r *http.Request, job jobstore.Job, action string) bool {
-	if !s.authorizeGatewayAction(w, r, action) {
-		return false
-	}
-
-	tenantID, appID := requestScope(r)
-	if job.TenantID != tenantID || job.AppID != appID {
-		s.writeJobNotFound(w, r)
-		return false
-	}
-	return true
-}
-
 func (s *Server) authorizeGatewayAction(w http.ResponseWriter, r *http.Request, action string) bool {
 	principal, ok := principalFromContext(r.Context())
 	if !ok {
@@ -3185,8 +3148,8 @@ func (s *Server) emitAuthorizationAudit(r *http.Request, principal authenticated
 	// High-frequency read authorizations (job:read status polling, browser:read,
 	// concurrency:read, audit:read, alerts:read) do not warrant a synchronous,
 	// Merkle-chained audit write on every request. That write serializes the
-	// hot path — a per-tenant advisory lock on Postgres, the single connection on
-	// the SQLite edge — for negligible audit value on a routine allowed read.
+	// hot path Ã¢â‚¬â€ a per-tenant advisory lock on Postgres, the single connection on
+	// the SQLite edge Ã¢â‚¬â€ for negligible audit value on a routine allowed read.
 	// Skip auditing *allowed* reads; every denial and every mutation is still
 	// recorded so the security-relevant trail is unaffected.
 	if outcome == "allow" && strings.HasSuffix(action, ":read") {
@@ -3263,7 +3226,7 @@ func adapterCatalog() []map[string]any {
 
 // Model catalogs are declared in the adapter manifests (adapters/<target>/
 // manifest.json "model_catalog"), which the Go gateway does not otherwise read
-// — /v1/adapters is served from the hardcoded adapterCatalog() above. This is
+// Ã¢â‚¬â€ /v1/adapters is served from the hardcoded adapterCatalog() above. This is
 // the minimal loader that parses just the model_catalog block so createJob /
 // processBatchEntry can validate job.model_settings against it. Results are
 // cached per target; a missing manifest or absent block yields an empty catalog,
@@ -3296,7 +3259,7 @@ func validateModelSettingsForCreate(target string, settings map[string]any) (cod
 }
 
 // optionsWithProviderConfig returns the options to persist for a job. Any
-// client-supplied provider_config is removed — it is a gateway-internal worker
+// client-supplied provider_config is removed Ã¢â‚¬â€ it is a gateway-internal worker
 // channel, never client-settable, and letting a client set it would bypass
 // model-catalog validation (the value is interpolated into a Playwright
 // selector in the worker). The validated model_settings are then injected as
@@ -3335,7 +3298,7 @@ func resolveModelCatalog(target string) jobcore.ModelCatalog {
 
 func loadModelCatalogFromDisk(target string) jobcore.ModelCatalog {
 	// isTargetKey enforces ^[a-z0-9][a-z0-9._-]*$, so the target can never carry
-	// a path separator — a defense-in-depth guard before filepath.Join.
+	// a path separator Ã¢â‚¬â€ a defense-in-depth guard before filepath.Join.
 	if !isTargetKey(target) {
 		return jobcore.ModelCatalog{}
 	}
@@ -3383,7 +3346,7 @@ func loadModelCatalogFromDisk(target string) jobcore.ModelCatalog {
 				if catalog, decErr := decodeModelCatalog(candRaw); decErr == nil {
 					return catalog
 				}
-				// Alias matched but catalog failed to decode — treat as empty
+				// Alias matched but catalog failed to decode Ã¢â‚¬â€ treat as empty
 				// (fail-closed) rather than falling through to another alias.
 				return jobcore.ModelCatalog{}
 			}
@@ -3842,19 +3805,10 @@ func metricMethod(method string) string {
 	}
 }
 
-func (s *Server) withTrace(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		traceID := firstNonEmpty(r.Header.Get("X-Request-Id"), generatedTraceID())
-		w.Header().Set("X-Request-Id", traceID)
-		w.Header().Set("Ubag-Trace-Id", traceID)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), traceContextKey{}, traceID)))
-	})
-}
-
 // withDevCORS adds CORS headers for exactly one configured origin and answers
 // preflight OPTIONS requests directly, before auth. It is a no-op unless
 // devCORSOrigin is set (Config.DevCORSOrigin / UBAG_DEV_CORS_ORIGIN), and it
-// only ever allows that single operator-chosen origin — never a wildcard or a
+// only ever allows that single operator-chosen origin Ã¢â‚¬â€ never a wildcard or a
 // reflected Origin header. This exists for local development only, where the
 // dashboard and gateway run on different localhost ports; production serves
 // both from one nginx origin and sets nothing here.
@@ -3886,7 +3840,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 
 		// Ordered credential-resolver chain: the first resolver that
 		// recognizes the presented credential yields the principal. Adding
-		// a credential type means adding one resolver here — no other edits.
+		// a credential type means adding one resolver here Ã¢â‚¬â€ no other edits.
 		for _, resolve := range s.credentialResolvers {
 			if principal, ok := resolve(r); ok {
 				principal = s.applyJITElevation(r.Context(), principal)
@@ -3982,14 +3936,14 @@ func (s *Server) resolveSSOSession(r *http.Request) (authenticatedPrincipal, boo
 // unchanged. Requiring a non-empty Subject prevents a grant for actor="service"
 // from escalating ALL bearer-secret requests (privilege-escalation guard).
 // maxAppJWTLifetime caps how far in the future an accepted token's exp may
-// lie. §11 App JWTs are short-lived (minutes); without a ceiling, a leaked
+// lie. Ã‚Â§11 App JWTs are short-lived (minutes); without a ceiling, a leaked
 // long-exp token would grant access until the shared public key is rotated,
 // which invalidates every client at once.
 const maxAppJWTLifetime = 24 * time.Hour
 
 // validAppJWTClaims rejects correctly signed App JWTs whose claims cannot form
 // an isolated principal. Identity claims (tid, sub, role) must be non-empty
-// and exactly their trimmed form — an empty tid/sub would collapse the caller
+// and exactly their trimmed form Ã¢â‚¬â€ an empty tid/sub would collapse the caller
 // into a shared ""/"" tenant scope (defeating per-app isolation and pooling
 // rate-limit buckets), and padded values are rejected rather than normalized
 // inside the trust boundary. exp must be present (exp==0 is a never-expiring
@@ -4030,17 +3984,6 @@ func sessionTokenFromRequest(r *http.Request) string {
 		return parts[1]
 	}
 	return ""
-}
-
-func (s *Server) withAPIVersionHeader(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		headerVersion := strings.TrimSpace(r.Header.Get(headerAPIVersion))
-		if headerVersion != "" && !s.isSupportedAPIVersion(headerVersion) {
-			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-API-VERSION-UNSUPPORTED-001", "requested API version is not supported"))
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func requiresAuth(path string) bool {

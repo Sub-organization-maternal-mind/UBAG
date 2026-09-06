@@ -6,7 +6,6 @@ may be reused -- reuse is only ever safe when the gate proves the page carries n
 prior conversation turn.
 """
 import pytest
-
 from ubag_worker.live.daemon import WarmWorkerDaemon
 from ubag_worker.live.page_driver import MockPageDriver, PlaywrightPageDriver
 from ubag_worker.live.selectors import get_provider_selectors

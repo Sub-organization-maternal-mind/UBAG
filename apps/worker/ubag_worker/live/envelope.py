@@ -18,10 +18,10 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime, timedelta
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from .events import canonical_json, digest
+from .events import worker_event as _canonical_worker_event
 from .secret_scan import _contains_disallowed_secret_material  # noqa: F401 - re-export
 
 DEFAULT_API_VERSION = "2026-05-22"
@@ -69,7 +69,6 @@ class NormalizedJob:
         "audio_local_path",
         "attachments",
         "attachment_local_paths",
-        "wait_for_artifacts",
         "provider_config",
         "new_chat_enabled",
         "config_enabled",
@@ -149,7 +148,6 @@ def normalize_payload(payload: Mapping[str, Any], provider_id: str) -> Normalize
         raise EnvelopeError(
             "attachments and attachment_local_paths must contain the same number of entries"
         )
-    wait_for_artifacts = _string_tuple(options.get("wait_for_artifacts"))
 
     # Resolve the pre-submit configuration: per-provider UBAG defaults live in the
     # selectors; an env var (UBAG_PROVIDER_CONFIG_<ID>) and the job options layer
@@ -203,7 +201,6 @@ def normalize_payload(payload: Mapping[str, Any], provider_id: str) -> Normalize
         audio_local_path=audio_local_path,
         attachments=attachments,
         attachment_local_paths=attachment_local_paths,
-        wait_for_artifacts=wait_for_artifacts,
         provider_config=provider_config,
         new_chat_enabled=new_chat_enabled,
         config_enabled=config_enabled,
@@ -314,9 +311,6 @@ def _derive_job_id(payload: Mapping[str, Any], job_payload: Mapping[str, Any]) -
     return "job_" + digest(seed)[:16]
 
 
-_BASE_CLOCK = datetime(2026, 1, 1, 0, 0, 0)
-
-
 def _worker_event(
     api_version: str,
     job_id: str,
@@ -326,16 +320,14 @@ def _worker_event(
     data: Mapping[str, Any],
 ) -> Dict[str, Any]:
     """The canonical worker-event envelope shared by every worker path."""
-    return {
-        "api_version": api_version,
-        "event_id": "evt_" + digest("%s:%s" % (job_id, sequence))[:16],
-        "job_id": job_id,
-        "trace_id": trace_id,
-        "type": event_type,
-        "sequence": sequence,
-        "created_at": (_BASE_CLOCK + timedelta(milliseconds=250 * (sequence - 1))).isoformat(timespec="milliseconds") + "Z",
-        "data": dict(data),
-    }
+    return _canonical_worker_event(
+        api_version=api_version,
+        job_id=job_id,
+        trace_id=trace_id,
+        sequence=sequence,
+        event_type=event_type,
+        data=data,
+    )
 
 
 def _extract_prompt(input_payload: Mapping[str, Any], payload: Mapping[str, Any]) -> str:

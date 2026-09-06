@@ -12,7 +12,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "apps" / "worker"))
 
-from ubag_worker.orchestration import SubmitPacer, SubmitPacerRegistry  # noqa: E402
+from ubag_worker.orchestration import SubmitPacer  # noqa: E402
 
 
 class _FakeClock:
@@ -78,18 +78,6 @@ class PacerTests(unittest.TestCase):
             gap = pacer.next_allowed - gate_before
             self.assertGreaterEqual(gap, 0.8 - 0.4 - 1e-9)
             self.assertLessEqual(gap, 0.8 + 0.4 + 1e-9)
-
-    def test_registry_isolates_keys(self):
-        clock = _FakeClock()
-        registry = SubmitPacerRegistry(base_gap=0.8, jitter=0.0, clock=clock)
-        p1 = registry.get("chatgpt_web", "acct_a")
-        p2 = registry.get("chatgpt_web", "acct_b")
-        same = registry.get("chatgpt_web", "acct_a")
-        self.assertIs(p1, same)
-        self.assertIsNot(p1, p2)
-        p1.acquire(now=0.0)
-        # p2 is independent: still immediately allowed.
-        self.assertTrue(p2.allow(now=0.0))
 
 
 if __name__ == "__main__":

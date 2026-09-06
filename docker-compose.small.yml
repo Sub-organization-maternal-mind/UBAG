@@ -275,23 +275,6 @@ services:
     networks:
       - ubag-private
 
-  dragonfly:
-    image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.30.3
-    restart: unless-stopped
-    command: ["--logtostderr"]
-    ports:
-      - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${DRAGONFLY_PORT:-6379}:6379"
-    volumes:
-      - dragonfly_data:/data
-    networks:
-      - ubag-private
-    healthcheck:
-      test: ["CMD-SHELL", "printf 'PING\\r\\n' | nc 127.0.0.1 6379 | grep -q PONG"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
-
   minio:
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     restart: unless-stopped
@@ -417,46 +400,6 @@ services:
       retries: 3
       start_period: 5s
 
-  # ── Profiling / error-agg / log-shipping (Task 2.7) ───────────────────────
-
-  pyroscope:
-    image: grafana/pyroscope:1.13.3
-    restart: unless-stopped
-    profiles: ["observability"]
-    command: ["server"]
-    ports:
-      - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${PYROSCOPE_PORT:-4040}:4040"
-    volumes:
-      - pyroscope_data:/data
-    networks:
-      - ubag-private
-
-  glitchtip:
-    image: glitchtip/glitchtip:v4.1.2
-    restart: unless-stopped
-    profiles: ["observability"]
-    environment:
-      DATABASE_URL: ${GLITCHTIP_DATABASE_URL:-sqlite:////data/glitchtip.db}
-      SECRET_KEY: ${GLITCHTIP_SECRET_KEY:-changeme-in-production}
-      PORT: "8000"
-      GLITCHTIP_DOMAIN: ${GLITCHTIP_DOMAIN:-http://localhost:8000}
-    ports:
-      - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${GLITCHTIP_PORT:-8000}:8000"
-    volumes:
-      - glitchtip_data:/data
-    networks:
-      - ubag-private
-
-  vector:
-    image: timberio/vector:0.45.0-alpine
-    restart: unless-stopped
-    profiles: ["observability"]
-    command: ["--config", "/etc/vector/vector.yaml"]
-    volumes:
-      - ./deploy/grafana/vector.yaml:/etc/vector/vector.yaml:ro
-    networks:
-      - ubag-private
-
   mock-worker-smoke:
     build:
       context: .
@@ -563,15 +506,12 @@ networks:
 
 volumes:
   postgres_data:
-  dragonfly_data:
   minio_data:
   prometheus_data:
   grafana_data:
   nats_data:
   executor_spool:
   browser_profiles:
-  pyroscope_data:
-  glitchtip_data:
   # Persists backup heartbeat files (last-success-*) that the backup/wal-archive
   # healthchecks read to detect stalled backups across container restarts.
   backup_state:

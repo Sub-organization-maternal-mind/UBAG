@@ -10,7 +10,6 @@ turn/emptiness selector: a guessed selector would silently match nothing, read
 "empty", and let a prior turn bleed into the next job.
 """
 import pytest
-
 from ubag_worker.live.page_driver import (
     DriftDetectedError,
     MockPageDriver,

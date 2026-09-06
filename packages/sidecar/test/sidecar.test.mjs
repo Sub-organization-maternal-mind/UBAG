@@ -54,7 +54,7 @@ test('sidecar proxies v1 gateway requests and preserves body', async () => {
     assert.equal(recorded.method, 'POST');
     assert.equal(recorded.url, '/v1/jobs');
     assert.equal(recorded.sidecar, 'loopback');
-    assert.match(recorded.idempotencyKey, /^[0-9A-HJKMNP-TV-Z]{26}$/);
+    assert.match(recorded.idempotencyKey, /^[0-9a-f]{32}$/);
     assert.deepEqual(JSON.parse(recorded.body), {
       hello: 'sidecar',
       idempotency_key: recorded.idempotencyKey
@@ -97,8 +97,8 @@ test('sidecar injects idempotency for mutating artifact routes', async () => {
     assert.equal(recorded.length, 2);
     assert.equal(recorded[0].method, 'PUT');
     assert.equal(recorded[1].method, 'DELETE');
-    assert.match(recorded[0].idempotencyKey, /^[0-9A-HJKMNP-TV-Z]{26}$/);
-    assert.match(recorded[1].idempotencyKey, /^[0-9A-HJKMNP-TV-Z]{26}$/);
+    assert.match(recorded[0].idempotencyKey, /^[0-9a-f]{32}$/);
+    assert.match(recorded[1].idempotencyKey, /^[0-9a-f]{32}$/);
     assert.equal(recorded[0].body, 'artifact');
   } finally {
     await sidecar.close();

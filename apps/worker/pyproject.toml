@@ -32,14 +32,6 @@ markers = [
 ]
 addopts = "-v --tb=short"
 
-[tool.ruff]
-line-length = 100
-target-version = "py39"
-
-[tool.ruff.lint]
-select = ["E", "F", "W", "I"]
-ignore = ["E501"]
-
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ubag_worker*"]

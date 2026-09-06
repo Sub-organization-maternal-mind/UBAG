@@ -219,6 +219,18 @@ func hashBytes(value []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// FirstNonEmpty returns the first value that is non-empty after trimming
+// spaces (the original untrimmed value is returned), or "" when every value
+// is empty. Shared by the HTTP, gRPC, executor, and webhooks packages.
+func FirstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func cloneMap(input map[string]any) map[string]any {
 	if input == nil {
 		return nil

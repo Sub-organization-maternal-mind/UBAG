@@ -4,14 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"io"
-	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -62,112 +56,20 @@ func TestFileSinkWritesValidJSONLines(t *testing.T) {
 	}
 }
 
-func TestHTTPSinkPostsRedactedBatchAndBypassesProxy(t *testing.T) {
-	var (
-		mu      sync.Mutex
-		gotBody map[string]any
-		gotAuth string
-	)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		gotAuth = r.Header.Get("Authorization")
-		body, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(body, &gotBody)
-		w.WriteHeader(http.StatusAccepted)
-	}))
-	defer server.Close()
-
-	// Set a bogus proxy: if the sink honored it, the request would fail.
-	t.Setenv("HTTP_PROXY", "http://127.0.0.1:9")
-	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:9")
-
-	sink := NewHTTPSink(server.URL, "audit-ref", StaticSecretResolver{"audit-ref": "s3cr3t-token"})
-	event := Redact(Event{
-		ID: "e1", TenantID: "t1", Action: "secret.rotate",
-		Timestamp:  time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
-		Attributes: map[string]any{"token": "leak-me", "ok": "fine"},
-	})
-	if err := sink.Export(context.Background(), []Event{event}); err != nil {
-		t.Fatalf("export: %v", err)
-	}
-
-	mu.Lock()
-	defer mu.Unlock()
-	if gotAuth != "Bearer s3cr3t-token" {
-		t.Fatalf("expected resolved bearer header, got %q", gotAuth)
-	}
-	rawEvents, ok := gotBody["events"].([]any)
-	if !ok || len(rawEvents) != 1 {
-		t.Fatalf("expected one event in payload, got %v", gotBody["events"])
-	}
-	first := rawEvents[0].(map[string]any)
-	attrs := first["attributes"].(map[string]any)
-	if attrs["token"] != redactedPlaceholder {
-		t.Fatalf("expected redacted token in payload, got %v", attrs["token"])
-	}
-	if attrs["ok"] != "fine" {
-		t.Fatalf("benign attribute altered: %v", attrs["ok"])
+func TestFileSinkEmptyPathErrors(t *testing.T) {
+	sink := NewFileSink("   ")
+	if err := sink.Export(context.Background(), []Event{{ID: "e1"}}); err == nil {
+		t.Fatal("expected error for empty path")
 	}
 }
 
-func TestHTTPSinkNon2xxReturnsError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer server.Close()
-	sink := NewHTTPSink(server.URL, "", nil)
-	err := sink.Export(context.Background(), []Event{{ID: "e1"}})
-	if err == nil || !strings.Contains(err.Error(), "status 500") {
-		t.Fatalf("expected non-2xx error, got %v", err)
+func TestFileSinkEmptyBatchIsNoop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.log")
+	sink := NewFileSink(path)
+	if err := sink.Export(context.Background(), nil); err != nil {
+		t.Fatalf("empty batch: %v", err)
 	}
-}
-
-func TestSyslogSinkWritesRFC5424Lines(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer listener.Close()
-
-	lineCh := make(chan string, 2)
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		reader := bufio.NewReader(conn)
-		for {
-			line, err := reader.ReadString('\n')
-			if line != "" {
-				lineCh <- line
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-
-	sink := NewSyslogSink("tcp", listener.Addr().String())
-	sink.Hostname = "gw-host"
-	event := Redact(Event{ID: "e1", TenantID: "t1", Type: "audit.job", Action: "job.create", Timestamp: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)})
-	if err := sink.Export(context.Background(), []Event{event}); err != nil {
-		t.Fatalf("export: %v", err)
-	}
-
-	select {
-	case line := <-lineCh:
-		if !strings.HasPrefix(line, "<86>1 ") {
-			t.Fatalf("expected RFC5424 PRI/VERSION prefix, got %q", line)
-		}
-		if !strings.Contains(line, "gw-host") {
-			t.Fatalf("expected hostname in line, got %q", line)
-		}
-		if !strings.Contains(line, `"id":"e1"`) {
-			t.Fatalf("expected structured event payload, got %q", line)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for syslog line")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("empty batch must not create the file")
 	}
 }

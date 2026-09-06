@@ -20,8 +20,6 @@
     "@sveltejs/adapter-static": "^3.0.8",
     "@sveltejs/kit": "^2.15.1",
     "@sveltejs/vite-plugin-svelte": "^4.0.4",
-    "@tanstack/svelte-table": "^8.21.2",
-    "@tsconfig/svelte": "^5.0.4",
     "@types/node": "^24.12.4",
     "autoprefixer": "^10.4.20",
     "axe-playwright": "^2.2.2",
@@ -32,7 +30,6 @@
     "svelte": "^5.17.3",
     "svelte-check": "^4.1.1",
     "tailwindcss": "^3.4.17",
-    "tslib": "^2.8.1",
     "typescript": "^5.7.2",
     "vite": "^5.4.11",
     "vitest": "^2.1.8"
