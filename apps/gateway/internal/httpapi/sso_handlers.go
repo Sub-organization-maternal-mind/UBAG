@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/audit"
+	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	"github.com/ubag/ubag/apps/gateway/internal/session"
 	"github.com/ubag/ubag/apps/gateway/internal/sso"
 )
@@ -441,8 +442,8 @@ func (s *Server) handleSSOSAMLACS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeSSOPrincipal(w http.ResponseWriter, r *http.Request, apiVersion, tenantID, appID string, principal sso.Principal) {
-	resolvedTenant := firstNonEmpty(principal.TenantID, tenantID)
-	resolvedApp := firstNonEmpty(principal.AppID, appID)
+	resolvedTenant := jobcore.FirstNonEmpty(principal.TenantID, tenantID)
+	resolvedApp := jobcore.FirstNonEmpty(principal.AppID, appID)
 
 	response := ssoPrincipalResponse{
 		APIVersion: apiVersion,

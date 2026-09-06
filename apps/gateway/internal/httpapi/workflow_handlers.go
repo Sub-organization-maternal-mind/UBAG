@@ -6,6 +6,7 @@ import (
 	"time"
 
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	"github.com/ubag/ubag/apps/gateway/internal/payloadpolicy"
 	"github.com/ubag/ubag/apps/gateway/internal/workflow"
 )
@@ -318,10 +319,10 @@ func (s *Server) workflowDispatcher(r *http.Request, runID string, def workflow.
 	traceID := traceIDFromContext(ctx)
 	client := map[string]any{
 		"app_id":      s.appID,
-		"app_version": firstNonEmpty(s.version, "0.0.0"),
+		"app_version": jobcore.FirstNonEmpty(s.version, "0.0.0"),
 		"sdk": map[string]any{
 			"name":    "ubag-gateway-workflow",
-			"version": firstNonEmpty(s.version, "0.0.0"),
+			"version": jobcore.FirstNonEmpty(s.version, "0.0.0"),
 		},
 	}
 	return func(step workflow.Step) (string, error) {
