@@ -19,7 +19,11 @@ func TestSQLiteTransitionStatusHasSingleConcurrentWinner(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(4)
+	// Single connection: production sqlite is single-writer by construction
+	// (serve.go forces SetMaxOpenConns(1) so concurrent writes never trip
+	// SQLITE_BUSY). The two goroutines still race through the shared store,
+	// so the exactly-one-winner property is fully exercised.
+	db.SetMaxOpenConns(1)
 	schema, err := os.ReadFile(filepath.Join("..", "sqlitestore", "schema.sql"))
 	if err != nil {
 		t.Fatal(err)

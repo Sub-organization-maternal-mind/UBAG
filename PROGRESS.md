@@ -2,6 +2,15 @@
 
 Last updated: 2026-09-07
 
+## 2026-09-07 SQLITE_BUSY flake fix (#72)
+
+`TestSQLiteTransitionStatusHasSingleConcurrentWinner` was the only test in
+the repo opening sqlite with `SetMaxOpenConns(4)`; every sibling sqlite test
+and production `serve.go` enforce single-conn because deferred-tx lock
+upgrades bypass `busy_timeout` and trip SQLITE_BUSY. Test now uses
+`SetMaxOpenConns(1)` — the two goroutines still race through the shared
+store, so the exactly-one-winner assertion is unweakened. Closes #72.
+
 ## 2026-09-07 Ponytail ultra dead-weight removal (−2,300 LOC, behavior-identical)
 
 Full-repo audit (understand knowledge graph: 709 nodes/752 edges; 4 parallel
