@@ -5,6 +5,20 @@
 -- RFC3339 UTC strings; integers use INTEGER.
 -- Apply after 0003_webhook_outbox.sql.
 
+-- Tracking table for gateway-schema migrations (mirrors
+-- migrations/postgres/0001_gateway_stores.sql, which creates it for the
+-- postgres series). Created here — the first gateway-schema sqlite file —
+-- so `ubag db-migrate --store sqlite` works without a pre-existing tracking
+-- table, exactly like the edge series creates edge_schema_migrations in
+-- 0001. `IF NOT EXISTS` keeps it safe on databases the gateway already
+-- bootstrapped at runtime.
+CREATE TABLE IF NOT EXISTS gateway_schema_migrations (
+  version TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  checksum TEXT NOT NULL,
+  applied_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+
 CREATE TABLE IF NOT EXISTS gateway_browser_instances (
   instance_id     TEXT PRIMARY KEY,
   worker_id       TEXT NOT NULL,
