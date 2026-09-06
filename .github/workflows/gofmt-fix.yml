@@ -1,0 +1,30 @@
+name: gofmt-fix
+on:
+  push:
+    branches: [feat/rectification]
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feat/rectification
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/gateway/go.mod
+      - name: gofmt the gateway
+        run: |
+          cd apps/gateway
+          gofmt -w .
+          git config user.name "ubag-ci-fmt"
+          git config user.email "ci@ubag.local"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "already formatted"
+          else
+            git commit -m "style: gofmt via CI (automated)"
+            git push
+          fi

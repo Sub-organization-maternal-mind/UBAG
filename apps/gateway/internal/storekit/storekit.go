@@ -59,7 +59,6 @@ const (
 // A nil db always yields the memory adapter, whatever the kind says — the
 // historical behavior of every switch block.
 func Pick[T any](kind Kind, db *sql.DB, what string, sqlite func(*sql.DB) (T, error), postgres func(*sql.DB) (T, error), memory func() T) (T, error) {
-	var zero T
 	switch {
 	case kind == KindSQLite && db != nil:
 		return sqlite(db)
