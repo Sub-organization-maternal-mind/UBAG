@@ -523,59 +523,10 @@ func (s *Server) routes() {
 		s.writeError(w, r, http.StatusMethodNotAllowed, validationError("UBAG-VALIDATION-METHOD-001", "method not allowed"))
 	})
 
-	s.mux.HandleFunc("/v1/health", s.handleHealth)
-	s.mux.HandleFunc("/v1/ready", s.handleReady)
-	s.mux.HandleFunc("/v1/version", s.handleVersion)
-	s.mux.HandleFunc("/v1/metrics", s.handleMetrics)
-	s.mux.HandleFunc("/v1/events", s.handleEvents)
-	s.mux.HandleFunc("/v1/stream", s.handleStream)
-	s.mux.HandleFunc("/v1/workflows", s.handleWorkflows)
-	s.mux.HandleFunc("/v1/workflows/*", s.handleWorkflowsSubtree)
-	s.mux.HandleFunc("/v1/templates", s.handleTemplates)
-	s.mux.HandleFunc("/v1/templates/*", s.handleTemplateRender)
-	s.mux.HandleFunc("/v1/targets", s.handleCollection("targets", targetCatalog(), "job:read"))
-	s.mux.HandleFunc("/v1/adapters", s.handleCollection("adapters", adapterCatalog(), "job:read"))
-	s.mux.HandleFunc("/v1/apps", s.handleCollection("apps", nil, "job:read"))
-	s.mux.HandleFunc("/v1/devices", s.handleCollection("devices", nil, "job:read"))
-	s.mux.HandleFunc("/v1/webhooks", s.handleCollection("webhooks", nil, "job:read"))
-	s.mux.HandleFunc("/v1/webhooks/replay", s.replayWebhook)
-	s.mux.HandleFunc("/v1/webhooks/secret:rotate", s.rotateWebhookSecret)
-	s.mux.HandleFunc("/v1/cache", s.handleCache)
-	s.mux.HandleFunc("/v1/cache/invalidate", s.handleCacheInvalidate)
-	s.mux.HandleFunc("/v1/rate-limits", s.handleRateLimits)
-	s.mux.HandleFunc("/v1/audit", s.handleCollection("audit", nil, "audit:read"))
-	s.mux.HandleFunc("/v1/audit/export", s.handleAuditExport)
-	s.mux.HandleFunc("/v1/sso/config", s.handleSSOConfig)
-	s.mux.HandleFunc("/v1/sso/oidc/authorize", s.handleSSOOIDCAuthorize)
-	s.mux.HandleFunc("/v1/sso/oidc/callback", s.handleSSOOIDCCallback)
-	s.mux.HandleFunc("/v1/sso/saml/acs", s.handleSSOSAMLACS)
-	s.mux.HandleFunc("/v1/sso/logout", s.handleSSOLogout)
-	s.mux.HandleFunc("/v1/scim/v2/Users", s.handleSCIMUsers)
-	s.mux.HandleFunc("/v1/scim/v2/Users/*", s.handleSCIMUserByID)
-	s.mux.HandleFunc("/v1/scim/v2/Groups", s.handleSCIMGroups)
-	s.mux.HandleFunc("/v1/scim/v2/Groups/*", s.handleSCIMGroupByID)
-	s.mux.HandleFunc("/v1/siem/config", s.handleSIEMConfig)
-	s.mux.HandleFunc("/v1/alerts", s.handleAlerts)
-	s.mux.HandleFunc("/v1/alerts/config", s.handleAlertsConfig)
-	s.mux.HandleFunc("/v1/alerts/*", s.handleAlertsSubtree)
-	s.mux.HandleFunc("/v1/browser/instances", s.handleBrowserInstances)
-	s.mux.HandleFunc("/v1/browser/contexts", s.handleBrowserContexts)
-	s.mux.HandleFunc("/v1/browser/tabs", s.handleBrowserTabs)
-	s.mux.HandleFunc("/v1/browser/summary", s.handleBrowserSummary)
-	s.mux.HandleFunc("/v1/concurrency", s.handleConcurrency)
-	s.mux.HandleFunc("/v1/conversations", s.handleConversations)
-	s.mux.HandleFunc("/v1/jobs", s.handleJobs)
-	s.mux.HandleFunc("/v1/jobs/batch", s.handleBatchJobs) // §10, §19.2: up to 100 jobs/request; chi resolves before wildcard
-	s.mux.HandleFunc("/v1/jobs/*", s.handleJobByID)       // chi wildcard: all /v1/jobs/{id}/... sub-paths
-	s.mux.HandleFunc("/v1/sse/jobs/*", s.handleJobSSE)
-	s.mux.HandleFunc("/v1/auth/pat", s.handleIssuePAT)
-	s.mux.HandleFunc("/v1/privacy/export", s.handlePrivacyExport)
-	s.mux.HandleFunc("/v1/privacy/erase", s.handlePrivacyErase)
-	s.mux.HandleFunc("/v1/admin/regions/{region}/state", s.handleSetRegionState)
-	s.mux.HandleFunc("/v1/mfa/enroll", s.handleMFAEnroll)
-	s.mux.HandleFunc("/v1/mfa/verify", s.handleMFAVerify)
-	s.mux.HandleFunc("/v1/admin/elevation", s.handleRequestElevation)
-	s.mux.HandleFunc("/v1/admin/elevation/{id}/approve", s.handleApproveElevation)
+	// Route table: every route is declared once in routes.go; this loop is the
+	// single registration (no parallel hand-maintained table for metrics —
+	// routePattern derives from the same declaration).
+	s.registerRoutes()
 	// Note: catch-all 404 is handled via s.mux.NotFound() registered above.
 }
 
@@ -1768,6 +1719,9 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		Operation: "create_job",
 		Key:       idempotencyKey,
 	}
+	// The reservation owns every cleanup on the error paths below (one
+	// fail() call replaces the hand-repeated release triplets).
+	reservation := s.newJobReservation(scope, tenantID, request.Job.Target, appID)
 
 	decision, err := s.idempotency.Reserve(r.Context(), scope, requestHash)
 	if err != nil {
@@ -1795,7 +1749,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 			}
 			if pending >= s.maxQueueDepth {
 				const retryAfterSecs = 30
-				_ = s.idempotency.Release(r.Context(), scope)
+				reservation.release(r.Context())
 				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSecs))
 				errObj := queueError("UBAG-QUEUE-BACKPRESSURE-002", "queue is too deep; retry later", true)
 				errObj.RetryAfterMS = ptrInt(retryAfterSecs * 1000)
@@ -1808,10 +1762,11 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	// §14 concurrency ceiling: acquire a token before creating the job.
 	if s.concurrency != nil {
 		if !s.concurrency.Acquire(tenantID, request.Job.Target, appID) {
-			_ = s.idempotency.Release(r.Context(), scope)
+			reservation.release(r.Context())
 			s.writeError(w, r, http.StatusTooManyRequests, concurrencyError("UBAG-CONCURRENCY-001", "concurrency ceiling reached for this target", nil))
 			return
 		}
+		reservation.tokenAcquired = true
 	}
 
 	job, err := s.jobs.Create(r.Context(), jobstore.CreateRequest{
@@ -1833,14 +1788,14 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		AwaitingAttachments: awaitingAttachments,
 	})
 	if err != nil {
-		_ = s.idempotency.Release(r.Context(), scope)
-		s.releaseConcurrencyToken(tenantID, request.Job.Target, appID)
+		reservation.fail(r.Context())
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to create job"))
 		return
 	}
 	// Associate the acquired token with the job now that it has an ID and before
 	// it is enqueued (so a worker can never process it before the association
 	// exists). From here the token is released per-job and idempotently.
+	reservation.attachJob(job.ID)
 	s.markConcurrencyAcquired(job.ID, tenantID, request.Job.Target, appID)
 
 	// Attachment dispatch gate: a job that declares attachments is created in the
@@ -1855,9 +1810,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := s.maybeDispatchAfterArtifact(r.Context(), job); err != nil {
-				_, _, _ = s.jobs.TransitionStatus(r.Context(), job.ID, jobstore.StatusCreated, jobstore.StatusFailedRetryable)
-				_ = s.idempotency.Release(r.Context(), scope)
-				s.releaseConcurrencyTokenForJob(job.ID)
+				reservation.fail(r.Context())
 				s.writeError(w, r, http.StatusInternalServerError, internalError("failed to finalize multipart attachments"))
 				return
 			}
@@ -1880,9 +1833,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	if s.regionRouter != nil {
 		targetRegion, routeErr := s.regionRouter.Route(dispatchCtx, tenantID)
 		if routeErr != nil {
-			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
-			_ = s.idempotency.Release(r.Context(), scope)
-			s.releaseConcurrencyTokenForJob(job.ID)
+			reservation.fail(r.Context())
 			s.writeError(w, r, http.StatusServiceUnavailable,
 				queueError("UBAG-REGION-MISMATCH-001", "tenant home region is unavailable for routing", true))
 			return
@@ -1896,9 +1847,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		env := executor.EnvelopeFromJobWithConversation(dispatchCtx, job, s.conversations)
 		envelopeBytes, err := json.Marshal(env)
 		if err != nil {
-			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
-			_ = s.idempotency.Release(r.Context(), scope)
-			s.releaseConcurrencyTokenForJob(job.ID)
+			reservation.fail(r.Context())
 			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to marshal job envelope"))
 			return
 		}
@@ -1906,17 +1855,13 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		// the actual enqueue, and the breaker wraps the relay's EnqueueJob call.
 		// No breaker check is needed here; the outbox write itself cannot be circuit-broken.
 		if err := s.outbox.Append(r.Context(), job.ID, "jobs.dispatch", envelopeBytes); err != nil {
-			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
-			_ = s.idempotency.Release(r.Context(), scope)
-			s.releaseConcurrencyTokenForJob(job.ID)
+			reservation.fail(r.Context())
 			s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-ENQUEUE-001", "failed to write job to outbox", true))
 			return
 		}
 	} else {
 		if _, err := s.executor.EnqueueJob(dispatchCtx, job); err != nil {
-			_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
-			_ = s.idempotency.Release(r.Context(), scope)
-			s.releaseConcurrencyTokenForJob(job.ID)
+			reservation.fail(r.Context())
 			var breakerErr *resilience.BreakerOpenError
 			if errors.As(err, &breakerErr) {
 				retryAfterSecs := int(math.Ceil(breakerErr.RetryAfter.Seconds()))
@@ -3863,29 +3808,6 @@ func metricErrorClass(errorClass string) string {
 	default:
 		return "other"
 	}
-}
-
-func routePattern(path string) string {
-	if path == "/v1/jobs" {
-		return path
-	}
-	segments := splitRouteTail(path, "/")
-	if len(segments) >= 3 && segments[0] == "v1" && segments[1] == "jobs" {
-		if len(segments) == 3 {
-			return "/v1/jobs/{job_id}"
-		}
-		if len(segments) == 4 && segments[3] == "artifacts" {
-			return "/v1/jobs/{job_id}/artifacts"
-		}
-		if len(segments) == 5 && segments[3] == "artifacts" {
-			return "/v1/jobs/{job_id}/artifacts/{key}"
-		}
-		if len(segments) == 4 &&
-			(segments[3] == "events" || segments[3] == "cancel" || segments[3] == "retry") {
-			return "/v1/jobs/{job_id}/" + segments[3]
-		}
-	}
-	return "unmatched"
 }
 
 func metricMethod(method string) string {
