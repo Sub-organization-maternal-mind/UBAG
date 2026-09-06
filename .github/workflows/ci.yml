@@ -154,6 +154,12 @@ jobs:
         run: pnpm test:sdk
       - name: Conformance + observability
         run: pnpm test:conformance && pnpm test:observability
+      - name: Cache Playwright browsers
+        uses: actions/cache@v7
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/dashboard/package.json', 'pnpm-lock.yaml') }}
+          restore-keys: playwright-${{ runner.os }}-
       - name: Install Playwright browsers
         working-directory: apps/dashboard
         run: npx playwright install chromium --with-deps || npx playwright install chromium

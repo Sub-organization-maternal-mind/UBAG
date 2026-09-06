@@ -22,6 +22,12 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with: { node-version: '20' }
+      - name: Cache Playwright browsers
+        uses: actions/cache@v7
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: playwright-${{ runner.os }}-
       - name: Install Playwright
         run: npx playwright install chromium
       - name: Run E2E tests

@@ -14,6 +14,11 @@ import (
 // strings so that lexical ordering matches chronological ordering in SQLite.
 const sqliteTimeLayout = "2006-01-02T15:04:05.000Z07:00"
 
+// defaultWaitEventsInterval is the SQL-store event-stream poll cadence. One
+// indexed SELECT per interval per waiting stream is trivial for SQLite and
+// Postgres; 50ms keeps SSE/gRPC stream tail latency low (was 300ms).
+const defaultWaitEventsInterval = 50 * time.Millisecond
+
 // SQLiteStore is a jobs.Store backed by a SQLite database. It mirrors
 // PostgresStore exactly, including the optional MetricsStore, ScopedStore and
 // EventLister interfaces. JSON map fields are stored as TEXT JSON.
@@ -27,7 +32,7 @@ func NewSQLiteStore(db *sql.DB) *SQLiteStore {
 	return &SQLiteStore{
 		db:           db,
 		now:          time.Now,
-		waitInterval: 300 * time.Millisecond,
+		waitInterval: defaultWaitEventsInterval,
 	}
 }
 
@@ -318,7 +323,7 @@ func (s *SQLiteStore) WaitEvents(ctx context.Context, jobID string, afterSequenc
 	}
 	interval := s.waitInterval
 	if interval <= 0 {
-		interval = 300 * time.Millisecond
+		interval = defaultWaitEventsInterval
 	}
 	for {
 		events, found, err := s.listEvents(ctx, jobID, afterSequence, limit)

@@ -21,7 +21,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 	return &PostgresStore{
 		db:           db,
 		now:          time.Now,
-		waitInterval: 300 * time.Millisecond,
+		waitInterval: defaultWaitEventsInterval,
 	}
 }
 
@@ -287,7 +287,7 @@ func (p *PostgresStore) WaitEvents(ctx context.Context, jobID string, afterSeque
 	}
 	interval := p.waitInterval
 	if interval <= 0 {
-		interval = 300 * time.Millisecond
+		interval = defaultWaitEventsInterval
 	}
 	for {
 		events, found, err := p.listEvents(ctx, jobID, afterSequence, limit)
