@@ -364,8 +364,12 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
   sqlite/postgres trio selection, nil-db => memory, error paths preserved);
   serve.go's 13 copy-paste store-kind switch blocks became one-line Picks
   (sso/siem use their real ConfigStore type names); storekit has its own
-  tests. Full CI green — **all 13 rectification tickets T1–T13 complete,
-  all 18 filed drift issues closed.**
+  tests. Follow-on sweep done: 19 schema-assertion copies (13 pg helpers +
+  2 sqlite helpers + 4 inline Ready blocks across 19 files) collapsed onto
+  the shared helpers (~200 lines deleted, behavior-identical — first CI run
+  caught only a SQLITE_BUSY flake in the unrelated CAS concurrency test,
+  green on re-run). Full CI green — **all 13 rectification tickets T1–T13
+  complete, all 18 filed drift issues closed.**
 
 ## 2026-07-17 PAT (Personal Access Tokens) wired into serve + made persistent
 
