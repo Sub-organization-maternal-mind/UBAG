@@ -199,6 +199,49 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
+    post:
+      tags: [Workflows]
+      operationId: createWorkflow
+      summary: Create a workflow definition.
+      description: |-
+        Creates a multi-step workflow definition. Steps run in topological
+        order: a step lists the step IDs it depends on in `depends_on`; steps
+        with an empty list follow the previous step (linear chain). Cyclic or
+        dangling dependencies are rejected with UBAG-VALIDATION-WORKFLOW-DEPENDENCY-001.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowCreateRequest"
+      responses:
+        "201":
+          description: Workflow definition created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowDefinition"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: Idempotency key conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/templates:
     get:
       tags: [Templates]
@@ -1670,6 +1713,77 @@ components:
             additionalProperties: true
         next_cursor:
           type: ["string", "null"]
+        trace_id:
+          type: string
+          minLength: 1
+    WorkflowStepInput:
+      type: object
+      additionalProperties: false
+      required: [id, target, command]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 160
+        target:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: "^[a-z0-9][a-z0-9._-]*$"
+        command:
+          type: string
+          minLength: 1
+          maxLength: 128
+        template_id:
+          type: string
+          maxLength: 160
+        input:
+          type: object
+          additionalProperties: true
+        continue_on_error:
+          type: boolean
+        depends_on:
+          type: array
+          description: Step IDs that must succeed before this step dispatches. Empty means the previous step (linear chain).
+          items:
+            type: string
+            minLength: 1
+    WorkflowCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [name, steps]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 160
+        steps:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/WorkflowStepInput"
+    WorkflowDefinition:
+      type: object
+      additionalProperties: false
+      required: [api_version, id, name, steps, created_at, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        id:
+          type: string
+        name:
+          type: string
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowStepInput"
+        created_at:
+          type: string
+          format: date-time
         trace_id:
           type: string
           minLength: 1

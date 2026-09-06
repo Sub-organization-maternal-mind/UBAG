@@ -5,6 +5,12 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import WorkflowDag from '$lib/components/WorkflowDag.svelte';
+  import {
+    assignStepIds,
+    toCreateSteps,
+    validateDraft,
+    type DagDraftStep,
+  } from '$lib/dag.js';
   import type { BrowserContext, Workflow, WorkflowRun } from '$lib/api/types';
 
   const API_VERSION = '2026-05-22';
@@ -31,6 +37,100 @@
   let runLoading = $state(false);
   let runError = $state<string | null>(null);
   let runSuccess = $state<string | null>(null);
+
+  // --- Custom DAG editor (modal) ---
+  let dagOpen = $state(false);
+  let dagName = $state('');
+  let dagSteps = $state<DagDraftStep[]>([]);
+  let dagKeySeq = $state(0);
+  let dagLoading = $state(false);
+  let dagError = $state<string | null>(null);
+
+  function providerLabel(key: string): string {
+    return PROVIDERS.find((p) => p.key === key)?.label ?? key;
+  }
+
+  function openDagEditor() {
+    dagError = null;
+    if (dagSteps.length === 0) {
+      dagKeySeq += 1;
+      dagSteps = [{
+        key: `step-${dagKeySeq}`,
+        target: createTarget,
+        command: createCommand || 'submit',
+        prompt: createPrompt,
+        deps: [],
+      }];
+    }
+    if (!dagName.trim()) dagName = createName.trim() || 'Custom workflow';
+    dagOpen = true;
+  }
+
+  function closeDagEditor() {
+    dagOpen = false;
+  }
+
+  function addDagStep() {
+    dagKeySeq += 1;
+    const prev = dagSteps[dagSteps.length - 1];
+    dagSteps = [...dagSteps, {
+      key: `step-${dagKeySeq}`,
+      target: prev?.target ?? PROVIDERS[0].key,
+      command: prev?.command || createCommand || 'submit',
+      prompt: '',
+      deps: [],
+    }];
+  }
+
+  function removeDagStep(key: string) {
+    dagSteps = dagSteps
+      .filter((s) => s.key !== key)
+      .map((s) => ({ ...s, deps: s.deps.filter((d) => d !== key) }));
+  }
+
+  function toggleDagDep(stepKey: string, depKey: string) {
+    dagSteps = dagSteps.map((s) => {
+      if (s.key !== stepKey) return s;
+      const has = s.deps.includes(depKey);
+      return { ...s, deps: has ? s.deps.filter((d) => d !== depKey) : [...s.deps, depKey] };
+    });
+  }
+
+  let dagPreview = $derived.by(() => {
+    const ids = assignStepIds(dagSteps);
+    return {
+      id: 'draft',
+      name: dagName.trim() || 'Draft workflow',
+      steps: dagSteps.map((s) => ({
+        id: ids.get(s.key) ?? s.key,
+        name: `${providerLabel(s.target)} — ${s.command.trim() || '…'}`,
+        depends_on: s.deps.map((d) => ids.get(d) ?? d),
+      })),
+    };
+  });
+
+  async function createDagWorkflow() {
+    dagError = null;
+    const invalid = validateDraft(dagName, dagSteps);
+    if (invalid) {
+      dagError = invalid;
+      return;
+    }
+    dagLoading = true;
+    const res = await api.post<Workflow>('/v1/workflows', {
+      api_version: API_VERSION,
+      name: dagName.trim(),
+      steps: toCreateSteps(dagSteps),
+    });
+    dagLoading = false;
+    if (res.error) {
+      dagError = res.error;
+      return;
+    }
+    dagOpen = false;
+    createSuccess = `Created ${res.data?.id?.slice(0, 8) ?? 'workflow'}`;
+    await load();
+  }
 
   let activeWorkflow = $derived(selectedWorkflow ?? items[0] ?? null);
   let activeStepCount = $derived(activeWorkflow?.step_count ?? activeWorkflow?.steps?.length ?? 0);
@@ -259,6 +359,13 @@
       >
         {createLoading ? 'Creating...' : 'Create Workflow'}
       </button>
+      <button
+        type="button"
+        onclick={() => openDagEditor()}
+        class="px-4 py-2 rounded-md border border-rule bg-paper text-sm font-medium text-ink hover:bg-paper-soft transition-colors"
+      >
+        Custom DAG…
+      </button>
       {#if createError}
         <span class="text-xs text-danger">{createError}</span>
       {/if}
@@ -372,3 +479,132 @@
     {/if}
   {/if}
 </div>
+
+<!-- Custom DAG editor dialog -->
+{#if dagOpen}
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" role="presentation" onclick={() => closeDagEditor()}>
+    <div
+      class="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-lg border border-rule bg-paper shadow-2xl"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Custom DAG editor"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => { if (e.key === 'Escape') closeDagEditor(); }}
+      tabindex="-1"
+    >
+      <div class="px-5 py-4 border-b border-rule bg-paper-soft sticky top-0">
+        <h2 class="text-lg font-display font-semibold text-ink">Custom DAG</h2>
+        <p class="text-xs text-ink-mute mt-0.5">Compose arbitrary step graphs. Steps with no dependencies follow the previous step; the gateway rejects cycles and dangling references.</p>
+      </div>
+      <div class="p-5 space-y-4">
+        <label class="block">
+          <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Workflow name *</span>
+          <input
+            type="text"
+            bind:value={dagName}
+            placeholder="e.g. research-fanout"
+            class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+          />
+        </label>
+
+        {#each dagSteps as step, i (step.key)}
+          <div class="rounded-md border border-rule bg-paper-soft p-4 space-y-3">
+            <div class="flex items-center justify-between">
+              <p class="text-sm font-mono font-semibold text-accent-deep">step_{i + 1}</p>
+              <button
+                onclick={() => removeDagStep(step.key)}
+                disabled={dagSteps.length <= 1}
+                class="text-xs text-danger hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Remove
+              </button>
+            </div>
+            <div class="grid gap-3 md:grid-cols-2">
+              <label class="block">
+                <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Target *</span>
+                <select
+                  bind:value={step.target}
+                  class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+                >
+                  {#each PROVIDERS as provider}
+                    <option value={provider.key}>{provider.label}</option>
+                  {/each}
+                </select>
+              </label>
+              <label class="block">
+                <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Command *</span>
+                <input
+                  type="text"
+                  bind:value={step.command}
+                  placeholder="submit"
+                  class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+                />
+              </label>
+            </div>
+            <label class="block">
+              <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Prompt</span>
+              <textarea
+                bind:value={step.prompt}
+                rows="2"
+                placeholder="Step prompt (optional)"
+                class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40 resize-y"
+              ></textarea>
+            </label>
+            {#if dagSteps.length > 1}
+              <div>
+                <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Depends on (empty = previous step)</span>
+                <div class="flex gap-3 flex-wrap">
+                  {#each dagSteps as other (other.key)}
+                    {#if other.key !== step.key}
+                      {@const depId = `step_${dagSteps.findIndex((s) => s.key === other.key) + 1}`}
+                      <label class="flex items-center gap-1.5 text-xs text-ink-soft cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={step.deps.includes(other.key)}
+                          onchange={() => toggleDagDep(step.key, other.key)}
+                          class="accent-[var(--color-accent)]"
+                        />
+                        <span class="font-mono">{depId}</span>
+                      </label>
+                    {/if}
+                  {/each}
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/each}
+
+        <button
+          onclick={() => addDagStep()}
+          class="px-3 py-1.5 rounded-md border border-rule bg-paper-soft text-xs font-medium text-ink hover:bg-paper-warm transition-colors"
+        >
+          + Add step
+        </button>
+
+        <div>
+          <p class="text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Live preview</p>
+          <WorkflowDag workflow={dagPreview} />
+        </div>
+
+        {#if dagError}
+          <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{dagError}</div>
+        {/if}
+      </div>
+      <div class="px-5 py-3 border-t border-rule flex justify-end gap-3 sticky bottom-0 bg-paper">
+        <button
+          onclick={() => closeDagEditor()}
+          class="px-4 py-2 rounded-md border border-rule bg-paper-soft text-ink text-sm font-medium hover:bg-paper-warm transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          onclick={() => createDagWorkflow()}
+          disabled={dagLoading}
+          class="px-4 py-2 rounded-md bg-accent text-paper-soft text-sm font-medium hover:bg-accent-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          {dagLoading ? 'Creating…' : 'Create Workflow'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}

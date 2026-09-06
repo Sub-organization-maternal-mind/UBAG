@@ -31,6 +31,7 @@
   let purgeLoading = $state(false);
   let purgeError = $state<string | null>(null);
   let purgeSuccess = $state<string | null>(null);
+  let purgeTag = $state('');
   let confirmDialogEl = $state<HTMLDialogElement | null>(null);
 
   async function load() {
@@ -62,19 +63,24 @@
     purgeError = null;
     purgeSuccess = null;
 
-    // Try POST /v1/cache/purge first, fall back to DELETE /v1/cache
-    let res = await api.post<unknown>('/v1/cache/purge');
-    if (res.status === 404 || res.status === 405) {
-      res = await api.delete<unknown>('/v1/cache');
-    }
+    // Tag-scoped purge uses the served invalidate endpoint; an empty tag
+    // purges the whole cache via DELETE /v1/cache.
+    const tag = purgeTag.trim();
+    const res = tag
+      ? await api.post<{ removed?: number }>('/v1/cache/invalidate', { tag })
+      : await api.delete<unknown>('/v1/cache');
 
     purgeLoading = false;
     closePurgeConfirm();
 
-    if (res.error && res.status !== 200 && res.status !== 204) {
+    if (res.error) {
       purgeError = `Purge failed: ${res.error} (HTTP ${res.status})`;
     } else {
-      purgeSuccess = `Cache purged successfully (HTTP ${res.status}).`;
+      const removed = (res.data as { removed?: number } | null)?.removed;
+      purgeSuccess = tag
+        ? `Purged tag “${tag}”${typeof removed === 'number' ? ` (${removed} entries)` : ''}.`
+        : `Cache purged successfully (HTTP ${res.status}).`;
+      purgeTag = '';
       await load();
     }
   }
@@ -207,10 +213,19 @@
     <div class="px-5 py-4 border-b border-rule bg-paper-soft">
       <h2 class="text-lg font-display font-semibold text-ink">Confirm Purge</h2>
     </div>
-    <div class="p-5">
+    <div class="p-5 space-y-3">
       <p class="text-sm text-ink-soft">
-        This will delete all cached entries. This action cannot be undone. Are you sure?
+        Optionally purge only one tag. Leave empty to delete all cached entries. This action cannot be undone. Are you sure?
       </p>
+      <label class="block">
+        <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Tag (optional)</span>
+        <input
+          type="text"
+          bind:value={purgeTag}
+          placeholder="e.g. template:radiology_ct_brain_v3"
+          class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+        />
+      </label>
     </div>
     <div class="px-5 py-3 border-t border-rule flex justify-end gap-3">
       <button

@@ -29,6 +29,10 @@ export const UBAG_ENDPOINTS = {
     "method": "GET",
     "path": "/v1/workflows"
   },
+  "POST /v1/workflows": {
+    "method": "POST",
+    "path": "/v1/workflows"
+  },
   "GET /v1/templates": {
     "method": "GET",
     "path": "/v1/templates"

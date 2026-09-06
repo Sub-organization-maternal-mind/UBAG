@@ -12,6 +12,9 @@
   let error = $state<string | null>(null);
   let filterActor = $state('');
   let filterAction = $state('');
+  let exporting = $state(false);
+  let exportError = $state<string | null>(null);
+  let exportSummary = $state<string | null>(null);
 
   let filtered = $derived(() => {
     let result = items;
@@ -53,14 +56,49 @@
     items = listOf<AuditEntry>(res);
   }
 
+  async function exportChain() {
+    exporting = true;
+    exportError = null;
+    exportSummary = null;
+    const res = await api.post<Record<string, unknown>>('/v1/audit/export', {});
+    exporting = false;
+    if (res.denied) { exportError = 'Export denied for this role.'; return; }
+    if (res.error || !res.data) { exportError = res.error ?? 'Export failed.'; return; }
+    const body = res.data as {
+      chain_valid?: boolean; head_hash?: string; count?: number; records?: unknown[];
+    };
+    exportSummary = `Exported ${body.count ?? body.records?.length ?? 0} records — chain ${body.chain_valid ? 'valid' : 'INVALID'} (head ${String(body.head_hash ?? '?').slice(-12)}).`;
+    const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ubag-audit-export-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
   onMount(() => load());
 </script>
 
 <div class="space-y-4">
   <div class="flex items-center justify-between">
     <h1 class="text-2xl font-display font-bold text-ink">Audit Log</h1>
-    <button onclick={() => load()} class="text-sm text-accent-deep hover:underline">Refresh</button>
+    <div class="flex items-center gap-3">
+      <button onclick={() => exportChain()} disabled={exporting || loading} class="text-sm text-accent-deep hover:underline disabled:opacity-40 disabled:cursor-not-allowed">
+        {exporting ? 'Exporting…' : 'Export chain'}
+      </button>
+      <button onclick={() => load()} class="text-sm text-accent-deep hover:underline">Refresh</button>
+    </div>
   </div>
+
+  {#if exportError}
+    <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{exportError}</div>
+  {/if}
+  {#if exportSummary}
+    <div class="rounded-md border border-success/30 bg-success-soft px-4 py-3 text-sm text-success" role="status">{exportSummary}</div>
+  {/if}
 
   <!-- Filters -->
   <div class="flex gap-3 flex-wrap">

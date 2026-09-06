@@ -17,6 +17,7 @@ type workflowStepPayload struct {
 	TemplateID      string         `json:"template_id,omitempty"`
 	Input           map[string]any `json:"input,omitempty"`
 	ContinueOnError bool           `json:"continue_on_error,omitempty"`
+	DependsOn       []string       `json:"depends_on,omitempty"`
 }
 
 type createWorkflowRequest struct {
@@ -27,6 +28,17 @@ type createWorkflowRequest struct {
 
 type createWorkflowRunRequest struct {
 	APIVersion string `json:"api_version,omitempty"`
+}
+
+// trimStringSlice trims each element and drops empties (dependency IDs).
+func trimStringSlice(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 type workflowDefinitionResponse struct {
@@ -190,8 +202,13 @@ func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
 			TemplateID:      strings.TrimSpace(step.TemplateID),
 			Input:           step.Input,
 			ContinueOnError: step.ContinueOnError,
+			DependsOn:       trimStringSlice(step.DependsOn),
 		})
 		_ = i
+	}
+	if err := workflow.ValidateDependencies(steps); err != nil {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WORKFLOW-DEPENDENCY-001", err.Error()))
+		return
 	}
 
 	tenantID, appID := requestScope(r)

@@ -26,6 +26,7 @@ var UbagEndpoints = map[string]ManifestEndpoint{
 	"GET /v1/events": {Method: "GET", Path: "/v1/events"},
 	"GET /v1/stream": {Method: "GET", Path: "/v1/stream"},
 	"GET /v1/workflows": {Method: "GET", Path: "/v1/workflows"},
+	"POST /v1/workflows": {Method: "POST", Path: "/v1/workflows"},
 	"GET /v1/templates": {Method: "GET", Path: "/v1/templates"},
 	"GET /v1/targets": {Method: "GET", Path: "/v1/targets"},
 	"GET /v1/adapters": {Method: "GET", Path: "/v1/adapters"},

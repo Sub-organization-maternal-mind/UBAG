@@ -10,7 +10,7 @@
   import {
     LayoutDashboard, Briefcase, Target, Puzzle, AppWindow, Smartphone,
     AlertTriangle, Globe, Webhook, FileText, GitBranch, Database,
-    Shield, Users, CreditCard, Settings2, BarChart3, Sun, Moon, Menu, X
+    Shield, Users, CreditCard, Settings2, BarChart3, MessagesSquare, Sun, Moon, Menu, X
   } from 'lucide-svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -25,6 +25,7 @@
     { href: '/devices', label: 'Devices', icon: Smartphone },
     { href: '/failed', label: 'Failed/DLQ', icon: AlertTriangle },
     { href: '/browser', label: 'Browser Sessions', icon: Globe },
+    { href: '/conversations', label: 'Conversations', icon: MessagesSquare },
     { href: '/webhooks', label: 'Webhooks', icon: Webhook },
     { href: '/templates', label: 'Templates', icon: FileText },
     { href: '/workflows', label: 'Workflows', icon: GitBranch },

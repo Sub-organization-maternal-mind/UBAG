@@ -30,6 +30,52 @@
   // --- Per-delivery replay state ---
   let replayState = $state<Record<string, { loading: boolean; success: string | null; error: string | null }>>({});
 
+  // --- Secret rotation state (POST /v1/webhooks/secret:rotate) ---
+  let rotateOpenId = $state<string | null>(null);
+  let rotateRef = $state('');
+  let rotateOverlap = $state('3600');
+  let rotateLoading = $state(false);
+  let rotateError = $state<string | null>(null);
+  let rotateSuccess = $state<string | null>(null);
+
+  function openRotate(webhookId: string) {
+    rotateOpenId = webhookId;
+    rotateRef = '';
+    rotateOverlap = '3600';
+    rotateError = null;
+    rotateSuccess = null;
+  }
+
+  function closeRotate() {
+    rotateOpenId = null;
+  }
+
+  async function doRotate(webhookId: string) {
+    const newSecretRef = rotateRef.trim();
+    if (!newSecretRef) {
+      rotateError = 'A new secret reference is required (secrets are supplied by reference only).';
+      return;
+    }
+    rotateLoading = true;
+    rotateError = null;
+    rotateSuccess = null;
+    const overlap = Number.parseInt(rotateOverlap, 10);
+    const res = await api.post<{
+      status?: string; active_secret_ref?: string; previous_secret_ref?: string;
+    }>('/v1/webhooks/secret:rotate', {
+      webhook_id: webhookId,
+      new_secret_ref: newSecretRef,
+      ...(Number.isFinite(overlap) && overlap > 0 ? { overlap_seconds: overlap } : {}),
+    });
+    rotateLoading = false;
+    if (res.error) {
+      rotateError = `Rotation failed: ${res.error} (HTTP ${res.status})`;
+      return;
+    }
+    const active = (res.data as { active_secret_ref?: string } | null)?.active_secret_ref;
+    rotateSuccess = `Secret rotated${active ? ` — active ref ${active}` : ''}. Update the receiver before the overlap window ends.`;
+  }
+
   async function load() {
     loading = true;
     error = null;
@@ -154,12 +200,20 @@
               <td class="px-4 py-2.5 text-xs text-ink-soft font-mono">{fmtEvents(wh.events)}</td>
               <td class="px-4 py-2.5"><StatusBadge status={wh.status ?? 'active'} /></td>
               <td class="px-4 py-2.5">
-                <button
-                  onclick={() => loadDeliveries(wh.id)}
-                  class="px-3 py-1 rounded-md border border-rule bg-paper-soft text-xs font-medium text-ink hover:bg-paper-warm transition-colors"
-                >
-                  {isExpanded ? 'Hide Deliveries' : 'View Deliveries'}
-                </button>
+                <div class="flex items-center gap-2">
+                  <button
+                    onclick={() => loadDeliveries(wh.id)}
+                    class="px-3 py-1 rounded-md border border-rule bg-paper-soft text-xs font-medium text-ink hover:bg-paper-warm transition-colors"
+                  >
+                    {isExpanded ? 'Hide Deliveries' : 'View Deliveries'}
+                  </button>
+                  <button
+                    onclick={() => openRotate(wh.id)}
+                    class="px-3 py-1 rounded-md border border-rule bg-paper-soft text-xs font-medium text-ink hover:bg-paper-warm transition-colors"
+                  >
+                    Rotate Secret
+                  </button>
+                </div>
               </td>
             </tr>
 
@@ -224,3 +278,72 @@
     </div>
   {/if}
 </div>
+
+<!-- Secret rotation dialog -->
+{#if rotateOpenId}
+  {@const rotateId = rotateOpenId}
+  <div class="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" role="presentation" onclick={closeRotate}>
+    <div
+      class="w-full max-w-md rounded-lg border border-rule bg-paper shadow-2xl"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Rotate webhook secret"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => { if (e.key === 'Escape') closeRotate(); }}
+      tabindex="-1"
+    >
+      <div class="px-5 py-4 border-b border-rule bg-paper-soft">
+        <h2 class="text-lg font-display font-semibold text-ink">Rotate Webhook Secret</h2>
+        <p class="text-xs text-ink-mute mt-0.5 font-mono">{rotateId}</p>
+      </div>
+      <div class="p-5 space-y-3">
+        <p class="text-sm text-ink-soft">
+          Secrets are supplied by reference only — the plaintext never leaves your secret store.
+          The previous secret keeps verifying during the overlap window.
+        </p>
+        <label class="block">
+          <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">New secret reference</span>
+          <input
+            type="text"
+            bind:value={rotateRef}
+            placeholder="e.g. vault:ubag/webhooks/acme#signing-key"
+            class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+          />
+        </label>
+        <label class="block">
+          <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Overlap seconds</span>
+          <input
+            type="number"
+            min="0"
+            bind:value={rotateOverlap}
+            placeholder="3600"
+            class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+          />
+        </label>
+        {#if rotateError}
+          <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{rotateError}</div>
+        {/if}
+        {#if rotateSuccess}
+          <div class="rounded-md border border-success/30 bg-success-soft px-4 py-3 text-sm text-success" role="status">{rotateSuccess}</div>
+        {/if}
+      </div>
+      <div class="px-5 py-3 border-t border-rule flex justify-end gap-3">
+        <button
+          onclick={closeRotate}
+          class="px-4 py-2 rounded-md border border-rule bg-paper-soft text-ink text-sm font-medium hover:bg-paper-warm transition-colors"
+        >
+          {rotateSuccess ? 'Done' : 'Cancel'}
+        </button>
+        {#if !rotateSuccess}
+          <button
+            onclick={() => doRotate(rotateId)}
+            disabled={rotateLoading}
+            class="px-4 py-2 rounded-md border border-danger/40 bg-danger-soft text-danger text-sm font-medium hover:bg-danger/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {rotateLoading ? 'Rotating…' : 'Rotate'}
+          </button>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}

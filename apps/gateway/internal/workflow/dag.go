@@ -6,6 +6,16 @@ import (
 	"github.com/google/cel-go/cel"
 )
 
+// ValidateDependencies checks a step list's dependency edges before it is
+// persisted: every dep must reference a known step ID, no step may depend on
+// itself, and the graph must be acyclic. Empty DependsOn keeps linear
+// semantics (each step follows its predecessor). Wraps topoSort so create
+// time and run time share one rule.
+func ValidateDependencies(steps []Step) error {
+	_, err := topoSort(Definition{Steps: steps})
+	return err
+}
+
 // topoSort returns the indices of def.Steps in topological execution order.
 // Steps with empty DependsOn depend on the immediately preceding step, which
 // preserves backward-compatible linear semantics.
