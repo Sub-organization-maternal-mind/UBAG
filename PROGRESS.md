@@ -245,6 +245,30 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
 - Rebuilt the exact synchronized gateway image (`sha256:dde174b3d9422bba95c4022c753171f7b0ae830a3617acec6a798875eec52559`) and recreated gateway, chat-reaper, and nginx-dashboard. Gateway and nginx-dashboard are healthy; the existing browser remains healthy.
 - Final post-sync production smoke `job_000000000029` completed with exact output `UBAG_SYNCED_GEMINI_36_STANDARD_OK` and selector version `2026-07-23-gemini-3.6-standard`.
 
+## 2026-09-06 Scheduled persistence + terminal-lease consolidation (best-recommended round)
+
+- **Scheduled jobs now persist on all three backends.** Contract promised
+  `not_before` but postgres/sqlite Create hard-coded queued and dropped the
+  field (memory was the only correct backend). postgres: migration 0012
+  (not_before column + widened status CHECK) + Create/INSERT/SELECT/scan
+  wired; sqlite: embedded schema + Create/INSERT/SELECT/scan + transactional
+  rebuild evolution in sqlitestore.Apply for pre-existing DBs (new-shape
+  detection, row-preserving copy, crash-safe single transaction). Covered by
+  memory+sqlite round-trip tests, a pg test (skip-guarded), and sqlitestore
+  evolution tests (old-DB migrate, fresh-DB shape, idempotent re-Apply).
+- **Terminal-lease finish paths unified** (workerconsumer.go): the two
+  identical pre-execution blocks and the three post-ingestion blocks (differing
+  only in Cancel/Complete/Fail) collapsed into finishTerminalLeasedJob +
+  finishTerminalIngestedJob. Removed dead `keyPrincipal` middleware const.
+- **Deliberately not done** (evidence-backed no): proto string statuses
+  (breaking buf contract change for zero behavior gain), webhook projector
+  names (`job.failed`/`job.dead_lettered` are contractual behavior now),
+  grpc bearer-compare 15-line dup across the transport boundary (accepted),
+  dependabot transitive dev-dep bumps (dependabot PRs already open; hand
+  churning the lockfile duplicates that job), speculative perf work (no Go
+  toolchain here to build the gateway and no prod access to measure against;
+  the VPS-measured mock-path baselines in this ledger stand).
+
 ## 2026-09-06 Rectification landed + acceptance-test gaps closed
 
 - `feat/rectification` (44 commits: T1-T13, storekit sweep, DDL parity,
