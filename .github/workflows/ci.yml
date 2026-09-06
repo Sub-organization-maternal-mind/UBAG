@@ -155,7 +155,7 @@ jobs:
       - name: Conformance + observability
         run: pnpm test:conformance && pnpm test:observability
       - name: Cache Playwright browsers
-        uses: actions/cache@v7
+        uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('apps/dashboard/package.json', 'pnpm-lock.yaml') }}
