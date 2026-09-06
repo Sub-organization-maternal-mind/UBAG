@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"time"
 )
 
@@ -26,7 +27,7 @@ func (p *PostgresStore) Ready(ctx context.Context) error {
 		return err
 	}
 	for _, objectName := range []string{"gateway_webhook_deliveries", "gateway_webhook_attempts"} {
-		if err := requirePostgresObject(ctx, p.db, objectName); err != nil {
+		if err := storekit.RequirePostgresObject(ctx, p.db, objectName); err != nil {
 			return err
 		}
 	}
@@ -283,17 +284,6 @@ func scanDeliveryValue(row deliveryScanner) (Delivery, error) {
 		delivery.DeliveredAt = time.Time{}
 	}
 	return delivery, nil
-}
-
-func requirePostgresObject(ctx context.Context, db *sql.DB, objectName string) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, objectName).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%s is missing", objectName)
-	}
-	return nil
 }
 
 func rollbackUnlessCommitted(tx *sql.Tx) {

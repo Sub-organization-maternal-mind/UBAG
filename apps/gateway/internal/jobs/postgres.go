@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"strings"
 	"time"
 )
@@ -469,7 +470,7 @@ func (p *PostgresStore) Ready(ctx context.Context) error {
 		"gateway_job_events",
 		"gateway_job_worker_event_keys",
 	} {
-		if err := requirePostgresObject(ctx, p.db, objectName); err != nil {
+		if err := storekit.RequirePostgresObject(ctx, p.db, objectName); err != nil {
 			return err
 		}
 	}
@@ -689,15 +690,4 @@ func decodeAny(payload []byte) any {
 
 func rollbackUnlessCommitted(tx *sql.Tx) {
 	_ = tx.Rollback()
-}
-
-func requirePostgresObject(ctx context.Context, db *sql.DB, objectName string) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, objectName).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%s is missing", objectName)
-	}
-	return nil
 }

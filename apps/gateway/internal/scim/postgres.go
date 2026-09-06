@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"time"
 )
 
@@ -38,7 +39,7 @@ func (s *PostgresStore) Ready(ctx context.Context) error {
 		return err
 	}
 	for _, objectName := range []string{"gateway_scim_users", "gateway_scim_groups"} {
-		if err := requirePostgresObject(ctx, s.db, objectName); err != nil {
+		if err := storekit.RequirePostgresObject(ctx, s.db, objectName); err != nil {
 			return err
 		}
 	}
@@ -339,15 +340,4 @@ func (s *PostgresStore) ListGroups(ctx context.Context, tenantID string, params 
 	}
 	window := paginate(matched, startIndex, count)
 	return buildGroupListResponse(window, len(matched), startIndex), nil
-}
-
-func requirePostgresObject(ctx context.Context, db *sql.DB, objectName string) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, objectName).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%s is missing", objectName)
-	}
-	return nil
 }

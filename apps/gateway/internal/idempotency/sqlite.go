@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"strings"
 	"time"
 )
@@ -127,12 +128,7 @@ func (s *SQLiteStore) Ready(ctx context.Context) error {
 	if err := s.db.PingContext(ctx); err != nil {
 		return err
 	}
-	var name string
-	err := s.db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE name = ? LIMIT 1`, "gateway_idempotency_records").Scan(&name)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("gateway_idempotency_records is missing")
-	}
-	return err
+	return storekit.RequireSQLiteObject(ctx, s.db, "gateway_idempotency_records")
 }
 
 func (s *SQLiteStore) loadForUpdate(ctx context.Context, tx *sql.Tx, scope Scope) (Record, bool, error) {

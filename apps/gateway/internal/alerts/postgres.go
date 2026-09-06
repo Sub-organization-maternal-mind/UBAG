@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"time"
 )
 
@@ -31,7 +32,7 @@ func (s *PostgresStore) Ready(ctx context.Context) error {
 	if err := s.db.PingContext(ctx); err != nil {
 		return err
 	}
-	return requireAlertsObject(ctx, s.db, "gateway_alerts")
+	return storekit.RequirePostgresObject(ctx, s.db, "gateway_alerts")
 }
 
 func (s *PostgresStore) Raise(ctx context.Context, alert Alert) (Alert, bool, error) {
@@ -176,15 +177,4 @@ func scanPostgresAlerts(rows *sql.Rows) ([]Alert, error) {
 		out = append(out, alert)
 	}
 	return out, rows.Err()
-}
-
-func requireAlertsObject(ctx context.Context, db *sql.DB, objectName string) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, objectName).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%s is missing", objectName)
-	}
-	return nil
 }

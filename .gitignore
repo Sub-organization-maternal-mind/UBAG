@@ -80,3 +80,6 @@ deploy/small/nginx-dashboard/.htpasswd
 *.egg-info/
 apps/gateway/spool/
 apps/worker/*.log
+
+# Stray local Python distribution accidentally extracted inside the gateway - never commit
+apps/gateway/internal/executor/Python/

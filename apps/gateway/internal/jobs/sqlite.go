@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"strings"
 	"time"
 )
@@ -498,7 +499,7 @@ func (s *SQLiteStore) Ready(ctx context.Context) error {
 		"gateway_job_events",
 		"gateway_job_worker_event_keys",
 	} {
-		if err := requireSQLiteObject(ctx, s.db, objectName); err != nil {
+		if err := storekit.RequireSQLiteObject(ctx, s.db, objectName); err != nil {
 			return err
 		}
 	}
@@ -686,18 +687,6 @@ func scanSQLiteEvent(rows *sql.Rows) (Event, error) {
 	event.TraceID = traceID.String
 	event.CreatedAt = parseSQLiteTime(createdAt)
 	return event, nil
-}
-
-func requireSQLiteObject(ctx context.Context, db *sql.DB, objectName string) error {
-	var name string
-	err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE name = ? LIMIT 1`, objectName).Scan(&name)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("%s is missing", objectName)
-	}
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func formatSQLiteTime(t time.Time) string {

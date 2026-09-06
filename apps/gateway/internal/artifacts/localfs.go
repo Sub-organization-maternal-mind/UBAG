@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"io"
 	"net/url"
 	"os"
@@ -238,12 +239,7 @@ func (m *SQLiteArtifactMeta) Ready(ctx context.Context) error {
 	if err := m.db.PingContext(ctx); err != nil {
 		return err
 	}
-	var name string
-	err := m.db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE name = ? LIMIT 1`, "artifact_metadata").Scan(&name)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("artifact_metadata table is missing")
-	}
-	return err
+	return storekit.RequireSQLiteObject(ctx, m.db, "artifact_metadata")
 }
 
 func (m *SQLiteArtifactMeta) Put(ctx context.Context, rec ArtifactRecord) error {

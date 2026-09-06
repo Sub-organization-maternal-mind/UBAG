@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"strings"
 	"time"
 )
@@ -33,7 +34,7 @@ func (s *PostgresStore) Ready(ctx context.Context) error {
 	if err := s.db.PingContext(ctx); err != nil {
 		return err
 	}
-	return requirePostgresObject(ctx, s.db, "gateway_siem_sink_configs")
+	return storekit.RequirePostgresObject(ctx, s.db, "gateway_siem_sink_configs")
 }
 
 // Put implements ConfigStore.
@@ -127,15 +128,4 @@ func (s *PostgresStore) Delete(ctx context.Context, tenantID string, id string) 
 	}
 	affected, _ := result.RowsAffected()
 	return affected > 0, nil
-}
-
-func requirePostgresObject(ctx context.Context, db *sql.DB, objectName string) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, objectName).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%s is missing", objectName)
-	}
-	return nil
 }

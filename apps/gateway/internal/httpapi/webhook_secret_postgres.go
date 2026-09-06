@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"time"
 )
 
@@ -31,14 +32,7 @@ func (s *PostgresWebhookSecretStore) Ready(ctx context.Context) error {
 	if err := s.db.PingContext(ctx); err != nil {
 		return err
 	}
-	var exists bool
-	if err := s.db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, "webhook_secret_rotations").Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("webhook_secret_rotations is missing")
-	}
-	return nil
+	return storekit.RequirePostgresObject(ctx, s.db, "webhook_secret_rotations")
 }
 
 func (s *PostgresWebhookSecretStore) Rotate(ctx context.Context, rotation WebhookSecretRotation) (WebhookSecretRotation, error) {

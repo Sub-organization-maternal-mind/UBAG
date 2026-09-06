@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"strings"
 	"time"
 )
@@ -33,7 +34,7 @@ func (s *PostgresStore) Ready(ctx context.Context) error {
 	if err := s.db.PingContext(ctx); err != nil {
 		return err
 	}
-	return requireConversationsObject(ctx, s.db, "gateway_conversations")
+	return storekit.RequirePostgresObject(ctx, s.db, "gateway_conversations")
 }
 
 func (s *PostgresStore) Resolve(ctx context.Context, key Key) (Conversation, bool, error) {
@@ -191,15 +192,4 @@ func nullableTime(t time.Time) any {
 		return nil
 	}
 	return t.UTC()
-}
-
-func requireConversationsObject(ctx context.Context, db *sql.DB, objectName string) error {
-	var exists bool
-	if err := db.QueryRowContext(ctx, `SELECT to_regclass($1) IS NOT NULL`, objectName).Scan(&exists); err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("%s is missing", objectName)
-	}
-	return nil
 }
