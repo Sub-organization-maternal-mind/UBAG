@@ -48,6 +48,15 @@ func AssertMigrationParity(t *testing.T, migrationFile string, tables []string, 
 	if err != nil {
 		t.Fatalf("read migration file: %v", err)
 	}
+	// Migration files record themselves in gateway_schema_migrations (the
+	// migrate runner creates that tracking table first); mirror the runner.
+	if _, err := migrated.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS gateway_schema_migrations (
+		version    TEXT PRIMARY KEY,
+		name       TEXT NOT NULL,
+		applied_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatalf("create schema_migrations: %v", err)
+	}
 	if _, err := migrated.ExecContext(ctx, string(raw)); err != nil {
 		t.Fatalf("apply migration file: %v", err)
 	}
