@@ -224,7 +224,6 @@ func dedupeScope(tenantID string, appID string, dedupeKey string) string {
 	return stringsTrim(tenantID) + "\x00" + stringsTrim(appID) + "\x00" + stringsTrim(dedupeKey)
 }
 
-
 func stringsTrim(value string) string {
 	return strings.TrimSpace(value)
 }

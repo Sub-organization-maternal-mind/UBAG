@@ -2488,8 +2488,6 @@ func requestScope(r *http.Request) (string, string) {
 	return defaultTenantID, defaultAppID
 }
 
-
-
 func (s *Server) isSupportedAPIVersion(value string) bool {
 	return apiVersionPattern.MatchString(value) && value == s.apiVersion
 }

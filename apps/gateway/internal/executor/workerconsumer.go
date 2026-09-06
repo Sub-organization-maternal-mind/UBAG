@@ -780,7 +780,6 @@ func intFromEventData(data map[string]any, key string) int {
 	return 0
 }
 
-
 func (c *WorkerConsumer) workerQueue() (WorkerQueue, error) {
 	if c == nil {
 		return nil, fmt.Errorf("worker consumer is not configured")
