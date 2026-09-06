@@ -258,39 +258,39 @@ type Server struct {
 	webhooks      webhooks.OutboxStore
 	webhookURLs   webhooks.URLPolicy
 
-	rateLimiter      ratelimit.Limiter
-	rateResolver     *ratelimit.PolicyResolver
-	rateLimitEnabled bool
-	responseCache    *responsecache.Cache
-	workflows        workflow.Store
-	workflowEngine   *workflow.Engine
-	sso              sso.ConfigStore
-	ssoAuthFlow      *sso.AuthCodeFlow
-	scim             scim.Store
-	siemConfig       siem.ConfigStore
-	siemExporter     *siem.Exporter
-	webhookSecrets   WebhookSecretStore
-	audit            audit.Store
-	sessions         session.Store
-	sessionTTL       time.Duration
-	alerts           *alerts.Manager
-	topology         topology.Store
-	concurrency      *topology.ConcurrencyRegistry
-	conversations    *conversations.Manager
-	outbox           outbox.Store
-	maxQueueDepth    int
-	patStore         pat.Store
-	patDefaultTTL    time.Duration
-	appJWTPublicKey  *crypto_rsa.PublicKey
-	abacEnforcer     *abac.Enforcer
-	semanticCache    semanticcache.Store
-	privacyStore     compliance.Store
-	plugins          *plugins.Host // nil-safe: no host → no hooks run
-	regionRouter     *region.Router
-	killSwitch       *region.KillSwitch
-	mfaSvc               *mfa.Service
-	mfaSessions          mfaSessionSet // in-memory set of MFA-verified session IDs
-	jitAdmin             jitadmin.Store
+	rateLimiter         ratelimit.Limiter
+	rateResolver        *ratelimit.PolicyResolver
+	rateLimitEnabled    bool
+	responseCache       *responsecache.Cache
+	workflows           workflow.Store
+	workflowEngine      *workflow.Engine
+	sso                 sso.ConfigStore
+	ssoAuthFlow         *sso.AuthCodeFlow
+	scim                scim.Store
+	siemConfig          siem.ConfigStore
+	siemExporter        *siem.Exporter
+	webhookSecrets      WebhookSecretStore
+	audit               audit.Store
+	sessions            session.Store
+	sessionTTL          time.Duration
+	alerts              *alerts.Manager
+	topology            topology.Store
+	concurrency         *topology.ConcurrencyRegistry
+	conversations       *conversations.Manager
+	outbox              outbox.Store
+	maxQueueDepth       int
+	patStore            pat.Store
+	patDefaultTTL       time.Duration
+	appJWTPublicKey     *crypto_rsa.PublicKey
+	abacEnforcer        *abac.Enforcer
+	semanticCache       semanticcache.Store
+	privacyStore        compliance.Store
+	plugins             *plugins.Host // nil-safe: no host → no hooks run
+	regionRouter        *region.Router
+	killSwitch          *region.KillSwitch
+	mfaSvc              *mfa.Service
+	mfaSessions         mfaSessionSet // in-memory set of MFA-verified session IDs
+	jitAdmin            jitadmin.Store
 	credentialResolvers []func(*http.Request) (authenticatedPrincipal, bool)
 
 	// §18 contract counters (Task 2.3) — updated atomically on the hot path.
