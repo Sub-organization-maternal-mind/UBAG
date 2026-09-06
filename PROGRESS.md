@@ -339,6 +339,20 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
   the lease; record_outcome + cap-state projection happen on exit); the
   never-emitted `drift` alert kind and the inert `tabbed` conversation-model
   alias deleted (CONTEXT.md updated). 415/415 worker tests; full CI green.
+- **T11 (#68)**: credential-to-principal seam deepened — `internal/authz`
+  is the one shared RBAC policy (`RoleAllows`; superadmin fast path keeps the
+  historical allow-all for credential-minting actions like auth:pat:issue),
+  consumed by httpapi AND grpcapi (gRPC's stale 10-action-behind table
+  deleted); `withAuth` is now an ordered credential-resolver chain
+  (resolveAppSecret / resolveAppJWT / resolvePAT / resolveSSOSession) —
+  adding a credential type is one small resolver, no table edits;
+  `packages/security` gained `auth.app_jwt.*` +
+  `auth.personal_access_token.*` audit names (parity for the two live auth
+  paths PROGRESS had flagged as open) and UBAG_ACTIONS synced to the
+  gateway's real action surface (artifact/alerts/browser/concurrency/region/
+  pat actions). 4 authz tests incl. the superadmin union invariant;
+  full CI green (3 fix-up rounds caught by CI: a shadowed lookup var, an
+  init cycle, and the superadmin semantics — all real findings).
 
 ## 2026-07-17 PAT (Personal Access Tokens) wired into serve + made persistent
 
