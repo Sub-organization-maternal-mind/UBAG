@@ -636,21 +636,21 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 	// SSO configuration store.
 	out.sso, err = storekit.Pick(
 		storekit.Kind(storeKind), db, "sso",
-		func(db *sql.DB) (sso.Store, error) {
+		func(db *sql.DB) (sso.ConfigStore, error) {
 			ssoStore := sso.NewSQLiteStore(db)
 			if err := ssoStore.Migrate(ctx); err != nil {
 				return nil, fmt.Errorf("sso sqlite migrate: %w", err)
 			}
 			return ssoStore, nil
 		},
-		func(db *sql.DB) (sso.Store, error) {
+		func(db *sql.DB) (sso.ConfigStore, error) {
 			ssoStore := sso.NewPostgresStore(db)
 			if err := ssoStore.Ready(ctx); err != nil {
 				return nil, fmt.Errorf("sso postgres store: %w", err)
 			}
 			return ssoStore, nil
 		},
-		func() sso.Store { return sso.NewMemoryStore() },
+		func() sso.ConfigStore { return sso.NewMemoryStore() },
 	)
 	if err != nil {
 		return enterpriseStores{}, err
@@ -685,21 +685,21 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 	// SIEM sink configuration store.
 	out.siemConfig, err = storekit.Pick(
 		storekit.Kind(storeKind), db, "siem",
-		func(db *sql.DB) (siem.Store, error) {
+		func(db *sql.DB) (siem.ConfigStore, error) {
 			siemStore := siem.NewSQLiteStore(db)
 			if err := siemStore.Ready(ctx); err != nil {
 				return nil, fmt.Errorf("siem sqlite schema: %w", err)
 			}
 			return siemStore, nil
 		},
-		func(db *sql.DB) (siem.Store, error) {
+		func(db *sql.DB) (siem.ConfigStore, error) {
 			siemStore := siem.NewPostgresStore(db)
 			if err := siemStore.Ready(ctx); err != nil {
 				return nil, fmt.Errorf("siem postgres schema: %w", err)
 			}
 			return siemStore, nil
 		},
-		func() siem.Store { return siem.NewMemoryStore() },
+		func() siem.ConfigStore { return siem.NewMemoryStore() },
 	)
 	if err != nil {
 		return enterpriseStores{}, err
