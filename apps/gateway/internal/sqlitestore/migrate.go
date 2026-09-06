@@ -147,7 +147,7 @@ func extractCreateTable(schema, table string) (string, error) {
 				if semi < 0 {
 					return "", fmt.Errorf("sqlitestore: %s definition unterminated", table)
 				}
-				return strings.TrimSpace(schema[start : i+1]) + ";", nil
+				return strings.TrimSpace(schema[start:i+1]) + ";", nil
 			}
 		}
 	}
