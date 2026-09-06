@@ -1,6 +1,6 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-09-05
+Last updated: 2026-09-06
 
 ## 2026-08-10 Production performance baseline and hardening
 
@@ -244,6 +244,23 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
 - Pushed shared commit `acec1ed` to GitHub `main`, then synchronized all 1,121 GitHub-tracked files into `/opt/docker/ubag`; a hash audit reported zero missing files and zero mismatches. The prior production source and dashboard artifact are recoverable under `/opt/docker/ubag-sync-backups`.
 - Rebuilt the exact synchronized gateway image (`sha256:dde174b3d9422bba95c4022c753171f7b0ae830a3617acec6a798875eec52559`) and recreated gateway, chat-reaper, and nginx-dashboard. Gateway and nginx-dashboard are healthy; the existing browser remains healthy.
 - Final post-sync production smoke `job_000000000029` completed with exact output `UBAG_SYNCED_GEMINI_36_STANDARD_OK` and selector version `2026-07-23-gemini-3.6-standard`.
+
+## 2026-09-06 Rectification landed + acceptance-test gaps closed
+
+- `feat/rectification` (44 commits: T1-T13, storekit sweep, DDL parity,
+  glossary/ADRs/tracker config) merged to main as 5a76a6e; main CI green.
+- Post-merge verification against the session brief found three ticket
+  acceptance tests never written; all three added on main, CI green:
+  `auth_resolvers_test.go` (injected demo resolver authenticates end-to-end,
+  proving a new credential type is one small adapter - required making the
+  chain a Server field initialized in NewServer), `reservation_test.go`
+  (fail() marks failed_retryable + releases scope and token; release()
+  pre-creation path), `serve/feature_wiring_test.go` (conversations
+  gate on/off, rate-limit flag, cache TTL parse accept/reject).
+- Stray `executor/Python/` distribution removed from disk (4,054 files) and
+  gitignored after it was nearly committed by an over-broad `git add`.
+- Open tracker state: #72 (SQLITE_BUSY flake, single occurrence) is the only
+  open defect; all 18 drift issues + 13 ticket issues closed.
 
 ## 2026-09-05 Domain glossary, ADRs, architecture survey, rectification backlog
 
