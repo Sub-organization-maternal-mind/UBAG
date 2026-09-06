@@ -16,6 +16,9 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     target: 'es2020',
+    // Dynamic imports (xterm, chart.js) split into separate chunks
+    // automatically; warn early if a route chunk grows past budget.
+    chunkSizeWarningLimit: 150,
   },
   server: {
     // Deliberately uncommon (not 3000/5173/8080/etc.) to avoid colliding with

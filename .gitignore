@@ -86,3 +86,8 @@ apps/gateway/internal/executor/Python/
 
 # Understand-Anything analysis data
 .ua/
+
+# Local-only agent/analysis caches (never commit; preserved on disk)
+.claude/
+.codegraph/
+.serena/

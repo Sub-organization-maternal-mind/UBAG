@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
@@ -19,6 +19,12 @@ type FileSpoolDispatcher struct {
 	root      string
 	queueName string
 	now       func() time.Time
+	// readyMu/readyOK cache the MkdirAll + writability probe: Ready() runs
+	// on every enqueue and every poll, and the probe (CreateTemp + Remove)
+	// is pure overhead once the spool dirs exist. Failures are NOT latched
+	// so a transient error self-heals on the next call.
+	readyMu sync.Mutex
+	readyOK bool
 }
 
 type FileSpoolLease struct {
@@ -42,6 +48,19 @@ func (d *FileSpoolDispatcher) Ready(context.Context) error {
 	if d == nil || d.root == "" {
 		return fmt.Errorf("file spool directory is not configured")
 	}
+	d.readyMu.Lock()
+	defer d.readyMu.Unlock()
+	if d.readyOK {
+		return nil
+	}
+	if err := d.probe(); err != nil {
+		return err
+	}
+	d.readyOK = true
+	return nil
+}
+
+func (d *FileSpoolDispatcher) probe() error {
 	for _, dir := range d.stateDirs() {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
@@ -74,7 +93,7 @@ func (d *FileSpoolDispatcher) EnqueueJob(ctx context.Context, job jobstore.Job) 
 		return Receipt{}, err
 	}
 
-	payload, err := json.MarshalIndent(EnvelopeFromJob(job), "", "  ")
+	payload, err := json.Marshal(EnvelopeFromJob(job))
 	if err != nil {
 		return Receipt{}, err
 	}
@@ -162,67 +181,74 @@ func (d *FileSpoolDispatcher) LeaseNext(ctx context.Context) (FileSpoolLease, bo
 	if err != nil {
 		return FileSpoolLease{}, false, err
 	}
-	sort.Slice(entries, func(left, right int) bool {
-		return entries[left].Name() < entries[right].Name()
-	})
-
+	// Single-pass oldest-first: job files are `<jobID>.json` with zero-padded
+	// sequential IDs (job_%012d), so lexicographic minimum IS the oldest —
+	// no O(n log n) sort on every poll.
+	oldest := ""
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		jobID := strings.TrimSuffix(entry.Name(), ".json")
-		leasedAt := d.now().UTC()
-		leaseID := fmt.Sprintf("%d", leasedAt.UnixNano())
-		source := filepath.Join(d.pendingDir(), entry.Name())
-		destination := filepath.Join(d.leasedDir(), fmt.Sprintf("%s.%s.json", jobID, leaseID))
-		if err := os.Rename(source, destination); err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return FileSpoolLease{}, false, err
+		if oldest == "" || entry.Name() < oldest {
+			oldest = entry.Name()
 		}
-
-		info, err := os.Stat(destination)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return FileSpoolLease{}, false, err
-		}
-		if info.Size() > maxSpoolEnvelopeBytes {
-			_ = d.moveLeasePath(destination, d.failedDir())
-			return FileSpoolLease{}, false, fmt.Errorf("spool envelope %s exceeds %d bytes", filepath.Base(destination), maxSpoolEnvelopeBytes)
-		}
-		raw, err := os.ReadFile(destination)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return FileSpoolLease{}, false, err
-		}
-		var envelope DispatchEnvelope
-		if err := json.Unmarshal(raw, &envelope); err != nil {
-			_ = d.moveLeasePath(destination, d.failedDir())
-			return FileSpoolLease{}, false, err
-		}
-		if envelope.JobID == "" {
-			envelope.JobID = jobID
-		}
-		if envelope.JobID != jobID {
-			_ = d.moveLeasePath(destination, d.failedDir())
-			return FileSpoolLease{}, false, fmt.Errorf("spool envelope job_id %q does not match file job_id %q", envelope.JobID, jobID)
-		}
-		return FileSpoolLease{
-			JobID:     envelope.JobID,
-			LeaseID:   leaseID,
-			Path:      destination,
-			Envelope:  envelope,
-			LeasedAt:  leasedAt,
-			QueueName: d.queueName,
-		}, true, nil
+	}
+	if oldest == "" {
+		return FileSpoolLease{}, false, nil
 	}
 
-	return FileSpoolLease{}, false, nil
+	name := oldest
+	jobID := strings.TrimSuffix(name, ".json")
+	leasedAt := d.now().UTC()
+	leaseID := fmt.Sprintf("%d", leasedAt.UnixNano())
+	source := filepath.Join(d.pendingDir(), name)
+	destination := filepath.Join(d.leasedDir(), fmt.Sprintf("%s.%s.json", jobID, leaseID))
+	if err := os.Rename(source, destination); err != nil {
+		if os.IsNotExist(err) {
+			// Lost the race with another worker — report empty, not an error.
+			return FileSpoolLease{}, false, nil
+		}
+		return FileSpoolLease{}, false, err
+	}
+
+	info, err := os.Stat(destination)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return FileSpoolLease{}, false, nil
+		}
+		return FileSpoolLease{}, false, err
+	}
+	if info.Size() > maxSpoolEnvelopeBytes {
+		_ = d.moveLeasePath(destination, d.failedDir())
+		return FileSpoolLease{}, false, fmt.Errorf("spool envelope %s exceeds %d bytes", filepath.Base(destination), maxSpoolEnvelopeBytes)
+	}
+	raw, err := os.ReadFile(destination)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return FileSpoolLease{}, false, nil
+		}
+		return FileSpoolLease{}, false, err
+	}
+	var envelope DispatchEnvelope
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		_ = d.moveLeasePath(destination, d.failedDir())
+		return FileSpoolLease{}, false, err
+	}
+	if envelope.JobID == "" {
+		envelope.JobID = jobID
+	}
+	if envelope.JobID != jobID {
+		_ = d.moveLeasePath(destination, d.failedDir())
+		return FileSpoolLease{}, false, fmt.Errorf("spool envelope job_id %q does not match file job_id %q", envelope.JobID, jobID)
+	}
+	return FileSpoolLease{
+		JobID:     envelope.JobID,
+		LeaseID:   leaseID,
+		Path:      destination,
+		Envelope:  envelope,
+		LeasedAt:  leasedAt,
+		QueueName: d.queueName,
+	}, true, nil
 }
 
 func (d *FileSpoolDispatcher) CompleteLease(_ context.Context, lease FileSpoolLease) error {
@@ -329,7 +355,7 @@ func (d *FileSpoolDispatcher) writeCancellationMarker(job jobstore.Job, reason s
 		"reason":       strings.TrimSpace(reason),
 		"cancelled_at": d.now().UTC().Format(time.RFC3339Nano),
 	}
-	payload, err := json.MarshalIndent(marker, "", "  ")
+	payload, err := json.Marshal(marker)
 	if err != nil {
 		return err
 	}

@@ -17,7 +17,6 @@ ubag-worker = "ubag_worker.cli:main"
 [project.optional-dependencies]
 live = [
     "playwright>=1.49",
-    "patchright>=1.49",
 ]
 dev = [
     "pytest>=7.4",
@@ -28,7 +27,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "live: requires a real browser (playwright / patchright) — skipped in CI unless UBAG_LIVE_TESTS=1",
+    "live: requires a real browser (playwright) — skipped in CI unless UBAG_LIVE_TESTS=1",
 ]
 addopts = "-v --tb=short"
 

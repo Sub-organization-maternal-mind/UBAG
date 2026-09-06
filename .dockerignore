@@ -20,6 +20,33 @@ __pycache__/
 *.log
 *.exe
 
+# Local analysis caches / backups (can be 100s of MB)
+.codegraph/
+.ua/
+.claude/
+.serena/
+.codex/
+
+# Live-browser persistent Chrome profile (operator logins, 10s of MB)
+tools/live-browser/chrome-profile/
+tools/live-browser/*.log
+
+# Test/build caches
+playwright-report/
+test-results/
+.svelte-kit/
+.pytest_cache/
+.ruff_cache/
+coverage.out
+coverage.html
+
+# Gateway local runtime state
+apps/gateway/*.db*
+apps/gateway/spool/
+apps/gateway/artifacts/
+apps/gateway/coverage.out
+apps/gateway/coverage.html
+
 var/
 tmp/
 coverage/

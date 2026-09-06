@@ -515,12 +515,12 @@ func (s *Server) routes() {
 	s.mux.Use(
 		s.withMetrics,                     // outermost: always records request timing
 		s.withRecovery,                    // catches panics before they propagate
-		mw.Trace,                          // injects/extracts W3C trace ID (Ã‚Â§18.3)
-		mw.RequestLog(serviceName),        // structured JSON request log line (Ã‚Â§18.1)
-		s.withDevCORS,                     // opt-in cross-origin dev shim (Ã‚Â§7.2 note above); no-op unless configured
+		mw.Trace,                          // injects/extracts W3C trace ID (§18.3)
+		s.withRequestLog,                  // structured JSON request log line (§18.1); skips probe paths
+		s.withDevCORS,                     // opt-in cross-origin dev shim (§7.2 note above); no-op unless configured
 		s.withAuth,                        // authenticates bearer / device / SSO session
-		s.withRateLimit,                   // IETF token-bucket rate-limiting (Ã‚Â§10.6)
-		mw.APIVersionHeader(s.apiVersion), // sets Ubag-Api-Version-Used (Ã‚Â§6.5)
+		s.withRateLimit,                   // IETF token-bucket rate-limiting (§10.6)
+		mw.APIVersionHeader(s.apiVersion), // sets Ubag-Api-Version-Used (§6.5)
 	)
 
 	// Custom not-found handler Ã¢â‚¬â€ chi's default writes plain text; we need JSON.
@@ -535,6 +535,26 @@ func (s *Server) routes() {
 	// routePattern derives from the same declaration).
 	s.registerRoutes()
 	// Note: catch-all 404 is handled via s.mux.NotFound() registered above.
+}
+
+// probePaths are the unauthenticated operator probes (container healthchecks,
+// Prometheus scrapes). They skip the JSON request log: at 15s health + 15s
+// scrape cadence the lines are pure noise, and metrics still count them.
+var probePaths = map[string]struct{}{
+	"/v1/health":  {},
+	"/v1/ready":   {},
+	"/v1/metrics": {},
+}
+
+func (s *Server) withRequestLog(next http.Handler) http.Handler {
+	inner := mw.RequestLog(serviceName)(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := probePaths[r.URL.Path]; ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

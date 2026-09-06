@@ -7,7 +7,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import type { MetricsResponse } from '$lib/api/types';
   import { FAILED_STATES as FAILED_STATUS_LIST } from '$lib/api/statuses';
-  import Chart from 'chart.js/auto';
+  import type { Chart as ChartJS } from 'chart.js/auto';
 
   let metrics = $state<MetricsResponse | null>(null);
   let loading = $state(true);
@@ -15,7 +15,7 @@
   let error = $state<string | null>(null);
 
   let chartCanvas = $state<HTMLCanvasElement | undefined>(undefined);
-  let chart: Chart | undefined;
+  let chart: ChartJS | undefined;
 
   // Top 5 numeric metrics for bar chart
   let chartLabels = $state<string[]>([]);
@@ -28,8 +28,12 @@
   let grafanaVisible = $state(false);
   let grafanaError = $state(false);
 
-  function buildChart() {
+  // Chart.js loads lazily so its ~200KB never enters the shared bundle —
+  // only visitors who open /metrics with chartable data download it.
+  async function buildChart() {
     if (!chartCanvas || chartLabels.length === 0) return;
+    const { default: Chart } = await import('chart.js/auto');
+    if (!chartCanvas) return; // unmounted while loading
     chart?.destroy();
     chart = new Chart(chartCanvas, {
       type: 'bar',
