@@ -291,7 +291,7 @@ type Server struct {
 	mfaSvc               *mfa.Service
 	mfaSessions          mfaSessionSet // in-memory set of MFA-verified session IDs
 	jitAdmin             jitadmin.Store
-	credentialResolvers  []func(*http.Request) (authenticatedPrincipal, bool)
+	credentialResolvers []func(*http.Request) (authenticatedPrincipal, bool)
 
 	// §18 contract counters (Task 2.3) — updated atomically on the hot path.
 	idempotencyReplays atomic.Int64 // ubag_idempotency_replays_total
