@@ -59,3 +59,22 @@ func TestUnknownRoleDenies(t *testing.T) {
 		}
 	}
 }
+
+// TestSuperadminAllowsUnion pins the superadmin invariant: since the set is
+// spelled out (no init cycle), this test fails if a new action is added to a
+// role but forgotten for superadmin.
+func TestSuperadminAllowsUnion(t *testing.T) {
+	roles := []string{"viewer", "developer", "operator", "admin", "service"}
+	seen := map[string]struct{}{}
+	for _, role := range roles {
+		for _, action := range Actions(role) {
+			seen[action] = struct{}{}
+			if !RoleAllows("superadmin", action) {
+				t.Errorf("superadmin missing action %s (allowed for %s)", action, role)
+			}
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatal("no actions discovered")
+	}
+}

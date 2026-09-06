@@ -93,7 +93,28 @@ var roleActions = map[string]map[string]struct{}{
 		"concurrency:read":  {},
 		"region:manage":     {},
 	},
-	"superadmin":       allActions(),
+	"superadmin":         {
+		"job:create":        {},
+		"job:read":          {},
+		"job:cancel":        {},
+		"job:retry":         {},
+		"artifact:write":    {},
+		"artifact:delete":   {},
+		"device:enroll":     {},
+		"device:revoke":     {},
+		"secret:rotate":     {},
+		"webhook:configure": {},
+		"webhook:replay":    {},
+		"audit:read":        {},
+		"rate_limit:manage": {},
+		"role:manage":       {},
+		"data:export":       {},
+		"alerts:read":       {},
+		"alerts:manage":     {},
+		"browser:read":      {},
+		"concurrency:read":  {},
+		"region:manage":     {},
+	},
 	"service":          {
 		"job:create":      {},
 		"job:read":        {},
@@ -103,17 +124,4 @@ var roleActions = map[string]map[string]struct{}{
 		"artifact:delete": {},
 		"webhook:replay":  {},
 	},
-}
-
-// allActions expands to every action the gateway authorizes. superadmin
-// allows the union; the map is computed so adding an action to any role
-// automatically extends superadmin.
-func allActions() map[string]struct{} {
-	all := map[string]struct{}{}
-	for _, actions := range roleActions {
-		for action := range actions {
-			all[action] = struct{}{}
-		}
-	}
-	return all
 }
