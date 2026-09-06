@@ -107,8 +107,19 @@ test.describe('Visual snapshots', () => {
   // Run at desktop only for snapshot baseline (reduce snapshot count)
   test.use({ viewport: { width: 1440, height: 900 } });
 
+  // Routes without a committed chromium-linux baseline. Generate with
+  // `npx playwright test -u` inside mcr.microsoft.com/playwright:v1.61.0-noble
+  // (matches CI Ubuntu + playwright version, per 1710f34), then commit the
+  // linux file and drop the name from this set. The routing suite above
+  // still covers these pages on Linux.
+  const MISSING_LINUX_BASELINES = new Set(['conversations']);
+
   for (const route of ALL_ROUTES) {
     test(`${route.name} desktop snapshot`, async ({ page }) => {
+      test.skip(
+        process.platform === 'linux' && MISSING_LINUX_BASELINES.has(route.name),
+        'no chromium-linux baseline committed yet'
+      );
       await page.goto(route.path);
       await page.waitForLoadState('domcontentloaded');
       // Wait for loading states to settle
