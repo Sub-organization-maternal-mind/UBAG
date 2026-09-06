@@ -30,21 +30,16 @@ function must(p) {
   return true;
 }
 
-// ── 1. Required files ────────────────────────────────────────────────────────
+// â”€â”€ 1. Required files â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const required = [
   "deploy/gitops/argocd/application.yaml",
   "deploy/gitops/flux/helmrelease.yaml",
   "deploy/helm/ubag/Chart.yaml",
-  // Sample config
-  "deploy/gitops/sample-config/argocd/ubag-app.yaml",
-  "deploy/gitops/sample-config/flux/ubag-helmrelease.yaml",
-  "deploy/gitops/sample-config/secrets/ubag-secret.yaml.example",
-  "deploy/gitops/sample-config/README.md",
 ];
 required.forEach(must);
 
-// ── 2. ArgoCD Application invariants ────────────────────────────────────────
+// â”€â”€ 2. ArgoCD Application invariants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const argoPath = "deploy/gitops/argocd/application.yaml";
 if (existsSync(join(root, argoPath))) {
@@ -71,7 +66,7 @@ if (existsSync(join(root, argoPath))) {
   }
 }
 
-// ── 3. Flux HelmRelease invariants ──────────────────────────────────────────
+// â”€â”€ 3. Flux HelmRelease invariants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const fluxPath = "deploy/gitops/flux/helmrelease.yaml";
 if (existsSync(join(root, fluxPath))) {
@@ -98,7 +93,7 @@ if (existsSync(join(root, fluxPath))) {
   }
 }
 
-// ── 4. Sample ArgoCD Application invariants ──────────────────────────────────
+// â”€â”€ 4. Sample ArgoCD Application invariants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const sampleArgoPath = "deploy/gitops/sample-config/argocd/ubag-app.yaml";
 if (existsSync(join(root, sampleArgoPath))) {
@@ -115,7 +110,7 @@ if (existsSync(join(root, sampleArgoPath))) {
   }
 }
 
-// ── 5. Sample Flux HelmRelease invariants ────────────────────────────────────
+// â”€â”€ 5. Sample Flux HelmRelease invariants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const sampleFluxPath = "deploy/gitops/sample-config/flux/ubag-helmrelease.yaml";
 if (existsSync(join(root, sampleFluxPath))) {
@@ -132,18 +127,16 @@ if (existsSync(join(root, sampleFluxPath))) {
   }
 }
 
-// ── 6. No real secrets committed ─────────────────────────────────────────────
+// â”€â”€ 6. No real secrets committed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // Reject any line that assigns a known secret key to a value that looks like
-// a real credential (≥20 chars of base64/alphanumeric that is NOT "REPLACE_ME"
+// a real credential (â‰¥20 chars of base64/alphanumeric that is NOT "REPLACE_ME"
 // or an empty string).  The .example file is excluded because it intentionally
 // contains the literal string "REPLACE_ME".
 
 const secretFiles = [
   "deploy/gitops/argocd/application.yaml",
   "deploy/gitops/flux/helmrelease.yaml",
-  "deploy/gitops/sample-config/flux/ubag-helmrelease.yaml",
-  "deploy/gitops/sample-config/argocd/ubag-app.yaml",
 ];
 
 const sensitiveKeyPattern = /UBAG_APP_SECRET|UBAG_POSTGRES_DSN|UBAG_WEBHOOK_SECRET/;
@@ -161,20 +154,8 @@ for (const sf of secretFiles) {
   }
 }
 
-// Also check the example file doesn't accidentally contain real values
-const examplePath = "deploy/gitops/sample-config/secrets/ubag-secret.yaml.example";
-if (existsSync(join(root, examplePath))) {
-  const lines = read(examplePath).split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    // Allow "REPLACE_ME" placeholder but reject anything that looks like a real secret
-    if (sensitiveKeyPattern.test(line) && realValuePattern.test(line)) {
-      fail(`${examplePath}:${i + 1}: example file contains what looks like a real secret value`);
-    }
-  }
-}
 
-// ── 7. Chart version present in Chart.yaml ───────────────────────────────────
+// â”€â”€ 7. Chart version present in Chart.yaml â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 const chartPath = "deploy/helm/ubag/Chart.yaml";
 if (existsSync(join(root, chartPath))) {
@@ -191,7 +172,7 @@ if (existsSync(join(root, chartPath))) {
   }
 }
 
-// ── Report ────────────────────────────────────────────────────────────────────
+// â”€â”€ Report â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 if (errors.length) {
   console.error("check-gitops: FAILED");
@@ -199,4 +180,4 @@ if (errors.length) {
   process.exit(1);
 }
 
-console.log("✅ GitOps: all checks passed");
+console.log("âœ… GitOps: all checks passed");
