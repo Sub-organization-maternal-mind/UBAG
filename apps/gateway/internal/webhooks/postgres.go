@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"time"
 )
@@ -43,8 +44,8 @@ func (p *PostgresStore) Enqueue(ctx context.Context, request EnqueueRequest) (De
 		request.NextAttemptAt = now
 	}
 	id := StableID("whd", request.TenantID, request.AppID, request.DedupeKey)
-	endpointID := firstNonEmpty(request.EndpointID, StableID("whe", request.URL, request.SecretID))
-	endpointKind := firstNonEmpty(request.EndpointKind, "job_callback")
+	endpointID := jobcore.FirstNonEmpty(request.EndpointID, StableID("whe", request.URL, request.SecretID))
+	endpointKind := jobcore.FirstNonEmpty(request.EndpointKind, "job_callback")
 	row := p.db.QueryRowContext(ctx, `
 INSERT INTO gateway_webhook_deliveries (
 	id, tenant_id, app_id, job_id, event_name, endpoint_id, endpoint_kind,

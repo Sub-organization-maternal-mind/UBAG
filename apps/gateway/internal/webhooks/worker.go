@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	"github.com/ubag/ubag/apps/gateway/internal/resilience"
 )
 
@@ -74,7 +75,7 @@ func (w *DeliveryWorker) RunOnce(ctx context.Context) (bool, error) {
 	if err := w.Ready(ctx); err != nil {
 		return false, err
 	}
-	workerID := firstNonEmpty(w.WorkerID, "gateway-webhook-worker")
+	workerID := jobcore.FirstNonEmpty(w.WorkerID, "gateway-webhook-worker")
 	leaseFor := w.LeaseFor
 	if leaseFor <= 0 {
 		leaseFor = 30 * time.Second
@@ -105,7 +106,7 @@ func (w *DeliveryWorker) RunOnce(ctx context.Context) (bool, error) {
 			// Use the breaker's cooldown as the retry delay to avoid DLQ churn.
 			cooldown := time.Second // default floor
 			if w.Breakers != nil {
-				// url.Parse failure here is unreachable in practice — ValidateCallbackURL
+				// url.Parse failure here is unreachable in practice Ã¢â‚¬â€ ValidateCallbackURL
 				// filters malformed URLs before they reach the delivery queue.
 				if u, parseErr := url.Parse(delivery.URL); parseErr == nil {
 					if remaining := w.Breakers.Get(resilience.KindWebhook, u.Hostname()).CooldownRemaining(); remaining > cooldown {
