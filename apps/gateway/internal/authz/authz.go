@@ -7,7 +7,12 @@
 package authz
 
 // RoleAllows reports whether a role may perform an action. The one table.
+// superadmin allows every action (the historical semantics: it gates routes
+// like auth:pat:issue that mint credentials).
 func RoleAllows(role string, action string) bool {
+	if role == "superadmin" {
+		return true
+	}
 	actions, ok := roleActions[role]
 	if !ok {
 		return false
@@ -40,10 +45,10 @@ func sortStrings(s []string) {
 }
 
 var roleActions = map[string]map[string]struct{}{
-	"viewer":    {
+	"viewer": {
 		"job:read": {},
 	},
-	"developer":          {
+	"developer": {
 		"job:create":        {},
 		"job:read":          {},
 		"job:cancel":        {},
@@ -54,7 +59,7 @@ var roleActions = map[string]map[string]struct{}{
 		"browser:read":      {},
 		"concurrency:read":  {},
 	},
-	"operator":           {
+	"operator": {
 		"job:create":        {},
 		"job:read":          {},
 		"job:cancel":        {},
@@ -71,29 +76,7 @@ var roleActions = map[string]map[string]struct{}{
 		"browser:read":      {},
 		"concurrency:read":  {},
 	},
-	"admin":              {
-		"job:create":        {},
-		"job:read":          {},
-		"job:cancel":        {},
-		"job:retry":         {},
-		"artifact:write":    {},
-		"artifact:delete":   {},
-		"device:enroll":     {},
-		"device:revoke":     {},
-		"secret:rotate":     {},
-		"webhook:configure": {},
-		"webhook:replay":    {},
-		"audit:read":        {},
-		"rate_limit:manage": {},
-		"role:manage":       {},
-		"data:export":       {},
-		"alerts:read":       {},
-		"alerts:manage":     {},
-		"browser:read":      {},
-		"concurrency:read":  {},
-		"region:manage":     {},
-	},
-	"superadmin":         {
+	"admin": {
 		"job:create":        {},
 		"job:read":          {},
 		"job:cancel":        {},
@@ -115,7 +98,11 @@ var roleActions = map[string]map[string]struct{}{
 		"concurrency:read":  {},
 		"region:manage":     {},
 	},
-	"service":          {
+	"superadmin": {
+		// Satisfied by the RoleAllows superadmin fast path; kept empty so the
+		// union invariant test sees the role without double-listing actions.
+	},
+	"service": {
 		"job:create":      {},
 		"job:read":        {},
 		"job:cancel":      {},
