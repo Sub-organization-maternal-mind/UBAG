@@ -2,6 +2,39 @@
 
 Last updated: 2026-09-07
 
+## 2026-09-07 Ponytail cuts landed + deployed to production
+
+The dead-weight removal is complete on `main` (CI fully green, incl. Gateway
+go test/vet/gofmt) after four follow-up fixes to c302bea/24f1425:
+
+1. `24f1425` — the c302bea deletions had been silently resurrected by a
+   concurrent process before staging (edit-only commit). All 59 paths
+   re-deleted and verified in the commit (`git show --name-status | grep ^D`).
+   Lesson: after `git rm`, re-verify the staged deletion list immediately
+   before committing on this workstation.
+2. `a5c035a` — `mw.RequestLog`/`mw.APIVersionHeader` restored: the chi chain
+   registers them (server.go routes()); the earlier grep used the wrong
+   package qualifier (`middleware.` vs the `mw` import alias).
+3. `0dd9e34` — `TestRecoverQueuedAttachmentOutbox` now uses a recording
+   Append-only outbox fake instead of the removed `MemoryStore.Pending`.
+4. `4533c54`/`89f81a4` — contract/tool canaries updated for the removals:
+   `check-contracts` parity term `authorizeJobAccess` →
+   `authorizeGatewayAction`; `check-gitops` no longer requires the deleted
+   `deploy/gitops/sample-config/`. Also `pnpm-lock.yaml` regenerated for the
+   dashboard devDeps removal so `--frozen-lockfile` installs pass.
+
+**Production deploy (VPS 185.252.233.186, 2026-09-06 ~22:35 UTC):**
+- Source synced via `git archive HEAD` + surgical deletion of the same 59
+  paths on `/opt/docker/ubag` (env.local/.htpasswd/DBs/logs untouched).
+- Gateway image rebuilt (`ubag/gateway:vps-local`, id `eeb18559292f…`),
+  `ubag-vps-gateway-1` recreated: health **healthy**, `/v1/ready` 200.
+- Dashboard bundle rebuilt from `apps/dashboard/dist` and synced (nginx
+  container unchanged — bind mount serves live files; auth gate intact).
+- Smoke: mock job **`job_000000000253`** accepted queued and **completed**
+  in ~214 ms with exact output **`UBAG_PONYTAIL_2400_OK`**.
+- chat-reaper + browser containers untouched and healthy; rollback = previous
+  image + source of pre-sync commit `f045fa6`.
+
 ## 2026-09-07 SQLITE_BUSY flake fix (#72)
 
 `TestSQLiteTransitionStatusHasSingleConcurrentWinner` was the only test in
