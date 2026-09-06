@@ -15,7 +15,7 @@
     "test": "node --import tsx --test test/json-schema.test.mjs test/checksum.test.mjs test/registry.test.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.9.3",
+    "typescript": "^7.0.2",
     "tsx": "^4.19.2"
   }
 }
