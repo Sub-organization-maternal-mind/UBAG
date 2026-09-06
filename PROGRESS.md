@@ -385,6 +385,10 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
   compat table + 5 missing indexes added to the topology bootstrap (real
   production sqlite perf win), explicit NOT NULL on audit.id and
   session.token_hash PKs (fresh DBs only). Full CI green.
+- **Landed**: `feat/rectification` (44 commits) merged to main as 5a76a6e;
+  main CI green on the merge. Stray `executor/Python` distribution (4,054
+  files) deleted from disk and gitignored. SQLITE_BUSY CAS-test flake filed
+  as #72 (single occurrence, green on re-run).
 
 ## 2026-07-17 PAT (Personal Access Tokens) wired into serve + made persistent
 
