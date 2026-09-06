@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { settings } from '$lib/stores/settings';
   import { api } from '$lib/api/client';
   import type { HealthResponse } from '$lib/api/types';
@@ -31,6 +32,63 @@
     }
     testing = false;
   }
+
+  // --- SIEM export sinks (GET/PUT /v1/siem/config, role:manage) ---
+  interface SiemSink {
+    id: string;
+    name: string;
+    kind: string;
+    target?: string;
+    network?: string;
+    secret_ref?: string;
+    enabled: boolean;
+  }
+  let siemSinks = $state<SiemSink[]>([]);
+  let siemLoading = $state(true);
+  let siemDenied = $state(false);
+  let siemUnavailable = $state(false);
+  let siemError = $state<string | null>(null);
+
+  async function loadSiem() {
+    siemLoading = true;
+    siemError = null;
+    siemDenied = false;
+    siemUnavailable = false;
+    const res = await api.get<{ tenant_id?: string; sinks?: SiemSink[] }>('/v1/siem/config');
+    siemLoading = false;
+    if (res.denied) { siemDenied = true; return; }
+    if (res.status === 501 || res.status === 404) { siemUnavailable = true; return; }
+    if (res.error) { siemError = res.error; return; }
+    siemSinks = res.data?.sinks ?? [];
+  }
+
+  let siemSavingId = $state<string | null>(null);
+  let siemToggleError = $state<string | null>(null);
+
+  async function toggleSiemSink(sink: SiemSink) {
+    siemSavingId = sink.id;
+    siemToggleError = null;
+    // PUT /v1/siem/config upserts ONE sink (siemSinkRequest).
+    const res = await api.put<SiemSink>('/v1/siem/config', {
+      id: sink.id,
+      name: sink.name,
+      kind: sink.kind,
+      target: sink.target ?? '',
+      network: sink.network ?? '',
+      secret_ref: sink.secret_ref ?? '',
+      enabled: !sink.enabled,
+    });
+    siemSavingId = null;
+    if (res.error) {
+      siemToggleError = `Update failed: ${res.error} (HTTP ${res.status})`;
+      return;
+    }
+    await loadSiem();
+  }
+
+  onMount(() => {
+    loadSiem();
+  });
 </script>
 
 <div class="space-y-6 max-w-xl">
@@ -125,5 +183,60 @@
       <code class="font-mono">ubag_gateway_url</code> and <code class="font-mono">ubag_app_secret</code>.
       They are loaded automatically on every page visit.
     </p>
+  </div>
+
+  <!-- SIEM export config -->
+  <div class="border-t border-rule pt-6">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-lg font-display font-semibold text-ink">SIEM Export</h2>
+      {#if !siemDenied && !siemUnavailable}
+        <button onclick={() => loadSiem()} class="text-sm text-accent-deep hover:underline">Refresh</button>
+      {/if}
+    </div>
+    {#if siemLoading}
+      <p class="text-sm text-ink-mute">Loading SIEM configuration…</p>
+    {:else if siemDenied}
+      <p class="text-xs text-ink-mute italic">SIEM configuration requires the <code class="font-mono">role:manage</code> permission.</p>
+    {:else if siemUnavailable}
+      <p class="text-xs text-ink-mute italic">SIEM export is not configured on this gateway (set <code class="font-mono">UBAG_SIEM_FILE_PATH</code> to enable the file sink).</p>
+    {:else if siemError}
+      <p class="text-sm text-danger" role="alert">{siemError}</p>
+    {:else if siemSinks.length === 0}
+      <p class="text-xs text-ink-mute italic">No SIEM sinks configured.</p>
+    {:else}
+      <div class="rounded-md border border-rule overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-paper-soft border-b border-rule">
+            <tr>
+              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Name</th>
+              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Kind</th>
+              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Target</th>
+              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Enabled</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-rule">
+            {#each siemSinks as sink (sink.id)}
+              <tr class="hover:bg-paper-soft transition-colors">
+                <td class="px-4 py-2.5 text-ink font-medium text-xs">{sink.name}</td>
+                <td class="px-4 py-2.5 font-mono text-xs text-ink-soft">{sink.kind}{sink.network ? `/${sink.network}` : ''}</td>
+                <td class="px-4 py-2.5 font-mono text-xs text-ink-mute break-all max-w-[16rem]">{sink.target ?? '—'}</td>
+                <td class="px-4 py-2.5">
+                  <button
+                    onclick={() => toggleSiemSink(sink)}
+                    disabled={siemSavingId === sink.id}
+                    class="text-xs text-accent-deep hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {siemSavingId === sink.id ? 'Saving…' : sink.enabled ? 'Disable' : 'Enable'}
+                  </button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+      {#if siemToggleError}
+        <p class="text-sm text-danger mt-2" role="alert">{siemToggleError}</p>
+      {/if}
+    {/if}
   </div>
 </div>

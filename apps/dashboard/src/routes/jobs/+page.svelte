@@ -217,6 +217,73 @@
     await load(currentCursor);
   }
 
+  // --- Batch submit (POST /v1/jobs/batch, blueprint A§10/A§19.2) ---
+  interface BatchOutcome {
+    index: number;
+    status: string;
+    job_id?: string;
+    idempotent_replay?: boolean;
+    error?: { code?: string; message?: string };
+  }
+  let batchText = $state('');
+  let batchLoading = $state(false);
+  let batchError = $state<string | null>(null);
+  let batchResults = $state<BatchOutcome[] | null>(null);
+
+  function parseBatchLines(): { prompt: string; command_type: string }[] {
+    return batchText
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('#'))
+      .map((line) => {
+        // "command_type | prompt" — defaults to chat.prompt when no pipe present.
+        const sep = line.indexOf('|');
+        if (sep === -1) return { prompt: line, command_type: createCommandType.trim() || 'chat.prompt' };
+        return { command_type: line.slice(0, sep).trim(), prompt: line.slice(sep + 1).trim() };
+      });
+  }
+
+  async function submitBatch() {
+    batchError = null;
+    batchResults = null;
+    const entries = parseBatchLines();
+    if (entries.length === 0) {
+      batchError = 'Add one job per line ("command type | prompt").';
+      return;
+    }
+    if (entries.length > 100) {
+      batchError = 'A batch is capped at 100 jobs.';
+      return;
+    }
+    batchLoading = true;
+    const res = await api.post<{ accepted?: number; rejected?: number; results?: BatchOutcome[] }>(
+      '/v1/jobs/batch',
+      {
+        api_version: API_VERSION,
+        jobs: entries.map((entry) => ({
+          api_version: API_VERSION,
+          client: {
+            app_id: 'ubag-dashboard',
+            app_version: '0.0.0',
+            sdk: { name: 'ubag-dashboard', version: '0.0.0' },
+          },
+          job: {
+            target: createTarget,
+            command_type: entry.command_type,
+            input: { prompt: entry.prompt },
+            options: { priority: 'normal', return_mode: 'final' },
+          },
+        })),
+      }
+    );
+    batchLoading = false;
+    if (res.error) {
+      batchError = `${res.error} (HTTP ${res.status})`;
+      return;
+    }
+    batchResults = res.data?.results ?? [];
+  }
+
   function fmtDate(s: string): string {
     try { return new Date(s).toLocaleString(); } catch { return s; }
   }
@@ -324,6 +391,63 @@
       {/if}
     </div>
   </form>
+
+  <!-- Batch submit -->
+  <section aria-labelledby="batch-heading" class="rounded-md border border-rule bg-paper-soft p-4 space-y-3">
+    <div class="flex items-center justify-between gap-3 flex-wrap">
+      <h2 id="batch-heading" class="text-sm font-display font-semibold text-ink">Batch Submit</h2>
+      <div class="text-xs text-ink-mute font-mono">one job per line · "command type | prompt" · max 100 · target = {createTarget}</div>
+    </div>
+    <textarea
+      bind:value={batchText}
+      rows="5"
+      placeholder={"chat.prompt | Summarize the incident report\nchat.prompt | Draft the follow-up email\nmock.complete | UBAG_BATCH_CHECK"}
+      class="w-full px-3 py-2 rounded-md border border-rule bg-paper text-sm text-ink font-mono placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40 resize-y"
+      aria-label="Batch job lines"
+    ></textarea>
+    <div class="flex items-center gap-3 flex-wrap">
+      <button
+        onclick={() => submitBatch()}
+        disabled={batchLoading}
+        class="px-4 py-2 rounded-md bg-marine text-paper text-sm font-medium hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+      >
+        {batchLoading ? 'Submitting…' : 'Submit Batch'}
+      </button>
+      {#if batchError}
+        <span class="text-xs text-danger">{batchError}</span>
+      {/if}
+    </div>
+    {#if batchResults}
+      <div class="rounded-md border border-rule overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead class="bg-paper border-b border-rule">
+            <tr>
+              <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">#</th>
+              <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">Status</th>
+              <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">Job</th>
+              <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">Error</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-rule">
+            {#each batchResults as outcome (outcome.index)}
+              <tr>
+                <td class="px-3 py-1.5 font-mono text-ink-mute">{outcome.index}</td>
+                <td class="px-3 py-1.5">
+                  {#if outcome.status === 'accepted'}
+                    <span class="text-success font-medium">accepted</span>
+                  {:else}
+                    <span class="text-danger font-medium">rejected</span>
+                  {/if}
+                </td>
+                <td class="px-3 py-1.5 font-mono text-ink-soft">{outcome.job_id ?? '—'}</td>
+                <td class="px-3 py-1.5 text-ink-soft">{outcome.error?.code ?? ''} {outcome.error?.message ?? ''}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </section>
 
   <!-- Filter -->
   <input

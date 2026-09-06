@@ -112,14 +112,25 @@
 
   async function replay(webhookId: string, deliveryId: string) {
     const key = `${webhookId}:${deliveryId}`;
+    const reason = window.prompt(`Reason for replaying delivery ${deliveryId} (audit-logged):`, 'operator replay from dashboard');
+    if (reason === null) return; // cancelled
+    if (!reason.trim()) {
+      replayState = { ...replayState, [key]: { loading: false, success: null, error: 'A reason is required for the audit record.' } };
+      return;
+    }
     replayState = { ...replayState, [key]: { loading: true, success: null, error: null } };
 
-    const res = await api.post(`/v1/webhooks/${webhookId}/deliveries/${deliveryId}/replay`, {});
+    // Contract: POST /v1/webhooks/replay with {delivery_id, reason} (openapi replayWebhookDelivery).
+    const res = await api.post<{ status?: string; delivery_id?: string }>('/v1/webhooks/replay', {
+      delivery_id: deliveryId,
+      webhook_id: webhookId,
+      reason: reason.trim(),
+    });
 
     if (res.error) {
-      replayState = { ...replayState, [key]: { loading: false, success: null, error: res.error } };
+      replayState = { ...replayState, [key]: { loading: false, success: null, error: `${res.error} (HTTP ${res.status})` } };
     } else {
-      replayState = { ...replayState, [key]: { loading: false, success: 'Replayed', error: null } };
+      replayState = { ...replayState, [key]: { loading: false, success: 'Replay accepted', error: null } };
       // Refresh deliveries for this webhook
       delete deliveriesMap[webhookId];
       deliveriesMap = { ...deliveriesMap };

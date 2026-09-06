@@ -10,7 +10,8 @@
   import {
     LayoutDashboard, Briefcase, Target, Puzzle, AppWindow, Smartphone,
     AlertTriangle, Globe, Webhook, FileText, GitBranch, Database,
-    Shield, Users, CreditCard, Settings2, BarChart3, MessagesSquare, Sun, Moon, Menu, X
+    Shield, Users, CreditCard, Settings2, BarChart3, MessagesSquare, Sun, Moon, Menu, X,
+    KeyRound, ServerCog
   } from 'lucide-svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -32,6 +33,8 @@
     { href: '/cache', label: 'Cache', icon: Database },
     { href: '/audit', label: 'Audit', icon: Shield },
     { href: '/users', label: 'Users & Roles', icon: Users },
+    { href: '/security', label: 'Security', icon: KeyRound },
+    { href: '/admin', label: 'Administration', icon: ServerCog },
     { href: '/quotas', label: 'Quotas & Billing', icon: CreditCard },
     { href: '/settings', label: 'Settings', icon: Settings2 },
     { href: '/metrics', label: 'Metrics', icon: BarChart3 },

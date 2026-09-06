@@ -49,6 +49,37 @@
 
   let rejectedNoVnc = $derived(Boolean(selectedInstance?.novnc_url && !noVncSrc));
 
+  // --- Adaptive concurrency ceilings (GET /v1/concurrency, concurrency:read) ---
+  interface ConcurrencyCeiling {
+    tenant_id?: string;
+    target_id?: string;
+    provider_id?: string;
+    identity_ref?: string;
+    lane?: string;
+    current_cap?: number;
+    minimum?: number;
+    maximum?: number | null;
+    in_flight?: number;
+    [key: string]: unknown;
+  }
+  let concurrency = $state<ConcurrencyCeiling[]>([]);
+  let concurrencyDenied = $state(false);
+  let concurrencyUnavailable = $state(false);
+
+  async function loadConcurrency() {
+    concurrencyDenied = false;
+    concurrencyUnavailable = false;
+    const res = await api.get<{ kind?: string; data?: ConcurrencyCeiling[] }>('/v1/concurrency');
+    if (res.denied) { concurrencyDenied = true; return; }
+    if (res.status === 501 || res.status === 404) { concurrencyUnavailable = true; return; }
+    if (res.error) { concurrencyUnavailable = true; return; }
+    concurrency = res.data?.data ?? [];
+  }
+
+  function ceilingLabel(c: ConcurrencyCeiling): string {
+    return String(c.provider_id ?? c.target_id ?? '—');
+  }
+
   async function load() {
     loading = true;
     error = null;
@@ -179,6 +210,7 @@
 
   onMount(() => {
     load();
+    loadConcurrency();
   });
 
   $effect(() => {
@@ -333,6 +365,46 @@
         {#if instances.length === 0 && contexts.length === 0 && tabs.length === 0}
           <EmptyState message="No browser sessions active." hint="Browser instances, contexts, and tabs will appear here." />
         {/if}
+
+        <!-- Adaptive concurrency ceilings -->
+        <section aria-labelledby="concurrency-heading" class="pt-2">
+          <div class="flex items-center justify-between">
+            <h2 id="concurrency-heading" class="text-sm font-semibold text-ink uppercase tracking-wider">Concurrency Ceilings</h2>
+            {#if !concurrencyDenied && !concurrencyUnavailable}
+              <button onclick={() => loadConcurrency()} class="text-xs text-accent-deep hover:underline">Refresh</button>
+            {/if}
+          </div>
+          {#if concurrencyDenied}
+            <p class="text-xs text-ink-mute mt-2 italic">Concurrency observability requires the <code class="font-mono">concurrency:read</code> permission.</p>
+          {:else if concurrencyUnavailable}
+            <p class="text-xs text-ink-mute mt-2 italic">Worker-reported adaptive concurrency is not available on this deployment.</p>
+          {:else if concurrency.length === 0}
+            <p class="text-xs text-ink-mute mt-2 italic">No worker-reported ceilings yet — they appear once a live worker runs with orchestration enabled.</p>
+          {:else}
+            <div class="mt-2 rounded-md border border-rule overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead class="bg-paper-soft border-b border-rule">
+                  <tr>
+                    <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">Provider</th>
+                    <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">Lane</th>
+                    <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">Cap</th>
+                    <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">In&nbsp;Flight</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-rule">
+                  {#each concurrency as c, i (i)}
+                    <tr class="hover:bg-paper-soft transition-colors">
+                      <td class="px-3 py-2 font-mono text-ink">{ceilingLabel(c)}</td>
+                      <td class="px-3 py-2 text-ink-soft">{c.lane ?? '—'}</td>
+                      <td class="px-3 py-2 text-ink">{c.current_cap ?? '—'}{c.maximum != null ? ` / ${c.maximum}` : ''}</td>
+                      <td class="px-3 py-2 text-ink-soft">{c.in_flight ?? 0}</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
+        </section>
       </div>
 
       <div class="space-y-4">
