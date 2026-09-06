@@ -247,15 +247,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	}
 	envelope := EnvelopeFromJobWithConversation(ctx, job, c.Conversations)
 	if jobstore.TerminalStatus(job.Status) {
-		c.observeTerminalJob(job)
-		c.runPostJobHook(ctx, job)
-		if err := c.notifyTerminalJob(ctx, lease, job); err != nil {
-			return true, err
-		}
-		if job.Status == jobstore.StatusCanceled {
-			return true, lease.Cancel(ctx)
-		}
-		return true, lease.Complete(ctx)
+		return c.finishTerminalLeasedJob(ctx, lease, job)
 	}
 	assignedJob, found, err := c.Jobs.UpdateStatus(ctx, job.ID, jobstore.StatusAssigned)
 	if err != nil {
@@ -267,15 +259,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return true, fmt.Errorf("leased job %s does not exist in job store", lease.JobID())
 	}
 	if jobstore.TerminalStatus(assignedJob.Status) {
-		c.observeTerminalJob(assignedJob)
-		c.runPostJobHook(ctx, assignedJob)
-		if err := c.notifyTerminalJob(ctx, lease, assignedJob); err != nil {
-			return true, err
-		}
-		if assignedJob.Status == jobstore.StatusCanceled {
-			return true, lease.Cancel(ctx)
-		}
-		return true, lease.Complete(ctx)
+		return c.finishTerminalLeasedJob(ctx, lease, assignedJob)
 	}
 
 	workerStarted := time.Now()
@@ -442,31 +426,13 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		c.observeIngestion(job.Target, "success", "none", len(events), time.Since(ingestionStarted))
 	}
 	if finalJob.Status == jobstore.StatusCanceled {
-		c.observeTerminalJob(finalJob)
-		c.releaseConcurrencyToken(finalJob)
-		c.runPostJobHook(ctx, finalJob)
-		if err := c.notifyTerminalJob(ctx, lease, finalJob); err != nil {
-			return true, err
-		}
-		return true, lease.Cancel(ctx)
+		return c.finishTerminalIngestedJob(ctx, lease, finalJob, lease.Cancel)
 	}
 	if finalJob.Status == jobstore.StatusCompleted || finalJob.Status == jobstore.StatusCompletedWithWarnings {
-		c.observeTerminalJob(finalJob)
-		c.releaseConcurrencyToken(finalJob)
-		c.runPostJobHook(ctx, finalJob)
-		if err := c.notifyTerminalJob(ctx, lease, finalJob); err != nil {
-			return true, err
-		}
-		return true, lease.Complete(ctx)
+		return c.finishTerminalIngestedJob(ctx, lease, finalJob, lease.Complete)
 	}
 	if jobstore.TerminalStatus(finalJob.Status) {
-		c.observeTerminalJob(finalJob)
-		c.releaseConcurrencyToken(finalJob)
-		c.runPostJobHook(ctx, finalJob)
-		if err := c.notifyTerminalJob(ctx, lease, finalJob); err != nil {
-			return true, err
-		}
-		return true, lease.Fail(ctx)
+		return c.finishTerminalIngestedJob(ctx, lease, finalJob, lease.Fail)
 	}
 
 	c.observeWorkerRun(job.Target, "failure", workerDuration)
@@ -927,6 +893,37 @@ func (c *WorkerConsumer) notifyTerminalJob(ctx context.Context, lease WorkerLeas
 		return err
 	}
 	return nil
+}
+
+// finishTerminalLeasedJob runs the terminal-job closing sequence for a job
+// already known to be terminal when leased: observe, post-job hook, notify,
+// then Cancel for canceled jobs and Complete otherwise. The two RunOnce
+// pre-execution paths shared this block verbatim; one copy means the next
+// step added here cannot be forgotten on one path.
+func (c *WorkerConsumer) finishTerminalLeasedJob(ctx context.Context, lease WorkerLease, job jobstore.Job) (bool, error) {
+	c.observeTerminalJob(job)
+	c.runPostJobHook(ctx, job)
+	if err := c.notifyTerminalJob(ctx, lease, job); err != nil {
+		return true, err
+	}
+	if job.Status == jobstore.StatusCanceled {
+		return true, lease.Cancel(ctx)
+	}
+	return true, lease.Complete(ctx)
+}
+
+// finishTerminalIngestedJob runs the terminal-job closing sequence after
+// worker ingestion, releasing the in-flight token first: observe, release,
+// post-job hook, notify, then the given lease finisher (Cancel, Complete, or
+// Fail). The three post-ingestion branches differed only in the finisher.
+func (c *WorkerConsumer) finishTerminalIngestedJob(ctx context.Context, lease WorkerLease, job jobstore.Job, finish func(context.Context) error) (bool, error) {
+	c.observeTerminalJob(job)
+	c.releaseConcurrencyToken(job)
+	c.runPostJobHook(ctx, job)
+	if err := c.notifyTerminalJob(ctx, lease, job); err != nil {
+		return true, err
+	}
+	return true, finish(ctx)
 }
 
 // runPostJobHook fires the job.post plugin hook if Plugins is configured.

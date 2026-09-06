@@ -27,7 +27,6 @@ type contextKey int
 
 const (
 	keyTraceID    contextKey = iota
-	keyPrincipal             // set by Auth middleware; retrieved via Principal()
 	keyAPIVersion            // resolved api_version after the version middleware
 )
 
