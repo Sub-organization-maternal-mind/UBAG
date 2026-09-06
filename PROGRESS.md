@@ -368,8 +368,23 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
   2 sqlite helpers + 4 inline Ready blocks across 19 files) collapsed onto
   the shared helpers (~200 lines deleted, behavior-identical — first CI run
   caught only a SQLITE_BUSY flake in the unrelated CAS concurrency test,
-  green on re-run). Full CI green — **all 13 rectification tickets T1–T13
-  complete, all 18 filed drift issues closed.**
+  green on re-run, filed as a tracking issue). Full CI green — **all 13
+  rectification tickets T1–T13 complete, all 18 filed drift issues closed.**
+- **DDL single-source decision**: evidence showed NEITHER side could be
+  deleted — the gateway runtime self-bootstraps sqlite on every boot while
+  `ubag db-migrate --store sqlite` provisions offline (deploy flows only ever
+  apply postgres migrations; sqlite files serve the manual CLI path). Kept
+  both sources and closed the drift hole instead: new `internal/sqlitetest`
+  parity helper + 4 tests requiring migration-file DDL and Go bootstrap DDL
+  to produce identical tables/indexes. The tests immediately caught real
+  drift and fixed the offline path: (1) sqlite 0004-0006 referenced a
+  `gateway_schema_migrations` tracking table nothing created — `db-migrate
+  --store sqlite` was broken at 0004; 0004 now creates it (mirroring pg
+  0001 and the edge series' self-contained pattern). (2) Reconciled three
+  divergences toward the stricter/correct side: `gateway_browser_sessions`
+  compat table + 5 missing indexes added to the topology bootstrap (real
+  production sqlite perf win), explicit NOT NULL on audit.id and
+  session.token_hash PKs (fresh DBs only). Full CI green.
 
 ## 2026-07-17 PAT (Personal Access Tokens) wired into serve + made persistent
 
