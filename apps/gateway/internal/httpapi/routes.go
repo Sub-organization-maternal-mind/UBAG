@@ -17,9 +17,9 @@ type routeDecl struct {
 // the route table; replaces the hand-rolled routePattern() switch.
 type metricRoute struct {
 	matchPrefix string
-	segments    int          // exact segment count that selects this entry
-	segment3   string        // required 4th segment value ("" = any)
-	pattern     string       // canonical metric pattern
+	segments    int    // exact segment count that selects this entry
+	segment3    string // required 4th segment value ("" = any)
+	pattern     string // canonical metric pattern
 }
 
 var jobMetricRoutes = []metricRoute{
