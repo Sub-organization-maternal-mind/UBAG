@@ -353,6 +353,19 @@ into first-class multi-file attachments end-to-end (branch `feat/multi-file-atta
   pat actions). 4 authz tests incl. the superadmin union invariant;
   full CI green (3 fix-up rounds caught by CI: a shadowed lookup var, an
   init cycle, and the superadmin semantics — all real findings).
+- **T12 (#69)**: route table — `httpapi/routes.go` declares every route
+  once (registration loop + `routePattern` metric patterns derive from the
+  same declaration; the hand-rolled second routing table deleted);
+  `jobReservation` (reservation.go) owns createJob's cleanup — fail() /
+  release() replace the five hand-repeated idempotency+token+status release
+  triplets. `check-contracts` route-parity reads the route table.
+- **T13 (#70)**: `internal/storekit` — shared `RequirePostgresObject` /
+  `RequireSQLiteObject` schema assertions and the generic `Pick` (memory/
+  sqlite/postgres trio selection, nil-db => memory, error paths preserved);
+  serve.go's 13 copy-paste store-kind switch blocks became one-line Picks
+  (sso/siem use their real ConfigStore type names); storekit has its own
+  tests. Full CI green — **all 13 rectification tickets T1–T13 complete,
+  all 18 filed drift issues closed.**
 
 ## 2026-07-17 PAT (Personal Access Tokens) wired into serve + made persistent
 
