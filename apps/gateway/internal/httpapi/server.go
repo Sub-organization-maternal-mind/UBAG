@@ -288,9 +288,10 @@ type Server struct {
 	plugins          *plugins.Host // nil-safe: no host → no hooks run
 	regionRouter     *region.Router
 	killSwitch       *region.KillSwitch
-	mfaSvc           *mfa.Service
-	mfaSessions      mfaSessionSet // in-memory set of MFA-verified session IDs
-	jitAdmin         jitadmin.Store
+	mfaSvc               *mfa.Service
+	mfaSessions          mfaSessionSet // in-memory set of MFA-verified session IDs
+	jitAdmin             jitadmin.Store
+	credentialResolvers  []func(*http.Request) (authenticatedPrincipal, bool)
 
 	// §18 contract counters (Task 2.3) — updated atomically on the hot path.
 	idempotencyReplays atomic.Int64 // ubag_idempotency_replays_total
@@ -489,6 +490,12 @@ func NewServer(config Config) *Server {
 			terminalObserved:   make(map[string]struct{}),
 		},
 		mux: chi.NewRouter(),
+	}
+	server.credentialResolvers = []func(*http.Request) (authenticatedPrincipal, bool){
+		server.resolveAppSecret,
+		server.resolveAppJWT,
+		server.resolvePAT,
+		server.resolveSSOSession,
 	}
 	server.routes()
 
@@ -3880,12 +3887,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		// Ordered credential-resolver chain: the first resolver that
 		// recognizes the presented credential yields the principal. Adding
 		// a credential type means adding one resolver here — no other edits.
-		for _, resolve := range []func(*http.Request) (authenticatedPrincipal, bool){
-			s.resolveAppSecret,
-			s.resolveAppJWT,
-			s.resolvePAT,
-			s.resolveSSOSession,
-		} {
+		for _, resolve := range s.credentialResolvers {
 			if principal, ok := resolve(r); ok {
 				principal = s.applyJITElevation(r.Context(), principal)
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalContextKey{}, principal)))
