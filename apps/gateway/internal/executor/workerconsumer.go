@@ -124,8 +124,8 @@ type WorkerConsumer struct {
 	// stateless (one subprocess per job) so mock/per-job jobs truly overlap;
 	// DaemonWorkerRunner keeps its mu so warm-daemon jobs stay serial there.
 	PoolSize int
-	Plugins      *plugins.Host // optional; nil disables post-job hook
-	Metrics      WorkerMetricsRecorder
+	Plugins  *plugins.Host // optional; nil disables post-job hook
+	Metrics  WorkerMetricsRecorder
 
 	inflight atomic.Int64
 }
