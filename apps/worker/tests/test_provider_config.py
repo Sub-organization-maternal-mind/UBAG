@@ -170,14 +170,17 @@ class NewChatAndConfigTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.reason, "manual_login_required")
 
-    def test_gemini_pins_3_7_flash_with_extended_thinking_enabled(self):
+    def test_gemini_pins_3_8_flash_with_extended_thinking_disabled(self):
+        # Operator default 2026-09-08: 3.8 Flash with the independent Extended
+        # toggle OFF (the 3.6-standard precedent — thinking off means the plain
+        # response timeout, not the reasoning floor).
         selectors = get_provider_selectors("gemini_web")
         driver = MockPageDriver(response_text="9")
         events = LiveSessionEngine(selectors).run(_payload("gemini_web"), driver=driver)
         settings = selectors.settings
         self.assertEqual(
             [(setting.key, setting.kind, setting.desired) for setting in settings],
-            [("model", "choice", "3.7 Flash"), ("thinking", "toggle", True)],
+            [("model", "choice", "3.8 Flash"), ("thinking", "toggle", False)],
         )
         self.assertEqual(
             settings[1].on_when,
@@ -187,11 +190,11 @@ class NewChatAndConfigTests(unittest.TestCase):
             settings[1].toggle_click,
             ("gem-menu-item:has-text('Extended thinking')",),
         )
-        self.assertTrue(selectors.reasoning)
+        self.assertFalse(selectors.reasoning)
         configured = _event(events, "session.configured")["data"]["settings"]
         self.assertEqual(
             [(setting["key"], setting["desired"]) for setting in configured],
-            [("model", "3.7 Flash"), ("thinking", True)],
+            [("model", "3.8 Flash"), ("thinking", False)],
         )
 
     def test_provider_config_overrides_desired_value(self):
