@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
@@ -115,8 +117,17 @@ type WorkerConsumer struct {
 	// target. Optional; nil disables login-state projection.
 	LoginState   topology.LoginStateWriter
 	PollInterval time.Duration
+	// PoolSize is the number of parallel lease-process workers in Run.
+	// 0/negative means 1 (legacy serial behavior). Clamped to 32 in workerCount.
+	// Each worker loops RunOnce independently; FileSpool rename-CAS and NATS
+	// fetch+ack are safe for concurrent LeaseNext. ProcessWorkerRunner is
+	// stateless (one subprocess per job) so mock/per-job jobs truly overlap;
+	// DaemonWorkerRunner keeps its mu so warm-daemon jobs stay serial there.
+	PoolSize int
 	Plugins      *plugins.Host // optional; nil disables post-job hook
 	Metrics      WorkerMetricsRecorder
+
+	inflight atomic.Int64
 }
 
 type WorkerQueue interface {
@@ -181,6 +192,57 @@ func (c *WorkerConsumer) Ready(ctx context.Context) error {
 }
 
 func (c *WorkerConsumer) Run(ctx context.Context) error {
+	n := c.workerCount()
+	if n <= 1 {
+		return c.runSerial(ctx)
+	}
+	child, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var wg sync.WaitGroup
+	errCh := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := c.runSerial(child); err != nil && err != context.Canceled && err != child.Err() {
+				select {
+				case errCh <- err:
+				default:
+				}
+				cancel()
+			}
+		}()
+	}
+	wg.Wait()
+	select {
+	case err := <-errCh:
+		return err
+	default:
+	}
+	return ctx.Err()
+}
+
+// workerCount normalizes PoolSize: unset/non-positive keeps the legacy
+// single worker; the ceiling bounds FileSpool ReadDir fan-out per poll.
+func (c *WorkerConsumer) workerCount() int {
+	if c == nil || c.PoolSize <= 0 {
+		return 1
+	}
+	if c.PoolSize > 32 {
+		return 32
+	}
+	return c.PoolSize
+}
+
+// Inflight reports jobs currently leased-and-executing across Run workers.
+func (c *WorkerConsumer) Inflight() int64 {
+	if c == nil {
+		return 0
+	}
+	return c.inflight.Load()
+}
+
+func (c *WorkerConsumer) runSerial(ctx context.Context) error {
 	pollInterval := c.PollInterval
 	if pollInterval <= 0 {
 		pollInterval = defaultWorkerPollInterval
@@ -222,6 +284,8 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	if lease == nil {
 		return true, nil
 	}
+	c.inflight.Add(1)
+	defer c.inflight.Add(-1)
 	leasedAt := time.Now()
 
 	job, found, err := c.Jobs.Get(ctx, lease.JobID())

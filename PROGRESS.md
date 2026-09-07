@@ -2,6 +2,19 @@
 
 Last updated: 2026-09-07
 
+## 2026-09-07 Parallel worker-consumer pool (UBAG_WORKER_CONCURRENCY)
+
+Serial `WorkerConsumer.Run` → N parallel lease-process workers. Default
+`PoolSize=1` keeps legacy behavior byte-identical; `UBAG_WORKER_CONCURRENCY`
+(1-32, fail-closed on non-positive) opts into overlap. FileSpool rename-CAS
++ NATS fetch+ack are safe for concurrent `LeaseNext`; `ProcessWorkerRunner`
+stays stateless so mock/per-job jobs truly overlap; `DaemonWorkerRunner` keeps
+its mu so warm-daemon jobs stay serial. `Inflight()` atomic tracks
+leased-and-executing jobs. New tests: workerCount defaults/clamp + 2-job
+overlap proof (both runners entered before either finishes). Wired through
+`serve.go`, both compose files, and both env.examples. Go verification via CI
+(no local toolchain); `git diff --check` clean locally.
+
 ## 2026-09-07 OpenAI facade for OET provider integration + deployed
 
 UBAG is now consumable as a drop-in OpenAI-compatible AI provider by

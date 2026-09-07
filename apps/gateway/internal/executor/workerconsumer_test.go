@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1495,5 +1496,125 @@ func TestWorkerConsumerReleasesConcurrencyTokenOnTerminalFailure(t *testing.T) {
 				t.Fatalf("concurrency token leaked on terminal status %s: lane still at capacity", tc.wantStatus)
 			}
 		})
+	}
+}
+
+func TestWorkerConsumerWorkerCountDefaultsAndClamps(t *testing.T) {
+	var nilConsumer *WorkerConsumer
+	if got := nilConsumer.workerCount(); got != 1 {
+		t.Fatalf("nil workerCount = %d, want 1", got)
+	}
+	for _, tc := range []struct{ in, want int }{{0, 1}, {-2, 1}, {1, 1}, {4, 4}, {32, 32}, {99, 32}} {
+		if got := (&WorkerConsumer{PoolSize: tc.in}).workerCount(); got != tc.want {
+			t.Fatalf("PoolSize=%d workerCount = %d, want %d", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestWorkerConsumerParallelRunOverlapsJobs(t *testing.T) {
+	store := jobstore.NewMemoryStore()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	jobIDs := []string{}
+	for i, trace := range []string{"trace_parallel_1", "trace_parallel_2"} {
+		job, err := store.Create(context.Background(), jobstore.CreateRequest{
+			APIVersion:     "2026-05-22",
+			TenantID:       "tenant_a",
+			AppID:          "app_a",
+			IdempotencyKey: "idem_parallel_" + trace,
+			Target:         "mock",
+			CommandType:    "submit",
+			Input:          map[string]any{"prompt": "hello", "n": i},
+			TraceID:        trace,
+		})
+		if err != nil {
+			t.Fatalf("Create returned error: %v", err)
+		}
+		if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+			t.Fatalf("EnqueueJob returned error: %v", err)
+		}
+		jobIDs = append(jobIDs, job.ID)
+	}
+
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	var inRun atomic.Int64
+	var maxSeen atomic.Int64
+	runner := WorkerRunFunc(func(ctx context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+		cur := inRun.Add(1)
+		for {
+			old := maxSeen.Load()
+			if cur <= old || maxSeen.CompareAndSwap(old, cur) {
+				break
+			}
+		}
+		started <- envelope.JobID
+		select {
+		case <-release:
+		case <-ctx.Done():
+			inRun.Add(-1)
+			return nil, ctx.Err()
+		}
+		inRun.Add(-1)
+		return []jobstore.WorkerEvent{
+			{EventID: "evt_done_" + envelope.JobID, JobID: envelope.JobID, APIVersion: envelope.APIVersion, Type: "completed", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "ok"}}},
+		}, nil
+	})
+	consumer := WorkerConsumer{
+		Spool:        dispatcher,
+		Jobs:         store,
+		Runner:       runner,
+		PoolSize:     2,
+		PollInterval: 5 * time.Millisecond,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	runErr := make(chan error, 1)
+	go func() { runErr <- consumer.Run(ctx) }()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			cancel()
+			t.Fatalf("only %d/2 jobs started; pool did not overlap", i)
+		}
+	}
+	if got := maxSeen.Load(); got < 2 {
+		cancel()
+		t.Fatalf("max concurrent runner executions = %d, want >= 2", got)
+	}
+	close(release)
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		done := 0
+		for _, id := range jobIDs {
+			loaded, found, err := store.Get(context.Background(), id)
+			if err != nil || !found {
+				cancel()
+				t.Fatalf("Get found=%v err=%v", found, err)
+			}
+			if loaded.Status == jobstore.StatusCompleted {
+				done++
+			}
+		}
+		if done == len(jobIDs) {
+			break
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatalf("only %d/%d jobs completed", done, len(jobIDs))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-runErr:
+		if err != nil && err != context.Canceled && err != context.DeadlineExceeded {
+			t.Fatalf("Run returned error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not stop after cancel")
 	}
 }

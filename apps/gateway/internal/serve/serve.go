@@ -1181,6 +1181,14 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 	if err != nil {
 		return nil, err
 	}
+	workerConcurrency, err := intFromEnv("UBAG_WORKER_CONCURRENCY", 1)
+	if err != nil {
+		return nil, err
+	}
+	if workerConcurrency > 32 {
+		slog.Warn("ubag worker concurrency clamped", "requested", workerConcurrency, "applied", 32)
+		workerConcurrency = 32
+	}
 	python, err := resolveExecutablePath(getenv("UBAG_WORKER_PYTHON", "python"))
 	if err != nil {
 		return nil, err
@@ -1218,6 +1226,7 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 		Topology:         topologyIngestor,
 		LoginState:       loginStateWriter,
 		PollInterval:     pollInterval,
+		PoolSize:         workerConcurrency,
 		Runner:           runner,
 	}, nil
 }

@@ -52,6 +52,7 @@ services:
       UBAG_WORKER_SCRIPT: ${UBAG_WORKER_SCRIPT:-/app/apps/worker/run_mock_worker.py}
       UBAG_WORKER_POLL_INTERVAL_MS: ${UBAG_WORKER_POLL_INTERVAL_MS:-500}
       UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-120000}
+      UBAG_WORKER_CONCURRENCY: ${UBAG_WORKER_CONCURRENCY:-1}
       # Opt-in stale-job reaper: times out jobs stuck non-terminal (crashed
       # worker) and releases their concurrency-lane token. Default MaxLifetime is
       # idle-time since last update — a progressing job is never reaped.

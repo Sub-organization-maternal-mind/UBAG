@@ -112,6 +112,7 @@ services:
       # Production benchmark (2026-08-10) selected 150 ms for the file-spool
       # hot path while retaining sub-1% idle gateway CPU.
       UBAG_WORKER_POLL_INTERVAL_MS: ${UBAG_WORKER_POLL_INTERVAL_MS:-150}
+      UBAG_WORKER_CONCURRENCY: ${UBAG_WORKER_CONCURRENCY:-1}
       # Live provider jobs (page loads, streamed responses) need more headroom
       # than mock jobs; matches the verified local live-runtime setting.
       # Covers auth readiness (57 s), manual login (300 s), three bounded
