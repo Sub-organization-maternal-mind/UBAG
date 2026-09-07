@@ -395,6 +395,13 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 		outcome = facadeOutcomeRejected
 		return
 	}
+	// JSON-coercion hint: provider web UIs answer in prose unless the task
+	// explicitly demands JSON. When the OET caller asked for a JSON shape,
+	// say so in the provider prompt as well — the gateway-side extractor
+	// still enforces the guarantee on the way out.
+	if jsonMode == facadeJSONCoerce {
+		prompt = "Return your answer as a single JSON object or array only, with no surrounding prose or markdown fences.\n\n" + prompt
+	}
 
 	wait := s.facadeMaxWait
 	if req.UbagWaitMs != nil {
