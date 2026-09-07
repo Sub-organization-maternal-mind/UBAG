@@ -2,6 +2,32 @@
 
 Last updated: 2026-09-07
 
+## 2026-09-07 Duck.ai Web provider (`duckai_web`) integration (unverified baseline)
+
+Duck.ai (https://duck.ai/) is now a first-class Web Provider alongside
+chatgpt_web/gemini_web: `adapters/duckai_web/` manifest + `DuckaiWebAdapter`
+(fail-closed `run`, `run_live` via `LiveSessionEngine`) + `DUCKAI_WEB`
+selectors (`selector_version 2026-09-07-duckai-baseline-unverified`) registered
+in `PROVIDER_SELECTORS`; `registry.json` + `REQUIRED_ADAPTER_IDS`; gateway
+target/adapter catalogs + warm-daemon routing; dashboard Jobs/Workflows
+provider lists; small-profile topology registrar now seeds a 4th
+`ctx/tab_prod_duckai` context (counts 3→4); `check-small-deployment` terms.
+Manifest declares free-tier `model_catalog` (9 picker-reported labels; Plus/Pro
+excluded until a subscribed session verifies them), `file_attach`, and
+`manual_required` safe-mode posture. Model setting ships `required=False` so a
+renamed picker warns instead of blocking before the live baseline lands.
+
+Focused verification: worker `test_adapter_registry` 13/13,
+`test_live_adapters` 29/29, `test_provider_config` 17/17, `test_attachments`
+10/10; TS `@ubag/adapter-registry` 21/21; `check-small-deployment` pass; ruff
+clean; `git diff --check` clean. Go verification via CI (no local toolchain).
+
+Still required before calling it live: read-only live-DOM baseline (prompt /
+submit / response / auth / streaming groups, exact free picker labels, file
+input at rest vs chooser trigger, new-chat control), then bump
+`selector_version` + flip the model setting to `required=True`, then one VPS
+exact-token smoke job.
+
 ## 2026-09-07 Parallel worker-consumer pool (UBAG_WORKER_CONCURRENCY)
 
 Serial `WorkerConsumer.Run` → N parallel lease-process workers. Default

@@ -45,6 +45,10 @@
     {
       "id": "perplexity_web",
       "manifest": "perplexity_web/manifest.json"
+    },
+    {
+      "id": "duckai_web",
+      "manifest": "duckai_web/manifest.json"
     }
   ]
 }

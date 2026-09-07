@@ -20,7 +20,7 @@ INSERT INTO gateway_browser_instances (
   context_count, tab_count, created_at
 ) VALUES (
   :'instance_id', :'worker_id', :'tenant_id', 'chromium', :'remote_endpoint',
-  'ready', 3, 3, now()
+  'ready', 4, 4, now()
 )
 ON CONFLICT (instance_id) DO UPDATE SET
   worker_id = EXCLUDED.worker_id,
@@ -57,7 +57,8 @@ INSERT INTO gateway_provider_contexts (
 ) VALUES
   ('ctx_prod_chatgpt', :'instance_id', :'tenant_id', 'chatgpt_web', 'production-manual-openai', 'unknown', 'spa-singleton', 2, now(), now()),
   ('ctx_prod_gemini', :'instance_id', :'tenant_id', 'gemini_web', 'production-manual-google', 'authenticated', 'spa-singleton', 2, now(), now()),
-  ('ctx_prod_deepseek', :'instance_id', :'tenant_id', 'deepseek_web', 'production-manual-deepseek', 'authenticated', 'spa-singleton', 2, now(), now())
+  ('ctx_prod_deepseek', :'instance_id', :'tenant_id', 'deepseek_web', 'production-manual-deepseek', 'authenticated', 'spa-singleton', 2, now(), now()),
+  ('ctx_prod_duckai', :'instance_id', :'tenant_id', 'duckai_web', 'production-manual-duckai', 'unknown', 'spa-singleton', 2, now(), now())
 ON CONFLICT (context_id) DO UPDATE SET
   instance_id = EXCLUDED.instance_id,
   tenant_id = EXCLUDED.tenant_id,
@@ -72,7 +73,8 @@ INSERT INTO gateway_browser_tabs (
 ) VALUES
   ('tab_prod_chatgpt', 'ctx_prod_chatgpt', 'warming', 'https://chatgpt.com/', 0, now(), now()),
   ('tab_prod_gemini', 'ctx_prod_gemini', 'ready', 'https://gemini.google.com/app', 0, now(), now()),
-  ('tab_prod_deepseek', 'ctx_prod_deepseek', 'ready', 'https://chat.deepseek.com/', 0, now(), now())
+  ('tab_prod_deepseek', 'ctx_prod_deepseek', 'ready', 'https://chat.deepseek.com/', 0, now(), now()),
+  ('tab_prod_duckai', 'ctx_prod_duckai', 'warming', 'https://duck.ai/', 0, now(), now())
 ON CONFLICT (tab_id) DO UPDATE SET
   context_id = EXCLUDED.context_id,
   state = EXCLUDED.state,

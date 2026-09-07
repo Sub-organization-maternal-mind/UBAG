@@ -38,6 +38,7 @@ _LIVE_PROVIDERS = (
     "gemini_web",
     "mistral_lechat",
     "perplexity_web",
+    "duckai_web",
 )
 
 _MANUAL_CONTEXT = {

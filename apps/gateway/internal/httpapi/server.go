@@ -3216,6 +3216,7 @@ func targetCatalog() []map[string]any {
 		{"key": "gemini_web", "adapter_key": "gemini_web", "display_name": "Gemini Web", "safe_mode": true, "manual_login_required": true},
 		{"key": "mistral_lechat", "adapter_key": "mistral_lechat", "display_name": "Mistral Le Chat", "safe_mode": true, "manual_login_required": true},
 		{"key": "perplexity_web", "adapter_key": "perplexity_web", "display_name": "Perplexity Web", "safe_mode": true, "manual_login_required": true},
+		{"key": "duckai_web", "adapter_key": "duckai_web", "display_name": "Duck.ai Web", "safe_mode": true, "manual_login_required": true},
 		{"key": "generic_chat", "adapter_key": "generic_chat", "display_name": "Generic Chat", "safe_mode": true, "manual_login_required": true},
 		{"key": "generic_form", "adapter_key": "generic_form", "display_name": "Generic Form", "safe_mode": true, "manual_login_required": true},
 	}
@@ -3230,6 +3231,7 @@ func adapterCatalog() []map[string]any {
 		{"key": "gemini_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
 		{"key": "mistral_lechat", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
 		{"key": "perplexity_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
+		{"key": "duckai_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
 		{"key": "generic_chat", "kind": "browser", "stage": "v0", "capabilities": []string{"manual_login", "submit", "extract", "normalize"}},
 		{"key": "generic_form", "kind": "browser", "stage": "v0", "capabilities": []string{"manual_login", "submit", "extract", "normalize"}},
 	}

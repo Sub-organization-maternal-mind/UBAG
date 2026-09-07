@@ -842,6 +842,114 @@ PERPLEXITY_WEB = ProviderSelectors(
 )
 
 
+# ---------------------------------------------------------------------------
+# Duck.ai Web (https://duck.ai/) — DuckDuckGo's private multi-model chat.
+#
+# TODO(drift): re-confirm every selector group against the live site and bump
+# ``selector_version`` + each group's ``baseline_version`` when verified. The
+# model picker labels below are the free-tier lineup reported 2026-09-07; only
+# picker-visible labels may ship (the gateway rejects anything else). The model
+# setting is required=False until the picker open-path is confirmed live, so a
+# renamed control warns instead of blocking jobs before the baseline lands.
+# ---------------------------------------------------------------------------
+
+DUCKAI_WEB = ProviderSelectors(
+    provider_id="duckai_web",
+    display_name="Duck.ai Web",
+    target_url="https://duck.ai/",
+    selector_version="2026-09-07-duckai-baseline-unverified",
+    prompt_input=SelectorGroup(
+        "prompt_input",
+        (
+            "textarea[placeholder*='Message']",
+            "textarea[placeholder*='Ask']",
+            "textarea",
+            "div[contenteditable='true']",
+        ),
+    ),
+    submit_button=SelectorGroup(
+        "submit_button",
+        (
+            "button[type='submit']",
+            "button[aria-label*='Send']",
+            "button[aria-label*='Submit']",
+        ),
+    ),
+    response_container=SelectorGroup(
+        "response_container",
+        (
+            "div[class*='assistant']",
+            "div[class*='prose']",
+            "div.markdown",
+            "div.prose",
+        ),
+    ),
+    authenticated_signal=SelectorGroup(
+        "authenticated_signal",
+        (
+            "textarea[placeholder*='Message']",
+            "textarea[placeholder*='Ask']",
+            "div[contenteditable='true']",
+            "nav",
+        ),
+    ),
+    login_signal=SelectorGroup(
+        "login_signal",
+        (
+            "a[href*='login']",
+            "text=Sign in",
+            "input[type='password']",
+        ),
+    ),
+    streaming_indicator=SelectorGroup(
+        "streaming_indicator",
+        (
+            "button[aria-label*='Stop']",
+            ".result-streaming",
+            "div[data-streaming='true']",
+        ),
+    ),
+    drift_signature_nodes=("main", "textarea"),
+    file_input=SelectorGroup(
+        "file_input",
+        (
+            # TODO(drift): confirm live whether Duck.ai renders a file input at
+            # rest or injects it behind an upload-menu chooser (Gemini pattern).
+            # file_attach is declared in the manifest, so this group must resolve
+            # before any attachment job can run.
+            "input[type='file']",
+            "input[accept*='image']",
+            "input[accept*='audio']",
+        ),
+    ),
+    new_chat=SelectorGroup(
+        "new_chat",
+        (
+            "button[aria-label*='New chat']",
+            "[aria-label*='New chat']",
+            "button:has-text('New chat')",
+        ),
+    ),
+    settings=(
+        ProviderSetting(
+            key="model",
+            kind="choice",
+            desired="GPT-5.4 mini",
+            open_steps=(
+                (
+                    "button[aria-label*='model' i]",
+                    "button[aria-label*='Model' i]",
+                    "[aria-label*='Model' i]",
+                ),
+            ),
+            satisfied_when="[aria-selected='true']:has-text(\"{value}\")",
+            apply_click="[role='option']:has-text(\"{value}\")",
+            required=False,
+        ),
+    ),
+)
+
+
 def live_web_template(
     provider_id: str,
     display_name: str,
@@ -964,6 +1072,7 @@ PROVIDER_SELECTORS = {
         GEMINI_WEB,
         MISTRAL_LECHAT,
         PERPLEXITY_WEB,
+        DUCKAI_WEB,
         GENERIC_LIVE_WEB,
     )
 }
@@ -981,6 +1090,7 @@ __all__ = [
     "CLAUDE_WEB",
     "DEEPSEEK_WEB",
     "GEMINI_WEB",
+    "DUCKAI_WEB",
     "GENERIC_LIVE_WEB",
     "MISTRAL_LECHAT",
     "PERPLEXITY_WEB",

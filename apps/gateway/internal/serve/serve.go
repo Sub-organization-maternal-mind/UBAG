@@ -1076,6 +1076,7 @@ var warmDaemonTargets = map[string]struct{}{
 	"gemini_web":     {},
 	"mistral_lechat": {},
 	"perplexity_web": {},
+	"duckai_web":     {},
 }
 
 // targetWorkerRunner keeps non-live adapters on the normal per-job worker even

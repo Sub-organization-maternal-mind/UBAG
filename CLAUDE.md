@@ -32,7 +32,7 @@ Self-hostable platform that lets applications drive web-based AI and automation 
 
 - `apps/gateway` (Go): health/readiness/version, jobs, scoped cross-job events (SSE), idempotency, app-secret auth, artifacts, template catalog, executor dispatch, worker result ingestion, signed webhook outbox. Runtime uses the in-memory store by default; Postgres/MinIO only when explicitly configured.
 - `apps/worker` (Python): v0 worker; JSONL runner drives provider adapters. A warm-browser daemon + stdin/stdout protocol exists behind flags (inert by default — see conventions).
-- `adapters/`: safe-mode manifests + stubs per provider (chatgpt_web, claude_web, gemini_web, deepseek_web, mistral_lechat, perplexity_web, generic_chat, generic_form, mock) with `registry.json` as the index.
+- `adapters/`: safe-mode manifests + stubs per provider (chatgpt_web, claude_web, gemini_web, deepseek_web, mistral_lechat, perplexity_web, duckai_web, generic_chat, generic_form, mock) with `registry.json` as the index.
 - `packages/`: contracts first — `openapi/`, `shared-schemas/`, `proto/` define the API; `sdk-typescript/` + `sdk-go/` are validated against shared `conformance/` fixtures; plus `security/` (auth, RBAC/ABAC, audit, webhook signing contracts), `edge-store/` (SQLite/localfs store + queue contracts; `migrations/` at repo root), `observability/`, `cli/`, `sidecar/` + `sidecar-rust/`, `adapter-registry/`, `plugins/`.
 - `tools/`: the `check-*.mjs` / `run-*.mjs` scripts behind the pnpm `test:*` and `check:*` commands.
 - `deploy/` + `docker-compose.small.yml`: small self-host profile; `deploy/operator` is Go.

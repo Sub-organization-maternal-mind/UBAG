@@ -459,6 +459,7 @@ func TestAdapterCatalogExposesAttachmentPolicyForLiveProvidersOnly(t *testing.T)
 	live := map[string]bool{
 		"chatgpt_web": false, "claude_web": false, "deepseek_web": false,
 		"gemini_web": false, "mistral_lechat": false, "perplexity_web": false,
+		"duckai_web": false,
 	}
 	for _, adapter := range payload.Data {
 		key, _ := adapter["key"].(string)

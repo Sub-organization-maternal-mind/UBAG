@@ -20,6 +20,7 @@ The blueprint names multiple web AI targets, but Milestone 0 should prevent the 
 | `gemini_web` | Prompt run and prompt stream. | Manual login required. | Scope file and app integrations separately. |
 | `mistral_lechat` | Prompt run and prompt stream. | Manual login required. | Keep model/provider UI variants explicit. |
 | `perplexity_web` | Prompt run with citation-style output. | Manual login required. | Normalize answer and source sections separately. |
+| `duckai_web` | Prompt run and prompt stream across Duck.ai's free multi-model picker. | Manual login required. | Free tier is anonymous; keep picker labels to picker-verified free models only. |
 
 No adapter is considered production-ready because it exists in the list. Each one must pass rollout gates.
 

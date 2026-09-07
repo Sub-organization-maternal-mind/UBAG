@@ -18,6 +18,7 @@
     { key: 'chatgpt_web', label: 'ChatGPT' },
     { key: 'gemini_web', label: 'Gemini' },
     { key: 'deepseek_web', label: 'DeepSeek' },
+    { key: 'duckai_web', label: 'Duck.ai' },
   ];
 
   let items = $state<Workflow[]>([]);

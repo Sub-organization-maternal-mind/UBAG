@@ -41,6 +41,7 @@ REQUIRED_ADAPTER_IDS = (
     "gemini_web",
     "mistral_lechat",
     "perplexity_web",
+    "duckai_web",
 )
 
 _FORBIDDEN_SAFE_MODE_FIELDS = (

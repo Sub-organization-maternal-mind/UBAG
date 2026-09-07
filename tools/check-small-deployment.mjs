@@ -122,7 +122,8 @@ requireTerms('deploy/small/register-browser-topology.sh', [
   'gateway_browser_tabs',
   'chatgpt_web',
   'gemini_web',
-  'deepseek_web'
+  'deepseek_web',
+  'duckai_web'
 ]);
 
 requireTerms('deploy/small/sync-browser-topology.sh', [

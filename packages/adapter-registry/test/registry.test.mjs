@@ -20,6 +20,7 @@ test('loads and validates every adapter listed in registry.json', () => {
   const ids = registry.list().map((entry) => entry.id);
   assert.ok(ids.includes('mock'));
   assert.ok(ids.includes('chatgpt_web'));
+  assert.ok(ids.includes('duckai_web'));
   assert.equal(index.schema_version, 'ubag.adapters.index.v1');
   assert.equal(index.adapters.length, registry.list().length);
 
@@ -40,6 +41,9 @@ test('get / getManifest resolve by id and alias', () => {
   // chatgpt_web declares the alias "chatgpt"
   const resolved = registry.resolve('chatgpt');
   assert.equal(resolved?.id, 'chatgpt_web');
+  // duckai_web declares the alias "duckai"
+  assert.equal(registry.resolve('duckai')?.id, 'duckai_web');
+  assert.equal(registry.get('duckai_web')?.drift.baseline_required, true);
 });
 
 test('capability, status, and command-type filters work', () => {

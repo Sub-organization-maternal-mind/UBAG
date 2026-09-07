@@ -103,6 +103,7 @@ func TestWorkerDaemonRoutesOnlyLiveWebTargets(t *testing.T) {
 		"gemini_web",
 		"mistral_lechat",
 		"perplexity_web",
+		"duckai_web",
 	} {
 		_, err := runner.RunWorker(context.Background(), executor.DispatchEnvelope{
 			Job: executor.DispatchJob{Target: target},
@@ -120,8 +121,8 @@ func TestWorkerDaemonRoutesOnlyLiveWebTargets(t *testing.T) {
 		}
 	}
 
-	if len(daemonTargets) != 6 {
-		t.Fatalf("daemon targets = %v, want all six live web providers", daemonTargets)
+	if len(daemonTargets) != 7 {
+		t.Fatalf("daemon targets = %v, want all seven live web providers", daemonTargets)
 	}
 	if len(fallbackTargets) != 4 {
 		t.Fatalf("fallback targets = %v, want mock/generic/unknown", fallbackTargets)

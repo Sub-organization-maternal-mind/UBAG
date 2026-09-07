@@ -58,7 +58,7 @@ In `apps/worker/ubag_worker/`:
 - `live/engine.py` / `live/engines.py` → **`LiveSessionEngine`** (orchestrates a run; emits the manual-action / token / completed events).
 - `live/events.py` → live event types (check how these map to `jobstore.WorkerEvent` JSONL).
 - `live/selectors.py` → per-provider `ProviderSelectors` + `PROVIDER_SELECTORS`.
-- `adapter_registry.py` + `adapters/<provider>/` (chatgpt_web, claude_web, deepseek_web, gemini_web, mistral_lechat, perplexity_web, generic_chat, generic_form, mock) — each adapter `run()` fails closed (safe-mode); `run_live()` delegates to `LiveSessionEngine`.
+- `adapter_registry.py` + `adapters/<provider>/` (chatgpt_web, claude_web, deepseek_web, gemini_web, mistral_lechat, perplexity_web, duckai_web, generic_chat, generic_form, mock) — each adapter `run()` fails closed (safe-mode); `run_live()` delegates to `LiveSessionEngine`.
 - `live/ONBOARDING.md` documents the live adapter design + invariants (ToS-safe: never logs in, never ingests cookies/credentials, never solves CAPTCHAs).
 - `run_mock_worker.py` = thin wrapper → `ubag_worker.cli.main` (mock). `cli.py` is **mock only**.
 
