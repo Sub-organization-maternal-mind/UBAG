@@ -65,6 +65,13 @@ OET PAT gitignore). Go verification runs via CI (no local toolchain).
   scoping. `stream:true` → 400 `streaming_unsupported`.
 - Rollback: prior image tag + `env.local.pre-oet-facade-*` backup; PAT
   revocation is store-level; OET-side rollback is route-row toggles.
+- CI follow-up (commit `ae91dc0`): the SDK conformance runner executes every
+  `scenarios[]` entry through a real SDK client method, so the 5 new facade
+  executable scenarios failed with `No SDK mapping`. The facade intentionally
+  has no SDK methods (OET consumes plain OpenAI HTTP); the scenarios moved
+  to non-executable `coverage_scenarios` (executable coverage stays in the
+  Go handler tests + `job_000000000259` smoke). TS conformance re-verified
+  green locally (49/49) before push.
 
 **OET side (separate repo, working tree — NOT pushed):**
 - `UbagProviderSeeder` (Code=`ubag`, OpenAiCompatible,
