@@ -87,9 +87,15 @@ OET PAT gitignore). Go verification runs via CI (no local toolchain).
   confirm modal, locked Group E, provider card with Test/Discover/Rotate
   PAT/Activate) + 5 vitest green + `tsc` clean + `ship:gate` OK; preset +
   board link + permission entry; `docs/AI-USAGE-POLICY.md` §19.
-- Remaining: push via OET ship-it flow, set `UBAG_OET_PAT` (value in
-  `.oet-pat.json` on VPS) or paste PAT in admin, Test → OK, enable Group A
-  via the board, monitor, staircase B/C/D per plan.
+- OET push outcome: main had moved +91 commits with a parallel session's
+  dirty tree blocking rebase/merge, so the commit shipped as remote branch
+  `feat/ubag-provider-board` (`2a4a28d0`, verified on origin; repo flipped
+  back to PRIVATE). Nothing lost on either side. Merge path: rebase the
+  branch onto main after the parallel work lands, then run the OET ship-it
+  flow (public → push → watch Build & Deploy → private + health gates).
+- Remaining after merge: set `UBAG_OET_PAT` (value in VPS
+  `.oet-pat.json`) or paste PAT in admin, Test → OK, enable Group A via
+  the board, monitor, staircase B/C/D per plan.
 
 ## 2026-09-07 Performance program complete + deployed (all 8 phases)
 
