@@ -2,6 +2,48 @@
 
 Last updated: 2026-09-07
 
+## 2026-09-07 Facade file attachments (`ubag_attachments`) + deployed
+
+Group E gap analysis (OET admin board, `/admin/ai-providers/ubag`) showed the
+only hard UBAG-side capability gap behind the locked rows is binary input:
+PDF/image/audio OCR+transcription can only be served by driving the provider
+web UIs with attached files — which the native job API already supports
+(key-reference + multipart one-shot, per-target manifest policy) but the
+OpenAI facade refused. Closed on the facade (commits `ee39071`+`0e61d05`):
+
+- `POST /v1/openai/chat/completions` accepts `ubag_attachments` (`{key,
+  content_type, kind, [filename]}`): shape-checked at the facade,
+  policy-checked by the shared `validateAttachmentsForCreate` path
+  (fail-closed for `mock`/policy-less targets, per-adapter content-type
+  allowlist, 32-file ceiling).
+- A declaring call answers **202** (`OpenAIChatCompletionAccepted`: held
+  `ubag_job_id`, status `created`); caller PUTs each key to
+  `PUT /v1/jobs/{id}/artifacts/{key}`, the job dispatches on completion, then
+  poll `GET /v1/jobs/{id}` or replay the same facade body resolves the
+  `chat.completion`. No second connection held while uploads land.
+- Idempotency fingerprint now includes attachment declarations (identical
+  replays rejoin the same held job).
+- Contracts-first: OpenAPI request field + 202 response schema (redocly
+  clean), `check:contracts` green, SDK manifests fresh, new conformance
+  coverage scenario (`openai.chat.completions.attachments`), Go handler tests
+  (202-held, PUT-dispatch, replay-resolve, shape/policy rejections).
+- CI: Gateway `go test -race` + Integration + Node + Worker + Operator all
+  green on the change; Lint & contracts flagged a PRE-EXISTING gofmt
+  misalignment in `apps/gateway/internal/executor/workerconsumer.go`
+  (from `6ee6856`, same file on runs before/after this change) — fixed as
+  `d6706c1` (PoolSize-group struct alignment), after which the full ci run is
+  green including gofmt + go vet.
+- Deployed to VPS `185.252.233.186` (tarball sync, gateway+chat-reaper
+  recreated, `/v1/ready` fully true, 0 panics): deploy smoke with the OET PAT
+  proved text-only still 200 (`job_000000000269`), a chatgpt_web declaring
+  call 202-held (`job_000000000270`), bad declarations 400, and `mock`
+  attachment rejection 400. No PAT copies linger (helpers in /tmp, removed).
+- Remaining Group E rows by kind: OCR/transcription/summarise-JSON are now
+  servable through this facade shape (OET-side routing work still needed);
+  direct-Claude listening extract/score + Whisper-ASR + embeddings + strict
+  JSON are OET-backend integration points, not UBAG gaps — tracked for the
+  OET-side plan.
+
 ## 2026-09-07 Duck.ai Web provider (`duckai_web`) integration (unverified baseline)
 
 Duck.ai (https://duck.ai/) is now a first-class Web Provider alongside

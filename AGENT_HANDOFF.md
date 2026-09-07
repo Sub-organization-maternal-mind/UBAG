@@ -2,6 +2,22 @@
 
 Last updated: 2026-09-07
 
+## Production integration state (2026-09-07 facade attachments live)
+
+VPS `185.252.233.186` gateway serves the OpenAI facade WITH `ubag_attachments`
+(rebuilt from main `d6706c1`, `/v1/ready` fully true, 0 panics): file
+attachments (PDF/image/audio/video/voice) now flow through facade calls —
+declare in the body, 202-held `ubag_job_id`, PUT each key to
+`/v1/jobs/{id}/artifacts/{key}`, poll/replay resolves the completion.
+Per-target manifest policy enforced (ChatGPT/Claude/Gemini/Mistral/Perplexity
+full file kinds; DeepSeek docs+images; Duck.ai PDF+images; `mock` rejects).
+Deploy smoke `job_000000000269` (text 200) + `job_000000000270` (202-held).
+Group E status: OCR/transcription/summarise-JSON now servable via this shape
+(OET-side routing still needed); direct-Claude listening, Whisper-ASR,
+embeddings, strict-JSON are OET-backend integration points, not UBAG gaps.
+Rollback: prior image + env.local backup (unchanged). Full evidence in
+`PROGRESS.md` top section.
+
 ## Production integration state (2026-09-07 OpenAI facade for OET)
 
 VPS `185.252.233.186` gateway now serves the OpenAI facade live:
