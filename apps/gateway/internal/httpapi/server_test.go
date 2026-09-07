@@ -1588,6 +1588,20 @@ func TestOptionsWithProviderConfig(t *testing.T) {
 		}
 	})
 
+	// The facade's best-effort marker composes with validated model pins:
+	// marker first, pins on top — skip-if-drifted AND pin-if-present.
+	t.Run("marker merges with model_settings", func(t *testing.T) {
+		opts := map[string]any{"provider_config": map[string]any{"_enabled": false}}
+		got := optionsWithProviderConfig(opts, map[string]any{"model": "GPT-5.6 Sol"})
+		pc, ok := got["provider_config"].(map[string]any)
+		if !ok {
+			t.Fatalf("options.provider_config missing: %#v", got)
+		}
+		if pc["_enabled"] != false || pc["model"] != "GPT-5.6 Sol" {
+			t.Fatalf("marker+pins must compose: %#v", pc)
+		}
+	})
+
 	// (c) With neither a client provider_config nor model settings, the options
 	// are returned unchanged so non-model callers are unaffected.
 	t.Run("identity when neither present", func(t *testing.T) {

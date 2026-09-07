@@ -3321,15 +3321,24 @@ func optionsWithProviderConfig(options map[string]any, modelSettings map[string]
 	}
 	// Preserve the facade's best-effort marker across the strip: it is the
 	// ONLY client-shaped provider_config the gateway itself mints, it
-	// carries no selector values (just the _enabled gate), and model
-	// settings merge on top of it below.
+	// carries no selector values (just the _enabled gate). Model settings
+	// merge INTO a copy of it below (marker first, then validated pins) so
+	// both compose: skip-if-drifted + pin-if-present.
 	var marker map[string]any
 	if raw, ok := out["provider_config"].(map[string]any); ok && isFacadeBestEffortMarker(raw) {
 		marker = raw
 	}
 	delete(out, "provider_config")
 	if len(providerConfig) > 0 {
-		out["provider_config"] = providerConfig
+		if marker != nil {
+			merged := map[string]any{"_enabled": false}
+			for key, value := range providerConfig {
+				merged[key] = value
+			}
+			out["provider_config"] = merged
+		} else {
+			out["provider_config"] = providerConfig
+		}
 	} else if marker != nil {
 		out["provider_config"] = marker
 	}
