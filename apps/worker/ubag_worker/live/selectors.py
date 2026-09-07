@@ -845,108 +845,158 @@ PERPLEXITY_WEB = ProviderSelectors(
 # ---------------------------------------------------------------------------
 # Duck.ai Web (https://duck.ai/) — DuckDuckGo's private multi-model chat.
 #
-# TODO(drift): re-confirm every selector group against the live site and bump
-# ``selector_version`` + each group's ``baseline_version`` when verified. The
-# model picker labels below are the free-tier lineup reported 2026-09-07; only
-# picker-visible labels may ship (the gateway rejects anything else). The model
-# setting is required=False until the picker open-path is confirmed live, so a
-# renamed control warns instead of blocking jobs before the baseline lands.
+# Baselines below were confirmed read-only against the live site 2026-09-07
+# via CDP (fresh anonymous tab — no login wall; free tier needs no account):
+# composer textarea[name=user-prompt], Send / Stop-generating buttons,
+# model-picker-button (current default "5.6 Luna"), duckai-reasoning-button
+# ("Fast"), duckai-tools-button menu (Create Image / Web Search aria-checked
+# toggles / Customize responses), duckai-attach-button + hidden
+# input[name=upload] (accept: png/jpeg/webp/gif/pdf only), New-Chat button.
+# Model picker + reasoning menus expose role=menuitemradio options; the picker
+# button shows a SHORT label ("5.6 Luna"), so settings verify against the OPEN
+# menu's aria-checked option (ChatGPT pattern), never the closed button.
+# Response-container candidates are still unverified (empty chat renders no
+# answer nodes) — they are only awaited post-submit, never pre-checked.
 # ---------------------------------------------------------------------------
 
 DUCKAI_WEB = ProviderSelectors(
     provider_id="duckai_web",
     display_name="Duck.ai Web",
     target_url="https://duck.ai/",
-    selector_version="2026-09-07-duckai-baseline-unverified",
+    selector_version="2026-09-07-duckai-tools-menu-verified",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
-            "textarea[placeholder*='Message']",
-            "textarea[placeholder*='Ask']",
+            "textarea[name='user-prompt']",
+            "textarea[placeholder*='Ask anything']",
             "textarea",
-            "div[contenteditable='true']",
         ),
+        baseline_version="2026-09-07-live",
     ),
     submit_button=SelectorGroup(
         "submit_button",
         (
+            "button[aria-label='Send']",
             "button[type='submit']",
-            "button[aria-label*='Send']",
             "button[aria-label*='Submit']",
         ),
+        baseline_version="2026-09-07-live",
     ),
     response_container=SelectorGroup(
         "response_container",
         (
             "div[class*='assistant']",
-            "div[class*='prose']",
+            "div[class*='response']",
             "div.markdown",
             "div.prose",
+            "article",
         ),
     ),
     authenticated_signal=SelectorGroup(
         "authenticated_signal",
         (
-            "textarea[placeholder*='Message']",
-            "textarea[placeholder*='Ask']",
-            "div[contenteditable='true']",
+            "textarea[name='user-prompt']",
+            "textarea[placeholder*='Ask anything']",
             "nav",
         ),
+        baseline_version="2026-09-07-live",
     ),
     login_signal=SelectorGroup(
         "login_signal",
         (
+            "input[type='password']",
             "a[href*='login']",
             "text=Sign in",
-            "input[type='password']",
         ),
     ),
     streaming_indicator=SelectorGroup(
         "streaming_indicator",
         (
+            "button[aria-label='Stop generating']",
             "button[aria-label*='Stop']",
             ".result-streaming",
-            "div[data-streaming='true']",
         ),
+        baseline_version="2026-09-07-live",
     ),
-    drift_signature_nodes=("main", "textarea"),
+    drift_signature_nodes=("main", "form", "textarea[name='user-prompt']"),
     file_input=SelectorGroup(
         "file_input",
         (
-            # TODO(drift): confirm live whether Duck.ai renders a file input at
-            # rest or injects it behind an upload-menu chooser (Gemini pattern).
-            # file_attach is declared in the manifest, so this group must resolve
-            # before any attachment job can run.
+            # Hidden at rest (visible=false); the attach button below reveals
+            # the native chooser, which the Playwright driver intercepts.
+            # accept=png/jpeg/webp/gif/pdf — audio/video were never offered.
+            "input[name='upload']",
             "input[type='file']",
-            "input[accept*='image']",
-            "input[accept*='audio']",
+        ),
+        baseline_version="2026-09-07-live",
+    ),
+    file_attach_trigger=(
+        SelectorGroup(
+            "attach_menu_button",
+            (
+                "button[data-testid='duckai-attach-button']",
+                "button[aria-label*='Add images or PDFs']",
+            ),
+            baseline_version="2026-09-07-live",
         ),
     ),
     new_chat=SelectorGroup(
         "new_chat",
         (
-            "button[aria-label*='New chat']",
-            "[aria-label*='New chat']",
-            "button:has-text('New chat')",
+            "button:has-text('New Chat')",
+            "button[aria-label*='New Chat']",
+            "[aria-label*='New Chat']",
         ),
+        baseline_version="2026-09-07-live",
     ),
+    # Order matters: model is enforced BEFORE reasoning, because switching
+    # model can reset the reasoning level (settings apply in declaration
+    # order). Web search rides the Tools menu, which is also opened per job
+    # to confirm the default-off state (one harmless click, Escape-dismissed).
     settings=(
         ProviderSetting(
             key="model",
             kind="choice",
-            desired="GPT-5.4 mini",
+            desired="GPT-5.6 Luna",
             open_steps=(
                 (
-                    "button[aria-label*='model' i]",
-                    "button[aria-label*='Model' i]",
-                    "[aria-label*='Model' i]",
+                    "button[data-testid='model-picker-button']",
                 ),
             ),
-            satisfied_when="[aria-selected='true']:has-text(\"{value}\")",
-            apply_click="[role='option']:has-text(\"{value}\")",
-            required=False,
+            satisfied_when="[role='menuitemradio'][aria-checked='true']:has-text(\"{value}\")",
+            apply_click="[role='menuitemradio']:has-text(\"{value}\")",
+        ),
+        ProviderSetting(
+            key="reasoning",
+            kind="choice",
+            desired="Fast",
+            open_steps=(
+                (
+                    "button[data-testid='duckai-reasoning-button']",
+                ),
+            ),
+            satisfied_when="[role='menuitemradio'][aria-checked='true']:has-text(\"{value}\")",
+            apply_click="[role='menuitemradio']:has-text(\"{value}\")",
+        ),
+        ProviderSetting(
+            key="web_search",
+            kind="toggle",
+            desired=False,
+            open_steps=(
+                (
+                    "button[data-testid='duckai-tools-button']",
+                ),
+            ),
+            on_when=("[aria-checked='true']:has-text(\"Web Search\")",),
+            toggle_click=(
+                "[aria-checked]:has-text(\"Web Search\")",
+                "button:has-text(\"Web Search\")",
+            ),
         ),
     ),
+    # The "Reasoning" level thinks long before answering, so take the longer
+    # reasoning timeout rather than mistaking a think for a hang.
+    reasoning=True,
 )
 
 
