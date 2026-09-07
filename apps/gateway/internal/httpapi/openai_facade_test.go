@@ -139,6 +139,98 @@ func TestEstimateTokens(t *testing.T) {
 	}
 }
 
+func TestFacadeAttachmentsHeldJobResolves(t *testing.T) {
+	srv := NewServer(Config{
+		AppSecret:     "dev-secret",
+		ActorRole:     "service",
+		Executor:      &recordingExecutor{},
+		FacadeMaxWait: 10 * time.Second,
+	})
+	handler := srv.Handler()
+	body := `{"model":"chatgpt_web","messages":[{"role":"user","content":"transcribe the attached audio"}],"ubag_attachments":[{"key":"note.webm","content_type":"audio/webm","kind":"voice"}]}`
+
+	rec := doJSON(handler, http.MethodPost, "/v1/openai/chat/completions", body, authHeaders(""))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("attachment declare status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var accepted openAIFacadeAccepted
+	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil {
+		t.Fatalf("decode 202: %v", err)
+	}
+	if accepted.UbagJobID == "" || accepted.Status != string(jobstore.StatusCreated) {
+		t.Fatalf("accepted = %+v, want ubag_job_id + held status", accepted)
+	}
+
+	listed, err := srv.jobs.List(t.Context(), jobstore.ListFilter{})
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("backing jobs = %v, err = %v", listed, err)
+	}
+	held := listed[0]
+	if held.Status != jobstore.StatusCreated {
+		t.Fatalf("backing job status = %q, want held %q", held.Status, jobstore.StatusCreated)
+	}
+
+	put := doRaw(handler, http.MethodPut, "/v1/jobs/"+held.ID+"/artifacts/note.webm", "fake-opus", "audio/webm", authHeaders("idem_facade_attach_put"))
+	if put.Code != http.StatusCreated {
+		t.Fatalf("artifact put status = %d, want 201; body=%s", put.Code, put.Body.String())
+	}
+
+	traceID := held.TraceID
+	if traceID == "" {
+		traceID = "trace_facade_attach_test"
+	}
+	if _, _, err := srv.jobs.ApplyWorkerEvent(t.Context(), jobstore.WorkerEvent{
+		EventID:    "evt_facade_attach_completion",
+		JobID:      held.ID,
+		APIVersion: held.APIVersion,
+		Type:       "completed",
+		TraceID:    traceID,
+		Data: map[string]any{
+			"status": "completed",
+			"result": map[string]any{"type": "text", "text": "transcript: hello"},
+		},
+	}); err != nil {
+		t.Fatalf("apply completion event: %v", err)
+	}
+
+	// Same body replays the same finished job and resolves the completion.
+	replay := doJSON(handler, http.MethodPost, "/v1/openai/chat/completions", body, authHeaders(""))
+	if replay.Code != http.StatusOK {
+		t.Fatalf("replay status = %d; body=%s", replay.Code, replay.Body.String())
+	}
+	var completion openAIFacadeCompletion
+	if err := json.Unmarshal(replay.Body.Bytes(), &completion); err != nil {
+		t.Fatalf("decode completion: %v", err)
+	}
+	if completion.Choices[0].Message.Content != "transcript: hello" {
+		t.Fatalf("choice content = %q", completion.Choices[0].Message.Content)
+	}
+	if completion.UbagJobID != held.ID {
+		t.Fatalf("job link = %q, want %q", completion.UbagJobID, held.ID)
+	}
+}
+
+func TestFacadeAttachmentsValidation(t *testing.T) {
+	server := facadeTestServer().Handler()
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"missing kind", `{"model":"chatgpt_web","messages":[{"role":"user","content":"hi"}],"ubag_attachments":[{"key":"a.pdf","content_type":"application/pdf"}]}`},
+		{"unknown property", `{"model":"chatgpt_web","messages":[{"role":"user","content":"hi"}],"ubag_attachments":[{"key":"a.pdf","content_type":"application/pdf","kind":"document","size":3}]}`},
+		{"unsupported target", `{"model":"mock","messages":[{"role":"user","content":"hi"}],"ubag_attachments":[{"key":"a.pdf","content_type":"application/pdf","kind":"document"}]}`},
+		{"content type rejected", `{"model":"chatgpt_web","messages":[{"role":"user","content":"hi"}],"ubag_attachments":[{"key":"x.exe","content_type":"application/x-msdownload","kind":"document"}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doJSON(server, http.MethodPost, "/v1/openai/chat/completions", tc.body, authHeaders(""))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
 // A facade call over a non-completing executor hits the wait budget and
 // answers 504 with the still-running job ID in error.param.
 func TestFacadeWaitTimeoutReturnsJobID(t *testing.T) {

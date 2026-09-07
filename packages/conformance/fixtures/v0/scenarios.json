@@ -2838,6 +2838,17 @@
         "tools_unsupported_400",
         "model_not_found_400"
       ]
+    },
+    {
+      "id": "openai.chat.completions.attachments",
+      "category": "openai_compat",
+      "title": "Facade ubag_attachments creates a held job that dispatches once artifact keys land",
+      "assertions": [
+        "held_until_all_keys_present",
+        "content_type_allowlist",
+        "unsupported_target_rejected",
+        "ubag_job_id_link"
+      ]
     }
   ],
   "scenarios": [

@@ -1541,12 +1541,25 @@ paths:
         multimodal content parts are rejected: UBAG has no end-to-end token
         streaming and no tool protocol. Message history is flattened into one
         prompt (system messages first, then turns in order); there is no
-        role-aware tool/result interpretation. Token usage is estimated from
+        role-aware tool/result interpretation. File attachments
+        (PDF/image/audio/video/voice) are supported: declare them in
+        `ubag_attachments` (each `{key, content_type, kind, [filename]}`).
+        A declaring call answers 202 with the held `ubag_job_id`; upload each
+        key with `PUT /v1/jobs/{ubag_job_id}/artifacts/{key}` and the job
+        dispatches once every declared key lands — then poll
+        `GET /v1/jobs/{ubag_job_id}` or replay the same facade body to
+        resolve the chat.completion. Declarations are validated against the
+        target adapter's attachments policy (see GET /v1/adapters); a target
+        with no policy rejects attachments. The provider web UI processes
+        the files and its answer becomes the completion text. A multipart
+        one-shot to POST /v1/jobs (first part `job` = this envelope, then one
+        file part per declared key) dispatches immediately instead. Token usage is estimated from
         character counts because browser workers report DOM deltas, not model
         tokens. When the deadline expires first the facade answers 504 with
         the ubag_job_id so the caller can poll the native job API. Retrying
         an identical body replays the same job: the facade derives the native
-        idempotency key from the caller principal plus the request hash.
+        idempotency key from the caller principal plus the request hash
+        (including attachment declarations).
       parameters:
         - $ref: "#/components/parameters/UbagApiVersion"
       requestBody:
@@ -1565,6 +1578,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/OpenAIChatCompletionResponse"
+        "202":
+          description: Attachment-declaring call accepted; the native job is held until every declared artifact key is uploaded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIChatCompletionAccepted"
         "400":
           description: Rejected request (streaming, tools, unknown model, empty messages).
           content:
@@ -2869,6 +2888,26 @@ components:
           type: integer
           minimum: 1000
           description: Per-request facade wait deadline in milliseconds, capped by the server maximum.
+        ubag_attachments:
+          type: array
+          maxItems: 32
+          description: Native attachment declarations ({key, content_type, kind, [filename]}) for PDF/image/audio/video/voice files. The facade creates a held job; upload each declared key with PUT /v1/jobs/{ubag_job_id}/artifacts/{key} and the facade resolves the completion once every key lands. Validated against the target adapter attachments policy (see GET /v1/adapters); a target with no policy rejects attachments.
+          items:
+            type: object
+            additionalProperties: false
+            required: [key, content_type, kind]
+            properties:
+              key:
+                type: string
+                minLength: 1
+              content_type:
+                type: string
+                minLength: 1
+              kind:
+                type: string
+                enum: [document, image, audio, video, voice]
+              filename:
+                type: string
     OpenAIChatChoice:
       type: object
       additionalProperties: false
@@ -2931,6 +2970,25 @@ components:
         ubag_job_id:
           type: string
           description: Native UBAG job behind this completion, for polling and audit.
+    OpenAIChatCompletionAccepted:
+      type: object
+      additionalProperties: false
+      required: [object, model, ubag_job_id, status, message]
+      properties:
+        object:
+          type: string
+          enum: [chat.completion.chunk]
+        model:
+          type: string
+          description: Echo of the requested model ID.
+        ubag_job_id:
+          type: string
+          description: Held native UBAG job; upload each declared attachment key with PUT /v1/jobs/{ubag_job_id}/artifacts/{key}, then poll GET /v1/jobs/{ubag_job_id} or replay the facade body.
+        status:
+          type: string
+          enum: [created]
+        message:
+          type: string
     OpenAIModel:
       type: object
       additionalProperties: false

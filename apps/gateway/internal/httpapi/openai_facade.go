@@ -23,6 +23,16 @@ import (
 //	POST /v1/openai/chat/completions  (sync long-poll over POST /v1/jobs)
 //	GET  /v1/openai/models            (model IDs the facade accepts)
 //
+// File attachments (PDF/image/audio/video/voice) ride the native attachment
+// flows: either declare ubag_attachments in the facade body and PUT each key
+// to /v1/jobs/{ubag_job_id}/artifacts/{key} (key-reference), or send the whole
+// call as multipart/form-data to POST /v1/jobs with the first part named
+// "job" carrying this same JSON envelope plus one file part per declared key
+// (one-shot). The provider web UIs (ChatGPT/Claude/Gemini/Mistral/Perplexity
+// accept document+image+audio+voice+video; DeepSeek docs+images only;
+// Duck.ai PDF+images only) process the files and the provider's answer comes
+// back as the chat.completion text.
+//
 // Deliberately unsupported, rejected with OpenAI-shaped 400s: streaming,
 // tools/function calling, multimodal content parts, strict response formats.
 // Token usage is estimated from character counts (browser workers report DOM
@@ -74,6 +84,14 @@ type openAIFacadeRequest struct {
 	ToolChoice     any                   `json:"tool_choice,omitempty"`
 	ResponseFormat any                   `json:"response_format,omitempty"`
 	UbagWaitMs     *int64                `json:"ubag_wait_ms,omitempty"`
+	// UbagAttachments carries native attachment declarations
+	// ({key, content_type, kind, [filename]}) for this facade call. Each
+	// declared key MUST be uploaded with PUT
+	// /v1/jobs/{ubag_job_id}/artifacts/{key} before the facade wait budget
+	// expires; the facade waits on the held job and dispatches it once every
+	// declared key is present. Rejected when the resolved target's manifest
+	// attachments policy does not accept the declared kind/content_type.
+	UbagAttachments []any `json:"ubag_attachments,omitempty"`
 }
 
 type openAIFacadeError struct {
@@ -112,6 +130,19 @@ type openAIFacadeCompletion struct {
 	Choices   []openAIFacadeChoice `json:"choices"`
 	Usage     openAIFacadeUsage    `json:"usage"`
 	UbagJobID string               `json:"ubag_job_id"`
+}
+
+// openAIFacadeAccepted is the 202 answer for a facade call whose native job is
+// held for attachment uploads. It is NOT a chat.completion: no choices/usage
+// exist yet. The caller uploads each declared key with
+// PUT /v1/jobs/{ubag_job_id}/artifacts/{key}, then polls
+// GET /v1/jobs/{ubag_job_id} (or replays the same facade body to wait).
+type openAIFacadeAccepted struct {
+	Object    string `json:"object"`
+	Model     string `json:"model"`
+	UbagJobID string `json:"ubag_job_id"`
+	Status    string `json:"status"`
+	Message   string `json:"message"`
 }
 
 type openAIFacadeModel struct {
@@ -231,6 +262,12 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 		outcome = facadeOutcomeRejected
 		return
 	}
+	attachmentDecls, ok := normalizeFacadeAttachments(req.UbagAttachments)
+	if !ok {
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", "ubag_attachments must be an array of {key, content_type, kind} objects")
+		outcome = facadeOutcomeRejected
+		return
+	}
 	prompt, ok := flattenFacadeMessages(req.Messages)
 	if !ok {
 		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", "messages must contain at least one text message with a system, user, or assistant role")
@@ -252,13 +289,33 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	jobID, status, errType, code, message, ok := s.createFacadeJob(r, req, target, modelSettings, prompt)
+	jobID, status, errType, code, message, ok := s.createFacadeJob(r, req, target, modelSettings, prompt, attachmentDecls)
 	if !ok {
 		s.writeFacadeError(w, status, errType, code, message)
 		if status == http.StatusBadRequest {
 			outcome = facadeOutcomeRejected
 		}
 		return
+	}
+
+	// Held attachment jobs (status created) need their artifact PUTs before the
+	// native wait can resolve. The uploads arrive on separate connections, so
+	// the in-process WaitEvents loop would hold this HTTP connection until the
+	// facade deadline; answer 202 immediately instead so the caller can upload
+	// the keys and then poll the job (or replay this same body to wait on it).
+	// The job ID rides in the payload for machine use.
+	if len(attachmentDecls) > 0 {
+		if held, found, err := s.jobs.Get(r.Context(), jobID); err == nil && found && held.Status == jobstore.StatusCreated {
+			s.writeJSON(w, http.StatusAccepted, openAIFacadeAccepted{
+				Object:    "chat.completion.chunk",
+				Model:     req.Model,
+				UbagJobID: jobID,
+				Status:    string(jobstore.StatusCreated),
+				Message:   fmt.Sprintf("job held for attachment uploads; PUT each declared key to /v1/jobs/%s/artifacts/{key}, then poll GET /v1/jobs/%s or replay this request to wait", jobID, jobID),
+			})
+			outcome = facadeOutcomeCompleted
+			return
+		}
 	}
 
 	job, result := s.waitFacadeJob(r, jobID, wait)
@@ -337,6 +394,46 @@ func facadeTargetKnown(target string) bool {
 	return false
 }
 
+// normalizeFacadeAttachments converts the untyped ubag_attachments field into
+// the native attachment declaration list ([]any of {key, content_type, kind,
+// [filename]} maps). Shape errors fail closed here; per-target manifest policy
+// is enforced later by the shared validateAttachmentsForCreate path. Returns
+// nil (not an error) when the caller declares nothing.
+func normalizeFacadeAttachments(raw []any) ([]any, bool) {
+	if len(raw) == 0 {
+		return nil, true
+	}
+	out := make([]any, 0, len(raw))
+	for _, item := range raw {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		for property := range entry {
+			switch property {
+			case "key", "content_type", "kind", "filename":
+			default:
+				return nil, false
+			}
+		}
+		key, _ := entry["key"].(string)
+		contentType, _ := entry["content_type"].(string)
+		kind, _ := entry["kind"].(string)
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(contentType) == "" || strings.TrimSpace(kind) == "" {
+			return nil, false
+		}
+		out = append(out, map[string]any{
+			"key":          strings.TrimSpace(key),
+			"content_type": strings.TrimSpace(contentType),
+			"kind":         strings.TrimSpace(kind),
+		})
+		if filename, _ := entry["filename"].(string); strings.TrimSpace(filename) != "" {
+			out[len(out)-1].(map[string]any)["filename"] = strings.TrimSpace(filename)
+		}
+	}
+	return out, true
+}
+
 // flattenFacadeMessages collapses OpenAI message history into one prompt:
 // system messages first (in order), then user/assistant turns in order.
 // Non-string content (multimodal parts) and unknown roles fail the request.
@@ -379,19 +476,29 @@ func flattenFacadeMessages(messages []openAIFacadeMessage) (string, bool) {
 }
 
 // createFacadeJob runs the shared native create path (validation, authz,
-// kill switch, payload safety, model settings, plugins, idempotency, enqueue)
-// by capturing its HTTP response, then returns the created job ID. The native
-// idempotency key is derived from the caller principal plus the request hash,
+// kill switch, payload safety, model settings, attachments, plugins,
+// idempotency, enqueue) by capturing its HTTP response, then returns the
+// created job ID. The native idempotency key is derived from the caller
+// principal plus the request hash (now including attachment declarations),
 // so retrying an identical facade body replays the same job instead of
 // submitting the provider twice.
-func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, target string, modelSettings map[string]any, prompt string) (jobID string, status int, errType, code, message string, ok bool) {
+//
+// Attachment semantics match the native key-reference flow: a facade call
+// that declares ubag_attachments creates a HELD job (status created). The
+// facade answers 202 immediately with the job ID; the caller uploads each
+// declared key with PUT /v1/jobs/{ubag_job_id}/artifacts/{key}. The job
+// dispatches once every declared key is present; polling
+// GET /v1/jobs/{ubag_job_id} (or replaying the same facade body) then
+// resolves it into a chat.completion as usual.
+func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, target string, modelSettings map[string]any, prompt string, attachmentDecls []any) (jobID string, status int, errType, code, message string, ok bool) {
 	tenantID, appID := requestScope(r)
 	keySeed, err := json.Marshal(map[string]any{
-		"model":       req.Model,
-		"messages":    facadeMessageDigest(req.Messages),
-		"temperature": req.Temperature,
-		"max_tokens":  req.MaxTokens,
-		"top_p":       req.TopP,
+		"model":            req.Model,
+		"messages":         facadeMessageDigest(req.Messages),
+		"temperature":      req.Temperature,
+		"max_tokens":       req.MaxTokens,
+		"top_p":            req.TopP,
+		"ubag_attachments": attachmentDecls,
 	})
 	if err != nil {
 		return "", http.StatusInternalServerError, "server_error", "job_create_failed", "failed to fingerprint the request", false
@@ -408,6 +515,10 @@ func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, targe
 	if req.TopP != nil {
 		options["top_p"] = *req.TopP
 	}
+	input := map[string]any{"prompt": prompt}
+	if len(attachmentDecls) > 0 {
+		input["attachments"] = attachmentDecls
+	}
 	createReq := createJobRequest{
 		APIVersion:     s.apiVersion,
 		IdempotencyKey: idempotencyKey,
@@ -419,7 +530,7 @@ func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, targe
 		Job: jobRequest{
 			Target:        target,
 			CommandType:   "chat.prompt",
-			Input:         map[string]any{"prompt": prompt},
+			Input:         input,
 			ModelSettings: modelSettings,
 			Options:       options,
 			Context:       map[string]any{"correlation_id": idempotencyKey},
@@ -497,6 +608,10 @@ const (
 
 // waitFacadeJob blocks until the job is terminal using store WaitEvents (no
 // polling spin: the call sleeps until an event lands or the budget expires).
+// It is only reached for jobs that already dispatched: attachment-declaring
+// calls whose native job is still held (status created, awaiting artifact
+// PUTs) are answered 202 up front instead, so this loop never has to wait on
+// uploads arriving over other connections.
 func (s *Server) waitFacadeJob(r *http.Request, jobID string, wait time.Duration) (jobstore.Job, facadeWaitResult) {
 	deadline := time.Now().Add(wait)
 	lastSeq := 0
