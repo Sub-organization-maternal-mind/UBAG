@@ -452,9 +452,15 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 	job, result := s.waitFacadeJob(r, jobID, wait)
 	switch result {
 	case facadeWaitDone:
-		completion, status, errType, code, message := s.facadeCompletion(req.Model, prompt, job, jsonMode)
+		completion, status, errType, code, message, param := s.facadeCompletion(req.Model, prompt, job, jsonMode)
 		if status != http.StatusOK {
-			s.writeFacadeError(w, status, errType, code, message)
+			if param != "" {
+				s.writeJSON(w, status, openAIFacadeErrorEnvelope{
+					Error: openAIFacadeError{Message: message, Type: errType, Code: code, Param: param},
+				})
+			} else {
+				s.writeFacadeError(w, status, errType, code, message)
+			}
 			outcome = facadeOutcomeProviderError
 			return
 		}
@@ -816,18 +822,19 @@ func (s *Server) cancelFacadeJob(ctx context.Context, job jobstore.Job, reason s
 // Terminal failures map to retryable 503s (login drift, transient) or 500s.
 // When jsonMode is coerce, the provider text is reduced to its first parseable
 // JSON value first; a completion with no parseable JSON fails as 500
-// json_extract_failed instead of returning provider chatter to a JSON parser.
-func (s *Server) facadeCompletion(model, prompt string, job jobstore.Job, jsonMode facadeJSONMode) (openAIFacadeCompletion, int, string, string, string) {
+// json_extract_failed (with the job ID in param for native inspection)
+// instead of returning provider chatter to a JSON parser.
+func (s *Server) facadeCompletion(model, prompt string, job jobstore.Job, jsonMode facadeJSONMode) (openAIFacadeCompletion, int, string, string, string, string) {
 	switch job.Status {
 	case jobstore.StatusCompleted, jobstore.StatusCompletedWithWarnings:
 		text := facadeOutputText(buildJobResultEnvelope(job))
 		if text == "" {
-			return openAIFacadeCompletion{}, http.StatusInternalServerError, "server_error", "empty_completion", "job completed without extractable text"
+			return openAIFacadeCompletion{}, http.StatusInternalServerError, "server_error", "empty_completion", "job completed without extractable text", ""
 		}
 		if jsonMode == facadeJSONCoerce {
 			coerced, _, ok := coerceFacadeJSON(text)
 			if !ok {
-				return openAIFacadeCompletion{}, http.StatusInternalServerError, "server_error", "json_extract_failed", "job completed but no JSON object or array could be extracted from the provider output"
+				return openAIFacadeCompletion{}, http.StatusInternalServerError, "server_error", "json_extract_failed", "job " + job.ID + " completed but no JSON object or array could be extracted from the provider output", job.ID
 			}
 			text = coerced
 		}
@@ -853,7 +860,7 @@ func (s *Server) facadeCompletion(model, prompt string, job jobstore.Job, jsonMo
 				TotalTokens:      promptTokens + completionTokens,
 			},
 			UbagJobID: job.ID,
-		}, http.StatusOK, "", "", ""
+		}, http.StatusOK, "", "", "", ""
 	default:
 		signals := s.deriveJobSignals(context.Background(), job)
 		detail := signals.ErrorMessage
@@ -861,17 +868,17 @@ func (s *Server) facadeCompletion(model, prompt string, job jobstore.Job, jsonMo
 			detail = fmt.Sprintf("job ended as %s", string(job.Status))
 		}
 		if signals.ErrorClass == loginRequiredErrorClass {
-			return openAIFacadeCompletion{}, http.StatusServiceUnavailable, "provider_error", "provider_login_required", detail
+			return openAIFacadeCompletion{}, http.StatusServiceUnavailable, "provider_error", "provider_login_required", detail, ""
 		}
 		switch job.Status {
 		case jobstore.StatusFailedRetryable:
-			return openAIFacadeCompletion{}, http.StatusServiceUnavailable, "provider_error", "provider_transient", detail
+			return openAIFacadeCompletion{}, http.StatusServiceUnavailable, "provider_error", "provider_transient", detail, ""
 		case jobstore.StatusTimedOut:
-			return openAIFacadeCompletion{}, http.StatusInternalServerError, "server_error", "provider_timeout", detail
+			return openAIFacadeCompletion{}, http.StatusInternalServerError, "server_error", "provider_timeout", detail, ""
 		case jobstore.StatusCanceled:
-			return openAIFacadeCompletion{}, http.StatusInternalServerError, "server_error", "job_cancelled", detail
+			return openAIFacadeCompletion{}, http.StatusInternalServerError, "server_error", "job_cancelled", detail, ""
 		default:
-			return openAIFacadeCompletion{}, http.StatusInternalServerError, "server_error", "provider_failed", detail
+			return openAIFacadeCompletion{}, http.StatusInternalServerError, "server_error", "provider_failed", detail, ""
 		}
 	}
 }
@@ -1062,7 +1069,7 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 	switch result {
 	case facadeWaitDone:
 		if job.Status != jobstore.StatusCompleted && job.Status != jobstore.StatusCompletedWithWarnings {
-			_, status, errType, code, message := s.facadeCompletion(target, prompt, job, facadeJSONOff)
+			_, status, errType, code, message, _ := s.facadeCompletion(target, prompt, job, facadeJSONOff)
 			s.writeFacadeError(w, status, errType, code, message)
 			outcome = facadeOutcomeProviderError
 			return
