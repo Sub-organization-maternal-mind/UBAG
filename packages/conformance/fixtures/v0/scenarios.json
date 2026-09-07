@@ -2805,6 +2805,39 @@
         "estimates_not_metered_tokens",
         "no_invented_token_counts"
       ]
+    },
+    {
+      "id": "openai.models.list.contract",
+      "category": "openai_compat",
+      "title": "Facade model IDs mirror adapter manifests (bare target + target|setting)",
+      "assertions": [
+        "models_list_object",
+        "bare_target_entry_per_target",
+        "target_setting_entry_per_catalog_choice",
+        "owned_by_ubag"
+      ]
+    },
+    {
+      "id": "openai.chat.completions.contract",
+      "category": "openai_compat",
+      "title": "Facade completion returns an OpenAI chat.completion backed by one native job",
+      "assertions": [
+        "object_chat_completion",
+        "single_stop_choice_with_assistant_text",
+        "usage_estimates_present",
+        "ubag_job_id_link",
+        "system_first_message_flattening"
+      ]
+    },
+    {
+      "id": "openai.chat.completions.rejections",
+      "category": "openai_compat",
+      "title": "Streaming, tools, and unknown models are rejected with OpenAI errors",
+      "assertions": [
+        "streaming_unsupported_400",
+        "tools_unsupported_400",
+        "model_not_found_400"
+      ]
     }
   ],
   "scenarios": [
@@ -4567,219 +4600,7 @@
         "ok": true,
         "body.revoked": true
       }
-    },
-    {
-      "id": "openai.models.list.ok",
-      "category": "openai_compat",
-      "title": "OpenAI models endpoint lists facade model IDs",
-      "request": {
-        "method": "GET",
-        "path": "/v1/openai/models",
-        "headers": {
-          "Authorization": "Bearer app_secret_fixture",
-          "Ubag-Api-Version": "2026-05-22"
-        }
-      },
-      "response": {
-        "status": 200,
-        "body": {
-          "object": "list",
-          "data": [
-            {
-              "id": "mock",
-              "object": "model",
-              "owned_by": "ubag"
-            },
-            {
-              "id": "chatgpt_web",
-              "object": "model",
-              "owned_by": "ubag"
-            }
-          ]
-        }
-      },
-      "expect": {
-        "ok": true,
-        "body.object": "list"
-      }
-    },
-    {
-      "id": "openai.chat.completions.accepted",
-      "category": "openai_compat",
-      "title": "OpenAI chat completion returns a chat.completion object",
-      "request": {
-        "method": "POST",
-        "path": "/v1/openai/chat/completions",
-        "headers": {
-          "Authorization": "Bearer app_secret_fixture",
-          "Content-Type": "application/json",
-          "Ubag-Api-Version": "2026-05-22"
-        },
-        "body": {
-          "model": "mock",
-          "messages": [
-            {
-              "role": "system",
-              "content": "You grade OET writing."
-            },
-            {
-              "role": "user",
-              "content": "Score this letter."
-            }
-          ]
-        }
-      },
-      "response": {
-        "status": 200,
-        "body": {
-          "id": "cmpl-job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU",
-          "object": "chat.completion",
-          "created": 1782427200,
-          "model": "mock",
-          "choices": [
-            {
-              "index": 0,
-              "message": {
-                "role": "assistant",
-                "content": "UBAG_FACADE_MOCK_OK"
-              },
-              "finish_reason": "stop"
-            }
-          ],
-          "usage": {
-            "prompt_tokens": 12,
-            "completion_tokens": 4,
-            "total_tokens": 16
-          },
-          "ubag_job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU"
-        }
-      },
-      "expect": {
-        "ok": true,
-        "body.object": "chat.completion",
-        "body.choices.0.finish_reason": "stop"
-      }
-    },
-    {
-      "id": "openai.chat.completions.stream-rejected",
-      "category": "openai_compat",
-      "title": "Streaming requests are rejected with an OpenAI error",
-      "request": {
-        "method": "POST",
-        "path": "/v1/openai/chat/completions",
-        "headers": {
-          "Authorization": "Bearer app_secret_fixture",
-          "Content-Type": "application/json",
-          "Ubag-Api-Version": "2026-05-22"
-        },
-        "body": {
-          "model": "mock",
-          "messages": [
-            {
-              "role": "user",
-              "content": "Hi."
-            }
-          ],
-          "stream": true
-        }
-      },
-      "response": {
-        "status": 400,
-        "body": {
-          "error": {
-            "message": "streaming is not supported; retry with stream:false",
-            "type": "invalid_request_error",
-            "code": "streaming_unsupported"
-          }
-        }
-      },
-      "expect": {
-        "ok": true,
-        "error.code": "streaming_unsupported"
-      }
-    },
-    {
-      "id": "openai.chat.completions.tools-rejected",
-      "category": "openai_compat",
-      "title": "Tool calls are rejected with an OpenAI error",
-      "request": {
-        "method": "POST",
-        "path": "/v1/openai/chat/completions",
-        "headers": {
-          "Authorization": "Bearer app_secret_fixture",
-          "Content-Type": "application/json",
-          "Ubag-Api-Version": "2026-05-22"
-        },
-        "body": {
-          "model": "mock",
-          "messages": [
-            {
-              "role": "user",
-              "content": "Hi."
-            }
-          ],
-          "tools": [
-            {
-              "type": "function",
-              "function": {
-                "name": "grade"
-              }
-            }
-          ]
-        }
-      },
-      "response": {
-        "status": 400,
-        "body": {
-          "error": {
-            "message": "tools are not supported by the UBAG facade",
-            "type": "invalid_request_error",
-            "code": "tools_unsupported"
-          }
-        }
-      },
-      "expect": {
-        "ok": true,
-        "error.code": "tools_unsupported"
-      }
-    },
-    {
-      "id": "openai.chat.completions.unknown-model",
-      "category": "openai_compat",
-      "title": "Unknown model IDs are rejected with an OpenAI error",
-      "request": {
-        "method": "POST",
-        "path": "/v1/openai/chat/completions",
-        "headers": {
-          "Authorization": "Bearer app_secret_fixture",
-          "Content-Type": "application/json",
-          "Ubag-Api-Version": "2026-05-22"
-        },
-        "body": {
-          "model": "bogus_model|nope",
-          "messages": [
-            {
-              "role": "user",
-              "content": "Hi."
-            }
-          ]
-        }
-      },
-      "response": {
-        "status": 400,
-        "body": {
-          "error": {
-            "message": "model bogus_model|nope is not available",
-            "type": "invalid_request_error",
-            "code": "model_not_found"
-          }
-        }
-      },
-      "expect": {
-        "ok": true,
-        "error.code": "model_not_found"
-      }
     }
   ],
-  "scenario_count": 284
+  "scenario_count": 327
 }
