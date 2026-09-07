@@ -2891,7 +2891,7 @@ components:
         ubag_attachments:
           type: array
           maxItems: 32
-          description: Native attachment declarations ({key, content_type, kind, [filename]}) for PDF/image/audio/video/voice files. The facade creates a held job; upload each declared key with PUT /v1/jobs/{ubag_job_id}/artifacts/{key} and the facade resolves the completion once every key lands. Validated against the target adapter attachments policy (see GET /v1/adapters); a target with no policy rejects attachments.
+          description: Native attachment declarations ({key, content_type, kind, [filename]}) for PDF/image/audio/video/voice files. The declaring facade call answers 202 with the held ubag_job_id; upload each declared key with PUT /v1/jobs/{ubag_job_id}/artifacts/{key} and the job dispatches once every key lands — then poll GET /v1/jobs/{ubag_job_id} or replay the facade body to resolve the chat.completion. Validated against the target adapter attachments policy (see GET /v1/adapters); a target with no policy rejects attachments.
           items:
             type: object
             additionalProperties: false
