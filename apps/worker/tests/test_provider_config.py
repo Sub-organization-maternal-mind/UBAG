@@ -282,9 +282,11 @@ class NewChatAndConfigTests(unittest.TestCase):
             [("model", "GPT-5.6 Sol"), ("thinking", "High")],
         )
 
-    def test_duckai_pins_luna_fast_and_no_search(self):
-        # Live-verified 2026-09-07 via read-only CDP survey: the model picker
-        # defaults to "GPT-5.6 Luna", reasoning to "Fast", web search off.
+    def test_duckai_pins_luna_reasoning_and_no_search(self):
+        # Live-verified 2026-09-07 via read-only CDP surveys: the model picker
+        # defaults to "GPT-5.6 Luna", the reply renders as the adjacent sibling
+        # of [data-testid='user-message'], and the operator pins Reasoning ON
+        # with web search off.
         selectors = get_provider_selectors("duckai_web")
         driver = MockPageDriver(response_text="luna")
         events = LiveSessionEngine(selectors).run(_payload("duckai_web"), driver=driver)
@@ -294,20 +296,27 @@ class NewChatAndConfigTests(unittest.TestCase):
         self.assertIn("completed", types)
         self.assertEqual(
             [(r["key"], r["desired"]) for r in driver.ensured_settings],
-            [("model", "GPT-5.6 Luna"), ("reasoning", "Fast"), ("web_search", False)],
+            [("model", "GPT-5.6 Luna"), ("reasoning", "Reasoning"), ("web_search", False)],
+        )
+        self.assertEqual(
+            selectors.response_container.primary, "[data-testid='user-message'] + div"
+        )
+        self.assertEqual(
+            selectors.final_answer_container.primary,
+            "[data-testid='user-message'] + div p",
         )
         self.assertTrue(selectors.reasoning)
 
     def test_duckai_reasoning_and_search_are_overridable_per_job(self):
         selectors = get_provider_selectors("duckai_web")
-        driver = MockPageDriver(response_text="deep")
+        driver = MockPageDriver(response_text="fast")
         LiveSessionEngine(selectors).run(
-            _payload("duckai_web", provider_config={"reasoning": "Reasoning", "web_search": True}),
+            _payload("duckai_web", provider_config={"reasoning": "Fast", "web_search": True}),
             driver=driver,
         )
         self.assertEqual(
             [(r["key"], r["desired"]) for r in driver.ensured_settings],
-            [("model", "GPT-5.6 Luna"), ("reasoning", "Reasoning"), ("web_search", True)],
+            [("model", "GPT-5.6 Luna"), ("reasoning", "Fast"), ("web_search", True)],
         )
 
     def test_transient_interaction_failure_retries_and_completes(self):

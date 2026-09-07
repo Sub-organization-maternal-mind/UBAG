@@ -863,7 +863,7 @@ DUCKAI_WEB = ProviderSelectors(
     provider_id="duckai_web",
     display_name="Duck.ai Web",
     target_url="https://duck.ai/",
-    selector_version="2026-09-07-duckai-tools-menu-verified",
+    selector_version="2026-09-07-duckai-reply-sibling-verified",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
@@ -885,12 +885,30 @@ DUCKAI_WEB = ProviderSelectors(
     response_container=SelectorGroup(
         "response_container",
         (
-            "div[class*='assistant']",
-            "div[class*='response']",
-            "div.markdown",
-            "div.prose",
-            "article",
+            # Verified 2026-09-07 against a live answered chat: the reply is
+            # rendered as the DIRECT SIBLING div of [data-testid='user-message']
+            # — duck.ai ships hashed CSS classes and no semantic class names, so
+            # every class-based candidate (assistant/prose/markdown/article)
+            # matched ZERO nodes live. The sibling carries the model header,
+            # the answer paragraphs, and a trailing "2nd opinion" button; the
+            # clean text lives in final_answer_container below. On a provider
+            # error ("Oops... temporarily unavailable") the same sibling node
+            # appears, so the error surfaces in the result rather than drift.
+            "[data-testid='user-message'] + div",
+            "xpath=//*[@data-testid='user-message']/following-sibling::*[1]",
         ),
+        baseline_version="2026-09-07-live-verified",
+    ),
+    final_answer_container=SelectorGroup(
+        "final_answer_container",
+        (
+            # The answer <p> inside the reply sibling: excludes the model-name
+            # header ("GPT-5.6 Luna") and the trailing "2nd opinion" control
+            # that the sibling div also contains.
+            "[data-testid='user-message'] + div p",
+            "xpath=//*[@data-testid='user-message']/following-sibling::*[1]//p",
+        ),
+        baseline_version="2026-09-07-live-verified",
     ),
     authenticated_signal=SelectorGroup(
         "authenticated_signal",
@@ -931,13 +949,17 @@ DUCKAI_WEB = ProviderSelectors(
         baseline_version="2026-09-07-live",
     ),
     file_attach_trigger=(
+        # Verified live 2026-09-07: the attach button opens the NATIVE file
+        # chooser DIRECTLY (no menu step, multiple=true) — the single-step
+        # Gemini-style interception path. The hidden input[name=upload] exists
+        # at rest (fallback for direct set_input_files).
         SelectorGroup(
             "attach_menu_button",
             (
                 "button[data-testid='duckai-attach-button']",
                 "button[aria-label*='Add images or PDFs']",
             ),
-            baseline_version="2026-09-07-live",
+            baseline_version="2026-09-07-live-verified",
         ),
     ),
     new_chat=SelectorGroup(
@@ -969,7 +991,10 @@ DUCKAI_WEB = ProviderSelectors(
         ProviderSetting(
             key="reasoning",
             kind="choice",
-            desired="Fast",
+            # Operator default 2026-09-07: run every duckai_web job with the
+            # Reasoning mode ON (user decision) — verified live as a
+            # role=menuitemradio choice with label "Reasoning".
+            desired="Reasoning",
             open_steps=(
                 (
                     "button[data-testid='duckai-reasoning-button']",
