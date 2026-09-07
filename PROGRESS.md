@@ -109,6 +109,24 @@ OET PAT gitignore). Go verification runs via CI (no local toolchain).
 - Remaining after merge: set `UBAG_OET_PAT` (value in VPS
   `.oet-pat.json`) or paste PAT in admin, Test → OK, enable Group A via
   the board, monitor, staircase B/C/D per plan.
+- **E2E verification 2026-09-07 (~14:15 UTC), all green:** OET merged the
+  branch (`a1359938`) + wired production compose (`c0b79f3a`, Build &
+  Deploy SUCCESS) and redeployed — all OET containers run `c0b79f3a`.
+  Prod DB proves the integration: `ubag` row exists with the facade URL,
+  `mock` default, priority 70, inactive, **keyed** (`key_len` 198, hint
+  `ubag-pat`); `OET_INTERNAL_AI_HOSTS=ubag-vps-gateway-1` live on api;
+  zero ubag routes (all OFF, no learner impact). Boot-order note: green
+  (13:41, no PAT env) inserted the keyless row; blue (13:46, PAT env set)
+  filled the key (+1 logged) — `oet-api-blue` still carries `UBAG_OET_PAT`,
+  green/worker do not (harmless: row is already keyed). Facade re-smoked
+  from inside the OET stack (`oet-agent-gateway`, exact .NET request
+  shape): 200 `chat.completion`, exact token, `job_000000000261`; earlier
+  `job_000000000259` proved `tenant_oet` isolation. Same-body repeat
+  returned the same job ID twice — idempotent replay working in prod.
+  Public site healthy; UBAG 0 panics/fatals; no PAT copies linger in any
+  container /tmp. Left for the operator (needs admin clicks, no agent
+  path): activate the `ubag` row + Test button (first real .NET-stack
+  call), then board Group A → first learner-visible UBAG result.
 
 ## 2026-09-07 Performance program complete + deployed (all 8 phases)
 
