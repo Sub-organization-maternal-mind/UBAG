@@ -1,6 +1,36 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-08-10
+Last updated: 2026-09-07
+
+## Production performance state (2026-09-07 perf program)
+
+VPS `185.252.233.186` now runs poll **75 ms** (`UBAG_WORKER_POLL_INTERVAL_MS=75`,
+was 150), daemon ON (live warm reuse; mock stays per-job by design),
+`UBAG_WORKER_MAX_RUNTIME_MS=1500000`, gateway 1 CPU/1300m. Deployed commits
+`568941a`+`d6412ff` (gateway code == main HEAD; dashboard dist = main HEAD
+with Group B). Image `ubag/gateway:vps-local` 540MB (was 733MB).
+
+Single-sample event-derived timings on mock jobs `job_000000000256-258`
+(all completed, exact token verified): queue (queued→assigned) **54ms**
+(was 122ms p50), worker (assigned→completed) ~150ms, true E2E ~250ms
+(was 491ms p50). SQL WaitEvents 300→50ms. Idle gateway 0.88% CPU / 12.9MiB.
+Dashboard initial JS 100KB (was ~330KB shared); `tools/check-weight.mjs`
+enforces budgets. 0 errors/panics in 20m post-deploy. Rollback: prior image +
+`/opt/docker/ubag/deploy/vps/env.local.pre-perf-20260907` on VPS.
+
+**Action required (operator): rotate `UBAG_APP_SECRET`** — an `sh -x` debug
+run during the perf session echoed it into the agent transcript. Never left
+VPS/transcript, but rotate in `deploy/vps/env.local` + platform copy.
+
+**Deploy notes for next agent:** sync via tarball file (`git archive HEAD -o
+x.tar`, scp, extract) — streaming `git archive | ssh tar -x` fails on VPS
+tar. Build dashboard dist in an isolated `git worktree` so uncommitted work
+never ships. Never `git add -A`: a parallel session shares this checkout —
+stage explicit paths only, and never touch files it is editing
+(jobs/webhooks/layout dashboard pages during Group B). New gateway env knob:
+none (poll change is env.local-only). Smoke via container-side
+`docker exec ubag-vps-gateway-1 wget` (host :8080 belongs to another project);
+canonical create envelope needs `client.sdk.{name,version}`.
 
 ## Production performance state (2026-08-10)
 

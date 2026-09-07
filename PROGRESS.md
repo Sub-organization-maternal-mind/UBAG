@@ -2,6 +2,72 @@
 
 Last updated: 2026-09-07
 
+## 2026-09-07 Performance program complete + deployed (all 8 phases)
+
+Latency + weight program, executed end-to-end on laptop + VPS `185.252.233.186`.
+Commits `568941a` (phase 0-1) + `d6412ff` (phase 2+6) on main; Go jobs green
+(Gateway/Operator/Integration/Lint all success on both; the single d6412ff CI
+failure was `actions/cache@v7` not existing in the node-suite job — fixed on
+main as v4 by `74bdcd1`, green since; no product code involved).
+
+**Measured production deltas (mock path, VPS, from gateway event timestamps):**
+- Queue wait (queued→assigned): **122ms p50 → 54ms** (filespool sort-free
+  LeaseNext + cached Ready probe + `UBAG_WORKER_POLL_INTERVAL_MS` 150→75).
+- Worker phase (assigned→completed): 332ms p50 → ~150ms single-sample
+  (unchanged architecture; per-job python spawn+import floor stands by design —
+  daemon stays live-targets-only, mock keeps per-job isolation).
+- True E2E create→completed now **~250ms** vs 491ms p50 baseline.
+- Event-stream tail: SQL WaitEvents 300ms→50ms (`defaultWaitEventsInterval`,
+  sqlite+postgres); SSE/gRPC streams react 6x faster.
+- Gateway idle at 75ms poll: **0.88% CPU, 12.9MiB RSS** (well under budget).
+- Image `ubag/gateway:vps-local` **733MB → 540MB** (−26%: patchright dropped
+  from worker extra + image; `pip install` line changed).
+- Dashboard initial JS **~330KB → 100KB shared** (metrics `chart.js/auto` now
+  lazy; chart 203KB + xterm 322KB are single-route lazy chunks). Entry 7.7KB,
+  route nodes ≤23KB. `tools/check-weight.mjs` budgets enforce it
+  (dist ≤1000KB, initial JS ≤150KB, CSS ≤120KB, lockfile ≤300KB).
+- Probe traffic (`/v1/ready|health|metrics` every 15s) skips the JSON request
+  log (`withRequestLog` + `probePaths`): 0 probe lines in 20m of prod logs,
+  metrics still count them, auth unchanged.
+
+**What was deliberately NOT changed (evidence-backed):**
+- MemoryStore Mutex→RWMutex: store already uses cond.Broadcast WaitEvents —
+  no spin, nothing to fix.
+- SQLite BEGIN IMMEDIATE / seq-table rewrite / marshal hoisting: single-conn
+  production + µs-scale costs; risk > gain.
+- `run_live_worker.py` lazy imports: measured marginal import cost ~0-1ms
+  (interpreter dominates); killed the idea.
+- Worker probe/reasoning/grace timings: live jobs run 10-50s; ms tweaks risk
+  flakiness. Untouched.
+- server.go split / TUI build tags / dep swaps: every heavy dep verified wired
+  (nats/minio/wazero/cel/pongo2/grpc-web/chi/pgx/otel all have production
+  importers; TUI links only into cmd/ubag, never the server binary). Split is
+  maintainability-only with zero latency gain — deferred.
+- Dashboard client caching / skeleton purge / layout changes: stale-data risk +
+  a concurrent agent was actively editing those files. Untouched.
+- Dockerfile BuildKit cache mounts: layer caching already covers; skipped.
+
+**Production deploy (this session):** source via tarball (`git archive HEAD`
+streaming pipe fails against VPS tar — use file + scp + extract); HEAD-only
+dashboard dist built in isolated worktree (never ships uncommitted work);
+gateway+chat-reaper rebuilt (warm cache, minutes) and recreated; browser +
+nginx untouched (nginx serves new dist via bind mount). Smoke jobs
+`job_000000000256/257/258` completed with exact `UBAG_SMOKE_PERF_OK` token.
+`/v1/ready` fully true, 0 errors/panics in 20m post-deploy. Rollback: prior
+image + `deploy/vps/env.local.pre-perf-20260907` backup on VPS.
+Note: a parallel session later deployed its Group B dashboard dist on top
+(main HEAD; gateway code identical to d6412ff — production is harmonious).
+
+**CI speed:** Playwright browsers now GHA-cached (ci.yml node-suite + e2e.yml).
+**Small profile:** mem_limit on postgres(1g)/minio/grafana/prometheus(512m)/
+nats(256m)/nginx(128m) — previously unbounded.
+**Follow-ups:** mock persistent runner (feature, kills ~100ms spawn — needs
+design, not a cut); pnpm esbuild x3 dedupe; skeleton CSS trim (needs visual
+check); server.go split when a local Go toolchain exists.
+**Security note:** an `sh -x` debug run echoed UBAG_APP_SECRET into the agent
+transcript during this session. The secret never left VPS/transcript, but
+**rotate UBAG_APP_SECRET** (deploy/vps/env.local + platform copy) to be safe.
+
 ## 2026-09-07 Dashboard Group B gaps complete + deployed
 
 Second half of the dashboard gap program (group A was `ac9694e`): every gateway
