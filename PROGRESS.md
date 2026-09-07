@@ -2,6 +2,41 @@
 
 Last updated: 2026-09-07
 
+## 2026-09-07 Duck.ai `duckai_web` live-verified + full matrix PASS on prod
+
+Follows the `duckai_web` provider integration (commits de78ef8 → 570c8fa, all
+pushed to main and deployed on VPS `185.252.233.186`, image rebuilt 3×).
+
+**Root cause of the first live failures (jobs 263-267):** `response_container`
+shipped with guessed class-based selectors (`div[class*='assistant']` etc.) —
+duck.ai renders hashed CSS classes and no semantic names, so every candidate
+matched ZERO nodes; each job drifted at reply-read. Fixed by live-DOM surveys
+(read-only CDP, fresh anonymous tabs — no login; duck.ai free tier needs none):
+the assistant reply is the **adjacent sibling div of
+`[data-testid='user-message']`**; clean answer text in its `p` children
+(`final_answer_container`). Also live-verified: model picker
+(`model-picker-button`, menuitemradio, default "GPT-5.6 Luna", free catalog
+GPT-5.6 Luna / GPT-5.4 mini / Claude Haiku 4.5 / Mistral Small 4 / gpt-oss 120B
+/ Gemma 4 31B), reasoning menu (`duckai-reasoning-button`: Fast ↔ Reasoning),
+Tools menu (Web Search aria-checked toggle), attach button opens the NATIVE
+chooser directly (single-step trigger, multiple=true; accept png/jpeg/webp/gif/
+pdf only — manifest attachments policy already matches), New Chat button.
+Operator default: **Luna + Reasoning ON**, web search off (per-job overridable
+via `model_settings`). Note: anonymous tier rate-limits — a hard loop of
+surveys hit "Oops… temporarily unavailable"; live tests must be paced.
+
+**Prod evidence (matrix 13/13 PASS, jobs 271-274):**
+- T1 Luna defaults exact token `UBAG_DUCKAI_FAST_OK` — completed.
+- T2 Luna+Reasoning bat-and-ball logic — completed, exact token
+  `UBAG_DUCKAI_REASON_OK`.
+- T3 web_search=true live-search question — completed, exact token
+  `UBAG_DUCKAI_SEARCH_OK`.
+- T4 multipart PDF attachment — completed, model quoted the file's
+  `FILECODE-7741-ALPHA` AND the exact token `UBAG_DUCKAI_FILE_OK`.
+Earlier smoke (12/12, job 264 attempt): adapters/targets catalogs, facade
+models (6 Luna models listed), mock E2E, bogus-model 400, safe-terminal.
+Worker/gateway all healthy; facade `duckai_web|GPT-5.6 Luna` model IDs live.
+
 ## 2026-09-07 Facade file attachments (`ubag_attachments`) + deployed
 
 Group E gap analysis (OET admin board, `/admin/ai-providers/ubag`) showed the
