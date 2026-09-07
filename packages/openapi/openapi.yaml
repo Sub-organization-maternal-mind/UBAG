@@ -43,6 +43,8 @@ tags:
     description: Read-only multi-tab browser topology and adaptive concurrency observability.
   - name: Alerts
     description: Human-in-the-loop manual-action alerts and notification configuration.
+  - name: OpenAICompat
+    description: Drop-in OpenAI-compatible chat completions backed by UBAG jobs.
   - name: SSO
     description: Enterprise single sign-on (OIDC/SAML) configuration, callbacks, and session logout.
 security:
@@ -1522,6 +1524,123 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/openai/chat/completions:
+    post:
+      tags: [OpenAICompat]
+      operationId: createOpenAIChatCompletion
+      summary: Create an OpenAI-compatible chat completion.
+      description: |
+        Synchronous OpenAI-compatible chat completion backed by a UBAG job.
+        The gateway creates a native job (target derived from `model`), waits
+        for its terminal state up to the configured facade deadline
+        (UBAG_FACADE_MAX_WAIT_MS, default 110000 ms), and returns an OpenAI
+        `chat.completion` object. `model` is a UBAG target key (for example
+        `chatgpt_web`) or `target|setting` (for example
+        `chatgpt_web|GPT-5.6 Sol`); the available values are listed by
+        GET /v1/openai/models. `stream:true`, tools/function calling, and
+        multimodal content parts are rejected: UBAG has no end-to-end token
+        streaming and no tool protocol. Message history is flattened into one
+        prompt (system messages first, then turns in order); there is no
+        role-aware tool/result interpretation. Token usage is estimated from
+        character counts because browser workers report DOM deltas, not model
+        tokens. When the deadline expires first the facade answers 504 with
+        the ubag_job_id so the caller can poll the native job API. Retrying
+        an identical body replays the same job: the facade derives the native
+        idempotency key from the caller principal plus the request hash.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenAIChatCompletionRequest"
+      responses:
+        "200":
+          description: Completion finished within the facade deadline.
+          headers:
+            Ubag-Api-Version-Used:
+              $ref: "#/components/headers/UbagApiVersionUsed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIChatCompletionResponse"
+        "400":
+          description: Rejected request (streaming, tools, unknown model, empty messages).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "401":
+          description: Missing or invalid credential.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "429":
+          description: Queue backpressure or concurrency ceiling.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "500":
+          description: Job creation or dispatch failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "503":
+          description: Provider unavailable (login required, adapter drift, region draining).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "504":
+          description: Facade deadline expired before the job reached a terminal state; ubag_job_id identifies the still-running job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+  /v1/openai/models:
+    get:
+      tags: [OpenAICompat]
+      operationId: listOpenAIModels
+      summary: List OpenAI-compatible model IDs.
+      description: |
+        Lists the model IDs accepted by POST /v1/openai/chat/completions: one
+        entry per UBAG target plus one `target|setting` entry per
+        caller-selectable model-catalog value. Entries mirror the same adapter
+        manifests the native create path validates against.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "200":
+          description: Model list returned.
+          headers:
+            Ubag-Api-Version-Used:
+              $ref: "#/components/headers/UbagApiVersionUsed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIModelList"
+        "401":
+          description: Missing or invalid credential.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "429":
+          description: Rate limited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "500":
+          description: Model catalog could not be read.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -2700,3 +2819,160 @@ components:
         trace_id:
           type: string
           minLength: 1
+    OpenAIChatMessage:
+      type: object
+      additionalProperties: false
+      required: [role, content]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant]
+        content:
+          type: string
+          minLength: 1
+        name:
+          type: string
+    OpenAIChatCompletionRequest:
+      type: object
+      additionalProperties: false
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+          minLength: 1
+          description: UBAG target key (for example chatgpt_web) or target|setting (for example chatgpt_web|GPT-5.6 Sol).
+        messages:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/OpenAIChatMessage"
+        temperature:
+          type: number
+          description: Accepted and forwarded as a hint; browser providers may ignore it.
+        max_tokens:
+          type: integer
+          minimum: 1
+        stream:
+          type: boolean
+          default: false
+          description: Must be false or omitted; streaming is rejected with 400.
+        top_p:
+          type: number
+          description: Accepted but ignored by the facade.
+        tools:
+          description: Rejected with 400 when non-empty; UBAG has no tool protocol.
+        tool_choice:
+          description: Rejected with 400 when set; UBAG has no tool protocol.
+        response_format:
+          description: Rejected with 400 when set; strict structured output is not guaranteed.
+        ubag_wait_ms:
+          type: integer
+          minimum: 1000
+          description: Per-request facade wait deadline in milliseconds, capped by the server maximum.
+    OpenAIChatChoice:
+      type: object
+      additionalProperties: false
+      required: [index, message, finish_reason]
+      properties:
+        index:
+          type: integer
+        message:
+          type: object
+          additionalProperties: false
+          required: [role, content]
+          properties:
+            role:
+              type: string
+              enum: [assistant]
+            content:
+              type: string
+        finish_reason:
+          type: string
+          enum: [stop, length]
+    OpenAIUsage:
+      type: object
+      additionalProperties: false
+      required: [prompt_tokens, completion_tokens, total_tokens]
+      properties:
+        prompt_tokens:
+          type: integer
+          minimum: 0
+        completion_tokens:
+          type: integer
+          minimum: 0
+        total_tokens:
+          type: integer
+          minimum: 0
+    OpenAIChatCompletionResponse:
+      type: object
+      additionalProperties: false
+      required: [id, object, created, model, choices, usage, ubag_job_id]
+      properties:
+        id:
+          type: string
+          description: cmpl-<job_id>.
+        object:
+          type: string
+          enum: [chat.completion]
+        created:
+          type: integer
+          description: Unix timestamp of the terminal job state.
+        model:
+          type: string
+          description: Echo of the requested model ID.
+        choices:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            $ref: "#/components/schemas/OpenAIChatChoice"
+        usage:
+          $ref: "#/components/schemas/OpenAIUsage"
+        ubag_job_id:
+          type: string
+          description: Native UBAG job behind this completion, for polling and audit.
+    OpenAIModel:
+      type: object
+      additionalProperties: false
+      required: [id, object, owned_by]
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          enum: [model]
+        owned_by:
+          type: string
+          enum: [ubag]
+    OpenAIModelList:
+      type: object
+      additionalProperties: false
+      required: [object, data]
+      properties:
+        object:
+          type: string
+          enum: [list]
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/OpenAIModel"
+    OpenAIErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [message, type, code]
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+              enum: [invalid_request_error, authentication_error, rate_limit_error, server_error, timeout_error, provider_error]
+            code:
+              type: string
+              description: Machine-readable reason (for example streaming_unsupported, model_not_found, wait_timeout, provider_login_required).
+            param:
+              type: string

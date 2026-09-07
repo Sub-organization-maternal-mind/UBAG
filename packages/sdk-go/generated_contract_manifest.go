@@ -63,6 +63,8 @@ var UbagEndpoints = map[string]ManifestEndpoint{
 	"POST /v1/jobs/{job_id}/cancel": {Method: "POST", Path: "/v1/jobs/{job_id}/cancel"},
 	"POST /v1/jobs/{job_id}/retry": {Method: "POST", Path: "/v1/jobs/{job_id}/retry"},
 	"GET /v1/sse/jobs/{job_id}": {Method: "GET", Path: "/v1/sse/jobs/{job_id}"},
+	"POST /v1/openai/chat/completions": {Method: "POST", Path: "/v1/openai/chat/completions"},
+	"GET /v1/openai/models": {Method: "GET", Path: "/v1/openai/models"},
 }
 
 var UbagErrorCodes = map[string]ManifestErrorCode{

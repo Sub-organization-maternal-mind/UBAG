@@ -31,6 +31,8 @@ The full UBAG Gateway REST API reference is available in machine-readable OpenAP
 | POST | /v1/templates/{id}/render | Render a template |
 | GET | /v1/workflows | List workflows |
 | GET | /v1/webhooks | List webhook endpoints |
+| POST | /v1/openai/chat/completions | OpenAI-compatible chat completion (sync bridge over one native job) |
+| GET | /v1/openai/models | List facade model IDs (`target` and `target\|setting`) |
 
 ## Required headers
 
@@ -99,3 +101,14 @@ All errors follow the stable UBAG error envelope (`error.schema.json`):
 See [Error Catalog](/contracts/error-catalog) for the full list of error codes.
 
 See [Error Catalog](/contracts/error-catalog) for the full list of error types.
+
+## OpenAI compatibility facade
+
+`POST /v1/openai/chat/completions` accepts a narrow OpenAI chat-completions
+subset and answers with an OpenAI `chat.completion` object, backed by one
+native UBAG job plus a terminal wait (see the OpenAPI description for the full
+mapping). `GET /v1/openai/models` lists the accepted `model` IDs. Facade
+errors are OpenAI-shaped (`error.message/type/code`, with the still-running
+job ID in `error.param` on 504); a missing credential keeps the gateway
+`UBAG-AUTH-MISSING-001` envelope from shared auth middleware. Usage figures
+are character-based estimates, not metered model tokens.

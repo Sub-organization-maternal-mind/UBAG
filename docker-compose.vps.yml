@@ -67,6 +67,11 @@ services:
       UBAG_GATEWAY_VERSION: ${UBAG_GATEWAY_VERSION:-0.0.0-vps}
       UBAG_BUILD_COMMIT: ${UBAG_BUILD_COMMIT:-local}
       UBAG_ACTOR_ROLE: ${UBAG_ACTOR_ROLE:-}
+      # PAT issuance (POST /v1/auth/pat) is opt-in server-side: the gateway
+      # only reads these when present in the container environment, so they
+      # must be listed here (env.local alone only feeds interpolation).
+      UBAG_PAT_ENABLED: ${UBAG_PAT_ENABLED:-false}
+      UBAG_PAT_DEFAULT_TTL_MS: ${UBAG_PAT_DEFAULT_TTL_MS:-}
       UBAG_GATEWAY_STORE: postgres
       # Full DSN lives in deploy/vps/env.local (platform credentials from
       # /opt/platform/projects/ubag.env on the VPS — never committed).
@@ -136,6 +141,12 @@ services:
       # Shared backing-services network (platform-postgres et al.) — created by
       # /opt/platform/bin/init-platform.sh.
       - platform
+      # OET application stack network (oet-api/oet-ai-worker live here). Lets
+      # the OET backend reach the gateway privately as
+      # http://ubag-vps-gateway-1:8080 with no public HTTP hop. Added for the
+      # UBAG-as-OET-AI-provider integration (OpenAI facade); harmless to other
+      # tenants — the gateway still authenticates every caller.
+      - oetwebsite_internal
 
   nginx-dashboard:
     image: nginx:alpine
@@ -249,6 +260,8 @@ networks:
   nginx-proxy-manager_default:
     external: true
   platform:
+    external: true
+  oetwebsite_internal:
     external: true
 
 volumes:

@@ -86,6 +86,8 @@ func (s *Server) simpleRoutes() []routeDecl {
 		{"/v1/conversations", s.handleConversations},
 		{"/v1/jobs", s.handleJobs},
 		{"/v1/jobs/batch", s.handleBatchJobs},
+		{"/v1/openai/chat/completions", s.handleOpenAIChatCompletion},
+		{"/v1/openai/models", s.handleOpenAIModels},
 		{"/v1/jobs/*", s.handleJobByID},
 		{"/v1/sse/jobs/*", s.handleJobSSE},
 		{"/v1/auth/pat", s.handleIssuePAT},

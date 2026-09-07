@@ -21,6 +21,8 @@ deploy/small/env.local
 deploy/small/secrets/
 deploy/vps/env.local
 deploy/vps/nginx-dashboard/.htpasswd
+# OET provider PAT (issued on the VPS, root-only; never commit).
+deploy/vps/.oet-pat.json
 
 # Python generated files
 __pycache__/

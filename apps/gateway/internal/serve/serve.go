@@ -140,6 +140,10 @@ func Run(ctx context.Context) error {
 		URLPolicy:   webhookPolicy,
 		MaxAttempts: webhookMaxAttempts,
 	}
+	facadeMaxWait, err := durationFromMillisEnv("UBAG_FACADE_MAX_WAIT_MS", 110*time.Second)
+	if err != nil {
+		return fmt.Errorf("invalid UBAG_FACADE_MAX_WAIT_MS: %w", err)
+	}
 
 	enterprise, err := newEnterpriseStoresFromEnv(ctx, storeKind, db)
 	if err != nil {
@@ -178,6 +182,7 @@ func Run(ctx context.Context) error {
 		Artifacts:        artifactStore,
 		Webhooks:         webhookStore,
 		WebhookURLPolicy: webhookPolicy,
+		FacadeMaxWait:    facadeMaxWait,
 
 		RateLimiter:       enterprise.rateLimiter,
 		RateLimitResolver: enterprise.rateResolver,

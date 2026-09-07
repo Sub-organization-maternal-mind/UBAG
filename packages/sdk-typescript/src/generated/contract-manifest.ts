@@ -176,6 +176,14 @@ export const UBAG_ENDPOINTS = {
   "GET /v1/sse/jobs/{job_id}": {
     "method": "GET",
     "path": "/v1/sse/jobs/{job_id}"
+  },
+  "POST /v1/openai/chat/completions": {
+    "method": "POST",
+    "path": "/v1/openai/chat/completions"
+  },
+  "GET /v1/openai/models": {
+    "method": "GET",
+    "path": "/v1/openai/models"
   }
 } as const;
 export const UBAG_ERROR_CODES = {

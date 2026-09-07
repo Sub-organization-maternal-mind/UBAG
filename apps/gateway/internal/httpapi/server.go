@@ -219,6 +219,12 @@ type Config struct {
 
 	MaxBodyBytes int64
 
+	// FacadeMaxWait bounds one POST /v1/openai/chat/completions call: the
+	// facade waits for the backing job's terminal state up to this long,
+	// then answers 504 with the still-running job ID. Zero selects the
+	// 110s default. Defaults to UBAG_FACADE_MAX_WAIT_MS when set.
+	FacadeMaxWait time.Duration
+
 	// Plugins is the optional WASM plugin host. When nil, no plugin hooks run.
 	Plugins *plugins.Host
 
@@ -297,6 +303,11 @@ type Server struct {
 	idempotencyReplays atomic.Int64 // ubag_idempotency_replays_total
 	artifactCaptures   atomic.Int64 // ubag_artifact_captures_total
 	webhookDeliveries  atomic.Int64 // ubag_webhook_deliveries_total
+
+	// OpenAI facade outcome counters (ubag_facade_jobs_total{outcome=...}).
+	facadeOutcomes labeledCounter
+
+	facadeMaxWait time.Duration
 
 	// Attachment pipeline counters.
 	attachmentsStored          atomic.Int64 // ubag_attachments_total{outcome="stored"}
@@ -392,6 +403,9 @@ func NewServer(config Config) *Server {
 	if config.MaxBodyBytes <= 0 {
 		config.MaxBodyBytes = defaultMaxBodyBytes
 	}
+	if config.FacadeMaxWait <= 0 {
+		config.FacadeMaxWait = defaultFacadeMaxWait
+	}
 	if config.MaxQueueDepth <= 0 {
 		config.MaxQueueDepth = parseEnvInt("UBAG_MAX_QUEUE_DEPTH", 10000)
 	}
@@ -468,6 +482,7 @@ func NewServer(config Config) *Server {
 		conversations:    config.Conversations,
 		outbox:           config.Outbox,
 		maxQueueDepth:    config.MaxQueueDepth,
+		facadeMaxWait:    config.FacadeMaxWait,
 		patStore:         config.PAT,
 		patDefaultTTL:    config.PATDefaultTTL,
 		appJWTPublicKey:  config.AppJWTPublicKey,
@@ -825,6 +840,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "ubag_multipart_rollbacks_total %d\n", s.multipartRollbacks.Load())
 	_, _ = fmt.Fprintf(w, "ubag_job_attachment_gate_timeouts_total %d\n", s.attachmentGateTimeouts.Load())
 	_, _ = fmt.Fprintf(w, "ubag_attachment_dispatch_failures_total %d\n", s.attachmentDispatchFailures.Load())
+	for _, item := range s.facadeOutcomes.snapshotWithDefaults([]string{facadeOutcomeCompleted, facadeOutcomeWaitTimeout, facadeOutcomeProviderError, facadeOutcomeRejected, facadeOutcomeError}) {
+		_, _ = fmt.Fprintf(w, "ubag_facade_jobs_total{outcome=\"%s\"} %d\n", promLabel(item.key), item.count)
+	}
 	materializeFailures := executor.AttachmentMaterializeFailureSnapshot()
 	if _, ok := materializeFailures["artifact_read"]; !ok {
 		materializeFailures["artifact_read"] = 0
