@@ -2,6 +2,52 @@
 
 Last updated: 2026-09-07
 
+## 2026-09-07 Group E end-to-end closure (UBAG + OET, deployed + verified)
+
+The admin-board Group E "capability gap" rows are fully closed on both ends:
+
+**UBAG side (main `7f030ed`, CI success, live on VPS `185.252.233.186`):**
+- `ubag_attachments` on chat completions (declare → 202-held → PUT keys →
+  poll/replay resolves): PDF/image/audio OCR + transcription through provider
+  web UIs (commits `ee39071`+`0e61d05`, smoke jobs `…269/270`).
+- `POST /v1/openai/audio/transcriptions` (multipart file + model/language/
+  prompt → held voice job → `{text, ubag_job_id}`; `whisper-1` maps to the
+  operator-default live target; 24 MiB cap, MIME allowlist) + `POST
+  /v1/openai/embeddings` (exact OpenAI shape, deterministic SHA-256 hash
+  unit vectors 1536-d — documented NOT semantic) + `response_format`
+  `json_object`/`json_schema` coercion (provider-visible JSON hint in the
+  fingerprinted prompt; first-parseable-JSON extraction, loud
+  `json_extract_failed` with job ID in param otherwise).
+- Fixes found by production smoke: fingerprint now includes response_format
+  (was: idempotency-conflict 400 on repeat JSON bodies); prompt-level JSON
+  hint (mock echoes the prompt, so coercion needs the instruction in-task).
+  Live proof: text 200 (`job_000000000278`), JSON 500-with-param before hint
+  fix → coercion path green after; embeddings shape + determinism green;
+  transcription validation green.
+- Full ci green on `7f030ed` (Gateway/Integration/Node/Worker/Operator/
+  Lint+gofmt+vet). Two pre-existing gofmt flags fixed along the way
+  (`d6706c1` workerconsumer, `ee7ef31` transcription struct).
+
+**OET side (main `385f791b`, Build & Deploy SUCCESS, live + verified):**
+- `ResponseFormatJson` plumbed gateway → both OpenAI-compatible providers;
+  forced-tool emulation (`CoerceToolCallsFromJsonText`) surfaces facade JSON
+  text as `ArgsJson` when providers return no `tool_calls`.
+- Registry UBAG transcription divert (`audio/transcriptions`) — all STT
+  callers work unchanged when routed to ubag.
+- Listening extract/score/score call sites route-aware (ubag toggle →
+  facade + emulation, else Anthropic byte-identical); recording embed uses
+  `IEmbeddingService` first; exemplar embeddings refresh best-effort on
+  scenario save; class summary sends `response_format: json_object`.
+- `KnownFeatureCodes` admits all 15 Group E codes; board Group E unlocked as
+  toggleable "Media in/out via UBAG" (matrix pin 50 → 65); policy doc
+  boundaries rewritten. `ship:gate` green; two CS0165 compile fixes during
+  rollout (`4d37b040` mine, `825629fc` parallel session's — merged clean).
+- Production verified: Build & Deploy SUCCESS on `385f791b`, all OET
+  containers on that SHA, site + api ready/live green, `ubag` row ACTIVE +
+  keyed with `LastTestStatus: ok`, zero ubag routes (all OFF, no learner
+  impact). Remaining: admin board toggles Groups A→E + parallel-eval window
+  for scoring rows.
+
 ## 2026-09-07 Duck.ai `duckai_web` live-verified + full matrix PASS on prod
 
 Follows the `duckai_web` provider integration (commits de78ef8 → 570c8fa, all

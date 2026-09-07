@@ -2,6 +2,21 @@
 
 Last updated: 2026-09-07
 
+## Production integration state (2026-09-07 Group E closed end-to-end)
+
+UBAG main `7f030ed` (ci success) live on VPS `185.252.233.186` (`/v1/ready`
+fully true, 0 panics): facade now serves chat + `ubag_attachments`,
+`POST /v1/openai/audio/transcriptions`, `POST /v1/openai/embeddings`
+(deterministic hash vectors, NOT semantic), and `response_format`
+json coercion. OET main `385f791b` (Build & Deploy SUCCESS, all containers
+on that SHA, site + api green): registry divert, ResponseFormatJson plumb,
+route-aware listening call sites, embedding/exemplar wiring, Group E
+unlocked as toggleable board rows (65 toggles), `ubag` row ACTIVE + keyed
+with LastTestStatus ok, zero ubag routes (all OFF). Smoke: `…276/278/279`.
+Rollback: prior images + env.local backup (unchanged). Full evidence in
+`PROGRESS.md` top section. Remaining: admin board toggles A→E + scoring
+parallel-eval window.
+
 ## Production integration state (2026-09-07 facade attachments live)
 
 VPS `185.252.233.186` gateway serves the OpenAI facade WITH `ubag_attachments`
