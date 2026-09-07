@@ -398,9 +398,12 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 	// JSON-coercion hint: provider web UIs answer in prose unless the task
 	// explicitly demands JSON. When the OET caller asked for a JSON shape,
 	// say so in the provider prompt as well — the gateway-side extractor
-	// still enforces the guarantee on the way out.
+	// still enforces the guarantee on the way out. The hint is folded into
+	// the idempotency fingerprint (not the raw prompt) so identical caller
+	// bodies always derive identical native keys.
+	jsonHint := ""
 	if jsonMode == facadeJSONCoerce {
-		prompt = "Return your answer as a single JSON object or array only, with no surrounding prose or markdown fences.\n\n" + prompt
+		jsonHint = "json"
 	}
 
 	wait := s.facadeMaxWait
@@ -417,7 +420,7 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	jobID, status, errType, code, message, ok := s.createFacadeJob(r, req, target, modelSettings, prompt, attachmentDecls)
+	jobID, status, errType, code, message, ok := s.createFacadeJob(r, req, target, modelSettings, prompt, attachmentDecls, jsonHint)
 	if !ok {
 		s.writeFacadeError(w, status, errType, code, message)
 		if status == http.StatusBadRequest {
@@ -618,7 +621,7 @@ func flattenFacadeMessages(messages []openAIFacadeMessage) (string, bool) {
 // dispatches once every declared key is present; polling
 // GET /v1/jobs/{ubag_job_id} (or replaying the same facade body) then
 // resolves it into a chat.completion as usual.
-func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, target string, modelSettings map[string]any, prompt string, attachmentDecls []any) (jobID string, status int, errType, code, message string, ok bool) {
+func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, target string, modelSettings map[string]any, prompt string, attachmentDecls []any, jsonHint string) (jobID string, status int, errType, code, message string, ok bool) {
 	tenantID, appID := requestScope(r)
 	keySeed, err := json.Marshal(map[string]any{
 		"model":            req.Model,
@@ -626,12 +629,22 @@ func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, targe
 		"temperature":      req.Temperature,
 		"max_tokens":       req.MaxTokens,
 		"top_p":            req.TopP,
+		"response_format":  req.ResponseFormat,
 		"ubag_attachments": attachmentDecls,
 	})
 	if err != nil {
 		return "", http.StatusInternalServerError, "server_error", "job_create_failed", "failed to fingerprint the request", false
 	}
 	idempotencyKey := facadeIdempotencyPrefix + hashBytes(append([]byte(tenantID+"\n"+appID+"\n"), keySeed...))
+
+	// Provider-visible prompt: the JSON hint is part of the task (when the
+	// caller asked for a JSON shape), so it must reach the provider — but it
+	// is derived from the fingerprinted response_format, never from free
+	// caller text, so identical bodies still derive identical keys.
+	effectivePrompt := prompt
+	if jsonHint != "" {
+		effectivePrompt = "Return your answer as a single JSON object or array only, with no surrounding prose or markdown fences.\n\n" + prompt
+	}
 
 	options := map[string]any{"return_mode": "final"}
 	if req.Temperature != nil {
@@ -643,7 +656,7 @@ func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, targe
 	if req.TopP != nil {
 		options["top_p"] = *req.TopP
 	}
-	input := map[string]any{"prompt": prompt}
+	input := map[string]any{"prompt": effectivePrompt}
 	if len(attachmentDecls) > 0 {
 		input["attachments"] = attachmentDecls
 	}
@@ -1031,7 +1044,7 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 	}}
 
 	facadeReq := openAIFacadeRequest{Model: target}
-	jobID, status, errType, code, message, ok := s.createFacadeJob(r, facadeReq, target, nil, prompt, attachmentDecls)
+	jobID, status, errType, code, message, ok := s.createFacadeJob(r, facadeReq, target, nil, prompt, attachmentDecls, "")
 	if !ok {
 		s.writeFacadeError(w, status, errType, code, message)
 		if status == http.StatusBadRequest {
