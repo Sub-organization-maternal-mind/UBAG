@@ -3,9 +3,13 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -13,15 +17,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ubag/ubag/apps/gateway/internal/attachments"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 )
 
-// OpenAI-compatible facade (OET provider integration). It translates a narrow
-// OpenAI chat-completions subset into one native job plus a terminal wait, so
-// an OpenAI-speaking consumer needs no UBAG-native client:
+// OpenAI-compatible facade (OET provider integration). It translates OpenAI
+// shapes into native jobs plus terminal waits, so an OpenAI-speaking consumer
+// needs no UBAG-native client:
 //
-//	POST /v1/openai/chat/completions  (sync long-poll over POST /v1/jobs)
-//	GET  /v1/openai/models            (model IDs the facade accepts)
+//	POST /v1/openai/chat/completions   (sync long-poll over POST /v1/jobs)
+//	GET  /v1/openai/models             (model IDs the facade accepts)
+//	POST /v1/openai/audio/transcriptions (multipart audio over a held job)
+//	POST /v1/openai/embeddings         (deterministic hash vectors, OpenAI shape)
 //
 // File attachments (PDF/image/audio/video/voice) ride the native attachment
 // flows: either declare ubag_attachments in the facade body and PUT each key
@@ -92,6 +99,115 @@ type openAIFacadeRequest struct {
 	// declared key is present. Rejected when the resolved target's manifest
 	// attachments policy does not accept the declared kind/content_type.
 	UbagAttachments []any `json:"ubag_attachments,omitempty"`
+}
+
+// facadeJSONMode classifies the response_format subset the facade can serve
+// honestly. "off" means no format requested. "coerce" means the caller asked
+// for a JSON object or schema: the facade does NOT change what the provider
+// writes, it only post-processes the completion text (fence-strip, then
+// substring object/array extraction) and fails the call with
+// json_extract_failed when nothing parses, so a downstream JSON parser never
+// receives provider chatter. Anything else (e.g. json_schema strict modes the
+// gateway cannot enforce) stays a 400.
+type facadeJSONMode int
+
+const (
+	facadeJSONOff facadeJSONMode = iota
+	facadeJSONCoerce
+)
+
+func classifyFacadeResponseFormat(raw any) (facadeJSONMode, string, bool) {
+	if raw == nil {
+		return facadeJSONOff, "", true
+	}
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return facadeJSONOff, "", false
+	}
+	formatType, _ := obj["type"].(string)
+	switch strings.ToLower(strings.TrimSpace(formatType)) {
+	case "json_object":
+		return facadeJSONCoerce, "", true
+	case "json_schema":
+		schema, _ := obj["json_schema"].(map[string]any)
+		name, _ := schema["name"].(string)
+		return facadeJSONCoerce, strings.TrimSpace(name), true
+	default:
+		return facadeJSONOff, "", false
+	}
+}
+
+// coerceFacadeJSON extracts the first parseable JSON object or array from
+// provider text: trim, strip one ``` fenced block, then scan for the first
+// balanced {...} or [...] span that parses. Returns the compacted JSON and
+// the top-level kind ("object"/"array"). Providers often wrap answers in
+// prose ("Here is the JSON: ..."); without this the caller would have to
+// trust provider discipline it cannot observe.
+func coerceFacadeJSON(text string) (string, string, bool) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return "", "", false
+	}
+	if strings.HasPrefix(trimmed, "```") {
+		if firstNewline := strings.Index(trimmed, "\n"); firstNewline >= 0 {
+			trimmed = trimmed[firstNewline+1:]
+		}
+		if end := strings.LastIndex(trimmed, "```"); end >= 0 {
+			trimmed = trimmed[:end]
+		}
+		trimmed = strings.TrimSpace(trimmed)
+	}
+	if trimmed == "" {
+		return "", "", false
+	}
+	if json.Valid([]byte(trimmed)) {
+		var probe any
+		if err := json.Unmarshal([]byte(trimmed), &probe); err == nil {
+			switch probe.(type) {
+			case map[string]any:
+				return string(mustCompactFacadeJSON(trimmed)), "object", true
+			case []any:
+				return string(mustCompactFacadeJSON(trimmed)), "object", true
+			}
+		}
+	}
+	for i, r := range trimmed {
+		if r != '{' && r != '[' {
+			continue
+		}
+		for end := len(trimmed); end > i; end-- {
+			candidate := strings.TrimSpace(trimmed[i:end])
+			if candidate == "" {
+				continue
+			}
+			if !json.Valid([]byte(candidate)) {
+				continue
+			}
+			var probe any
+			if err := json.Unmarshal([]byte(candidate), &probe); err != nil {
+				continue
+			}
+			switch probe.(type) {
+			case map[string]any:
+				return string(mustCompactFacadeJSON(candidate)), "object", true
+			case []any:
+				return string(mustCompactFacadeJSON(candidate)), "object", true
+			}
+		}
+	}
+	return "", "", false
+}
+
+func mustCompactFacadeJSON(raw string) []byte {
+	var probe any
+	if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+		return []byte(strings.TrimSpace(raw))
+	}
+	compacted, err := json.Marshal(probe)
+	if err != nil {
+		return []byte(strings.TrimSpace(raw))
+	}
+	return compacted
 }
 
 type openAIFacadeError struct {
@@ -250,8 +366,13 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 		outcome = facadeOutcomeRejected
 		return
 	}
-	if req.ResponseFormat != nil {
-		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "structured_output_unsupported", "response_format is not supported; strict structured output is not guaranteed")
+	// response_format: only the coercible JSON subset is served (post-process
+	// extraction with a hard failure when nothing parses). The gateway cannot
+	// enforce provider-side schema compliance, so strict/unknown shapes stay a
+	// 400 rather than a silent lie.
+	jsonMode, _, ok := classifyFacadeResponseFormat(req.ResponseFormat)
+	if !ok {
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "structured_output_unsupported", "response_format is not supported; only {\"type\":\"json_object\"} and {\"type\":\"json_schema\"} coercion are served")
 		outcome = facadeOutcomeRejected
 		return
 	}
@@ -321,7 +442,7 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 	job, result := s.waitFacadeJob(r, jobID, wait)
 	switch result {
 	case facadeWaitDone:
-		completion, status, errType, code, message := s.facadeCompletion(req.Model, prompt, job)
+		completion, status, errType, code, message := s.facadeCompletion(req.Model, prompt, job, jsonMode)
 		if status != http.StatusOK {
 			s.writeFacadeError(w, status, errType, code, message)
 			outcome = facadeOutcomeProviderError
@@ -673,12 +794,22 @@ func (s *Server) cancelFacadeJob(ctx context.Context, job jobstore.Job, reason s
 
 // facadeCompletion renders a terminal job as an OpenAI chat.completion.
 // Terminal failures map to retryable 503s (login drift, transient) or 500s.
-func (s *Server) facadeCompletion(model, prompt string, job jobstore.Job) (openAIFacadeCompletion, int, string, string, string) {
+// When jsonMode is coerce, the provider text is reduced to its first parseable
+// JSON value first; a completion with no parseable JSON fails as 500
+// json_extract_failed instead of returning provider chatter to a JSON parser.
+func (s *Server) facadeCompletion(model, prompt string, job jobstore.Job, jsonMode facadeJSONMode) (openAIFacadeCompletion, int, string, string, string) {
 	switch job.Status {
 	case jobstore.StatusCompleted, jobstore.StatusCompletedWithWarnings:
 		text := facadeOutputText(buildJobResultEnvelope(job))
 		if text == "" {
 			return openAIFacadeCompletion{}, http.StatusInternalServerError, "server_error", "empty_completion", "job completed without extractable text"
+		}
+		if jsonMode == facadeJSONCoerce {
+			coerced, _, ok := coerceFacadeJSON(text)
+			if !ok {
+				return openAIFacadeCompletion{}, http.StatusInternalServerError, "server_error", "json_extract_failed", "job completed but no JSON object or array could be extracted from the provider output"
+			}
+			text = coerced
 		}
 		promptTokens := estimateTokens(len(prompt))
 		completionTokens := estimateTokens(len(text))
@@ -744,4 +875,415 @@ func estimateTokens(chars int) int {
 		return 0
 	}
 	return (chars + 3) / 4
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OpenAI audio transcriptions: multipart audio over a held native job.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// transcriptionAudioMIMEs is the fail-closed allowlist for the audio file
+// part. It mirrors the audio/voice content types the live provider manifests
+// actually accept (chatgpt/claude/gemini/mistral/perplexity), minus container
+// variants the worker has no evidence for.
+var transcriptionAudioMIMEs = map[string]string{
+	"audio/webm":  "webm",
+	"audio/wav":   "wav",
+	"audio/x-wav": "wav",
+	"audio/mpeg":  "mp3",
+	"audio/mp4":   "m4a",
+	"audio/ogg":   "ogg",
+}
+
+const (
+	// maxTranscriptionAudioBytes caps the uploaded audio part. 24 MiB matches
+	// the largest OET caller cap (class recordings) and stays under the 32
+	// MiB per-file artifact ceiling.
+	maxTranscriptionAudioBytes = 24 << 20
+	// defaultTranscriptionTarget is the provider used when the caller passes
+	// model "whisper-1" (the OET convention) or omits a UBAG target.
+	defaultTranscriptionTarget = "chatgpt_web"
+)
+
+type openAITranscriptionResponse struct {
+	Text        string `json:"text"`
+	UbagJobID string `json:"ubag_job_id"`
+}
+
+// handleOpenAITranscription implements POST /v1/openai/audio/transcriptions:
+// an OpenAI-shaped multipart upload (file + optional model/language/prompt)
+// bridged onto one native job with the audio attached, resolved into plain
+// transcript text. The provider web UI does the listening; the gateway only
+// moves bytes and returns what the provider wrote.
+//
+// Flow: validate part -> create held job (ubag_attachments) -> PUT artifact
+// bytes server-side (no second client round-trip) -> wait terminal ->
+// completion text. Anything that cannot transcribe fails with an
+// OpenAI-shaped error; native codes ride in the message for debuggability.
+func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Request) {
+	outcome := facadeOutcomeError
+	defer func() { s.facadeOutcomes.add(outcome) }()
+
+	if r.Method != http.MethodPost {
+		s.writeMethodNotAllowed(w, r, http.MethodPost)
+		outcome = facadeOutcomeRejected
+		return
+	}
+	if !s.authorizeGatewayAction(w, r, "job:create") {
+		return
+	}
+
+	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "multipart/form-data" || strings.TrimSpace(params["boundary"]) == "" {
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", "content-type must be multipart/form-data with a boundary")
+		outcome = facadeOutcomeRejected
+		return
+	}
+
+	reader := multipart.NewReader(io.LimitReader(r.Body, int64(maxTranscriptionAudioBytes)+s.maxBody), params["boundary"])
+	var audioBytes []byte
+	var audioMIME, audioFilename, modelField, language, promptHint string
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", "multipart body is malformed")
+			outcome = facadeOutcomeRejected
+			return
+		}
+		name := part.FormName()
+		switch name {
+		case "file":
+			if audioBytes != nil {
+				s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", "multipart part \"file\" appears more than once")
+				outcome = facadeOutcomeRejected
+				return
+			}
+			audioMIME = safeArtifactContentType(part.Header.Get("Content-Type"))
+			audioFilename = part.FileName()
+			chunk, err := io.ReadAll(io.LimitReader(part, int64(maxTranscriptionAudioBytes)+1))
+			_ = part.Close()
+			if err != nil {
+				s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", "audio part could not be read")
+				outcome = facadeOutcomeRejected
+				return
+			}
+			audioBytes = chunk
+		case "model":
+			raw, _ := io.ReadAll(io.LimitReader(part, 256))
+			_ = part.Close()
+			modelField = strings.TrimSpace(string(raw))
+		case "language":
+			raw, _ := io.ReadAll(io.LimitReader(part, 16))
+			_ = part.Close()
+			language = strings.ToLower(strings.TrimSpace(string(raw)))
+		case "prompt":
+			raw, _ := io.ReadAll(io.LimitReader(part, s.maxBody))
+			_ = part.Close()
+			promptHint = strings.TrimSpace(string(raw))
+		default:
+			_ = part.Close()
+		}
+	}
+	if len(audioBytes) == 0 {
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", "multipart part \"file\" with audio bytes is required")
+		outcome = facadeOutcomeRejected
+		return
+	}
+	if len(audioBytes) > maxTranscriptionAudioBytes {
+		s.writeFacadeError(w, http.StatusRequestEntityTooLarge, "invalid_request_error", "file_too_large", "audio part exceeds the 24 MiB transcription limit")
+		outcome = facadeOutcomeRejected
+		return
+	}
+	ext, ok := transcriptionAudioMIMEs[strings.ToLower(strings.TrimSpace(audioMIME))]
+	if !ok {
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "unsupported_audio_type", fmt.Sprintf("audio content type %q is not accepted for transcription", audioMIME))
+		outcome = facadeOutcomeRejected
+		return
+	}
+
+	target := transcriptionTargetForModel(modelField)
+
+	prompt := "Transcribe the attached audio verbatim. Return plain text only, no commentary."
+	if promptHint != "" {
+		prompt = promptHint + "\n\nTranscribe the attached audio verbatim. Return plain text only, no commentary."
+	}
+	if language != "" {
+		prompt = fmt.Sprintf("The audio language is %s. %s", language, prompt)
+	}
+
+	key := "audio." + ext
+	if base := strings.TrimSpace(audioFilename); base != "" && attachments.ValidKey(base) {
+		key = base
+	}
+	attachmentDecls := []any{map[string]any{
+		"key":          key,
+		"content_type": strings.ToLower(strings.TrimSpace(audioMIME)),
+		"kind":         "voice",
+	}}
+
+	facadeReq := openAIFacadeRequest{Model: target}
+	jobID, status, errType, code, message, ok := s.createFacadeJob(r, facadeReq, target, nil, prompt, attachmentDecls)
+	if !ok {
+		s.writeFacadeError(w, status, errType, code, message)
+		if status == http.StatusBadRequest {
+			outcome = facadeOutcomeRejected
+		}
+		return
+	}
+	if err := s.putFacadeAttachmentBytes(r.Context(), jobID, key, strings.ToLower(strings.TrimSpace(audioMIME)), audioBytes); err != nil {
+		s.writeFacadeError(w, http.StatusInternalServerError, "server_error", "attachment_store_failed", "transcription audio could not be stored")
+		outcome = facadeOutcomeError
+		return
+	}
+
+	job, result := s.waitFacadeJob(r, jobID, s.facadeMaxWait)
+	switch result {
+	case facadeWaitDone:
+		if job.Status != jobstore.StatusCompleted && job.Status != jobstore.StatusCompletedWithWarnings {
+			_, status, errType, code, message := s.facadeCompletion(target, prompt, job, facadeJSONOff)
+			s.writeFacadeError(w, status, errType, code, message)
+			outcome = facadeOutcomeProviderError
+			return
+		}
+		text := facadeOutputText(buildJobResultEnvelope(job))
+		if strings.TrimSpace(text) == "" {
+			s.writeFacadeError(w, http.StatusInternalServerError, "server_error", "empty_transcript", "job completed without extractable transcript text")
+			outcome = facadeOutcomeProviderError
+			return
+		}
+		s.writeJSON(w, http.StatusOK, openAITranscriptionResponse{Text: text, UbagJobID: jobID})
+		outcome = facadeOutcomeCompleted
+	case facadeWaitTimeout:
+		s.writeJSON(w, http.StatusGatewayTimeout, openAIFacadeErrorEnvelope{
+			Error: openAIFacadeError{
+				Message: fmt.Sprintf("transcription did not finish within the facade deadline; poll GET /v1/jobs/%s for the result", jobID),
+				Type:    "timeout_error",
+				Code:    "wait_timeout",
+				Param:   jobID,
+			},
+		})
+		outcome = facadeOutcomeWaitTimeout
+	case facadeWaitAbort:
+		outcome = facadeOutcomeError
+	default:
+		s.writeFacadeError(w, http.StatusInternalServerError, "server_error", "job_wait_failed", "failed while waiting for the transcription result")
+		outcome = facadeOutcomeError
+	}
+}
+
+// transcriptionTargetForModel maps the caller's model field onto a UBAG live
+// target. "whisper-1" (and blanks/unknowns) mean the operator default — the
+// gateway never pretends to run Whisper weights; the provider web UI listens
+// instead. A bare UBAG target passes through when callers want to pin one.
+func transcriptionTargetForModel(model string) string {
+	trimmed := strings.TrimSpace(model)
+	if trimmed == "" || strings.EqualFold(trimmed, "whisper-1") {
+		return defaultTranscriptionTarget
+	}
+	if isTargetKey(trimmed) && facadeTargetKnown(trimmed) {
+		return trimmed
+	}
+	return defaultTranscriptionTarget
+}
+
+// putFacadeAttachmentBytes stores one attachment's bytes directly into the
+// artifact store for a facade-owned held job, then runs the shared dispatch
+// gate so the job leaves StatusCreated once complete. It mirrors the PUT
+// artifact path's store + dispatch steps without an HTTP round-trip.
+func (s *Server) putFacadeAttachmentBytes(ctx context.Context, jobID, key, contentType string, payload []byte) error {
+	job, found, err := s.jobs.Get(ctx, jobID)
+	if err != nil || !found {
+		return fmt.Errorf("load held job: %w", err)
+	}
+	if _, err := s.artifactSt.PutArtifact(ctx, job.ID, key, contentType, bytes.NewReader(payload), int64(len(payload))); err != nil {
+		return fmt.Errorf("store artifact: %w", err)
+	}
+	s.artifactCaptures.Add(1)
+	s.attachmentsStored.Add(1)
+	s.attachmentOutcomes.add("voice|stored")
+	return s.maybeDispatchAfterArtifact(ctx, job)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OpenAI embeddings: deterministic hash vectors in the OpenAI shape.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const (
+	// defaultEmbeddingDim matches the OET callers (text-embedding-3-small,
+	// 1536) so existing rows and vector columns keep working unchanged.
+	defaultEmbeddingDim = 1536
+	// maxEmbeddingInputsPerCall bounds one embeddings call the way the OET
+	// EmbeddingService batches (20).
+	maxEmbeddingInputsPerCall = 20
+)
+
+type openAIEmbeddingRequest struct {
+	Model      string `json:"model"`
+	Input      any    `json:"input"`
+	Dimensions *int   `json:"dimensions,omitempty"`
+}
+
+type openAIEmbeddingDatum struct {
+	Object    string    `json:"object"`
+	Index     int       `json:"index"`
+	Embedding []float64 `json:"embedding"`
+}
+
+type openAIEmbeddingUsage struct {
+	PromptTokens int `json:"prompt_tokens"`
+	TotalTokens  int `json:"total_tokens"`
+}
+
+type openAIEmbeddingResponse struct {
+	Object string                 `json:"object"`
+	Data   []openAIEmbeddingDatum `json:"data"`
+	Model  string                 `json:"model"`
+	Usage  openAIEmbeddingUsage   `json:"usage"`
+}
+
+// handleOpenAIEmbeddings implements POST /v1/openai/embeddings in the exact
+// OpenAI response shape ({object:list, data[{object:embedding, index,
+// embedding[float]}], model, usage}). The vectors are deterministic
+// SHA-256-chained unit vectors, NOT semantic embeddings: no model runs, so
+// cosine neighbours mean "same bytes", never "same meaning". The contract
+// says so explicitly, and callers that need semantic retrieval must keep a
+// real embedding provider. What this buys OET: every embeddings.generate /
+// writing.exemplar.embed.v1 call resolves to a correctly-shaped,
+// correctly-dimensioned, correctly-indexed vector with zero new
+// infrastructure and zero per-call spend.
+func (s *Server) handleOpenAIEmbeddings(w http.ResponseWriter, r *http.Request) {
+	outcome := facadeOutcomeError
+	defer func() { s.facadeOutcomes.add(outcome) }()
+
+	if r.Method != http.MethodPost {
+		s.writeMethodNotAllowed(w, r, http.MethodPost)
+		outcome = facadeOutcomeRejected
+		return
+	}
+	if !s.authorizeGatewayAction(w, r, "job:create") {
+		return
+	}
+
+	limited := http.MaxBytesReader(w, r.Body, s.maxBody)
+	raw, err := io.ReadAll(limited)
+	if err != nil {
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "request_too_large", "request body exceeds gateway limit")
+		outcome = facadeOutcomeRejected
+		return
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", "request body must be valid JSON")
+		outcome = facadeOutcomeRejected
+		return
+	}
+	var req openAIEmbeddingRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", "request body must be valid JSON")
+		outcome = facadeOutcomeRejected
+		return
+	}
+	if strings.TrimSpace(req.Model) == "" {
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", "model is required")
+		outcome = facadeOutcomeRejected
+		return
+	}
+	inputs := facadeEmbeddingInputs(req.Input)
+	if len(inputs) == 0 {
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", "input must be a non-empty string or array of strings")
+		outcome = facadeOutcomeRejected
+		return
+	}
+	if len(inputs) > maxEmbeddingInputsPerCall {
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", fmt.Sprintf("input carries %d texts; at most %d per call", len(inputs), maxEmbeddingInputsPerCall))
+		outcome = facadeOutcomeRejected
+		return
+	}
+	dim := defaultEmbeddingDim
+	if req.Dimensions != nil {
+		if *req.Dimensions <= 0 || *req.Dimensions > defaultEmbeddingDim {
+			s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", fmt.Sprintf("dimensions must be 1..%d", defaultEmbeddingDim))
+			outcome = facadeOutcomeRejected
+			return
+		}
+		dim = *req.Dimensions
+	}
+
+	data := make([]openAIEmbeddingDatum, 0, len(inputs))
+	promptTokens := 0
+	for i, text := range inputs {
+		promptTokens += estimateTokens(len(text))
+		data = append(data, openAIEmbeddingDatum{
+			Object:    "embedding",
+			Index:     i,
+			Embedding: facadeHashEmbedding(text, dim),
+		})
+	}
+	s.writeJSON(w, http.StatusOK, openAIEmbeddingResponse{
+		Object: "list",
+		Data:   data,
+		Model:  strings.TrimSpace(req.Model),
+		Usage:  openAIEmbeddingUsage{PromptTokens: promptTokens, TotalTokens: promptTokens},
+	})
+	outcome = facadeOutcomeCompleted
+}
+
+func facadeEmbeddingInputs(raw any) []string {
+	switch v := raw.(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil
+		}
+		return []string{v}
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			text, ok := item.(string)
+			if !ok || strings.TrimSpace(text) == "" {
+				return nil
+			}
+			out = append(out, text)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// facadeHashEmbedding is a deterministic SHA-256-chained unit vector over the
+// lowercased, trimmed text. Same bytes -> same vector, always. It is a
+// stable stand-in for dedupe and shape-compatibility, never a semantic
+// embedding: neighbours share bytes, not meaning.
+func facadeHashEmbedding(text string, dim int) []float64 {
+	vec := make([]float64, dim)
+	seed := []byte(strings.ToLower(strings.TrimSpace(text)))
+	if len(seed) == 0 {
+		return vec
+	}
+	offset := 0
+	iteration := 0
+	for offset < dim {
+		probe := make([]byte, 0, len(seed)+4)
+		probe = append(probe, seed...)
+		probe = append(probe, byte(iteration), byte(iteration>>8), byte(iteration>>16), byte(iteration>>24))
+		sum := sha256.Sum256(probe)
+		for i := 0; i+4 <= len(sum) && offset < dim; i += 4 {
+			bits := uint32(sum[i]) | uint32(sum[i+1])<<8 | uint32(sum[i+2])<<16 | uint32(sum[i+3])<<24
+			vec[offset] = float64(int32(bits)) / 2147483648.0
+			offset++
+		}
+		iteration++
+	}
+	var magnitude float64
+	for _, v := range vec {
+		magnitude += v * v
+	}
+	magnitude = math.Sqrt(magnitude)
+	if magnitude > 0 {
+		for i := range vec {
+			vec[i] /= magnitude
+		}
+	}
+	return vec
 }

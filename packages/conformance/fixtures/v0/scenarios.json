@@ -2849,6 +2849,39 @@
         "unsupported_target_rejected",
         "ubag_job_id_link"
       ]
+    },
+    {
+      "id": "openai.chat.completions.json_coercion",
+      "category": "openai_compat",
+      "title": "Facade response_format json_object/json_schema coerces provider text to parseable JSON",
+      "assertions": [
+        "json_object_coerced",
+        "json_schema_coerced",
+        "unparseable_fails_loudly",
+        "unknown_format_rejected_400"
+      ]
+    },
+    {
+      "id": "openai.audio.transcriptions.contract",
+      "category": "openai_compat",
+      "title": "Facade multipart audio upload resolves to transcript text with ubag_job_id",
+      "assertions": [
+        "multipart_file_required",
+        "unsupported_audio_type_400",
+        "audio_mime_allowlist",
+        "ubag_job_id_link"
+      ]
+    },
+    {
+      "id": "openai.embeddings.contract",
+      "category": "openai_compat",
+      "title": "Facade embeddings answers the OpenAI shape with deterministic hash vectors",
+      "assertions": [
+        "object_list_with_indexed_data",
+        "dimension_1536_default",
+        "deterministic_same_bytes_same_vector",
+        "documented_not_semantic"
+      ]
     }
   ],
   "scenarios": [

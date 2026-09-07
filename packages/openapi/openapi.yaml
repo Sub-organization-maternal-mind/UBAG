@@ -1537,9 +1537,14 @@ paths:
         `chat.completion` object. `model` is a UBAG target key (for example
         `chatgpt_web`) or `target|setting` (for example
         `chatgpt_web|GPT-5.6 Sol`); the available values are listed by
-        GET /v1/openai/models. `stream:true`, tools/function calling, and
-        multimodal content parts are rejected: UBAG has no end-to-end token
-        streaming and no tool protocol. Message history is flattened into one
+        GET /v1/openai/models. `stream:true` and tools/function calling are
+        rejected: UBAG has no end-to-end token streaming and no tool protocol.
+        `response_format` serves JSON coercion only (`json_object` /
+        `json_schema`: the completion text is reduced to its first parseable
+        JSON value, and the call fails loudly when nothing parses); any other
+        shape is rejected. Multimodal content parts are rejected — send files
+        via `ubag_attachments` (below) or multipart to POST /v1/jobs instead.
+        Message history is flattened into one
         prompt (system messages first, then turns in order); there is no
         role-aware tool/result interpretation. File attachments
         (PDF/image/audio/video/voice) are supported: declare them in
@@ -1656,6 +1661,146 @@ paths:
                 $ref: "#/components/schemas/OpenAIErrorResponse"
         "500":
           description: Model catalog could not be read.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+  /v1/openai/audio/transcriptions:
+    post:
+      tags: [OpenAICompat]
+      operationId: createOpenAITranscription
+      summary: Transcribe audio via a held native job.
+      description: |
+        OpenAI-shaped multipart upload (`file` audio part + optional
+        `model`/`language`/`prompt` fields) bridged onto one native job with
+        the audio attached as a `voice` artifact. The provider web UI does the
+        listening; the gateway answers `{text, ubag_job_id}` once the job is
+        terminal, or 504 with the job ID when the facade deadline expires
+        first. `model: whisper-1` (or blank) selects the operator-default
+        live target; a bare UBAG target pins the provider. Audio MIME types
+        are allowlisted (webm/wav/mpeg/mp4/ogg); the part is capped at 24 MiB.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                model:
+                  type: string
+                language:
+                  type: string
+                prompt:
+                  type: string
+      responses:
+        "200":
+          description: Transcription finished within the facade deadline.
+          headers:
+            Ubag-Api-Version-Used:
+              $ref: "#/components/headers/UbagApiVersionUsed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAITranscriptionResponse"
+        "400":
+          description: Rejected upload (missing file, unsupported audio type, malformed multipart).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "401":
+          description: Missing or invalid credential.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "413":
+          description: Audio part exceeds the 24 MiB transcription limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "429":
+          description: Queue backpressure or concurrency ceiling.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "500":
+          description: Job creation, dispatch, or transcript extraction failed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "503":
+          description: Provider unavailable (login required, adapter drift, region draining).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "504":
+          description: Facade deadline expired before the job reached a terminal state; ubag_job_id identifies the still-running job.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+  /v1/openai/embeddings:
+    post:
+      tags: [OpenAICompat]
+      operationId: createOpenAIEmbedding
+      summary: Deterministic hash embeddings in the OpenAI shape.
+      description: |
+        Accepts the OpenAI embeddings request shape (`model`, `input` as a
+        string or array of strings, optional `dimensions` 1..1536) and answers
+        in the exact OpenAI embeddings response shape. The vectors are
+        deterministic SHA-256-chained unit vectors, NOT semantic embeddings:
+        no model runs, so cosine neighbours mean "same bytes", never "same
+        meaning". At most 20 inputs per call. Callers that need semantic
+        retrieval must keep a real embedding provider.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OpenAIEmbeddingRequest"
+      responses:
+        "200":
+          description: Embeddings computed.
+          headers:
+            Ubag-Api-Version-Used:
+              $ref: "#/components/headers/UbagApiVersionUsed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIEmbeddingResponse"
+        "400":
+          description: Rejected request (missing model, empty input, too many inputs, bad dimensions).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "401":
+          description: Missing or invalid credential.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "429":
+          description: Rate limited.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpenAIErrorResponse"
+        "500":
+          description: Embedding computation failed.
           content:
             application/json:
               schema:
@@ -2883,7 +3028,7 @@ components:
         tool_choice:
           description: Rejected with 400 when set; UBAG has no tool protocol.
         response_format:
-          description: Rejected with 400 when set; strict structured output is not guaranteed.
+          description: JSON coercion only ({type json_object} or {type json_schema}); the completion text is reduced to its first parseable JSON value and the call fails loudly when nothing parses. Any other shape is rejected with 400.
         ubag_wait_ms:
           type: integer
           minimum: 1000
@@ -2989,6 +3134,69 @@ components:
           enum: [created]
         message:
           type: string
+    OpenAITranscriptionResponse:
+      type: object
+      additionalProperties: false
+      required: [text, ubag_job_id]
+      properties:
+        text:
+          type: string
+          description: Transcript text the provider wrote for the attached audio.
+        ubag_job_id:
+          type: string
+          description: Native UBAG job behind this transcription, for polling and audit.
+    OpenAIEmbeddingRequest:
+      type: object
+      additionalProperties: false
+      required: [model, input]
+      properties:
+        model:
+          type: string
+          minLength: 1
+        input:
+          description: One text or an array of up to 20 texts.
+        dimensions:
+          type: integer
+          minimum: 1
+          maximum: 1536
+    OpenAIEmbeddingResponse:
+      type: object
+      additionalProperties: false
+      required: [object, data, model, usage]
+      properties:
+        object:
+          type: string
+          enum: [list]
+        data:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [object, index, embedding]
+            properties:
+              object:
+                type: string
+                enum: [embedding]
+              index:
+                type: integer
+                minimum: 0
+              embedding:
+                type: array
+                items:
+                  type: number
+        model:
+          type: string
+        usage:
+          type: object
+          additionalProperties: false
+          required: [prompt_tokens, total_tokens]
+          properties:
+            prompt_tokens:
+              type: integer
+              minimum: 0
+            total_tokens:
+              type: integer
+              minimum: 0
     OpenAIModel:
       type: object
       additionalProperties: false

@@ -33,6 +33,8 @@ The full UBAG Gateway REST API reference is available in machine-readable OpenAP
 | GET | /v1/webhooks | List webhook endpoints |
 | POST | /v1/openai/chat/completions | OpenAI-compatible chat completion (sync bridge over one native job) |
 | GET | /v1/openai/models | List facade model IDs (`target` and `target\|setting`) |
+| POST | /v1/openai/audio/transcriptions | Transcribe audio via a held native job (`{text, ubag_job_id}`) |
+| POST | /v1/openai/embeddings | Deterministic hash embeddings in the OpenAI shape (NOT semantic) |
 
 ## Required headers
 
@@ -107,7 +109,16 @@ See [Error Catalog](/contracts/error-catalog) for the full list of error types.
 `POST /v1/openai/chat/completions` accepts a narrow OpenAI chat-completions
 subset and answers with an OpenAI `chat.completion` object, backed by one
 native UBAG job plus a terminal wait (see the OpenAPI description for the full
-mapping). `GET /v1/openai/models` lists the accepted `model` IDs. Facade
+mapping). `GET /v1/openai/models` lists the accepted `model` IDs.
+`response_format` serves JSON coercion only (`json_object` / `json_schema`:
+the completion text is reduced to its first parseable JSON value, and the
+call fails loudly when nothing parses). File attachments ride
+`ubag_attachments` (declare, 202-held, PUT each key, poll/replay).
+`POST /v1/openai/audio/transcriptions` takes an OpenAI-shaped multipart
+audio upload and answers `{text, ubag_job_id}` once the provider-backed job
+is terminal. `POST /v1/openai/embeddings` answers the OpenAI embeddings
+shape with deterministic SHA-256-chained unit vectors — correctly shaped and
+dimensioned, but NOT semantic (neighbours share bytes, not meaning). Facade
 errors are OpenAI-shaped (`error.message/type/code`, with the still-running
 job ID in `error.param` on 504); a missing credential keeps the gateway
 `UBAG-AUTH-MISSING-001` envelope from shared auth middleware. Usage figures

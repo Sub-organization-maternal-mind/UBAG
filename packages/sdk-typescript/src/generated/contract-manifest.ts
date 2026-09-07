@@ -184,6 +184,14 @@ export const UBAG_ENDPOINTS = {
   "GET /v1/openai/models": {
     "method": "GET",
     "path": "/v1/openai/models"
+  },
+  "POST /v1/openai/audio/transcriptions": {
+    "method": "POST",
+    "path": "/v1/openai/audio/transcriptions"
+  },
+  "POST /v1/openai/embeddings": {
+    "method": "POST",
+    "path": "/v1/openai/embeddings"
   }
 } as const;
 export const UBAG_ERROR_CODES = {
