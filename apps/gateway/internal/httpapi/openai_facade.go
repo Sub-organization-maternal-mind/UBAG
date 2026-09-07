@@ -301,27 +301,37 @@ func (s *Server) facadeModels() []openAIFacadeModel {
 			continue
 		}
 		models = append(models, openAIFacadeModel{ID: key, Object: "model", OwnedBy: "ubag"})
-		catalog := resolveModelCatalog(key)
-		settingKeys := make([]string, 0, len(catalog.Settings))
-		for name := range catalog.Settings {
-			settingKeys = append(settingKeys, name)
-		}
-		sort.Strings(settingKeys)
-		for _, name := range settingKeys {
-			setting := catalog.Settings[name]
-			if setting.Kind != "choice" {
-				continue
-			}
-			for _, value := range setting.Values {
-				models = append(models, openAIFacadeModel{
-					ID:      key + facadeModelSeparator + value,
-					Object:  "model",
-					OwnedBy: "ubag",
-				})
-			}
+		for _, id := range facadeChoiceModelIDs(key) {
+			models = append(models, openAIFacadeModel{ID: id, Object: "model", OwnedBy: "ubag"})
 		}
 	}
 	return models
+}
+
+// facadeChoiceModelIDs lists the chat-addressable target|value IDs for one
+// target: one per value of every kind=choice catalog setting, in sorted
+// setting-key order with manifest value order preserved. Toggle-kind
+// settings are skipped — they carry no labelled values and cannot be chat
+// model IDs. Shared with resolveFacadeModel so the models list and the
+// resolver can never disagree on what is addressable.
+func facadeChoiceModelIDs(target string) []string {
+	catalog := resolveModelCatalog(target)
+	settingKeys := make([]string, 0, len(catalog.Settings))
+	for name := range catalog.Settings {
+		settingKeys = append(settingKeys, name)
+	}
+	sort.Strings(settingKeys)
+	ids := []string{}
+	for _, name := range settingKeys {
+		setting := catalog.Settings[name]
+		if setting.Kind != "choice" {
+			continue
+		}
+		for _, value := range setting.Values {
+			ids = append(ids, target+facadeModelSeparator+value)
+		}
+	}
+	return ids
 }
 
 func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Request) {
@@ -492,6 +502,13 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 // model settings. A bare target uses operator defaults; "target|value" binds
 // the catalog choice setting offering that value (e.g. chatgpt_web|GPT-5.6
 // Sol binds {"model": ...}, deepseek_web|Instant binds {"mode": ...}).
+// Thinking levels ride the same mechanism: chatgpt_web|Medium binds
+// {"thinking": "Medium"}, duckai_web|Reasoning binds {"reasoning":
+// "Reasoning"}. Toggle-kind settings (gemini_web thinking, deepseek
+// deepthink) have no labelled values, so they are NOT addressable as model
+// IDs — the facade surfaces them in the models list for discovery but
+// rejects them as chat model IDs; use the bare target (operator default)
+// for those.
 func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool) {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -508,13 +525,7 @@ func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool)
 		return target, nil, true
 	}
 	catalog := resolveModelCatalog(target)
-	settingKeys := make([]string, 0, len(catalog.Settings))
-	for name := range catalog.Settings {
-		settingKeys = append(settingKeys, name)
-	}
-	sort.Strings(settingKeys)
-	for _, name := range settingKeys {
-		setting := catalog.Settings[name]
+	for name, setting := range catalog.Settings {
 		if setting.Kind == "choice" && slices.Contains(setting.Values, value) {
 			return target, map[string]any{name: value}, true
 		}

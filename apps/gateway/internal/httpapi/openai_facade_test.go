@@ -99,9 +99,36 @@ func TestResolveFacadeModel(t *testing.T) {
 	if !ok || target != "deepseek_web" || settings["mode"] != "Instant" {
 		t.Fatalf("deepseek setting = %q,%v,%v", target, settings, ok)
 	}
+	// Thinking levels are choice-kind settings, so they resolve as model IDs
+	// through the same path (chatgpt thinking, duckai reasoning).
+	target, settings, ok = server.resolveFacadeModel("chatgpt_web|Medium")
+	if !ok || target != "chatgpt_web" || settings["thinking"] != "Medium" {
+		t.Fatalf("thinking setting = %q,%v,%v", target, settings, ok)
+	}
+	target, settings, ok = server.resolveFacadeModel("duckai_web|Reasoning")
+	if !ok || target != "duckai_web" || settings["reasoning"] != "Reasoning" {
+		t.Fatalf("reasoning setting = %q,%v,%v", target, settings, ok)
+	}
 	for _, bad := range []string{"", "bogus_target", "chatgpt_web|No Such Model", "mock|anything"} {
 		if _, _, ok := server.resolveFacadeModel(bad); ok {
 			t.Fatalf("model %q should not resolve", bad)
+		}
+	}
+}
+
+func TestFacadeChoiceModelIDsMatchResolver(t *testing.T) {
+	// The models list and the resolver must agree: every listed target|value
+	// resolves, and every resolving target|value is listed. Otherwise the
+	// admin board offers IDs the facade rejects (the reported mismatch).
+	for _, entry := range targetCatalog() {
+		key, _ := entry["key"].(string)
+		if key == "" {
+			continue
+		}
+		for _, id := range facadeChoiceModelIDs(key) {
+			if _, _, ok := facadeTestServer().resolveFacadeModel(id); !ok {
+				t.Fatalf("listed model %q does not resolve", id)
+			}
 		}
 	}
 }
