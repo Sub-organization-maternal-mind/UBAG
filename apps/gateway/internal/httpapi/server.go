@@ -3297,14 +3297,18 @@ func validateModelSettingsForCreate(target string, settings map[string]any) (cod
 }
 
 // optionsWithProviderConfig returns the options to persist for a job. Any
-// client-supplied provider_config is removed Ã¢â‚¬â€ it is a gateway-internal worker
+// client-supplied provider_config is removed — it is a gateway-internal worker
 // channel, never client-settable, and letting a client set it would bypass
 // model-catalog validation (the value is interpolated into a Playwright
-// selector in the worker). The validated model_settings are then injected as
-// options.provider_config so they reach the worker's _resolve_provider_config on
-// every dispatch path. Returns the input unchanged when there is no client
-// provider_config to strip and no model settings to inject, so behavior for
-// callers that use neither is identical.
+// selector in the worker). The one exception is the OpenAI facade's
+// best-effort marker (options.provider_config._enabled=false with NO other
+// keys): the facade is gateway-internal code, the value is a constant, and
+// stripping it would silently re-enable fail-closed picker config. The
+// validated model_settings are then injected as options.provider_config so
+// they reach the worker's _resolve_provider_config on every dispatch path.
+// Returns the input unchanged when there is no client provider_config to
+// strip and no model settings to inject, so behavior for callers that use
+// neither is identical.
 func optionsWithProviderConfig(options map[string]any, modelSettings map[string]any) map[string]any {
 	providerConfig := executor.ProviderConfigFromModelSettings(modelSettings)
 	_, hasClient := options["provider_config"]
@@ -3315,11 +3319,36 @@ func optionsWithProviderConfig(options map[string]any, modelSettings map[string]
 	if out == nil {
 		out = map[string]any{}
 	}
+	// Preserve the facade's best-effort marker across the strip: it is the
+	// ONLY client-shaped provider_config the gateway itself mints, it
+	// carries no selector values (just the _enabled gate), and model
+	// settings merge on top of it below.
+	var marker map[string]any
+	if raw, ok := out["provider_config"].(map[string]any); ok && isFacadeBestEffortMarker(raw) {
+		marker = raw
+	}
 	delete(out, "provider_config")
 	if len(providerConfig) > 0 {
 		out["provider_config"] = providerConfig
+	} else if marker != nil {
+		out["provider_config"] = marker
 	}
 	return out
+}
+
+// isFacadeBestEffortMarker reports whether a provider_config value is exactly
+// the facade's best-effort marker: {"_enabled": false} and nothing else. Any
+// other shape (selector values, extra keys) is NOT a marker and is stripped.
+func isFacadeBestEffortMarker(raw map[string]any) bool {
+	if len(raw) != 1 {
+		return false
+	}
+	enabled, ok := raw["_enabled"]
+	if !ok {
+		return false
+	}
+	flag, ok := enabled.(bool)
+	return ok && !flag
 }
 
 func resolveModelCatalog(target string) jobcore.ModelCatalog {

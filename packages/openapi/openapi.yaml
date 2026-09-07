@@ -3033,6 +3033,9 @@ components:
           type: integer
           minimum: 1000
           description: Per-request facade wait deadline in milliseconds, capped by the server maximum.
+        ubag_strict:
+          type: boolean
+          description: Opt back into fail-closed picker config. When omitted or false (recommended), a drifted provider model menu skips instead of failing the job — the prompt submits in the account's current mode. When true, drift fails the job as selector_drift_detected.
         ubag_attachments:
           type: array
           maxItems: 32

@@ -91,6 +91,12 @@ type openAIFacadeRequest struct {
 	ToolChoice     any                   `json:"tool_choice,omitempty"`
 	ResponseFormat any                   `json:"response_format,omitempty"`
 	UbagWaitMs     *int64                `json:"ubag_wait_ms,omitempty"`
+	// UbagStrict opts back into fail-closed picker config: when true, a
+	// drifted model menu fails the job as selector_drift_detected (the old
+	// default). When omitted or false (recommended), the facade marks the
+	// job best-effort and the worker skips the picker instead — the prompt
+	// submits in the account's current mode rather than failing.
+	UbagStrict *bool `json:"ubag_strict,omitempty"`
 	// UbagAttachments carries native attachment declarations
 	// ({key, content_type, kind, [filename]}) for this facade call. Each
 	// declared key MUST be uploaded with PUT
@@ -672,6 +678,22 @@ func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, targe
 	}
 	if req.TopP != nil {
 		options["top_p"] = *req.TopP
+	}
+	// Best-effort picker config: the provider's model menu drifts (ChatGPT
+	// rewrote the picker 2026-08-10; Gemini flattened its menu 2026-07-17).
+	// The worker resolves operator defaults from its selectors; this flag
+	// only RECORDS that the caller asked for best-effort mode. A drifted
+	// picker then skips (submits in the account's current mode) instead of
+	// failing the job as selector_drift_detected. Pass ubag_strict:true to
+	// keep the old fail-closed behavior for evals. NOTE: options is set
+	// directly (not via optionsWithProviderConfig) because that helper
+	// strips client provider_config — the facade IS the gateway here, and
+	// the value is a constant, never caller-supplied.
+	if req.UbagStrict == nil || !*req.UbagStrict {
+		if options == nil {
+			options = map[string]any{}
+		}
+		options["provider_config"] = map[string]any{"_enabled": false}
 	}
 	input := map[string]any{"prompt": effectivePrompt}
 	if len(attachmentDecls) > 0 {

@@ -1609,4 +1609,28 @@ func TestOptionsWithProviderConfig(t *testing.T) {
 			t.Fatalf("provider_config not injected into nil options: %#v", got)
 		}
 	})
+
+	// The facade's best-effort marker (exactly {"_enabled": false}) survives
+	// the strip: the facade is gateway-internal code and the value carries no
+	// selector values. Any other shape is stripped like a client value.
+	t.Run("preserves facade best-effort marker", func(t *testing.T) {
+		opts := map[string]any{"provider_config": map[string]any{"_enabled": false}}
+		got := optionsWithProviderConfig(opts, nil)
+		pc, ok := got["provider_config"].(map[string]any)
+		if !ok || len(pc) != 1 || pc["_enabled"] != false {
+			t.Fatalf("facade marker must survive: %#v", got)
+		}
+	})
+	t.Run("strips non-marker provider_config shapes", func(t *testing.T) {
+		for _, shape := range []map[string]any{
+			{"_enabled": true},
+			{"_enabled": false, "model": "evil-injection"},
+			{"model": "evil-injection"},
+		} {
+			got := optionsWithProviderConfig(map[string]any{"provider_config": shape}, nil)
+			if _, ok := got["provider_config"]; ok {
+				t.Fatalf("non-marker shape must be stripped: %#v", shape)
+			}
+		}
+	})
 }

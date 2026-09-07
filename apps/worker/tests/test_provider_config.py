@@ -229,7 +229,11 @@ class NewChatAndConfigTests(unittest.TestCase):
         self.assertEqual(by_key["mode"]["desired"], "Instant")
         self.assertEqual(driver.attached_files, ["/tmp/report.txt"])
 
-    def test_config_disabled_skips_configured_but_keeps_new_chat(self):
+    def test_config_disabled_skips_picker_but_records_skip(self):
+        # Best-effort facade path: _enabled=false skips the picker (a drifted
+        # model menu can never fail the job) but still emits
+        # session.configured with skipped_config_disabled so the gateway can
+        # tell "ran unconfigured" apart from "no settings declared".
         selectors = get_provider_selectors("deepseek_web")
         driver = MockPageDriver()
         events = LiveSessionEngine(selectors).run(
@@ -237,10 +241,13 @@ class NewChatAndConfigTests(unittest.TestCase):
             driver=driver,
         )
         types = _types(events)
-        self.assertNotIn("session.configured", types)
+        self.assertIn("session.configured", types)
         self.assertIn("session.new_chat", types)
         self.assertIn("completed", types)
         self.assertEqual(driver.ensured_settings, [])
+        configured = _event(events, "session.configured")
+        self.assertEqual(configured["data"]["status"], "skipped_config_disabled")
+        self.assertEqual(configured["data"]["settings"], [])
 
     def test_new_chat_disabled_skips_new_chat_but_keeps_config(self):
         selectors = get_provider_selectors("deepseek_web")

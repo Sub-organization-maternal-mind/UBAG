@@ -532,6 +532,19 @@ class LiveSessionEngine:
                 "settings": list(applied_settings),
                 "message": "enforced provider model/option settings before submit",
             }))
+        elif self._selectors.settings:
+            # Config disabled for this job (_enabled=false or operator gate
+            # off): skip the picker entirely and record WHY, so a drifted
+            # model menu can never fail a job the operator chose to run
+            # unconfigured. The prompt still submits in the account's current
+            # mode — best-effort, never blocked.
+            events.append(("session.configured", {
+                "status": "skipped_config_disabled",
+                "target": job.target,
+                "adapter": self._selectors.provider_id,
+                "settings": [],
+                "message": "provider settings skipped: config disabled for this job",
+            }))
 
         attach_paths = list(job.attachment_local_paths)
         # Back-compat: an older gateway materializes a single dictation-audio job

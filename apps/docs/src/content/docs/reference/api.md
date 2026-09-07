@@ -112,7 +112,10 @@ native UBAG job plus a terminal wait (see the OpenAPI description for the full
 mapping). `GET /v1/openai/models` lists the accepted `model` IDs.
 `response_format` serves JSON coercion only (`json_object` / `json_schema`:
 the completion text is reduced to its first parseable JSON value, and the
-call fails loudly when nothing parses). File attachments ride
+call fails loudly when nothing parses). `ubag_strict` (default off) opts
+back into fail-closed picker config: with the default, a drifted provider
+model menu skips instead of failing the job — the prompt submits in the
+account's current mode. File attachments ride
 `ubag_attachments` (declare, 202-held, PUT each key, poll/replay).
 `POST /v1/openai/audio/transcriptions` takes an OpenAI-shaped multipart
 audio upload and answers `{text, ubag_job_id}` once the provider-backed job
