@@ -905,7 +905,7 @@ const (
 )
 
 type openAITranscriptionResponse struct {
-	Text        string `json:"text"`
+	Text      string `json:"text"`
 	UbagJobID string `json:"ubag_job_id"`
 }
 
