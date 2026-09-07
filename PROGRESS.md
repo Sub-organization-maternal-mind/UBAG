@@ -2,6 +2,88 @@
 
 Last updated: 2026-09-07
 
+## 2026-09-07 OpenAI facade for OET provider integration + deployed
+
+UBAG is now consumable as a drop-in OpenAI-compatible AI provider by
+`app.oetwithdrhesham.co.uk` (and any future project): new
+`POST /v1/openai/chat/completions` sync long-poll bridge over native jobs +
+`GET /v1/openai/models` from adapter manifests. Commit `d6603ff` on main
+(facade + contracts + VPS compose PAT passthrough/oetwebsite_internal +
+OET PAT gitignore). Go verification runs via CI (no local toolchain).
+
+**Phase 0 (VPS, all verified):**
+- `UBAG_APP_SECRET` rotated (backup
+  `deploy/vps/env.local.pre-oet-facade-20260907T070218Z`; value-holder sweep
+  found only env.local itself — no platform copy exists as a file; operator
+  must update any off-box copies). Gateway + nginx-dashboard recreated on the
+  new secret; `/v1/ready` fully true.
+- `UBAG_PAT_ENABLED=true` added to env.local. Caught during rollout:
+  env.local alone only feeds compose interpolation — the gateway never saw
+  the flag until `UBAG_PAT_ENABLED`/`UBAG_PAT_DEFAULT_TTL_MS` were added to
+  the gateway `environment:` block in `docker-compose.vps.yml` (same file now
+  also joins `oetwebsite_internal` as an external network).
+- PAT issued for `(tenant_oet, oet-platform, role=service)`, no expiry
+  (`ttl_seconds=-1`); full JSON at root-only
+  `/opt/docker/ubag/deploy/vps/.oet-pat.json` (gitignored); PAT
+  authenticates (200 on `/v1/targets`).
+- Private path proven: `oet-api` container reaches
+  `http://ubag-vps-gateway-1:8080/v1/health` over `oetwebsite_internal`.
+
+**Facade design (see openapi + `internal/httpapi/openai_facade.go`):**
+- Model IDs: bare target (operator defaults) or `target|setting`
+  (catalog-bound, e.g. `chatgpt_web|GPT-5.6 Sol`, `deepseek_web|Instant`).
+- `stream:true`, tools, response_format, multimodal content rejected with
+  OpenAI-shaped 400s; usage is documented char-based estimates.
+- Native idempotency key derived from principal + request hash (retries
+  replay the same job); `return_mode: final`; wait loop over store
+  `WaitEvents` (no spin); deadline (`UBAG_FACADE_MAX_WAIT_MS`, 110s
+  default, per-request `ubag_wait_ms` capped) answers 504 with the job ID in
+  `error.param`; client disconnect best-effort cancels the job.
+- Terminal mapping: completed → 200 `chat.completion`; login drift →
+  503 `provider_login_required`; retryable → 503; timed_out/cancelled/other
+  → 500s. Metrics: `ubag_facade_jobs_total{outcome}` + chi route timings.
+- New tests in `openai_facade_test.go` (models, rejections, model parse,
+  flatten, estimates, 504-with-job-ID, completion + idempotent replay via
+  worker events). Contracts-first artifacts: OpenAPI paths + 9 schemas,
+  5 executable + 4 coverage conformance scenarios, regenerated SDK
+  manifests (`check:contracts`, fixture validation, manifest `--check`
+  all green locally).
+- Two build failures caught by the VPS build before CI: multi-value
+  `return "", mapRecorderError(...)` (illegal spread — fixed with named
+  temporaries) and missing `jobstore` import alias. gofmt alignment of the
+  new structs verified with a local audit script (no toolchain on laptop).
+
+**Production deploy + smoke (VPS 185.252.233.186):**
+- Source synced via tarball; gateway image rebuilt + gateway/chat-reaper
+  recreated (browser/nginx untouched); `/v1/ready` fully true, 0 panics,
+  0 fatals, all four containers healthy.
+- `GET /v1/openai/models` (PAT): 200, **29 models** incl. mock +
+  chatgpt_web.
+- Facade smoke `job_000000000259` (mock, PAT): **200 chat.completion**
+  with exact `UBAG_FACADE_SMOKE_OK` token in output, usage estimates,
+  `ubag_job_id` linked; native read proves `tenant_oet`/`oet-platform`
+  scoping. `stream:true` → 400 `streaming_unsupported`.
+- Rollback: prior image tag + `env.local.pre-oet-facade-*` backup; PAT
+  revocation is store-level; OET-side rollback is route-row toggles.
+
+**OET side (separate repo, working tree — NOT pushed):**
+- `UbagProviderSeeder` (Code=`ubag`, OpenAiCompatible,
+  `http://ubag-vps-gateway-1:8080/v1/openai`, DefaultModel=`mock`,
+  full 29-model allowlist, price 0, priority 70, inactive, no routes
+  seeded) + hosted service; PAT via `UBAG_OET_PAT` env or admin paste.
+- `AiProviderConnectionTester` SSRF guard gains `OET_INTERNAL_AI_HOSTS`
+  exact-hostname http exception (default `ubag-vps-gateway-1` in compose) —
+  REQUIRED, else every UBAG call fails closed. Side effect flagged in code:
+  allowlisting also makes the dormant `antigravity-gateway` row callable;
+  `oet-agent-gateway` deliberately NOT in the default.
+- Toggle board `/admin/ai-providers/ubag` (Groups A–E, 50 toggles, scoring
+  confirm modal, locked Group E, provider card with Test/Discover/Rotate
+  PAT/Activate) + 5 vitest green + `tsc` clean + `ship:gate` OK; preset +
+  board link + permission entry; `docs/AI-USAGE-POLICY.md` §19.
+- Remaining: push via OET ship-it flow, set `UBAG_OET_PAT` (value in
+  `.oet-pat.json` on VPS) or paste PAT in admin, Test → OK, enable Group A
+  via the board, monitor, staircase B/C/D per plan.
+
 ## 2026-09-07 Performance program complete + deployed (all 8 phases)
 
 Latency + weight program, executed end-to-end on laptop + VPS `185.252.233.186`.

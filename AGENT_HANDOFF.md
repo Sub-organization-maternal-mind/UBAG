@@ -2,6 +2,49 @@
 
 Last updated: 2026-09-07
 
+## Production integration state (2026-09-07 OpenAI facade for OET)
+
+VPS `185.252.233.186` gateway now serves the OpenAI facade live:
+`POST /v1/openai/chat/completions` + `GET /v1/openai/models` (29 models),
+commit `d6603ff`, smoke `job_000000000259` (mock, exact token, PAT-scoped
+`tenant_oet`/`oet-platform`). `UBAG_APP_SECRET` rotated (backup
+`deploy/vps/env.local.pre-oet-facade-20260907T070218Z`); PAT auth enabled;
+OET PAT (service, no expiry) at root-only
+`/opt/docker/ubag/deploy/vps/.oet-pat.json` — hand that value to the OET
+operator for the `ubag` provider row (never print it). Gateway joined
+`oetwebsite_internal`; `oet-api` reaches it privately (verified). Rollback:
+prior image + env.local backup. Full evidence in `PROGRESS.md` top section.
+
+**Deploy notes for next agent (learned this session):**
+- `deploy/vps/env.local` vars reach containers ONLY if listed in the
+  service `environment:` block (interpolation ≠ injection) — PAT was
+  silently off until the compose passthrough was added.
+- **SSH quote stripping:** `"` and `'` characters are stripped from ssh
+  command strings in transit from this workstation. Write remote scripts
+  with the Write tool, base64 them, `echo <b64> | base64 -d > file` on the
+  VPS. Keep remote one-liners quoteless (`grep ^KEY= file | cut -d= -f2-`
+  needs no quotes). Never print secrets: read them into remote-only shell
+  vars, `unset` after, and save issued tokens straight to root-only files
+  (print metadata only). Helpers used: `/tmp/ubag_smoke.py`
+  (authed GET/POST via SMOKE_TOKEN env), `/tmp/ubag_pat_issue.py`,
+  `/tmp/ubag_facade_smoke.py`, `/tmp/ubag_job_scope.py` (all in /tmp =
+  ephemeral; recreate via base64 after a reboot).
+- Authenticated probing from containers: gateway image has python3 but
+  minimal shell tooling; `ubag-nginx-dashboard` (alpine) is on ubag-private
+  for headerless checks; use the python helpers (via `docker exec -i -e
+  SMOKE_TOKEN=$S ... python3 -`) for authed calls.
+- No Go toolchain on this laptop: Go verification is CI (`go vet`, `go
+  test -race`, `gofmt -l` all enforced). A local
+  `gofmt_audit.mjs`-style struct-tag/const-alignment check caught real
+  misalignments pre-push — re-run an equivalent check on any new Go file.
+- Sync method stands: `git archive HEAD -o x.tar`, scp, extract in
+  `/opt/docker/ubag` (tracked-only; env.local/.htpasswd/DBs/`.oet-pat.json`
+  untouched). Commit first — never ship uncommitted work.
+- OET repo work (seeder/board/guard/docs, uncommitted in
+  `D:\Projects\OET with Dr Hesham\Web App`) still needs the OET ship-it
+  flow + `UBAG_OET_PAT`/admin PAT paste + board enablement. OET guard
+  change (`OET_INTERNAL_AI_HOSTS`) is REQUIRED for any UBAG call.
+
 ## Production performance state (2026-09-07 perf program)
 
 VPS `185.252.233.186` now runs poll **75 ms** (`UBAG_WORKER_POLL_INTERVAL_MS=75`,
