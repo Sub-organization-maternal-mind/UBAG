@@ -152,8 +152,9 @@ func (e *ModelSettingsError) Error() string {
 //
 // Rules (see the orchestration-semantics plan, Task B3 / Step 5):
 //   - nil/empty settings → nil (operator defaults apply).
-//   - any "_"-prefixed key → error (reserved worker control keys, e.g.
-//     _enabled / _new_chat).
+//   - the facade-owned "_enabled" best-effort marker is skipped (it is a
+//     gateway-internal constant, never a caller-supplied setting; any other
+//     "_"-prefixed key → error as a reserved worker control key).
 //   - every key must exist in catalog.Settings, else MODE-UNAVAILABLE.
 //   - kind "choice" → value must be a string present in Values; a bad value on
 //     the "model" key returns MODEL-UNAVAILABLE, any other choice key returns
@@ -165,6 +166,15 @@ func ValidateModelSettings(target string, settings map[string]any, catalog Model
 		return nil
 	}
 	for key, value := range settings {
+		if key == "_enabled" {
+			if _, ok := value.(bool); !ok {
+				return &ModelSettingsError{
+					Code:    codeModeUnavailable,
+					Message: fmt.Sprintf("model_settings key %q must be a boolean", key),
+				}
+			}
+			continue
+		}
 		if strings.HasPrefix(key, "_") {
 			return &ModelSettingsError{
 				Code:    codeModeUnavailable,
