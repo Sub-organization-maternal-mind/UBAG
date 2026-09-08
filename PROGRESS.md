@@ -2,6 +2,27 @@
 
 Last updated: 2026-09-08
 
+## 2026-09-08 Dashboard blank-page fix (stale dist, live-verified)
+
+Owner report: `https://ubag.polytronx.com/dashboard/` rendered blank (only
+"Skip to main content"). Root cause: the served `index.html` was built with
+`base: ""`, so every asset URL pointed at `/​_app/…` — but nginx only serves
+dashboard assets under `/dashboard/​_app/…`. The page shell (200) loaded, then
+the app shell, layout node, and every chunk 404'd (the `location /` fallback
+returns the 52-byte ingress text with a 200 status, so the browser swallowed
+real JS as plaintext and SvelteKit never booted — hence a blank white page
+with zero console signal beyond failed imports).
+
+Fix: rebuilt locally with `UBAG_BASE_PATH=/dashboard` (svelte-check 0/0,
+vitest 44/44), shipped the ~1MB `dist.tgz` to the VPS (full 36MB source
+tarball kept timing out on scp), swapped `apps/dashboard/dist` (old bundle
+kept at `dist.bak.blankfix` + container-root `dist.old`), force-recreated
+`nginx-dashboard` (healthy). Verified: new `index.html` references
+`/dashboard/​_app/…`, entry/layout/chunk/CSS all 200 with real byte sizes,
+`/dashboard/jobs` serves, `/v1/jobs?limit=1` through the auth gate returns
+live job data. Note: `dist/` is gitignored — the bundle ships via tarball,
+not git (same as the standing gateway deploy flow).
+
 ## 2026-09-08 Sol+Medium composite + retest reliability (live, verified)
 
 Owner report (screenshots): ChatGPT dropdown showed confusing single-setting

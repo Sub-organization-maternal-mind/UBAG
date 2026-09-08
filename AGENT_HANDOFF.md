@@ -2,6 +2,17 @@
 
 Last updated: 2026-09-08
 
+## Production integration state (2026-09-08 dashboard blank-page fixed)
+
+`https://ubag.polytronx.com/dashboard/` renders again (Basic Auth
+admin/admin): the served bundle was built with `base: ""`, so all assets
+404'd under `/dashboard/`; rebuilt with `UBAG_BASE_PATH=/dashboard`,
+synced to `/opt/docker/ubag/apps/dashboard/dist` (backup at
+`dist.bak.blankfix`), nginx-dashboard recreated healthy. Verified: entry,
+layout, chunk, CSS all 200; /dashboard/jobs serves; /v1/jobs live data.
+Rollback: swap `dist.bak.blankfix` back + recreate nginx-dashboard. Full
+evidence in `PROGRESS.md` top section.
+
 ## Production integration state (2026-09-08 Sol+Medium composite, live)
 
 UBAG main `cc54d27` (ci success) live on VPS `185.252.233.186` (`/v1/ready`
