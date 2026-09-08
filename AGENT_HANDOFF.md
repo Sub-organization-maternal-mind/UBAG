@@ -2,6 +2,18 @@
 
 Last updated: 2026-09-08
 
+## Production integration state (2026-09-08 marker+pins + cancel fix, live)
+
+UBAG main `c22d3c9` live on VPS `185.252.233.186` (`/v1/ready` fully
+true, image `c3835192a7829`): facade best-effort marker merges with
+model pins (was: pins silently wiped, every job ran unconfigured) +
+spurious facade-cancel fixed (was: "job ended as cancelled" with the
+provider blamed) + provider-config env passthrough to worker. Live
+proof: `job_000000000311` (deepseek Instant), `job_000000000312`
+(ChatGPT Sol+Medium), `job_000000000313` (gemini) — all COMPLETED
+exact tokens. Rollback: `ubag-sync-backups/ubag-pre-10bf7f4-20260908`.
+Full evidence in `PROGRESS.md` top section.
+
 ## Production integration state (2026-09-08 dashboard blank-page fixed)
 
 `https://ubag.polytronx.com/dashboard/` renders again (Basic Auth

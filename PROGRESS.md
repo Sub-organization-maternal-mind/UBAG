@@ -2,6 +2,43 @@
 
 Last updated: 2026-09-08
 
+## 2026-09-08 Marker+pins merge + spurious-cancel fix (live, verified)
+
+Two backend fixes, both deployed to VPS `185.252.233.186` (`/v1/ready`
+fully true, image `c3835192a7829`, rollback
+`ubag-sync-backups/ubag-pre-10bf7f4-20260908`):
+
+**1. Facade best-effort marker was wiping model pins (`10bf7f4` +
+`c22d3c9`).** The facade wrote `_enabled:false` straight into
+`options.provider_config`, silently overwriting the validated pins
+resolved from the model ID — every facade job ran unconfigured in the
+account's current mode (ChatGPT never enforced Medium, Gemini never
+enforced 3.8, DeepSeek never pinned Instant). The marker now rides
+inside `model_settings` so `optionsWithProviderConfig` merges it with
+the pins; the validator + envelope transform accept the facade-owned
+`_enabled` key (any other `_`-prefixed key still rejected/dropped).
+Caught live: mock smoke 400 `MODE-UNAVAILABLE` on the first rebuild —
+fixed, rebuilt, mock 200.
+
+**2. Spurious facade cancel (`e7a2753`).** `waitFacadeJob` treated every
+`WaitEvents` error with a done request context as a client disconnect
+and cancelled the live job (surfaced as "job ended as cancelled" with
+the provider blamed). The facade deadline is now checked first (504,
+job keeps running), store errors answer 500, cancel only on a true
+client abort. Plus `minimalWorkerEnv` now forwards
+`UBAG_PROVIDER_CONFIG_<ID>` + timing knobs into the worker subprocess
+so operator overrides survive process boundaries.
+
+**Live proof (prod, exact tokens):** models list 200 (40 IDs incl.
+`chatgpt_web|GPT-5.6 Sol + Medium`, `gemini_web|3.8 Flash`,
+`deepseek_web|Instant`); `job_000000000311` deepseek Instant COMPLETED
+(`{"_enabled":false,"mode":"Instant"}`); `job_000000000312` ChatGPT
+Sol+Medium COMPLETED (`{"_enabled":false,"model":"GPT-5.6 Sol",
+"thinking":"Medium"}`); `job_000000000313` gemini COMPLETED
+(`{"_enabled":false}`, bare target = operator 3.8/standard default).
+No panics/fatals. Worker 94/94 green locally; Go via CI + this live
+matrix (no local toolchain).
+
 ## 2026-09-08 Dashboard blank-page fix (stale dist, live-verified)
 
 Owner report: `https://ubag.polytronx.com/dashboard/` rendered blank (only
