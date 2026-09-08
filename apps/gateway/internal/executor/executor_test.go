@@ -36,15 +36,21 @@ func TestEnvelopeOmitsProviderConfigWhenNoModelSettings(t *testing.T) {
 }
 
 func TestProviderConfigDropsReservedKeys(t *testing.T) {
-	// _enabled / _new_chat are reserved worker control keys that gate whole
-	// phases of the interaction. Defense in depth: the schema and the validator
-	// already block them, but the envelope must never carry one through.
-	got := ProviderConfigFromModelSettings(map[string]any{"_enabled": false, "model": "mock-fast"})
-	if _, ok := got["_enabled"]; ok {
-		t.Fatal("reserved key _enabled leaked into provider_config")
+	// _new_chat is a reserved worker control key that gates a whole phase
+	// of the interaction. Defense in depth: the schema and the validator
+	// already block it, but the envelope must never carry one through. The
+	// facade-owned "_enabled" best-effort marker is the one exception — it
+	// passes through so drift-skipping composes with model pins.
+	got := ProviderConfigFromModelSettings(map[string]any{"_new_chat": true, "model": "mock-fast"})
+	if _, ok := got["_new_chat"]; ok {
+		t.Fatal("reserved key _new_chat leaked into provider_config")
 	}
 	if got["model"] != "mock-fast" {
 		t.Fatalf("model = %v, want mock-fast to survive alongside a dropped reserved key", got["model"])
+	}
+	got = ProviderConfigFromModelSettings(map[string]any{"_enabled": false, "model": "GPT-5.6 Sol"})
+	if got["_enabled"] != false || got["model"] != "GPT-5.6 Sol" {
+		t.Fatalf("marker+pins must compose: %#v", got)
 	}
 }
 

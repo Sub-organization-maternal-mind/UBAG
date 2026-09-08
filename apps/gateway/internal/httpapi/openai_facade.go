@@ -732,15 +732,21 @@ func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, targe
 	// only RECORDS that the caller asked for best-effort mode. A drifted
 	// picker then skips (submits in the account's current mode) instead of
 	// failing the job as selector_drift_detected. Pass ubag_strict:true to
-	// keep the old fail-closed behavior for evals. NOTE: options is set
-	// directly (not via optionsWithProviderConfig) because that helper
-	// strips client provider_config — the facade IS the gateway here, and
-	// the value is a constant, never caller-supplied.
+	// keep the old fail-closed behavior for evals.
+	//
+	// The marker rides inside the facade's model-settings map (not raw
+	// options) so optionsWithProviderConfig merges it with the validated
+	// pins below: marker first, pins on top (skip-if-drifted AND
+	// pin-if-present). Setting options directly here would be stripped as
+	// client provider_config and drop the pins (Sol/Medium, 3.8 Flash,
+	// Instant) — the worker would run unconfigured.
 	if req.UbagStrict == nil || !*req.UbagStrict {
-		if options == nil {
-			options = map[string]any{}
+		if modelSettings == nil {
+			modelSettings = map[string]any{}
 		}
-		options["provider_config"] = map[string]any{"_enabled": false}
+		if _, ok := modelSettings["_enabled"]; !ok {
+			modelSettings["_enabled"] = false
+		}
 	}
 	input := map[string]any{"prompt": effectivePrompt}
 	if len(attachmentDecls) > 0 {

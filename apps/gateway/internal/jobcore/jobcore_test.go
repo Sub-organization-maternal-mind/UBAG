@@ -78,10 +78,15 @@ func TestValidateModelSettingsNilIsAllowed(t *testing.T) {
 }
 
 func TestValidateModelSettingsRejectsReservedKey(t *testing.T) {
-	// _enabled / _new_chat are reserved worker control keys. The schema pattern
-	// blocks them at the edge; this is defense in depth for gRPC/batch paths.
-	err := ValidateModelSettings("mock", map[string]any{"_enabled": "false"}, mockCatalog())
+	// _new_chat is a reserved worker control key. The schema pattern
+	// blocks it at the edge; this is defense in depth for gRPC/batch paths.
+	// The facade-owned "_enabled" marker is the one exception (skipped, not
+	// rejected) so best-effort mode composes with model pins.
+	err := ValidateModelSettings("mock", map[string]any{"_new_chat": true}, mockCatalog())
 	if err == nil {
 		t.Fatal("want error for reserved _-prefixed key, got nil")
+	}
+	if err := ValidateModelSettings("mock", map[string]any{"_enabled": false}, mockCatalog()); err != nil {
+		t.Fatalf("facade _enabled marker must validate, got %v", err)
 	}
 }

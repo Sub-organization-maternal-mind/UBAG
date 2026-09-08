@@ -138,16 +138,23 @@ func EnvelopeFromJobWithConversation(ctx context.Context, job jobstore.Job, mana
 }
 
 // ProviderConfigFromModelSettings copies model_settings into the flat
-// provider_config dict the worker reads, dropping any reserved control key
-// (any key beginning with "_", e.g. _enabled / _new_chat). It returns an empty
-// map when there is nothing to send so callers can omit provider_config and let
-// the operator defaults apply.
+// provider_config dict the worker reads. The facade-owned "_enabled"
+// best-effort marker passes through (skip-if-drifted); any other reserved
+// control key (leading "_", e.g. _new_chat) is dropped. It returns an empty
+// map when there is nothing to send so callers can omit provider_config and
+// let the operator defaults apply.
 func ProviderConfigFromModelSettings(settings map[string]any) map[string]any {
 	if len(settings) == 0 {
 		return nil
 	}
 	config := make(map[string]any, len(settings))
 	for key, value := range settings {
+		if key == "_enabled" {
+			if flag, ok := value.(bool); ok {
+				config[key] = flag
+			}
+			continue
+		}
 		if strings.HasPrefix(key, "_") {
 			continue
 		}
