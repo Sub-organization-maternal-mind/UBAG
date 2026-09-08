@@ -2,6 +2,20 @@
 
 Last updated: 2026-09-07
 
+## Production integration state (2026-09-07 all-providers E2E + drift-proof)
+
+UBAG main `401bba7` (ci success ×2) live on VPS `185.252.233.186`
+(`/v1/ready` fully true, 0 panics): single-source models list (thinking
+levels addressable, toggles bare-target-only), gemini default 3.8 Flash +
+thinking OFF, facade best-effort picker config (drift skips, never fails;
+`ubag_strict:true` for fail-closed evals). Live proof: deepseek ✓, duckai
+✓, gemini ✓ (exact tokens `…284/290/295`), chatgpt ✓ after merge fix
+(`…297` with merged `{"_enabled":false,"model":"..."}`). OET main
+`bb991e60` (Build & Deploy SUCCESS): catalog sync (allowlist + dropdown +
+seeder refresh + tests). Claude/mistral/perplexity = operator manual
+logins (safe-mode, NOT bugs). Rollback: prior image + env.local backup.
+Full evidence in `PROGRESS.md` top section.
+
 ## Production integration state (2026-09-07 Group E closed end-to-end)
 
 UBAG main `7f030ed` (ci success) live on VPS `185.252.233.186` (`/v1/ready`

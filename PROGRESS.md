@@ -2,6 +2,61 @@
 
 Last updated: 2026-09-07
 
+## 2026-09-07 All-providers E2E + models-list parity + best-effort drift fix (live)
+
+Owner report: only deepseek_web|Instant worked from the admin board; the
+facade models list mismatched UBAG's real catalog. Full-matrix E2E on the
+prod VPS + three shipped fixes (all live, all verified):
+
+**E2E matrix (prod VPS, desired models):** deepseek_web|Instant COMPLETED
+(`job_000000000284`, exact token); duckai_web|Luna COMPLETED
+(`job_000000000290`, exact token); gemini_web COMPLETED after the 3.8 Flash
+re-pin (`job_000000000295`, exact token); chatgpt_web FAILED every job at
+`setting:model` drift (`…285`, `…294`); gemini_web FAILED the same way
+before its re-pin (`…286`); claude_web `manual_login_required` (signed out —
+operator login step, safe-mode forbids automation); mistral_lechat +
+perplexity_web `manual_login_required` (never logged in on this VPS).
+
+**Fix 1 — models-list parity (`9ef8835`, ci success):** the list and the
+resolver were two independent code paths. `facadeModels` now delegates to
+`facadeChoiceModelIDs` (one target|value per choice-kind setting); thinking
+levels (chatgpt thinking, duckai reasoning) resolve as model IDs;
+toggle-kind settings (gemini thinking, deepseek deepthink) stay
+bare-target-only. Parity test guards list↔resolver agreement forever.
+
+**Fix 2 — OET catalog sync (`53d64018` + merge `bb991e60`, Build & Deploy
+SUCCESS):** seeder allowlist + board fallback dropdown now mirror the live
+facade (duck.ai 6 models + reasoning, gemini 3.8 Flash, chatgpt thinking
+levels, `whisper-1` transcription alias; stale `gemini 3.1 Flash` /
+`GPT-5.4 Mini` out); seeder refreshes the CSV on existing rows without
+touching admin-tuned fields; new `UbagProviderSeederTests` pin the contract;
+board dropdown test asserts thinking/duck.ai/3.8 entries.
+
+**Fix 3 — gemini 3.8 Flash default (`810442f`, worker 247/247 green):**
+pinned model 3.8 Flash + Extended toggle OFF (plain timeout) + selector
+version `2026-09-08-gemini-3.8-standard` + manifest catalog; renamed
+provider-config test. (Reverted a parallel session's identical uncommitted
+gemini edit + its env-passthrough/worker-timeout drafts — same content,
+kept the tree single-authored; those ideas need their own commit if the
+peer still wants them.)
+
+**Fix 4 — best-effort picker config (`6ba77c0` + `401bba7`, ci success
+×2, live proof `job_000000000297` COMPLETED with exact token):** facade
+marks every chat job `_enabled:false` by default (constant, never caller
+input; `ubag_strict:true` opts back into fail-closed drift); gateway
+preserves exactly that marker shape across its client-value strip and
+MERGES it with validated model pins (live bug caught: pins overwrote the
+marker on `…296`, still drift-failed — fixed, proven by `…297` options
+`{"_enabled":false,"model":"GPT-5.6 Sol"}`); worker emits
+`session.configured=skipped_config_disabled` instead of omitting the event.
+Contracts: OpenAPI `ubag_strict` field, api.md paragraph, redocly clean.
+
+**Known non-code states (operator steps, NOT bugs):** claude/mistral/
+perplexity need manual browser logins (safe-mode forbids automation —
+surface in the admin board, never bypass); deepseek Expert mode has no
+file input by design (facade pins Instant/Vision for attachments);
+embeddings stay deterministic hash vectors (documented NOT semantic).
+
 ## 2026-09-07 Group E end-to-end closure (UBAG + OET, deployed + verified)
 
 The admin-board Group E "capability gap" rows are fully closed on both ends:
