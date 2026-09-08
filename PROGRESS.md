@@ -1,6 +1,43 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-09-07
+Last updated: 2026-09-08
+
+## 2026-09-08 Sol+Medium composite + retest reliability (live, verified)
+
+Owner report (screenshots): ChatGPT dropdown showed confusing single-setting
+IDs (`GPT-5.6 Sol` vs `Medium` vs `Instant` vs `High` vs `o3`…) and retesting
+`chatgpt_web|GPT-5.6 Sol` failed with HTTP 400
+UBAG-VALIDATION-IDEMPOTENCY-CONFLICT-001. Two root causes, both fixed:
+
+**1. Idempotency key did not cover model_settings/ubag_strict.** Every
+fingerprint-scheme change orphaned prior keys: the OET probe sends the same
+body each Test click, so a retest after any deploy answered CONFLICT instead
+of replaying/creating. Fix (`cc54d27`, ci success): fingerprint now covers
+model, model_settings, messages, temperature, max_tokens, top_p,
+response_format, ubag_strict, attachments under version `v2` (MUST bump with
+the field set); regression test pins replay + coverage.
+
+**2. OET probe had no nonce.** OET `BuildChatCompletionsProbe` now sends a
+fresh `ubag_nonce` per Test click (ignored by every other OpenAI-compatible
+provider; the facade ignores unknown fields) — each admin Test is an
+independent run, never a replay/collision.
+
+**3. ONE curated ChatGPT pick.** Board offers a single recommended entry,
+`chatgpt_web · GPT-5.6 Sol + Medium (recommended)` (wire value
+`chatgpt_web|GPT-5.6 Sol + Medium`), which the facade binds to BOTH settings
+at once (`{"model":"GPT-5.6 Sol","thinking":"Medium"}`); legacy single IDs
+leave the board (full catalog still one click away via Discover models).
+Listed via `facadeCuratedModelIDs` so list↔resolver parity holds; parity
+test extended. Seeder allowlist intentionally excludes the composite
+(free-form gate only; board+facade contract pinned by board tests).
+
+**Live proof (prod VPS):** composite resolves (no model_not_found), appears
+in `/v1/openai/models`, `job_000000000303` COMPLETED with exact token
+`SOLMEDIUM-POSTDEPLOY`, options carry the merged
+`{"_enabled":false,"model":"GPT-5.6 Sol","thinking":"Medium"}`, and an
+identical retest REPLAYED the same job (200, no CONFLICT). OET deploy
+`34181106847` SUCCESS on `5e1c37a7` (all 7 jobs incl. migrate-production);
+VPS blue slots on that SHA; site + api ready/live green; OET repo PRIVATE.
 
 ## 2026-09-07 All-providers E2E + models-list parity + best-effort drift fix (live)
 

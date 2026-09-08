@@ -1,6 +1,18 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-09-07
+Last updated: 2026-09-08
+
+## Production integration state (2026-09-08 Sol+Medium composite, live)
+
+UBAG main `cc54d27` (ci success) live on VPS `185.252.233.186` (`/v1/ready`
+fully true): versioned full-fingerprint idempotency (v2 — model,
+model_settings, messages, sampling hints, format, strict, attachments) +
+`chatgpt_web|GPT-5.6 Sol + Medium` composite binding both settings at once.
+Live proof `job_000000000303` COMPLETED exact token, merged options, retest
+REPLAYED same job (no CONFLICT). OET `5e1c37a7` (deploy SUCCESS, blue slots,
+health green, repo PRIVATE): ONE curated ChatGPT pick with recommended
+label, per-probe ubag_nonce, allowlist excludes composite by design.
+Rollback: prior image + env.local backup. Full evidence in `PROGRESS.md`.
 
 ## Production integration state (2026-09-07 all-providers E2E + drift-proof)
 
