@@ -63,6 +63,13 @@ const (
 	// facadeIdempotencyPrefix namespaces facade-derived native idempotency
 	// keys so they can never collide with caller-supplied ones.
 	facadeIdempotencyPrefix = "facade-"
+	// facadeIdempotencyVersion versions the facade fingerprint scheme. Bump
+	// it whenever the fingerprinted field set changes (a new field means an
+	// old key no longer identifies the same logical request — without a
+	// version bump the idempotency store answers CONFLICT instead of
+	// creating a new job). History: v2 added model_settings,
+	// response_format, and ubag_attachments to the fingerprint.
+	facadeIdempotencyVersion = "v2"
 )
 
 // Facade outcome labels for ubag_facade_jobs_total.
@@ -310,6 +317,12 @@ func (s *Server) facadeModels() []openAIFacadeModel {
 		for _, id := range facadeChoiceModelIDs(key) {
 			models = append(models, openAIFacadeModel{ID: id, Object: "model", OwnedBy: "ubag"})
 		}
+		// Board-curated composite IDs (not manifest values — see
+		// resolveFacadeModel). Listed here so Discover models surfaces the
+		// operator's recommended pick.
+		for _, id := range facadeCuratedModelIDs(key) {
+			models = append(models, openAIFacadeModel{ID: id, Object: "model", OwnedBy: "ubag"})
+		}
 	}
 	return models
 }
@@ -338,6 +351,17 @@ func facadeChoiceModelIDs(target string) []string {
 		}
 	}
 	return ids
+}
+
+// facadeCuratedModelIDs lists board-curated composite IDs for one target:
+// operator-recommended setting combinations that are not single manifest
+// values (see resolveFacadeModel). Shared with facadeModels so the list and
+// the resolver agree.
+func facadeCuratedModelIDs(target string) []string {
+	if target == "chatgpt_web" {
+		return []string{"chatgpt_web" + facadeModelSeparator + "GPT-5.6 Sol + Medium"}
+	}
+	return nil
 }
 
 func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Request) {
@@ -515,6 +539,12 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 // IDs — the facade surfaces them in the models list for discovery but
 // rejects them as chat model IDs; use the bare target (operator default)
 // for those.
+//
+// Composite ChatGPT ID: the OET board offers ONE curated entry,
+// "chatgpt_web|GPT-5.6 Sol + Medium", which binds BOTH settings at once
+// ({"model": "GPT-5.6 Sol", "thinking": "Medium"}) — the operator's
+// always-Sol-Medium default as a single pick, so a stale or wrong-effort
+// combo can never be selected.
 func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool) {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -529,6 +559,11 @@ func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool)
 	}
 	if value == "" {
 		return target, nil, true
+	}
+	// Composite ChatGPT ID (board-curated, not a manifest value): bind both
+	// the model and the thinking level at once.
+	if target == "chatgpt_web" && value == "GPT-5.6 Sol + Medium" {
+		return target, map[string]any{"model": "GPT-5.6 Sol", "thinking": "Medium"}, true
 	}
 	catalog := resolveModelCatalog(target)
 	for name, setting := range catalog.Settings {
@@ -646,14 +681,26 @@ func flattenFacadeMessages(messages []openAIFacadeMessage) (string, bool) {
 // resolves it into a chat.completion as usual.
 func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, target string, modelSettings map[string]any, prompt string, attachmentDecls []any, jsonHint string) (jobID string, status int, errType, code, message string, ok bool) {
 	tenantID, appID := requestScope(r)
+	// Fingerprint every field that changes what the provider does: model,
+	// messages, sampling hints, format coercion (+ the derived JSON hint —
+	// same body must still derive the same key, so the hint is a pure
+	// function of the fingerprinted response_format), attachments, strict
+	// flag, AND the resolved model settings. The resolved settings matter:
+	// two calls with the same "chatgpt_web" string but different picker
+	// states (or before/after a manifest change) are different provider
+	// requests. A missing field here is a future IDEMPOTENCY-CONFLICT-001
+	// every time that field is introduced — hence the version below.
 	keySeed, err := json.Marshal(map[string]any{
-		"model":            req.Model,
-		"messages":         facadeMessageDigest(req.Messages),
-		"temperature":      req.Temperature,
-		"max_tokens":       req.MaxTokens,
-		"top_p":            req.TopP,
-		"response_format":  req.ResponseFormat,
-		"ubag_attachments": attachmentDecls,
+		"fingerprint_version": facadeIdempotencyVersion,
+		"model":               req.Model,
+		"model_settings":      modelSettings,
+		"messages":            facadeMessageDigest(req.Messages),
+		"temperature":         req.Temperature,
+		"max_tokens":          req.MaxTokens,
+		"top_p":               req.TopP,
+		"response_format":     req.ResponseFormat,
+		"ubag_strict":         req.UbagStrict,
+		"ubag_attachments":    attachmentDecls,
 	})
 	if err != nil {
 		return "", http.StatusInternalServerError, "server_error", "job_create_failed", "failed to fingerprint the request", false

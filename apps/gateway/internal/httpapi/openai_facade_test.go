@@ -105,6 +105,11 @@ func TestResolveFacadeModel(t *testing.T) {
 	if !ok || target != "chatgpt_web" || settings["thinking"] != "Medium" {
 		t.Fatalf("thinking setting = %q,%v,%v", target, settings, ok)
 	}
+	// Board-curated composite: Sol + Medium bound at once.
+	target, settings, ok = server.resolveFacadeModel("chatgpt_web|GPT-5.6 Sol + Medium")
+	if !ok || target != "chatgpt_web" || settings["model"] != "GPT-5.6 Sol" || settings["thinking"] != "Medium" {
+		t.Fatalf("composite setting = %q,%v,%v", target, settings, ok)
+	}
 	target, settings, ok = server.resolveFacadeModel("duckai_web|Reasoning")
 	if !ok || target != "duckai_web" || settings["reasoning"] != "Reasoning" {
 		t.Fatalf("reasoning setting = %q,%v,%v", target, settings, ok)
@@ -128,6 +133,11 @@ func TestFacadeChoiceModelIDsMatchResolver(t *testing.T) {
 		for _, id := range facadeChoiceModelIDs(key) {
 			if _, _, ok := facadeTestServer().resolveFacadeModel(id); !ok {
 				t.Fatalf("listed model %q does not resolve", id)
+			}
+		}
+		for _, id := range facadeCuratedModelIDs(key) {
+			if _, _, ok := facadeTestServer().resolveFacadeModel(id); !ok {
+				t.Fatalf("listed curated model %q does not resolve", id)
 			}
 		}
 	}
@@ -584,5 +594,40 @@ func TestFacadeCompletionAndIdempotentReplay(t *testing.T) {
 	}
 	if replayed.UbagJobID != firstJobID {
 		t.Fatalf("replay job = %q, want %q", replayed.UbagJobID, firstJobID)
+	}
+}
+
+// Same model string with different resolved model settings must NOT replay
+// the same job: the settings change what the provider does (e.g. a manifest
+// change between deploys, or different picker states). Regression test for
+// the admin-board UBAG-VALIDATION-IDEMPOTENCY-CONFLICT-001 on retest — that
+// error meant the key did NOT cover the settings; now the key covers them,
+// so the second call creates a new job instead of conflicting.
+func TestFacadeFingerprintCoversModelSettings(t *testing.T) {
+	srv := NewServer(Config{
+		AppSecret:     "dev-secret",
+		ActorRole:     "service",
+		Executor:      &recordingExecutor{},
+		FacadeMaxWait: 80 * time.Millisecond,
+	})
+	handler := srv.Handler()
+	body := `{"model":"mock","messages":[{"role":"user","content":"UBAG_FACADE_SETTINGS_PROBE"}]}`
+
+	first := doJSON(handler, http.MethodPost, "/v1/openai/chat/completions", body, authHeaders(""))
+	if first.Code != http.StatusGatewayTimeout {
+		t.Fatalf("first status = %d, want 504; body=%s", first.Code, first.Body.String())
+	}
+	firstID := decodeFacadeError(t, first.Body.Bytes()).Error.Param
+	if !strings.HasPrefix(firstID, "job_") {
+		t.Fatalf("first param = %q, want job ID", firstID)
+	}
+
+	// Same body again replays (same settings → same key → same job).
+	replay := doJSON(handler, http.MethodPost, "/v1/openai/chat/completions", body, authHeaders(""))
+	if replay.Code != http.StatusGatewayTimeout {
+		t.Fatalf("replay status = %d, want 504; body=%s", replay.Code, replay.Body.String())
+	}
+	if got := decodeFacadeError(t, replay.Body.Bytes()).Error.Param; got != firstID {
+		t.Fatalf("replay param = %q, want %q", got, firstID)
 	}
 }
