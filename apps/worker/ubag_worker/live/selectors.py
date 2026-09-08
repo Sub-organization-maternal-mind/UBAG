@@ -300,6 +300,11 @@ CHATGPT_WEB = ProviderSelectors(
     ),
     # Operator default (always-on), superseding the 2026-06-29 "leave the account
     # default" decision: pin GPT-5.6 Sol + Medium intelligence on every job.
+    # The worker resolves this default when no per-job override is present;
+    # the gateway forwards UBAG_PROVIDER_CONFIG_CHATGPT_WEB into the worker
+    # subprocess env (see executor minimalWorkerEnv) so an operator override
+    # survives process boundaries. A drifted Effort menu fails CLOSED as
+    # selector_drift_detected (required=True) instead of answering off-Medium.
     #
     # Re-verified 2026-08-10 against live chatgpt.com. The composer pill still
     # carries the current effort label ("Medium"), but its compact menu now shows

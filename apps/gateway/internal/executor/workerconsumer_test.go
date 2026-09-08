@@ -1210,6 +1210,9 @@ func TestMinimalWorkerEnvIncludesBrowserRuntimeConfigOnly(t *testing.T) {
 	t.Setenv("UBAG_BROWSER_PROTOCOL", "cdp")
 	t.Setenv("UBAG_BROWSER_HEADED", "false")
 	t.Setenv("UBAG_NOVNC_BASE_URL", "http://127.0.0.1:7900")
+	t.Setenv("UBAG_PROVIDER_CONFIG_CHATGPT_WEB", `{"thinking":"Medium"}`)
+	t.Setenv("UBAG_PROVIDER_CONFIG_ENABLED", "true")
+	t.Setenv("UBAG_NEW_CHAT_ENABLED", "true")
 	t.Setenv("UBAG_BROWSER_VNC_PASSWORD", "must-not-pass")
 	t.Setenv("UBAG_POSTGRES_DSN", "must-not-pass")
 
@@ -1227,6 +1230,15 @@ func TestMinimalWorkerEnvIncludesBrowserRuntimeConfigOnly(t *testing.T) {
 	}
 	if values["UBAG_BROWSER_ENGINE"] != "chromium" || values["UBAG_BROWSER_PROTOCOL"] != "cdp" {
 		t.Fatalf("browser engine/protocol were not propagated: %#v", values)
+	}
+	// Provider-config operator overrides ride the same safe channel: the
+	// worker resolves per-provider defaults from these env vars, and a
+	// dropped var would silently run ChatGPT off-Medium (or Gemini off-3.8).
+	if values["UBAG_PROVIDER_CONFIG_CHATGPT_WEB"] != `{"thinking":"Medium"}` {
+		t.Fatalf("provider config override was not propagated: %#v", values)
+	}
+	if values["UBAG_PROVIDER_CONFIG_ENABLED"] != "true" || values["UBAG_NEW_CHAT_ENABLED"] != "true" {
+		t.Fatalf("provider config gates were not propagated: %#v", values)
 	}
 	if _, ok := values["UBAG_BROWSER_VNC_PASSWORD"]; ok {
 		t.Fatal("VNC password must not be propagated to worker subprocess")

@@ -472,14 +472,17 @@ func TestOpenAIEmbeddingsHandler(t *testing.T) {
 }
 
 // A facade call over a non-completing executor hits the wait budget and
-// answers 504 with the still-running job ID in error.param.
+// answers 504 with the still-running job ID in error.param. The job must
+// NOT be cancelled by the timeout: a later worker completion still resolves
+// the native job (cancel is reserved for a real client disconnect).
 func TestFacadeWaitTimeoutReturnsJobID(t *testing.T) {
-	server := NewServer(Config{
+	srv := NewServer(Config{
 		AppSecret:     "dev-secret",
 		ActorRole:     "service",
 		Executor:      &recordingExecutor{},
 		FacadeMaxWait: 80 * time.Millisecond,
-	}).Handler()
+	})
+	server := srv.Handler()
 	body := `{"model":"mock","messages":[{"role":"user","content":"UBAG_FACADE_TIMEOUT_PROBE"}]}`
 	start := time.Now()
 	rec := doJSON(server, http.MethodPost, "/v1/openai/chat/completions", body, authHeaders(""))
@@ -495,6 +498,13 @@ func TestFacadeWaitTimeoutReturnsJobID(t *testing.T) {
 	}
 	if !strings.HasPrefix(env.Error.Param, "job_") {
 		t.Fatalf("error.param = %q, want the native job ID", env.Error.Param)
+	}
+	listed, err := srv.jobs.List(t.Context(), jobstore.ListFilter{})
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("backing jobs = %v, err = %v", listed, err)
+	}
+	if jobstore.TerminalStatus(listed[0].Status) {
+		t.Fatalf("timed-out facade wait cancelled the backing job: status=%q", listed[0].Status)
 	}
 }
 

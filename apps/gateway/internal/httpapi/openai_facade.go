@@ -851,14 +851,21 @@ func (s *Server) waitFacadeJob(r *http.Request, jobID string, wait time.Duration
 		events, found, err := s.jobs.WaitEvents(waitCtx, jobID, lastSeq, 1)
 		cancel()
 		if err != nil {
+			// A store-level error is NOT a client disconnect: surfacing
+			// facadeWaitError answers 500 instead of cancelling a live job
+			// (a cancelled facade job shows up downstream as
+			// "job ended as cancelled" with the provider blamed).
+			// Only treat an error as a client abort when the request
+			// context itself is done AND the inner wait was not the
+			// deadline that fired.
+			if waitCtx.Err() == context.DeadlineExceeded && r.Context().Err() == nil {
+				return jobstore.Job{}, facadeWaitTimeout
+			}
 			if r.Context().Err() != nil {
 				if job, ok, _ := s.jobs.Get(context.Background(), jobID); ok {
 					s.cancelFacadeJob(context.Background(), job, "facade_client_disconnect")
 				}
 				return jobstore.Job{}, facadeWaitAbort
-			}
-			if waitCtx.Err() == context.DeadlineExceeded {
-				return jobstore.Job{}, facadeWaitTimeout
 			}
 			return jobstore.Job{}, facadeWaitError
 		}
