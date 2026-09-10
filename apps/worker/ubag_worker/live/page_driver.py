@@ -55,6 +55,18 @@ def _visible(selector: str) -> str:
     """
     return selector + " >> visible=true"
 
+
+# Same question Playwright's own hit-target check asks before a click -- does the
+# element (or a descendant) receive a pointer at its centre -- but answered in one
+# in-page call instead of after a failed click's whole timeout. Used only to ORDER
+# duplicate matches (ChatGPT stacks a covered New-chat icon under the sidebar row).
+_HIT_TARGET_JS = (
+    "el => { const r = el.getBoundingClientRect();"
+    " if (!r.width || !r.height) return false;"
+    " const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);"
+    " return !!hit && (hit === el || el.contains(hit)); }"
+)
+
 # Settle window (seconds of no growth) before a response is considered complete.
 # Reasoning modes (DeepThink / Extended thinking) pause mid-thought for seconds
 # with no visible streaming indicator, so they need a wider window than a plain
@@ -1086,10 +1098,16 @@ class PlaywrightPageDriver(PageDriver):
                 # check forever. Try each visible match with a short budget rather
                 # than burning the whole budget on the covered one.
                 try:
-                    matches = locator.all()
+                    matches = locator.all()[:4]
                 except Exception:  # noqa: BLE001
                     matches = [locator.first]
-                for match in matches[:4]:
+                # Cheap in-page hit test first: Playwright only learns a match is
+                # covered after its whole click budget (1.5s per job on ChatGPT,
+                # whose covered icon is the first match), so try the matches whose
+                # centre point actually receives the click before the covered ones.
+                # Ordering only -- every match is still attempted.
+                matches.sort(key=lambda match: not self._hit_target_ok(match))
+                for match in matches:
                     try:
                         match.click(timeout=max(500, min(timeout_ms, 1500)))
                         return True
@@ -1097,6 +1115,13 @@ class PlaywrightPageDriver(PageDriver):
                         continue
             if time.monotonic() >= deadline:
                 return False
+
+    @staticmethod
+    def _hit_target_ok(match) -> bool:  # pragma: no cover - requires real browser
+        try:
+            return bool(match.evaluate(_HIT_TARGET_JS))
+        except Exception:  # noqa: BLE001 - unknown: try it after the proven ones
+            return False
 
     def _dismiss_menus(self) -> None:  # pragma: no cover
         """Close any open picker/menu so the next step starts from a clean state.
@@ -1463,8 +1488,13 @@ class PlaywrightPageDriver(PageDriver):
     def clear_attachment_state(self) -> None:  # pragma: no cover - requires real browser
         if not self._page_is_live():
             return
-        for locator in self._page.locator("input[type='file']").all():
-            locator.set_input_files([])
+        file_inputs = self._page.locator("input[type='file']")
+        # One round trip to see whether any input still holds files: clearing
+        # every input unconditionally cost ~130ms each, and ChatGPT renders five
+        # of them, so an attachment-free warm job paid ~0.7s for nothing.
+        if file_inputs.evaluate_all("els => els.some(el => el.files && el.files.length)"):
+            for locator in file_inputs.all():
+                locator.set_input_files([])
 
     def _click_first(  # pragma: no cover - requires real browser
         self, group: SelectorGroup, timeout_ms: int

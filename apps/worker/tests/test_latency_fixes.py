@@ -244,3 +244,107 @@ class TestProbeBudgets:
         assert pd._warm_reload_every() == pd._WARM_RELOAD_EVERY
         monkeypatch.setenv("UBAG_WARM_RELOAD_EVERY", "4")
         assert pd._warm_reload_every() == 4
+
+
+class _Match:
+    """One visible match of a duplicated control. A covered match fails its
+    click (Playwright's hit-target check) only after the full click timeout."""
+
+    def __init__(self, name: str, *, covered: bool, log) -> None:
+        self.name, self.covered, self._log = name, covered, log
+
+    def evaluate(self, _js):
+        return not self.covered
+
+    def click(self, **_kw):
+        self._log.append(self.name)
+        if self.covered:
+            raise RuntimeError("element intercepts pointer events")
+
+
+class TestCoveredDuplicateIsNotClickedFirst:
+    def test_hit_target_ok_match_is_tried_before_the_covered_one(self):
+        clicks = []
+        matches = [
+            _Match("covered-icon", covered=True, log=clicks),
+            _Match("sidebar-row", covered=False, log=clicks),
+        ]
+
+        class _Loc:
+            first = property(lambda s: s)
+
+            def wait_for(self, **_kw):
+                pass
+
+            def all(self):
+                return list(matches)
+
+        class _Page:
+            def locator(self, _s):
+                return _Loc()
+
+        assert _driver(_Page())._click_any(["a.new-chat"], timeout_ms=4000) is True
+        assert clicks == ["sidebar-row"]  # the covered match never cost a click
+
+    def test_hit_test_failure_only_demotes_a_match(self):
+        clicks = []
+
+        class _Odd(_Match):
+            def evaluate(self, _js):
+                raise RuntimeError("detached")
+
+        matches = [_Odd("odd", covered=False, log=clicks)]
+
+        class _Loc:
+            first = property(lambda s: s)
+
+            def wait_for(self, **_kw):
+                pass
+
+            def all(self):
+                return list(matches)
+
+        class _Page:
+            def locator(self, _s):
+                return _Loc()
+
+        assert _driver(_Page())._click_any(["a.new-chat"], timeout_ms=4000) is True
+        assert clicks == ["odd"]  # still attempted, just not first
+
+
+class TestAttachmentStateClearIsOneRoundTrip:
+    class _FileInputs:
+        def __init__(self, holding_files: bool, log) -> None:
+            self._holding, self._log = holding_files, log
+
+        def evaluate_all(self, _js):
+            self._log.append("evaluate_all")
+            return self._holding
+
+        def all(self):
+            return [self] * 5  # ChatGPT renders five file inputs
+
+        def set_input_files(self, files):
+            self._log.append(("set_input_files", files))
+
+    def _page(self, holding_files: bool, log):
+        inputs = self._FileInputs(holding_files, log)
+
+        class _Page:
+            def is_closed(self):
+                return False
+
+            def locator(self, _s):
+                return inputs
+
+        return _Page()
+
+    def test_empty_inputs_are_not_cleared_one_by_one(self):
+        log = []
+        _driver(self._page(False, log)).clear_attachment_state()
+        assert log == ["evaluate_all"]
+
+    def test_inputs_holding_files_are_still_cleared(self):
+        log = []
+        _driver(self._page(True, log)).clear_attachment_state()
+        assert log == ["evaluate_all"] + [("set_input_files", [])] * 5
