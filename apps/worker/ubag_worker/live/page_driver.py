@@ -22,8 +22,10 @@ Security invariants enforced here:
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Iterator, List, Mapping, Optional, Sequence
@@ -563,6 +565,9 @@ class PlaywrightPageDriver(PageDriver):
         # True when we created a dedicated page inside a context we do NOT own
         # (the operator's shared CDP browser) and must close it ourselves.
         self._owns_page = False
+        # CDP target id of that dedicated page, recorded in the on-disk registry
+        # so the next process can close it if this one is killed before close().
+        self._target_id: Optional[str] = None
         self._artifacts_dir: Optional[str] = None
         # Per-candidate count of response containers present just BEFORE the
         # current prompt was submitted. On a resumed multi-turn thread the page
@@ -725,6 +730,7 @@ class PlaywrightPageDriver(PageDriver):
                 # would discard all cookies and force re-login every job. The
                 # attach is retried so a watchdog-driven Chromium relaunch is a
                 # short delay rather than a hard failure.
+                _close_stale_pages(plan.remote_endpoint)
                 browser = self._connect_over_cdp_resilient(browser_type, plan.remote_endpoint)
                 if browser.contexts:
                     self._context = browser.contexts[0]
@@ -758,6 +764,8 @@ class PlaywrightPageDriver(PageDriver):
             # tab (pages[0]). We close it on teardown so pages never accumulate.
             self._page = self._context.new_page()
             self._owns_page = True
+            self._target_id = _cdp_target_id(self._context, self._page)
+            _registry_update(add=self._target_id)
         else:
             self._page = (
                 self._context.pages[0]
@@ -1477,6 +1485,7 @@ class PlaywrightPageDriver(PageDriver):
             if self._owns_page and self._page is not None and not self._owns_context:
                 try:
                     self._page.close()
+                    _registry_update(remove=self._target_id)
                 except Exception:  # noqa: BLE001 - best-effort page cleanup
                     pass
             if self._context is not None and self._owns_context:
@@ -1488,7 +1497,89 @@ class PlaywrightPageDriver(PageDriver):
             self._owns_context = True
             self._page = None
             self._owns_page = False
+            self._target_id = None
             self._playwright = None
+
+
+# --- leaked-tab registry ----------------------------------------------------
+# The warm daemon is SIGKILLed on cancel/deadline/gateway restart, so close()
+# never runs and every kill left one tab open in the shared browser; those
+# renderers eventually starved Chrome of memory (OOM kills, then stalled jobs).
+# Each process role (daemon / per-job worker / reaper) records the CDP target ids
+# it opens; a fresh process of the same role closes them before attaching. Only
+# registered ids are ever closed, so the operator's own tabs are untouchable.
+_TARGET_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
+# Ids opened by THIS process; never treated as stale even if still registered.
+_LIVE_TARGET_IDS: set = set()
+
+
+def _page_registry_path() -> str:
+    from .chat_ledger import ledger_path
+
+    role = re.sub(r"[^A-Za-z0-9_.-]", "_", os.path.basename(sys.argv[0] or "")) or "worker"
+    return os.path.join(os.path.dirname(ledger_path()) or ".", "open-pages.%s.json" % role)
+
+
+def _registry_read() -> List[str]:
+    try:
+        with open(_page_registry_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:  # noqa: BLE001 - missing/corrupt registry: nothing to close
+        return []
+    return [str(x) for x in data if _TARGET_ID_RE.match(str(x))] if isinstance(data, list) else []
+
+
+def _registry_update(add: Optional[str] = None, remove: Optional[str] = None) -> None:
+    ids = set(_registry_read())
+    if add:
+        ids.add(add)
+        _LIVE_TARGET_IDS.add(add)
+    if remove:
+        ids.discard(remove)
+        _LIVE_TARGET_IDS.discard(remove)
+    path = _page_registry_path()
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path + ".tmp", "w", encoding="utf-8") as fh:
+            json.dump(sorted(ids), fh)
+        os.replace(path + ".tmp", path)
+    except Exception:  # noqa: BLE001 - best-effort bookkeeping must never fail a job
+        pass
+
+
+def _cdp_target_id(context, page) -> Optional[str]:  # pragma: no cover - requires real browser
+    try:
+        session = context.new_cdp_session(page)
+        try:
+            target_id = session.send("Target.getTargetInfo")["targetInfo"]["targetId"]
+        finally:
+            session.detach()
+    except Exception:  # noqa: BLE001 - unregistered page just cannot be reaped later
+        return None
+    return str(target_id) if _TARGET_ID_RE.match(str(target_id)) else None
+
+
+def _close_stale_pages(endpoint: str, opener=None) -> None:
+    """Close tabs a dead predecessor left behind, via Chrome's HTTP /json/close.
+
+    Plain HTTP (no Playwright) so it runs before the CDP attach and cannot wedge
+    on a hung renderer. Unreachable browser: keep the registry for next time.
+    """
+    stale = [tid for tid in _registry_read() if tid not in _LIVE_TARGET_IDS]
+    if not stale:
+        return
+    import urllib.error
+    import urllib.request
+
+    opener = opener or urllib.request.urlopen
+    for target_id in stale:
+        try:
+            opener("%s/json/close/%s" % (endpoint.rstrip("/"), target_id), timeout=5).read()
+        except urllib.error.HTTPError:
+            pass  # already gone (browser restarted or the operator closed it)
+        except Exception:  # noqa: BLE001
+            return
+        _registry_update(remove=target_id)
 
 
 def _emptiness_probe_ms() -> int:
