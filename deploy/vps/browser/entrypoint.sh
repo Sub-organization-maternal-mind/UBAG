@@ -81,7 +81,8 @@ reset_profile_guards() {
 #
 # Footprint flags (the block after the compositor flags) switch off Chrome's
 # idle background services — update/variations/safe-browsing fetches, sync,
-# crash reporting, media-router discovery, the WebUI omnibox renderer, the
+# crash reporting, media-router discovery, the WebUI omnibox popup and the
+# top-chrome WebUI preloader that keeps a ~130MB renderer for it warm, the
 # pre-warmed spare renderer, and the back/forward page cache. None of them is
 # observable from a web page, so the provider-facing fingerprint is unchanged.
 CHROME_PID=""
@@ -102,7 +103,7 @@ start_chrome() {
     --disable-dev-shm-usage \
     --disable-gpu \
     --disable-infobars \
-    --disable-features=Translate,OptimizationHints,InterestFeedContentSuggestions,CalculateNativeWinOcclusion,MediaRouter,DialMediaRouteProvider,GlobalMediaControls,WebUIOmniboxPopup,SpareRendererForSitePerProcess \
+    --disable-features=Translate,OptimizationHints,InterestFeedContentSuggestions,CalculateNativeWinOcclusion,MediaRouter,DialMediaRouteProvider,GlobalMediaControls,WebUIOmniboxPopup,WebUIOmniboxAimPopup,PreloadTopChromeWebUI,SpareRendererForSitePerProcess \
     --disable-backgrounding-occluded-windows \
     --disable-renderer-backgrounding \
     --disable-background-timer-throttling \
