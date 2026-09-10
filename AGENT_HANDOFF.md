@@ -8,7 +8,8 @@ UBAG `b9110ae` is live on VPS `185.252.233.186`
 (`UBAG_BUILD_COMMIT=b9110ae4bb254e2f5b0e4d4bccfd21c412d32066`, `/v1/ready`
 fully true, gateway/chat-reaper/browser healthy, 31/31 jobs completed today).
 Branch `fix/oet-facade-timeout` was fast-forwarded into `main` on top of
-`1b20fc7`; main HEAD differs from production only by this docs commit. Four
+`1b20fc7`; main HEAD differs from production only by docs commits. Exact-SHA
+CI run `34498628459` on `51df379` completed successfully (all 8 jobs). Four
 code commits: `53ddf45` reaps tabs leaked by a SIGKILLed daemon (the OOM /
 tab-leak incident that broke every provider); `623c74a` races selector
 candidates against one deadline with a visible-only filter, one-shot

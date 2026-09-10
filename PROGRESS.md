@@ -48,7 +48,9 @@ holding files. New env knobs allowlisted in `minimalWorkerEnv()`:
 chat-reaper` (which also recreated the browser). Deploy logs
 `/tmp/ubag-deploy-{623c74a,dff6115,b9110ae}.log` all `DEPLOY_EXIT=0`. Live:
 `UBAG_BUILD_COMMIT=b9110ae4bb254e2f5b0e4d4bccfd21c412d32066`, `/v1/ready`
-fully true, zero restarts, 31/31 jobs in the last 3 h `completed`. Rollback
+fully true, zero restarts, 31/31 jobs in the last 3 h `completed`. Branch
+fast-forwarded into `main` (`1b20fc7..51df379`); exact-SHA CI run
+`34498628459` completed successfully on `51df379` (all 8 jobs). Rollback
 images `ubag/gateway:rollback-before-{53ddf45,623c74a,b9110ae}`,
 `ubag/vps-browser:rollback-before-623c74a`; tree backups under
 `/opt/docker/ubag-sync-backups/ubag-pre-{53ddf45-20260910T121422Z,623c74a-20260910T135623Z,b9110ae}`.
