@@ -1,6 +1,100 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-09-08
+Last updated: 2026-09-10
+
+## Production performance state (2026-09-10 perf program, live)
+
+UBAG `b9110ae` is live on VPS `185.252.233.186`
+(`UBAG_BUILD_COMMIT=b9110ae4bb254e2f5b0e4d4bccfd21c412d32066`, `/v1/ready`
+fully true, gateway/chat-reaper/browser healthy, 31/31 jobs completed today).
+Branch `fix/oet-facade-timeout` was fast-forwarded into `main` on top of
+`1b20fc7`; main HEAD differs from production only by this docs commit. Four
+code commits: `53ddf45` reaps tabs leaked by a SIGKILLed daemon (the OOM /
+tab-leak incident that broke every provider); `623c74a` races selector
+candidates against one deadline with a visible-only filter, one-shot
+`_fresh_chat` (no duplicate New-chat click), provider-signalled completion
+(Stop control seen then gone + 0.75 s no-growth grace, 4 s settle kept as
+fallback), warm tab reload only every 10 jobs, bridge screencast only while a
+dashboard is connected, Chrome background services disabled, browser starts on
+`about:blank`; `dff6115` disables `PreloadTopChromeWebUI` (132 MB omnibox
+WebUI renderer gone); `b9110ae` orders duplicate matches by an in-page
+hit-target check so ChatGPT's covered New-chat icon no longer burns a 1.5 s
+click timeout, and `clear_attachment_state` is one `evaluate_all` round trip
+(was five 130 ms `set_input_files([])` calls).
+
+Measured wall-clock (OET pattern, `max_tokens` 16, `_enabled:false`), baseline
+-> cold / warm after (cold = first job after a provider switch or restart):
+duckai 12.6 -> 8.9 / 5.4-6.1 s; chatgpt 34.3 -> 20.9-26.9 / 12.4-14.2 s;
+gemini 40.8 -> 17.2-24.9 / 7.1-7.6 s; deepseek 16.1 -> 12.4 / 9.1 s
+(`job_000000000348`-`...368`, all completed with the exact expected text).
+Browser idle cgroup 854.6 -> 196.9 MiB (~355-560 MiB with a provider page);
+gateway idle ~6 MiB, ~140 MiB with the warm daemon. Memory limits unchanged
+(browser 1900m, gateway 1300m). Worker overhead assigned->Send on warm ChatGPT
+is ~2.7 s (was ~6.1 s); the rest is ChatGPT itself (~7 s to text + Stop button
+lingering 3-4 s). Rollback: `ubag/gateway:rollback-before-b9110ae`
+(= 623c74a+dff6115), `ubag/gateway:rollback-before-623c74a` +
+`ubag/vps-browser:rollback-before-623c74a` (pre-perf),
+`ubag/gateway:rollback-before-53ddf45`; tree backups
+`/opt/docker/ubag-sync-backups/ubag-pre-{53ddf45-20260910T121422Z,623c74a-20260910T135623Z,b9110ae}`.
+Retag to `:vps-local` / `:local`, restore the tree, `up -d gateway chat-reaper
+browser`. Full evidence in `PROGRESS.md` top section.
+
+**Deploy notes for next agent (learned this session):**
+- New worker env knobs (allowlisted in `minimalWorkerEnv()`):
+  `UBAG_REASONING_SETTLE_S` (4.0), `UBAG_INDICATOR_GONE_GRACE_S` (0.75),
+  `UBAG_WARM_RELOAD_EVERY` (10); compose `UBAG_BROWSER_START_URL` (default
+  `about:blank`). None are set in env.local - defaults are what is live.
+- `up -d --build gateway chat-reaper` ALSO rebuilds and recreates the browser
+  container (compose dependency): Chrome restarts, the warm page is lost, logins
+  survive in the `browser_profile` volume. Expect one cold job per provider.
+- Never touch the anti-detection flags in `deploy/vps/browser/entrypoint.sh`
+  (headed Chrome on Xvfb, UA, GL, `--disable-blink-features=AutomationControlled`,
+  no `--enable-automation`); only `--disable-features` entries were added.
+  Chrome feature names live in the binary as `kFeatureName`. Keep LF endings.
+- `gateway_job_events` timestamps are all written at completion - for
+  per-phase timing attach an observer via CDP (`connect_over_cdp` to
+  `http://172.28.0.10:9223`, worker page listed in
+  `/var/lib/ubag/chat-ledger/open-pages.run_worker_daemon.py.json`).
+- Deliberately kept (measured, not worth it): 900 ms post-New-chat settle (SPA
+  route safety), Send-button click over Enter (multi-line prompts), 4 s settle
+  fallback while a Stop indicator persists; queue poll already 75 ms.
+  `job_000000000039` is a permanently stale `queued` row - ignore it.
+- Reliable SSH from this workstation: write the script locally, then
+  `Get-Content x.sh -Raw | ssh -o BatchMode=yes vps "tr -d '\r' | bash -s"`
+  (env via `ssh vps "tr -d '\r' | PROVIDER=x bash -s"`); nested double quotes
+  inside the ssh string break. Long builds: `nohup bash -lc '...' > /tmp/log
+  2>&1 < /dev/null &` then poll the log from a separate ssh call.
+- Worker tests: `apps/worker` -> `python -m pytest -q` (265 pass). Go:
+  `apps/gateway` -> `gofmt -l`, `go vet`, `go test ./internal/executor/`.
+- Worktree `D:\Projects\UBAG-fix-oet-facade-timeout` is merged; remove with
+  `git worktree remove` when convenient.
+
+## Production integration state (2026-09-10 nonce-aware OET probes, live)
+
+UBAG main `1b20fc7` is live on VPS `185.252.233.186`: the OpenAI facade now
+decodes nonempty `ubag_nonce` values into its v2 idempotency fingerprint while
+preserving the exact legacy no-nonce key. Exact-SHA CI runs `34441400511` and
+`34441399956` completed successfully. The immutable release archive was
+28,272,396 bytes with SHA-256
+`99ed21ad2dda3254972eab941e015f6febc381e6fdadc89317111302078b79de`.
+
+Production runs image `sha256:ebac5a0901f467c4df28b4dba0581557b4121d563ead100ae2df6a68968da57c`,
+`UBAG_BUILD_COMMIT=1b20fc70633a6bf08751ea9cfa7367c0207ad0fd`, and
+`UBAG_FACADE_MAX_WAIT_MS=240000`; gateway and chat-reaper have zero restarts.
+Browser/dashboard container IDs were unchanged, the browser profile volume
+remains present, and PAT/htpasswd hashes match the root-only rollback backup
+`/opt/docker/ubag-sync-backups/ubag-pre-1b20fc7-20260910T053709Z` (old image
+`sha256:771d5acacc61afdea0eaa600457e378fa398434575309796f8cef5e594b616f5`).
+
+Live nonce proof: same nonce replayed `job_000000000329`; a changed nonce made
+fresh `job_000000000330`. The facade listed 40 models and all five OET targets.
+Public OET matrix on unchanged OET SHA `a04b8674`: mock `...331` (333 ms),
+ChatGPT Sol+Medium `...332` (88,210 ms), DeepSeek Instant `...334` (34,556
+ms), and DuckAI Luna `...335` (42,526 ms) all returned expected output.
+Gemini 3.8 Flash `...333` completed/routed correctly but returned `pong`; a
+fresh retry `...336` returned exact `OK` in 63,845 ms. OET web/API/database
+and all UBAG services remained healthy after the matrix. Full evidence is at
+the top of `PROGRESS.md`.
 
 ## Production integration state (2026-09-08 marker+pins + cancel fix, live)
 
