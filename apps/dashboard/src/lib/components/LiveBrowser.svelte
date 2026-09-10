@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { Trash2, RefreshCw } from 'lucide-svelte';
 
   // The live-browser bridge (tools/live-browser/bridge.mjs) streams the real
   // Chrome as JPEG frames over this WebSocket and accepts mouse/keyboard input
@@ -38,6 +39,11 @@
   let currentTargetId = $state('');
   let hasFrame = $state(false);
   let capturing = $state(false);
+  // True from a reset request until the bridge pushes the tab list of the
+  // relaunched browser.
+  let resetting = $state(false);
+  let tabsMenu = $state<HTMLDetailsElement | null>(null);
+  let resetDialog = $state<HTMLDialogElement | null>(null);
 
   let deviceW = $state(1280);
   let deviceH = $state(720);
@@ -92,6 +98,7 @@
         } else if (m.type === 'targets') {
           targets = (m.targets as typeof targets) ?? [];
           if (m.current) currentTargetId = m.current as string;
+          resetting = false;
         }
         return;
       }
@@ -197,10 +204,21 @@
     let u = urlInput.trim();
     if (u && !/^https?:\/\//i.test(u)) u = 'https://' + u;
     send({ t: 'newtab', url: u });
-    setTimeout(() => send({ t: 'targets' }), 800);
   }
   function switchTarget(id: string) {
     if (id && id !== currentTargetId) send({ t: 'attach', targetId: id });
+    if (tabsMenu) tabsMenu.open = false;
+  }
+  function closeTab(id: string) {
+    send({ t: 'close', targetId: id });
+  }
+  function closeTabsMenuOnBlur(e: FocusEvent) {
+    if (tabsMenu && !tabsMenu.contains(e.relatedTarget as Node | null)) tabsMenu.open = false;
+  }
+  function resetBrowser() {
+    resetDialog?.close();
+    resetting = true;
+    send({ t: 'reset' });
   }
   function reconnect() {
     manualClose = true;
@@ -255,17 +273,47 @@
       <button type="button" onclick={newTab} class="px-2.5 py-1 rounded border border-rule text-ink text-xs hover:bg-rule-soft transition-colors">+ Tab</button>
     </form>
 
-    {#if targets.length > 1}
-      <select
-        class="px-2 py-1 rounded border border-rule bg-paper text-ink text-xs max-w-[10rem]"
-        value={currentTargetId}
-        onchange={(e) => switchTarget((e.target as HTMLSelectElement).value)}
-        aria-label="Switch tab"
-      >
-        {#each targets as t}
-          <option value={t.id}>{t.title || t.url}</option>
-        {/each}
-      </select>
+    {#if connected}
+      <details bind:this={tabsMenu} class="relative shrink-0" onfocusout={closeTabsMenuOnBlur}>
+        <summary
+          class="list-none [&::-webkit-details-marker]:hidden cursor-pointer select-none px-2 py-1 rounded border border-rule bg-paper text-ink text-xs hover:bg-rule-soft transition-colors"
+          title="Tabs open in the server browser"
+        >{targets.length} {targets.length === 1 ? 'tab' : 'tabs'} &#9662;</summary>
+        <ul
+          class="absolute right-0 top-full mt-1 z-20 w-80 max-h-72 overflow-y-auto rounded-md border border-rule bg-paper shadow-lg divide-y divide-rule-soft"
+          aria-label="Open tabs"
+        >
+          {#each targets as t (t.id)}
+            <li class="flex items-center gap-1 pl-1 pr-1.5 py-1" class:bg-accent-soft={t.id === currentTargetId}>
+              <button
+                type="button"
+                onclick={() => switchTarget(t.id)}
+                class="flex-1 min-w-0 text-left px-1.5 py-0.5 rounded hover:bg-rule-soft transition-colors"
+                aria-current={t.id === currentTargetId ? 'true' : undefined}
+                title={t.url}
+              >
+                <span class="block text-xs text-ink truncate">{t.title || t.url}</span>
+                <span class="block text-[10px] font-mono text-ink-mute truncate">{t.url}</span>
+              </button>
+              <button
+                type="button"
+                onclick={() => closeTab(t.id)}
+                class="shrink-0 p-1 rounded text-ink-mute hover:bg-danger-soft hover:text-danger transition-colors"
+                aria-label="Close tab {t.title || t.url}"
+                title="Close this tab and free its memory"
+              ><Trash2 size={14} /></button>
+            </li>
+          {/each}
+        </ul>
+      </details>
+
+      <button
+        type="button"
+        onclick={() => resetDialog?.showModal()}
+        disabled={resetting}
+        class="flex items-center gap-1 shrink-0 px-2 py-1 rounded border border-danger/40 bg-danger-soft text-danger text-xs hover:bg-danger/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        title="Restart the server browser: closes every tab and kills all its processes. Logins are kept."
+      ><RefreshCw size={12} class={resetting ? 'animate-spin' : ''} /> {resetting ? 'Restarting…' : 'Reset browser'}</button>
     {/if}
 
     <label class="flex items-center gap-1.5 text-xs text-ink-soft cursor-pointer select-none shrink-0">
@@ -327,6 +375,15 @@
       <div class="absolute inset-0 flex items-center justify-center text-ink-mute text-xs animate-pulse">Waiting for first frame...</div>
     {/if}
 
+    {#if connected && resetting}
+      <div class="absolute inset-0 flex items-center justify-center bg-[#0b0d10]/70" role="status">
+        <div class="text-center text-xs text-paper-soft space-y-1 px-6">
+          <p class="font-medium text-sm">Restarting browser…</p>
+          <p class="text-paper-soft/70">All tabs and browser processes are being discarded. Logins are kept.</p>
+        </div>
+      </div>
+    {/if}
+
     {#if connected}
       <div class="absolute top-2 right-2 flex items-center gap-2">
         {#if interactive}
@@ -340,3 +397,29 @@
     {/if}
   </div>
 </div>
+
+<dialog
+  bind:this={resetDialog}
+  class="w-full max-w-md rounded-lg border border-rule bg-paper shadow-2xl p-0 backdrop:bg-ink/40"
+  aria-label="Confirm browser reset"
+>
+  <div class="px-5 py-4 border-b border-rule bg-paper-soft">
+    <h2 class="text-lg font-display font-semibold text-ink">Reset browser?</h2>
+  </div>
+  <div class="p-5 space-y-2 text-sm text-ink-soft">
+    <p>Chrome on the server quits and is relaunched fresh: every tab, renderer and stalled process is discarded and its memory released.</p>
+    <p>Provider logins are kept (the profile is persistent). Any job running right now will fail.</p>
+  </div>
+  <div class="px-5 py-3 border-t border-rule flex justify-end gap-3">
+    <button
+      type="button"
+      onclick={() => resetDialog?.close()}
+      class="px-4 py-2 rounded-md border border-rule bg-paper-soft text-ink text-sm font-medium hover:bg-paper-warm transition-colors"
+    >Cancel</button>
+    <button
+      type="button"
+      onclick={resetBrowser}
+      class="px-4 py-2 rounded-md border border-danger/40 bg-danger-soft text-danger text-sm font-medium hover:bg-danger/10 transition-colors"
+    >Reset browser</button>
+  </div>
+</dialog>

@@ -46,6 +46,10 @@ function log(...args) {
   console.log(new Date().toISOString(), '[live-browser]', ...args);
 }
 
+// Same shape the worker's leaked-tab registry accepts; anything else is not a
+// CDP target id and must never reach /json/close.
+const TARGET_ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
+
 // Set by main(); called whenever Chrome dies or a capture fails so the bridge
 // relaunches Chrome and re-attaches instead of streaming a dead browser.
 let triggerRecover = () => {};
@@ -376,6 +380,43 @@ class PageSession {
       await fetch(`http://127.0.0.1:${CDP_PORT}/json/new?${encodeURIComponent(url || START_URL)}`).catch(() => {});
     });
   }
+
+  // Close one tab (its renderer process and memory go with it). Chrome quits
+  // when its last tab closes, which the supervisor would treat as a crash, so
+  // a blank tab is opened first if this is the only one. When the tab being
+  // closed is the one on screen, re-attach to another BEFORE closing so the
+  // keepalive never sees a dead session and starts a needless recovery.
+  async closeTab(targetId) {
+    if (!TARGET_ID_RE.test(String(targetId ?? ''))) return;
+    let targets = await this.listPageTargets();
+    if (!targets.some((t) => t.id === targetId)) return;
+    if (targets.length === 1) {
+      await this.newTab('about:blank');
+      targets = await this.listPageTargets();
+    }
+    if (targetId === this.targetId) {
+      const other = targets.find((t) => t.id !== targetId);
+      if (other) await this.attach(other.id);
+    }
+    await fetch(`http://127.0.0.1:${CDP_PORT}/json/close/${targetId}`);
+    log(`closed tab ${targetId}`);
+  }
+
+  // Ask Chrome to quit cleanly via the browser-level CDP socket. Every tab,
+  // renderer, GPU and utility process (including wedged ones) exits with it;
+  // cookies are flushed on the way out, so the persistent profile keeps the
+  // provider logins. The supervisor (watchdog / local launcher) relaunches it.
+  async closeBrowser() {
+    const r = await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`);
+    const { webSocketDebuggerUrl } = await r.json();
+    await new Promise((resolvePromise, rejectPromise) => {
+      const ws = new WebSocket(webSocketDebuggerUrl);
+      ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Browser.close' }));
+      ws.onmessage = () => { resolvePromise(); ws.close(); };
+      ws.onclose = () => resolvePromise();
+      ws.onerror = (e) => rejectPromise(e?.error ?? new Error('CDP ws error'));
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -479,6 +520,31 @@ async function main() {
     if (!sock.destroyed) sock.write(encodeFrame(Buffer.from(base64, 'base64'), 0x2));
   }
 
+  // Tab list as the dashboard renders it (count + per-tab close). Pushed to
+  // every viewer whenever it changes, so tabs the live worker opens and closes
+  // on its own show up without anyone clicking.
+  async function targetsPayload() {
+    const targets = await page.listPageTargets();
+    return JSON.stringify({
+      type: 'targets',
+      targets: targets.map((t) => ({ id: t.id, title: t.title, url: t.url })),
+      current: page.targetId,
+    });
+  }
+  let lastTargetsPayload = '';
+  async function broadcastTargets(force = false) {
+    if (clients.size === 0) return;
+    let payload;
+    try { payload = await targetsPayload(); } catch { return; }
+    if (!force && payload === lastTargetsPayload) return;
+    lastTargetsPayload = payload;
+    const frame = encodeFrame(Buffer.from(payload), 0x1);
+    for (const sock of clients) {
+      if (!sock.destroyed) sock.write(frame);
+    }
+  }
+  setInterval(() => broadcastTargets(), 3000);
+
   // Self-healing: relaunch Chrome (if it was closed/crashed) and re-attach the
   // page session. Debounced by `recovering` so overlapping triggers coalesce.
   let recovering = false;
@@ -497,8 +563,31 @@ async function main() {
     } finally {
       recovering = false;
     }
+    broadcastTargets(true);
   }
   triggerRecover = () => { recover(); };
+
+  // Operator "Reset browser": quit Chrome cleanly, wait until its DevTools
+  // endpoint is really gone (so recovery attaches to the NEW Chrome, not the
+  // dying one), then run the normal recovery. `recovering` is held for the
+  // whole shutdown so the keepalive cannot start a competing recovery.
+  async function resetBrowser() {
+    if (recovering) return;
+    recovering = true;
+    try {
+      broadcastMeta({ status: 'recovering' });
+      log('reset: operator requested Chrome restart');
+      await page.closeBrowser();
+      for (let i = 0; i < 40 && (await cdpAlive()); i++) {
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    } catch (e) {
+      log('reset: Browser.close failed', e.message);
+    } finally {
+      recovering = false;
+    }
+    await recover();
+  }
 
   // Keepalive: while clients are connected, if the change-driven screencast has
   // been quiet for ~700ms, push a one-shot capture so the canvas stays live
@@ -564,13 +653,11 @@ async function main() {
             case 'text': page.text(m.text); break;
             case 'key': page.key(m.kind, m.info); break;
             case 'navigate': page.navigate(m.url); break;
-            case 'newtab': await page.newTab(m.url); break;
-            case 'targets': {
-              const targets = await page.listPageTargets();
-              socket.write(encodeFrame(Buffer.from(JSON.stringify({ type: 'targets', targets: targets.map((t) => ({ id: t.id, title: t.title, url: t.url })), current: page.targetId })), 0x1));
-              break;
-            }
-            case 'attach': await page.attach(m.targetId); break;
+            case 'newtab': await page.newTab(m.url); await broadcastTargets(true); break;
+            case 'targets': socket.write(encodeFrame(Buffer.from(await targetsPayload()), 0x1)); break;
+            case 'attach': await page.attach(m.targetId); await broadcastTargets(true); break;
+            case 'close': await page.closeTab(m.targetId); await broadcastTargets(true); break;
+            case 'reset': await resetBrowser(); break;
           }
         } catch (e) {
           log('input error', e.message);
