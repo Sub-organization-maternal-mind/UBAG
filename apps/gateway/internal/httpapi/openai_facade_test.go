@@ -19,6 +19,16 @@ func facadeTestServer() *Server {
 	})
 }
 
+func TestDefaultFacadeWaitCoversQueueAndBrowserExecution(t *testing.T) {
+	if defaultFacadeMaxWait != 240*time.Second {
+		t.Fatalf("default facade wait = %s, want 4m", defaultFacadeMaxWait)
+	}
+	server := NewServer(Config{})
+	if server.facadeMaxWait != 240*time.Second {
+		t.Fatalf("server facade wait = %s, want 4m", server.facadeMaxWait)
+	}
+}
+
 func decodeFacadeError(t *testing.T, recBody []byte) openAIFacadeErrorEnvelope {
 	t.Helper()
 	var env openAIFacadeErrorEnvelope
@@ -483,7 +493,7 @@ func TestFacadeWaitTimeoutReturnsJobID(t *testing.T) {
 		FacadeMaxWait: 80 * time.Millisecond,
 	})
 	server := srv.Handler()
-	body := `{"model":"mock","messages":[{"role":"user","content":"UBAG_FACADE_TIMEOUT_PROBE"}]}`
+	body := `{"model":"mock","messages":[{"role":"user","content":"UBAG_FACADE_TIMEOUT_PROBE"}],"ubag_wait_ms":60000}`
 	start := time.Now()
 	rec := doJSON(server, http.MethodPost, "/v1/openai/chat/completions", body, authHeaders(""))
 	if elapsed := time.Since(start); elapsed > 30*time.Second {

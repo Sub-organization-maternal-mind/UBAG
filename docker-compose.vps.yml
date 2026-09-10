@@ -73,6 +73,7 @@ services:
       UBAG_PAT_ENABLED: ${UBAG_PAT_ENABLED:-false}
       UBAG_PAT_DEFAULT_TTL_MS: ${UBAG_PAT_DEFAULT_TTL_MS:-}
       UBAG_GATEWAY_STORE: postgres
+      UBAG_FACADE_MAX_WAIT_MS: ${UBAG_FACADE_MAX_WAIT_MS:-240000}
       # Full DSN lives in deploy/vps/env.local (platform credentials from
       # /opt/platform/projects/ubag.env on the VPS — never committed).
       UBAG_POSTGRES_DSN: ${UBAG_POSTGRES_DSN:?Set UBAG_POSTGRES_DSN in deploy/vps/env.local}

@@ -59,6 +59,7 @@ import (
 // defaultSQLiteDSN enables WAL mode, a busy timeout, and foreign-key
 // enforcement so the single-writer SQLite store behaves safely.
 const defaultSQLiteDSN = "file:ubag-gateway.db?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)"
+const defaultFacadeMaxWait = 240 * time.Second
 
 // Run starts the gateway and blocks until the context is cancelled or a fatal
 // error occurs.
@@ -140,7 +141,7 @@ func Run(ctx context.Context) error {
 		URLPolicy:   webhookPolicy,
 		MaxAttempts: webhookMaxAttempts,
 	}
-	facadeMaxWait, err := durationFromMillisEnv("UBAG_FACADE_MAX_WAIT_MS", 110*time.Second)
+	facadeMaxWait, err := durationFromMillisEnv("UBAG_FACADE_MAX_WAIT_MS", defaultFacadeMaxWait)
 	if err != nil {
 		return fmt.Errorf("invalid UBAG_FACADE_MAX_WAIT_MS: %w", err)
 	}

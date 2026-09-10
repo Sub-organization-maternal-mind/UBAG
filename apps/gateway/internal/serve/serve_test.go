@@ -15,6 +15,12 @@ import (
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 )
 
+func TestDefaultFacadeMaxWaitCoversQueueAndBrowserExecution(t *testing.T) {
+	if defaultFacadeMaxWait != 240*time.Second {
+		t.Fatalf("default facade wait = %s, want 4m", defaultFacadeMaxWait)
+	}
+}
+
 func TestNewStoresFromEnvDefaultsToMemory(t *testing.T) {
 	t.Setenv("UBAG_GATEWAY_STORE", "")
 	t.Setenv("UBAG_IDEMPOTENCY_TTL_HOURS", "48")

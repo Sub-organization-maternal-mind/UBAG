@@ -222,7 +222,7 @@ type Config struct {
 	// FacadeMaxWait bounds one POST /v1/openai/chat/completions call: the
 	// facade waits for the backing job's terminal state up to this long,
 	// then answers 504 with the still-running job ID. Zero selects the
-	// 110s default. Defaults to UBAG_FACADE_MAX_WAIT_MS when set.
+	// 240s default. Defaults to UBAG_FACADE_MAX_WAIT_MS when set.
 	FacadeMaxWait time.Duration
 
 	// Plugins is the optional WASM plugin host. When nil, no plugin hooks run.

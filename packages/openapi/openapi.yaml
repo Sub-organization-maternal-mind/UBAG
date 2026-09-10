@@ -1533,7 +1533,7 @@ paths:
         Synchronous OpenAI-compatible chat completion backed by a UBAG job.
         The gateway creates a native job (target derived from `model`), waits
         for its terminal state up to the configured facade deadline
-        (UBAG_FACADE_MAX_WAIT_MS, default 110000 ms), and returns an OpenAI
+        (UBAG_FACADE_MAX_WAIT_MS, default 240000 ms), and returns an OpenAI
         `chat.completion` object. `model` is a UBAG target key (for example
         `chatgpt_web`) or `target|setting` (for example
         `chatgpt_web|GPT-5.6 Sol`); the available values are listed by

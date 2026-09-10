@@ -52,9 +52,9 @@ import (
 
 const (
 	// defaultFacadeMaxWait bounds one facade call when UBAG_FACADE_MAX_WAIT_MS
-	// is unset. Browser jobs settle in 10-60s; 110s keeps headroom without
+	// is unset. Browser jobs can exceed two minutes under queue pressure; 240s keeps headroom without
 	// holding client connections indefinitely.
-	defaultFacadeMaxWait = 110 * time.Second
+	defaultFacadeMaxWait = 240 * time.Second
 	// minFacadeWaitMs is the smallest per-request ubag_wait_ms the contract
 	// accepts; anything positive below it is a client error, not a clamp.
 	minFacadeWaitMs = int64(1000)
