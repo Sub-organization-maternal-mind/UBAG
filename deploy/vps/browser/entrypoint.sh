@@ -78,6 +78,12 @@ reset_profile_guards() {
 # is not blocked as "not secure") and let the worker attach over CDP — they
 # never restrict what UBAG drives. CDP binds loopback; socat exposes it to the
 # worker's container privately.
+#
+# Footprint flags (the block after the compositor flags) switch off Chrome's
+# idle background services — update/variations/safe-browsing fetches, sync,
+# crash reporting, media-router discovery, the WebUI omnibox renderer, the
+# pre-warmed spare renderer, and the back/forward page cache. None of them is
+# observable from a web page, so the provider-facing fingerprint is unchanged.
 CHROME_PID=""
 start_chrome() {
   reset_profile_guards
@@ -96,10 +102,23 @@ start_chrome() {
     --disable-dev-shm-usage \
     --disable-gpu \
     --disable-infobars \
-    --disable-features=Translate,OptimizationHints,InterestFeedContentSuggestions,CalculateNativeWinOcclusion \
+    --disable-features=Translate,OptimizationHints,InterestFeedContentSuggestions,CalculateNativeWinOcclusion,MediaRouter,DialMediaRouteProvider,GlobalMediaControls,WebUIOmniboxPopup,SpareRendererForSitePerProcess \
     --disable-backgrounding-occluded-windows \
     --disable-renderer-backgrounding \
     --disable-background-timer-throttling \
+    --disable-background-networking \
+    --disable-component-update \
+    --disable-sync \
+    --disable-default-apps \
+    --disable-domain-reliability \
+    --disable-client-side-phishing-detection \
+    --disable-breakpad \
+    --disable-crash-reporter \
+    --disable-hang-monitor \
+    --disable-prompt-on-repost \
+    --disable-back-forward-cache \
+    --no-pings \
+    --metrics-recording-only \
     --window-position=0,0 \
     --window-size="$SCREEN_W,$SCREEN_H" \
     --start-maximized \

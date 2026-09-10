@@ -20,6 +20,14 @@ Playwright page that models a chronological transcript; no browser is launched.
 from ubag_worker.live.page_driver import PlaywrightPageDriver
 from ubag_worker.live.selectors import CHATGPT_WEB, DEEPSEEK_WEB
 
+_VISIBLE_SUFFIX = " >> visible=true"
+
+
+def _strip_visible(selector):
+    if selector.endswith(_VISIBLE_SUFFIX):
+        return selector[: -len(_VISIBLE_SUFFIX)]
+    return selector
+
 
 class _CountLocator:
     """Minimal locator exposing only .count() (what _await_prior_turn needs)."""
@@ -146,6 +154,9 @@ class _FakeChatPage:
             self._pending = None
 
     def locator(self, selector):
+        # The driver appends Playwright's visibility filter; every node this fake
+        # renders is visible, so the filter is a no-op here.
+        selector = _strip_visible(selector)
         if selector in self._prompt_sel:
             return _ActionLocator()
         if selector in self._submit_sel:
@@ -271,7 +282,7 @@ class _ResumeFakePage:
         return self._url
 
     def locator(self, selector):
-        if selector == self._primary:
+        if _strip_visible(selector) == self._primary:
             n = self._primary_polls
             self._primary_polls += 1
             present = self._appears_after is not None and n >= self._appears_after

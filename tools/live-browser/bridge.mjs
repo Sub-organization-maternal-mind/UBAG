@@ -214,6 +214,10 @@ class PageSession {
     this.deviceWidth = FRAME_MAX_WIDTH;
     this.deviceHeight = 720;
     this.targetId = null;
+    // Screencast runs only while a dashboard client is connected: with nobody
+    // watching, Chrome would still JPEG-encode every repaint of the page the
+    // live worker is driving (measured ~3-4% of a core, around the clock).
+    this.streaming = false;
   }
 
   async listPageTargets() {
@@ -253,9 +257,23 @@ class PageSession {
 
     await this.send('Page.enable');
     await this.send('Runtime.enable').catch(() => {});
-    await this.startScreencast();
+    if (this.streaming) await this.startScreencast();
     this.onMeta({ deviceWidth: this.deviceWidth, deviceHeight: this.deviceHeight, url: target.url, targetId: this.targetId });
     log(`attached to page ${this.targetId} (${target.url})`);
+  }
+
+  // Start/stop the screencast as dashboard clients come and go. Safe to call
+  // before a page is attached: attach() applies the current state.
+  async setStreaming(on) {
+    this.streaming = on;
+    if (!this.ws) return;
+    try {
+      if (on) await this.startScreencast();
+      else await this.send('Page.stopScreencast');
+      log(`screencast ${on ? 'started' : 'stopped'}`);
+    } catch (e) {
+      log('screencast toggle failed', e.message);
+    }
   }
 
   async startScreencast() {
@@ -516,6 +534,14 @@ async function main() {
     socket.setNoDelay(true);
     clients.add(socket);
     log(`dashboard connected (${clients.size} live)`);
+    if (clients.size === 1) page.setStreaming(true);
+    // Every disconnect path funnels here so the screencast stops exactly once
+    // the last viewer is gone.
+    const dropClient = (announce) => {
+      if (!clients.delete(socket)) return;
+      if (announce) log(`dashboard disconnected (${clients.size} live)`);
+      if (clients.size === 0) page.setStreaming(false);
+    };
 
     // Push current meta immediately so the new client can size its canvas.
     socket.write(
@@ -551,15 +577,14 @@ async function main() {
         }
       },
       () => {
-        clients.delete(socket);
+        dropClient(true);
         socket.destroy();
-        log(`dashboard disconnected (${clients.size} live)`);
       }
     );
 
     socket.on('data', (chunk) => decode(chunk));
-    socket.on('close', () => { clients.delete(socket); });
-    socket.on('error', () => { clients.delete(socket); socket.destroy(); });
+    socket.on('close', () => { dropClient(false); });
+    socket.on('error', () => { dropClient(false); socket.destroy(); });
   });
 
   server.listen(WS_PORT, BIND_HOST, () => {

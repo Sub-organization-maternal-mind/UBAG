@@ -43,11 +43,29 @@ UNKNOWN = "unknown"
 # match other chats, and the delete it drives is permanent on a real account.
 _SAFE_CONV_ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,128}$")
 
+
+def _visible(selector: str) -> str:
+    """Restrict a candidate selector to VISIBLE matches.
+
+    Providers keep hidden duplicates of controls in the DOM (Gemini renders two
+    ``a[aria-label='New chat']``, the first 0x0; its Quill composer ships an
+    invisible clipboard shim). ``.first`` on the raw selector latches the hidden
+    node and waits out the whole budget, so every probe filters to visible nodes
+    first. Playwright's ``>> visible=true`` chain works after css/xpath/text.
+    """
+    return selector + " >> visible=true"
+
 # Settle window (seconds of no growth) before a response is considered complete.
 # Reasoning modes (DeepThink / Extended thinking) pause mid-thought for seconds
 # with no visible streaming indicator, so they need a wider window than a plain
 # reply to avoid latching a partial answer. Env-overridable for tuning.
 _REASONING_SETTLE_S = 4.0
+# Grace after the provider's own Stop control disappears before a turn is read as
+# complete (two ~0.45s polls). Only applies once the control was SEEN this turn.
+_INDICATOR_GONE_GRACE_S = 0.75
+# A warm tab gets a full reload every N jobs (in between, New chat is an in-page
+# SPA transition). Bounds renderer memory growth on a long-lived provider tab.
+_WARM_RELOAD_EVERY = 10
 # Warm-reuse emptiness probe budget. A presence check on an already-loaded page,
 # so it is deliberately short; a false "absent" is caught downstream by drift
 # detection rather than by waiting longer here.
@@ -575,6 +593,15 @@ class PlaywrightPageDriver(PageDriver):
         # reader wait for THIS turn's node and skip the earlier ones. Captured in
         # submit_prompt, consumed by stream_response. Empty on a fresh chat.
         self._response_baseline: dict[str, int] = {}
+        # True right after prepare_for_next_job navigated to the provider root and
+        # clicked New chat with nothing else done since. The engine calls
+        # start_new_chat again straight afterwards; that second click (plus its
+        # settle) is pure wall-clock, so start_new_chat consumes this flag and
+        # skips it. Cleared by every action that changes the page in between.
+        self._fresh_chat = False
+        # Jobs served by the current page since its last full load; drives the
+        # periodic reload in prepare_for_next_job. Reset when a page is opened.
+        self._jobs_on_page = 0
 
     @staticmethod
     def _cdp_attach_attempts() -> int:
@@ -662,28 +689,55 @@ class PlaywrightPageDriver(PageDriver):
             return False
 
     def prepare_for_next_job(self, selectors: ProviderSelectors) -> bool:
+        self._fresh_chat = False
         if not self._page_is_live():
             return False
         if selectors.new_chat is None:
             return False
         try:
-            # A real, bounded navigation proves the CDP command channel responds;
-            # HTTP /json/version health alone does not detect a wedged connection.
-            self._page.goto(
-                selectors.target_url,
-                wait_until="domcontentloaded",
-                timeout=15000,
-            )
+            self._jobs_on_page += 1
+            if self._jobs_on_page >= _warm_reload_every():
+                # A full reload every N jobs bounds the SPA's memory growth: a
+                # provider tab kept warm for hours across in-page New chat
+                # transitions would otherwise creep toward the browser cgroup
+                # cap. Every job in between skips it (ChatGPT alone spends ~7.6s
+                # from load to a usable composer).
+                self._jobs_on_page = 0
+                self._page.goto(
+                    selectors.target_url,
+                    wait_until="domcontentloaded",
+                    timeout=15000,
+                )
+            # Bounded CDP round-trips: a wedged connection times out here (and
+            # forces a cold page) — HTTP /json/version health alone would not
+            # detect it.
             self._first_visible(selectors.prompt_input, timeout_ms=10000)
             if not self.start_new_chat(selectors):
                 return False
-            probe_ms = _emptiness_probe_ms()
-            for candidate in selectors.response_container.as_list():
-                if self._page.locator(candidate).first.is_visible(timeout=probe_ms):
-                    return False
+            # The New chat click is an SPA route change, so the prior turn may
+            # still be on screen for a moment: wait (bounded) for it to clear
+            # rather than sampling once. Anything still visible at the deadline
+            # means the page cannot be proven empty.
+            if not self._wait_until_absent(
+                selectors.response_container, timeout_ms=_emptiness_probe_ms()
+            ):
+                return False
+            self._fresh_chat = True
             return True
         except Exception:  # noqa: BLE001 - any doubt forces a cold page
             return False
+
+    def _wait_until_absent(self, group, *, timeout_ms: int) -> bool:  # pragma: no cover - requires real browser
+        """True once no candidate of ``group`` is visible; False at the deadline."""
+        import time
+
+        deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
+        while True:
+            if not self._visible_now(group):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.1)
 
     def open(self, *, target_url: str, user_data_dir: str, headless: bool) -> None:
         # Idempotent: the warm-reuse daemon holds ONE driver across jobs, but the
@@ -773,6 +827,8 @@ class PlaywrightPageDriver(PageDriver):
                 else self._context.new_page()
             )
             self._owns_page = False
+        self._jobs_on_page = 0
+        self._fresh_chat = False
         try:
             self._page.goto(target_url, wait_until="domcontentloaded")
         except Exception as exc:  # pragma: no cover - requires real browser
@@ -797,6 +853,7 @@ class PlaywrightPageDriver(PageDriver):
         # engine then decides fail vs. restart). Never raises DriftDetectedError.
         if not thread_ref:
             return False
+        self._fresh_chat = False
         try:
             self._page.goto(thread_ref, wait_until="domcontentloaded")
             self._page.wait_for_timeout(800)
@@ -861,12 +918,12 @@ class PlaywrightPageDriver(PageDriver):
         # This only changes how the element is *found*; reading the response is
         # unchanged, so response completeness is unaffected.
         deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
-        probe_ms = 250 if timeout_ms > 250 else timeout_ms
+        probe_ms = max(1, min(250, timeout_ms))  # 0 would mean "no timeout" to Playwright
         last_error: Optional[Exception] = None
         while True:
             for candidate in candidates:
                 try:
-                    locator = self._page.locator(candidate).first
+                    locator = self._page.locator(_visible(candidate)).first
                     locator.wait_for(state="visible", timeout=probe_ms)
                     return locator
                 except Exception as exc:  # noqa: BLE001 - try next fallback
@@ -977,37 +1034,69 @@ class PlaywrightPageDriver(PageDriver):
         )
 
     def _present(self, group, *, timeout_ms: int = 3000) -> bool:  # pragma: no cover
-        for candidate in group.as_list():
-            try:
-                self._page.locator(candidate).first.wait_for(
-                    state="visible", timeout=timeout_ms
-                )
-                return True
-            except Exception:  # noqa: BLE001
-                continue
-        return False
+        return self._present_any(group.as_list(), timeout_ms=timeout_ms)
 
     def _present_any(self, candidates: Sequence[str], *, timeout_ms: int = 2000) -> bool:  # pragma: no cover
-        for candidate in candidates:
+        # Race every candidate against ONE deadline (same scheme as _first_visible)
+        # instead of paying the full timeout per candidate in series: a 3-candidate
+        # miss used to cost 3x the budget, and detect_login_state's 4s probe ran
+        # 12s on a slow-rendering composer. A visible element short-circuits at
+        # the first probe, so a hit is never slower than before.
+        import time
+
+        deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
+        probe_ms = max(1, min(250, timeout_ms))  # 0 would mean "no timeout" to Playwright
+        while True:
+            for candidate in candidates:
+                try:
+                    self._page.locator(_visible(candidate)).first.wait_for(
+                        state="visible", timeout=probe_ms
+                    )
+                    return True
+                except Exception:  # noqa: BLE001
+                    continue
+            if time.monotonic() >= deadline:
+                return False
+
+    def _visible_now(self, group) -> bool:  # pragma: no cover - requires real browser
+        """Instant, non-waiting presence check: is any candidate visible right now?"""
+        for candidate in group.as_list():
             try:
-                self._page.locator(candidate).first.wait_for(
-                    state="visible", timeout=timeout_ms
-                )
-                return True
-            except Exception:  # noqa: BLE001
+                if self._page.locator(_visible(candidate)).count() > 0:
+                    return True
+            except Exception:  # noqa: BLE001 - an unqueryable candidate reads absent
                 continue
         return False
 
     def _click_any(self, candidates: Sequence[str], *, timeout_ms: int = 4000) -> bool:  # pragma: no cover
-        for candidate in candidates:
-            try:
-                locator = self._page.locator(candidate).first
-                locator.wait_for(state="visible", timeout=timeout_ms)
-                locator.click(timeout=timeout_ms)
-                return True
-            except Exception:  # noqa: BLE001 - try next fallback
-                continue
-        return False
+        import time
+
+        deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
+        probe_ms = max(1, min(250, timeout_ms))  # 0 would mean "no timeout" to Playwright
+        while True:
+            for candidate in candidates:
+                locator = self._page.locator(_visible(candidate))
+                try:
+                    locator.first.wait_for(state="visible", timeout=probe_ms)
+                except Exception:  # noqa: BLE001 - not on screen (yet); try next fallback
+                    continue
+                # Providers render the same control twice (ChatGPT: a collapsed
+                # icon and the expanded sidebar row, stacked at the same spot), so
+                # the first visible match can be covered and fail the hit-target
+                # check forever. Try each visible match with a short budget rather
+                # than burning the whole budget on the covered one.
+                try:
+                    matches = locator.all()
+                except Exception:  # noqa: BLE001
+                    matches = [locator.first]
+                for match in matches[:4]:
+                    try:
+                        match.click(timeout=max(500, min(timeout_ms, 1500)))
+                        return True
+                    except Exception:  # noqa: BLE001 - covered/detached; try the next match
+                        continue
+            if time.monotonic() >= deadline:
+                return False
 
     def _dismiss_menus(self) -> None:  # pragma: no cover
         """Close any open picker/menu so the next step starts from a clean state.
@@ -1085,6 +1174,11 @@ class PlaywrightPageDriver(PageDriver):
         group = selectors.new_chat
         if group is None:
             return False
+        if self._fresh_chat:
+            # prepare_for_next_job just did exactly this on a page nothing has
+            # touched since; a second click only re-runs the SPA route + settle.
+            self._fresh_chat = False
+            return True
         # Wait for the composer to be interactive before clicking New chat, so the
         # click never lands on a half-loaded page (right after auth or a retry
         # reset) — a common source of transient failures under load.
@@ -1209,11 +1303,18 @@ class PlaywrightPageDriver(PageDriver):
     def wait_until_authenticated(  # pragma: no cover - requires real browser
         self, selectors: ProviderSelectors, *, timeout_s: float
     ) -> str:
-        # Identical mechanism to await_manual_login for the live driver: poll the
-        # authenticated marker only; no credentials are ever typed. Kept as a
-        # distinct method so the engine's intent (grace re-check vs. manual wait)
-        # is explicit and the mock can diverge.
-        return self.await_manual_login(selectors, timeout_s=timeout_s)
+        # Same marker poll as await_manual_login (no credentials are ever typed),
+        # but this is a machine-speed readiness wait for a composer that is still
+        # rendering, not a wait for a human: the probe itself already blocks up
+        # to 1.5s, so skip the multi-second human poll interval between probes.
+        import time
+
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if self._present(selectors.authenticated_signal, timeout_ms=1500):
+                return AUTHENTICATED
+            time.sleep(0.2)
+        return LOGIN_REQUIRED
 
     def login_signal_present(  # pragma: no cover - requires real browser
         self, selectors: ProviderSelectors
@@ -1227,6 +1328,7 @@ class PlaywrightPageDriver(PageDriver):
         # authenticated context (no credentials typed), so login persists.
         if self._page is None:
             return
+        self._fresh_chat = False
         try:
             self._page.goto(target_url, wait_until="domcontentloaded")
             self._page.wait_for_timeout(800)
@@ -1235,6 +1337,7 @@ class PlaywrightPageDriver(PageDriver):
 
     # -- interaction -----------------------------------------------------
     def submit_prompt(self, selectors: ProviderSelectors, prompt: str) -> None:  # pragma: no cover
+        self._fresh_chat = False
         # Turn-aware read baseline: snapshot how many assistant turns are already
         # on the page BEFORE we submit, so stream_response/read_final_response can
         # target the NEW turn and never latch a prior turn's answer on a resumed
@@ -1395,6 +1498,16 @@ class PlaywrightPageDriver(PageDriver):
         deadline = time.monotonic() + timeout_s
         seen = ""
         last_growth = time.monotonic()
+        # Provider-signalled completion: once the provider's OWN streaming control
+        # (Stop button) has been seen during this turn and then disappears, the
+        # provider says it is done. We still require a short no-growth grace so
+        # the final DOM flush lands, and re-check the indicator over that grace
+        # (a flicker re-arms the wait). Turns where no indicator was ever seen
+        # (Gemini exposes none; a drifted Stop selector; an answer that finished
+        # before our first poll) keep the text-growth settle below unchanged.
+        indicator_seen = False
+        indicator_gone_at: Optional[float] = None
+        grace_s = _indicator_gone_grace_s()
         # Reasoning modes pause (often >1s) while "thinking" with no streaming
         # indicator; widen the settle window so a mid-thought pause is not mistaken
         # for completion and the partial answer captured.
@@ -1418,16 +1531,30 @@ class PlaywrightPageDriver(PageDriver):
                 yield current[len(seen):]
                 seen = current
                 last_growth = time.monotonic()
-            # Short probe: the streaming indicator, when present, is already on
-            # screen, so a long timeout only wastes wall-clock every poll (and is
-            # pure waste for providers such as Gemini that expose no indicator).
-            # A false "not streaming" here is harmless — completion still requires
-            # `settled` (no text growth for settle_s), which stays false while the
-            # response is actively growing.
-            still_streaming = self._present(selectors.streaming_indicator, timeout_ms=150)
-            settled = (time.monotonic() - last_growth) >= settle_s
-            if seen.strip() and settled and not still_streaming:
-                break
+            # Instant probe: the streaming indicator, when present, is already on
+            # screen, so any wait here only burns wall-clock every poll (the old
+            # 150ms-per-candidate wait cost ~0.45s per iteration on a 3-candidate
+            # group, and was pure waste for providers such as Gemini that expose
+            # no indicator). A false "not streaming" is harmless — completion
+            # still requires `settled` (no text growth for settle_s), which stays
+            # false while the response is actively growing.
+            still_streaming = self._visible_now(selectors.streaming_indicator)
+            now = time.monotonic()
+            if still_streaming:
+                indicator_seen = True
+                indicator_gone_at = None
+            elif indicator_seen and indicator_gone_at is None:
+                indicator_gone_at = now
+            settled = (now - last_growth) >= settle_s
+            if seen.strip() and not still_streaming:
+                if settled:
+                    break
+                if (
+                    indicator_gone_at is not None
+                    and (now - indicator_gone_at) >= grace_s
+                    and (now - last_growth) >= grace_s
+                ):
+                    break
             time.sleep(0.4)
 
     def read_final_response(  # pragma: no cover
@@ -1630,6 +1757,28 @@ def _reasoning_settle_s() -> float:
     except (TypeError, ValueError):
         pass
     return _REASONING_SETTLE_S
+
+
+def _indicator_gone_grace_s() -> float:
+    """No-growth grace (s) after the provider's Stop control disappears."""
+
+    raw = os.environ.get("UBAG_INDICATOR_GONE_GRACE_S", "").strip()
+    try:
+        value = float(raw)
+        if value > 0:
+            return value
+    except (TypeError, ValueError):
+        pass
+    return _INDICATOR_GONE_GRACE_S
+
+
+def _warm_reload_every() -> int:
+    """Full page reload cadence (jobs) for a warm tab; bounds SPA memory growth."""
+
+    raw = os.environ.get("UBAG_WARM_RELOAD_EVERY", "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return _WARM_RELOAD_EVERY
 
 
 def offline_mode_enabled() -> bool:

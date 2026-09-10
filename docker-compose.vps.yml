@@ -197,7 +197,10 @@ services:
     mem_limit: 1900m
     environment:
       UBAG_BROWSER_GEOMETRY: ${UBAG_BROWSER_GEOMETRY:-1280x800x24}
-      UBAG_BROWSER_START_URL: ${UBAG_BROWSER_START_URL:-https://chatgpt.com}
+      # about:blank keeps the operator's idle tab at ~30MB instead of a parked
+      # chatgpt.com renderer (~250MB); the dashboard's URL box navigates it when
+      # a login is needed. Override to a provider URL to restore the old default.
+      UBAG_BROWSER_START_URL: ${UBAG_BROWSER_START_URL:-about:blank}
     volumes:
       - browser_profile:/profiles
     healthcheck:
