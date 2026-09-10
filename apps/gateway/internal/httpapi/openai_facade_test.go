@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -614,6 +615,57 @@ func TestFacadeCompletionAndIdempotentReplay(t *testing.T) {
 	}
 	if replayed.UbagJobID != firstJobID {
 		t.Fatalf("replay job = %q, want %q", replayed.UbagJobID, firstJobID)
+	}
+}
+
+func TestFacadeFingerprintCoversNonce(t *testing.T) {
+	srv := NewServer(Config{
+		AppSecret:     "dev-secret",
+		ActorRole:     "service",
+		Executor:      &recordingExecutor{},
+		FacadeMaxWait: 80 * time.Millisecond,
+	})
+	handler := srv.Handler()
+
+	jobID := func(nonce string) string {
+		body := fmt.Sprintf(`{"model":"mock","messages":[{"role":"user","content":"ping"}],"ubag_nonce":%q}`, nonce)
+		rec := doJSON(handler, http.MethodPost, "/v1/openai/chat/completions", body, authHeaders(""))
+		if rec.Code != http.StatusGatewayTimeout {
+			t.Fatalf("status = %d, want 504; body=%s", rec.Code, rec.Body.String())
+		}
+		return decodeFacadeError(t, rec.Body.Bytes()).Error.Param
+	}
+
+	firstID := jobID("first")
+	if replayID := jobID("first"); replayID != firstID {
+		t.Fatalf("same nonce created job %q, want replay of %q", replayID, firstID)
+	}
+	secondID := jobID("second")
+	if secondID == firstID {
+		t.Fatalf("different nonces replayed job %q", firstID)
+	}
+}
+
+func TestFacadeFingerprintWithoutNonceRemainsCompatible(t *testing.T) {
+	srv := NewServer(Config{
+		AppSecret:     "dev-secret",
+		ActorRole:     "service",
+		Executor:      &recordingExecutor{},
+		FacadeMaxWait: 80 * time.Millisecond,
+	})
+	rec := doJSON(srv.Handler(), http.MethodPost, "/v1/openai/chat/completions",
+		`{"model":"mock","messages":[{"role":"user","content":"ping"}]}`, authHeaders(""))
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504; body=%s", rec.Code, rec.Body.String())
+	}
+	jobID := decodeFacadeError(t, rec.Body.Bytes()).Error.Param
+	job, found, err := srv.jobs.Get(t.Context(), jobID)
+	if err != nil || !found {
+		t.Fatalf("get job: %v", err)
+	}
+	const legacyKey = "facade-1177fdc00eced51222c3d53d0f96e96181ae53f1991241ec3a436f2d46f593a9"
+	if got := job.Context["correlation_id"]; got != legacyKey {
+		t.Fatalf("no-nonce key = %q, want legacy key %q", got, legacyKey)
 	}
 }
 

@@ -98,6 +98,7 @@ type openAIFacadeRequest struct {
 	ToolChoice     any                   `json:"tool_choice,omitempty"`
 	ResponseFormat any                   `json:"response_format,omitempty"`
 	UbagWaitMs     *int64                `json:"ubag_wait_ms,omitempty"`
+	UbagNonce      string                `json:"ubag_nonce,omitempty"`
 	// UbagStrict opts back into fail-closed picker config: when true, a
 	// drifted model menu fails the job as selector_drift_detected (the old
 	// default). When omitted or false (recommended), the facade marks the
@@ -690,7 +691,7 @@ func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, targe
 	// states (or before/after a manifest change) are different provider
 	// requests. A missing field here is a future IDEMPOTENCY-CONFLICT-001
 	// every time that field is introduced — hence the version below.
-	keySeed, err := json.Marshal(map[string]any{
+	fingerprint := map[string]any{
 		"fingerprint_version": facadeIdempotencyVersion,
 		"model":               req.Model,
 		"model_settings":      modelSettings,
@@ -701,7 +702,11 @@ func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, targe
 		"response_format":     req.ResponseFormat,
 		"ubag_strict":         req.UbagStrict,
 		"ubag_attachments":    attachmentDecls,
-	})
+	}
+	if req.UbagNonce != "" {
+		fingerprint["ubag_nonce"] = req.UbagNonce
+	}
+	keySeed, err := json.Marshal(fingerprint)
 	if err != nil {
 		return "", http.StatusInternalServerError, "server_error", "job_create_failed", "failed to fingerprint the request", false
 	}

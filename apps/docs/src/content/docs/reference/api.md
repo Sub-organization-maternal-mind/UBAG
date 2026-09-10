@@ -115,7 +115,8 @@ the completion text is reduced to its first parseable JSON value, and the
 call fails loudly when nothing parses). `ubag_strict` (default off) opts
 back into fail-closed picker config: with the default, a drifted provider
 model menu skips instead of failing the job — the prompt submits in the
-account's current mode. File attachments ride
+account's current mode. Reusing `ubag_nonce` retries the same native job;
+changing it makes an otherwise identical call create a distinct job. File attachments ride
 `ubag_attachments` (declare, 202-held, PUT each key, poll/replay).
 `POST /v1/openai/audio/transcriptions` takes an OpenAI-shaped multipart
 audio upload and answers `{text, ubag_job_id}` once the provider-backed job

@@ -3033,6 +3033,9 @@ components:
           type: integer
           minimum: 1000
           description: Per-request facade wait deadline in milliseconds, capped by the server maximum.
+        ubag_nonce:
+          type: string
+          description: Optional caller nonce included in the idempotency fingerprint. Reuse it to retry the same native job; change it to make an otherwise identical request create a distinct job.
         ubag_strict:
           type: boolean
           description: Opt back into fail-closed picker config. When omitted or false (recommended), a drifted provider model menu skips instead of failing the job — the prompt submits in the account's current mode. When true, drift fails the job as selector_drift_detected.
