@@ -2,6 +2,20 @@
 
 Last updated: 2026-09-13
 
+## Facade strict-by-default (2026-09-13, live on both boxes)
+
+`ubag_strict` now defaults to STRICT (`0cc04e2`, CI green, YAML fix
+`efd13d2`): the gateway injects the `_enabled:false` best-effort marker only
+on explicit `ubag_strict:false`. Without the marker the worker enforces the
+operator's model/reasoning settings on-page — explicit `model_settings` or
+the per-provider selector defaults — fail-closed (`selector_drift_detected`
+blocks the job on menu drift). Deployed on primary `185.252.233.186`
+(image `efd13d2`, ready true, mock probes `job_...419/420`) and vps2
+`213.163.201.37` (image `0cc04e2`, duckai facade jobs strict-verified).
+If OET calls start failing with `selector_drift_detected`, that is this
+change working as mandated — fix the selectors for the drifted target, do
+NOT flip the default back.
+
 ## VPS2 (second in-line production) state (2026-09-13, LIVE over HTTPS)
 
 UBAG main `5295ed9` deployed on the NEW dedicated box `213.163.201.37`

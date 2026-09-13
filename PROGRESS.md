@@ -2,6 +2,39 @@
 
 Last updated: 2026-09-13
 
+## 2026-09-13 STRICT picker enforcement is now the facade default — live on both boxes
+
+Owner mandate: the model/reasoning settings the operator defines — explicit
+`model_settings` OR the per-provider selector defaults (e.g. duckai_web =
+GPT-5.6 Luna + Reasoning) — MUST be selected on the provider UI before a
+facade job runs. Commit `0cc04e2` (CI green; YAML-scalar fix `efd13d2`)
+flips `ubag_strict` to **default strict**: the gateway no longer injects the
+`_enabled:false` best-effort marker unless the caller passes an explicit
+`ubag_strict:false`. With the marker absent, the worker's config phase runs
+(its own default is ON) and enforces selector defaults + pins fail-closed —
+a drifted provider menu now FAILS the job as `selector_drift_detected`
+(never silently submits in the account's current mode). OpenAPI + api.md
+updated to the new contract; the idempotency fingerprint still uses the raw
+`ubag_strict` value, so existing callers' replays keep resolving to the same
+jobs.
+
+Deployed and live-verified on both production gateways:
+- **vps2 `213.163.201.37`** (image from `0cc04e2`): two duckai_web facade
+  jobs — explicit Luna/Reasoning and a bare-model call — both COMPLETED with
+  exact tokens, `provider_config` carries NO `_enabled` marker, and the
+  worker emitted `session.configured` (the per-setting enforcement phase;
+  under drift the engine emits `blocked`/`selector_drift_detected` instead
+  and never completes — pinned by `test_provider_config.py`).
+- **primary `185.252.233.186`** (image from `efd13d2`, `/v1/ready` fully
+  true, 0 panics): mock-target facade probes — default call shows NO marker;
+  explicit `ubag_strict:false` still produces `{"_enabled": false}`
+  (`job_000000000419` / `...420`).
+
+Operational consequence (accepted by owner): if a provider rewrites its
+model menu, facade jobs for that target FAIL LOUDLY until selectors are
+re-verified — no silent wrong-mode runs. Rollback: prior gateway image +
+revert of `0cc04e2`.
+
 ## 2026-09-13 VPS2 deployed (213.163.201.37, ubag2.polytronx.com) — LIVE over HTTPS
 
 Second in-line production box deployed with `docker-compose.vps2.yml` (commit
