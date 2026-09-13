@@ -79,6 +79,19 @@ DuckAI/duck.ai entry; /dashboard 200 authed. **Also deployed to the primary
 Cloudflare: /dashboard 200 authed, served chunk carries the DuckAI/duck.ai
 entry.
 
+**2026-09-13 — duckai_web live E2E with 5.6 Luna + Reasoning (vps2, PASS):**
+Full pipeline with explicit pins: `POST /v1/jobs` target `duckai_web`,
+`model_settings {"model":"GPT-5.6 Luna","reasoning":"Reasoning"}` (validated
+against the manifest catalog, injected as `options.provider_config` — visible
+in `metadata.options.provider_config`). `job_000000000002` COMPLETED in ~15s:
+queued → assigned → live session over CDP (`session.opening`,
+`session.authenticated`, `session.new_chat`, `session.configured`) → streamed
+token deltas → exact token `DUCKAI-LUNA-R-D977DF` returned as the entire
+output. Worker enforces both settings on-page (strict path — direct pins
+carry no `_enabled` best-effort marker; a picker mismatch would fail the
+job). Operator defaults for duckai_web already match (selectors: model
+desired GPT-5.6 Luna, reasoning desired Reasoning).
+
 ## 2026-09-10 Live pipeline perf program: 2-5x faster jobs, 4x smaller browser
 
 Trigger: every AI provider on the VPS was failing. Root cause (`53ddf45`): a
