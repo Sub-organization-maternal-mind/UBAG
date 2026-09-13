@@ -3038,7 +3038,7 @@ components:
           description: Optional caller nonce included in the idempotency fingerprint. Reuse it to retry the same native job; change it to make an otherwise identical request create a distinct job.
         ubag_strict:
           type: boolean
-          description: Opt out of strict picker config. When omitted or true (default), the operator's model/reasoning settings — explicit model_settings or per-provider selector defaults — are enforced on-page before the job runs, and a drifted provider model menu fails the job as selector_drift_detected. Explicit false marks the job best-effort: a drifted menu is skipped and the prompt submits in the account's current mode (not recommended).
+          description: Opt out of strict picker config. When omitted or true (default), the operator's model/reasoning settings — explicit model_settings or per-provider selector defaults — are enforced on-page before the job runs, and a drifted provider model menu fails the job as selector_drift_detected. Explicit false marks the job best-effort (a drifted menu is skipped and the prompt submits in the account's current mode — not recommended).
         ubag_attachments:
           type: array
           maxItems: 32
