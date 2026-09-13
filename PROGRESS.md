@@ -35,6 +35,17 @@ model menu, facade jobs for that target FAIL LOUDLY until selectors are
 re-verified — no silent wrong-mode runs. Rollback: prior gateway image +
 revert of `0cc04e2`.
 
+**Duck.ai operator defaults re-confirmed the same day (owner ask):** the
+duckai_web selector defaults ARE GPT-5.6 Luna (`selectors.py:989`) +
+Reasoning (`selectors.py:1004`, marked "user decision") — so with strict
+enforcement now default, EVERY duckai_web job (facade or direct, with or
+without explicit settings) selects Luna + Reasoning on-page before
+submitting, on every run (new chats reset the picker, the per-job config
+phase re-applies it). No `UBAG_PROVIDER_CONFIG_*` overrides exist on either
+box. Live proofs of bare no-settings jobs completing under enforcement:
+vps2 `job_000000000005`, primary `job_000000000421`
+(`PRIMARY-DEF-DEFAULTS-7BBFB7` exact token).
+
 ## 2026-09-13 VPS2 deployed (213.163.201.37, ubag2.polytronx.com) — LIVE over HTTPS
 
 Second in-line production box deployed with `docker-compose.vps2.yml` (commit
