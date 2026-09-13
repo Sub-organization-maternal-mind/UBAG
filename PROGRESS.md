@@ -2,6 +2,30 @@
 
 Last updated: 2026-09-13
 
+## 2026-09-13 vps2 synced to latest main `cf8de88` via executor relay — both boxes on same commit
+
+Follow-up to the primary sync above: the owner's vps2 agent session executed
+the vps2 half using the relay template (`deploy/vps2/EXECUTOR-PROMPT.md`,
+TASK = RUNBOOK A). The primary session staged the tracked-only tarball on
+the box (`/tmp/ubag-cf8de88.tgz`, sha256 `51f2134…`) over SSH; the vps2
+session ran backup → extract → `UBAG_BUILD_COMMIT` bump → `up -d --build
+gateway chat-reaper` and reported DONE with a full report. Independently
+re-verified over SSH by the primary session: gateway
+`UBAG_BUILD_COMMIT=cf8de88371e8…` (container env + env.local line 7),
+`/v1/ready` fully true (`0.0.0-vps2`, all 7 checks), 5/5 containers
+healthy (browser NOT recreated — untouched, Up 13h; profile intact),
+htpasswd still 644, 0 panics, staged tarball removed. Backup:
+`/opt/docker/ubag-sync-backups/ubag-pre-cf8de88-20260913T174536Z`.
+Smoke step e remains SKIPPED on vps2 (no PAT json on the box — issue one
+via the operator before the next vps2 smoke is needed). **Both production
+gateways now run exactly `cf8de88371e8329373e1fd7ccb3f09b90105f564`.**
+Operational note: the relay pattern worked first try — template at
+`deploy/vps2/EXECUTOR-PROMPT.md`, fill the TASK block, owner pastes it
+into the vps2 session, report comes back in the pinned format. Also
+cleaned the vps2 session's scratch files from the repo root
+(`ubag-cf8de88.tgz`, `ubag-runbookA-1.sh` — never committed; the 28 MB
+tarball must stay out of git history).
+
 ## 2026-09-13 Primary synced to latest main `cf8de88` (docs-parity deploy, live-verified)
 
 Owner ask: publish the vps2-session changes to the primary

@@ -2,6 +2,21 @@
 
 Last updated: 2026-09-13
 
+## Both production boxes on exactly `cf8de88` (2026-09-13, live-verified)
+
+Primary `185.252.233.186` AND vps2 `213.163.201.37` both run
+`UBAG_BUILD_COMMIT=cf8de88371e8329373e1fd7ccb3f09b90105f564` (strict
+default build `0cc04e2` + docs/OpenAPI deltas; functionally identical
+code everywhere). The vps2 sync was executed BY the owner's vps2 session
+using the relay template `deploy/vps2/EXECUTOR-PROMPT.md` (RUNBOOK A);
+primary session staged the tarball + re-verified independently: ready
+true, containers healthy, htpasswd 644, 0 panics, backup
+`/opt/docker/ubag-sync-backups/ubag-pre-cf8de88-20260913T174536Z` on
+vps2 and `ubag-pre-cf8de88-20260913T2131Z` on the primary. vps2 smoke
+remains unexercised on this build (no PAT on that box — operator issues
+one when needed). For future vps2 work prefer the relay: stage artifacts
+over SSH, fill the TASK block, owner pastes into the vps2 session.
+
 ## Primary on latest main `cf8de88` (2026-09-13, live-verified)
 
 Primary `185.252.233.186` re-synced to main HEAD `cf8de88` — docs-only
