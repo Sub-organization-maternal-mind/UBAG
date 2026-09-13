@@ -112,10 +112,13 @@ native UBAG job plus a terminal wait (see the OpenAPI description for the full
 mapping). `GET /v1/openai/models` lists the accepted `model` IDs.
 `response_format` serves JSON coercion only (`json_object` / `json_schema`:
 the completion text is reduced to its first parseable JSON value, and the
-call fails loudly when nothing parses). `ubag_strict` (default off) opts
-back into fail-closed picker config: with the default, a drifted provider
-model menu skips instead of failing the job — the prompt submits in the
-account's current mode. Reusing `ubag_nonce` retries the same native job;
+call fails loudly when nothing parses). `ubag_strict` (default on since
+2026-09-13) enforces strict picker config: the operator's model/reasoning
+settings — explicit `model_settings` or per-provider selector defaults — are
+selected on-page before the job runs, and a drifted provider model menu
+fails the job instead of submitting in the wrong mode. Explicit
+`ubag_strict: false` opts out to best-effort (a drifted menu skips; not
+recommended). Reusing `ubag_nonce` retries the same native job;
 changing it makes an otherwise identical call create a distinct job. File attachments ride
 `ubag_attachments` (declare, 202-held, PUT each key, poll/replay).
 `POST /v1/openai/audio/transcriptions` takes an OpenAI-shaped multipart

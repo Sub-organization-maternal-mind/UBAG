@@ -99,11 +99,13 @@ type openAIFacadeRequest struct {
 	ResponseFormat any                   `json:"response_format,omitempty"`
 	UbagWaitMs     *int64                `json:"ubag_wait_ms,omitempty"`
 	UbagNonce      string                `json:"ubag_nonce,omitempty"`
-	// UbagStrict opts back into fail-closed picker config: when true, a
-	// drifted model menu fails the job as selector_drift_detected (the old
-	// default). When omitted or false (recommended), the facade marks the
-	// job best-effort and the worker skips the picker instead — the prompt
-	// submits in the account's current mode rather than failing.
+	// UbagStrict opts out of the default strict picker config. When omitted
+	// or true (default since 2026-09-13, owner mandate), the operator's
+	// model/reasoning settings — explicit model_settings or per-provider
+	// selector defaults — are enforced on-page before the job runs and a
+	// drifted menu fails the job as selector_drift_detected. Explicit false
+	// marks the job best-effort: a drifted model menu is skipped and the
+	// prompt submits in the account's current mode (NOT recommended).
 	UbagStrict *bool `json:"ubag_strict,omitempty"`
 	// UbagAttachments carries native attachment declarations
 	// ({key, content_type, kind, [filename]}) for this facade call. Each
@@ -731,21 +733,21 @@ func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, targe
 	if req.TopP != nil {
 		options["top_p"] = *req.TopP
 	}
-	// Best-effort picker config: the provider's model menu drifts (ChatGPT
-	// rewrote the picker 2026-08-10; Gemini flattened its menu 2026-07-17).
-	// The worker resolves operator defaults from its selectors; this flag
-	// only RECORDS that the caller asked for best-effort mode. A drifted
-	// picker then skips (submits in the account's current mode) instead of
-	// failing the job as selector_drift_detected. Pass ubag_strict:true to
-	// keep the old fail-closed behavior for evals.
+	// STRICT picker config is the DEFAULT (owner mandate 2026-09-13): the
+	// model/reasoning settings the operator defined — explicit model_settings
+	// or the per-provider selector defaults — MUST be selected on-page before
+	// the job runs, and a drifted provider menu FAILS the job as
+	// selector_drift_detected instead of silently submitting in the account's
+	// current mode. The worker resolves operator defaults from its selectors
+	// whenever config is enabled, so an absent marker means enforce.
 	//
-	// The marker rides inside the facade's model-settings map (not raw
-	// options) so optionsWithProviderConfig merges it with the validated
-	// pins below: marker first, pins on top (skip-if-drifted AND
-	// pin-if-present). Setting options directly here would be stripped as
-	// client provider_config and drop the pins (Sol/Medium, 3.8 Flash,
-	// Instant) — the worker would run unconfigured.
-	if req.UbagStrict == nil || !*req.UbagStrict {
+	// Only an EXPLICIT ubag_strict:false opts out to best-effort (marker
+	// rides inside the facade's model-settings map — not raw options — so
+	// optionsWithProviderConfig merges it with the validated pins below:
+	// marker first, pins on top). Setting options directly here would be
+	// stripped as client provider_config and drop the pins (Sol/Medium,
+	// 3.8 Flash, Instant) — the worker would run unconfigured.
+	if req.UbagStrict != nil && !*req.UbagStrict {
 		if modelSettings == nil {
 			modelSettings = map[string]any{}
 		}
