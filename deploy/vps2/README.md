@@ -59,6 +59,13 @@ mkdir -p /opt/docker/nginx-proxy-manager && cd /opt/docker/nginx-proxy-manager
 # 6. Bring the stack up
 cd /opt/docker/ubag
 docker compose -f docker-compose.vps2.yml --env-file deploy/vps/env.local up -d --build
+
+# 7. REQUIRED on a fresh box: the artifact_data volume can come up root-owned
+#    while the gateway runs as uid 999 (ubag) — artifact uploads then 500 with
+#    UBAG-INTERNAL-GATEWAY-001 "failed to store artifact". Fix (2026-09-13):
+docker exec -u root ubag-vps2-gateway-1 chown -R 999:999 /var/lib/ubag/artifacts
+#    (executor-spool and chat-ledger volumes were fine; verify with
+#     docker exec ubag-vps2-gateway-1 ls -ld /var/lib/ubag/*)
 ```
 
 ## Wiring ubag2.polytronx.com (NPM admin UI, http://213.163.201.37:81)

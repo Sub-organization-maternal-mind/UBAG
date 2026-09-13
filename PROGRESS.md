@@ -92,6 +92,24 @@ carry no `_enabled` best-effort marker; a picker mismatch would fail the
 job). Operator defaults for duckai_web already match (selectors: model
 desired GPT-5.6 Luna, reasoning desired Reasoning).
 
+**2026-09-13 — duckai_web attachment E2E (vps2, PASS after infra fix):**
+Facade call with `ubag_attachments` `[{key:"invoice", application/pdf,
+kind:document}]` + Luna/Reasoning `model_settings` → 202-held
+`job_000000000003`; a generated PDF with INVENTED facts (invoice INV-3097,
+total 1,284.60 EUR — base-14 Helvetica, built on-box, 985 bytes) PUT to
+`/v1/jobs/{id}/artifacts/invoice` → born-complete auto-dispatch on the PUT
+hook → `file.attached` worker event → duck.ai answered
+**"INV-3097 — 1,284.60 EUR"** (facts exist only in the PDF = genuine
+comprehension). Guardrails verified live: artifact PUT with mismatched
+Content-Type → 400 ATTACHMENT-CONTENT-TYPE-001; without the required
+`Idempotency-Key` header → 400 IDEMPOTENCY-KEY-MISSING-001.
+**Infra fix on vps2:** the fresh `artifact_data` volume came up **root-owned**
+(gateway runs uid 999) so every artifact store 500'd
+(UBAG-INTERNAL-GATEWAY-001, "failed to store artifact");
+`docker exec -u root ubag-vps2-gateway-1 chown -R 999:999
+/var/lib/ubag/artifacts` fixed it. Primary's volume verified ubag-owned
+(unaffected). Add this chown to one-time setup on any new box.
+
 ## 2026-09-10 Live pipeline perf program: 2-5x faster jobs, 4x smaller browser
 
 Trigger: every AI provider on the VPS was failing. Root cause (`53ddf45`): a
