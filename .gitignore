@@ -93,3 +93,6 @@ apps/gateway/internal/executor/Python/
 .claude/
 .codegraph/
 .serena/
+
+# ZCode session tool state (local only)
+.commandcode/
