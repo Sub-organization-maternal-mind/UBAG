@@ -1,6 +1,29 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-09-10
+Last updated: 2026-09-13
+
+## VPS2 (second in-line production) state (2026-09-13, live at origin)
+
+UBAG main `5295ed9` deployed on the NEW dedicated box `213.163.201.37`
+(`ssh upcloud-prod`, Upcloud Singapore 4c/8GB) via
+`docker-compose.vps2.yml`: standalone stack with LOCAL postgres:16-alpine,
+dedicated NPM v2.15 edge (host 80/443/81), gateway + nginx-dashboard +
+browser + chat-reaper all healthy, `/v1/ready` fully true, authed
+`/v1/jobs` 200 through the edge, dashboard assets 200, facade mock E2E
+`job_000000000001` COMPLETED (exact token). Fresh on-box secrets in
+`/opt/docker/ubag/deploy/vps/env.local`; NPM admin creds root-only at
+`/opt/docker/nginx-proxy-manager/ADMIN-CREDENTIALS.txt`; setup flow in
+`deploy/vps2/README.md` (+ `one-time-setup.sh`, `npm-setup.sh`).
+
+**One step left — blocked on the owner:** Cloudflare's record for
+`ubag2.polytronx.com` does not route to this box (edge openresty 404 / 525
+while the origin answers correctly direct). When the DNS record is fixed to
+A `ubag2 → 213.163.201.37`, request the LE cert
+(`POST /api/nginx/certificates`) and set `certificate_id` + `ssl_forced`
+on proxy host 1 — see `deploy/vps2/npm-setup.sh`. ACME challenge serving for
+the host is already fixed (advanced_config). Gotchas (htpasswd 644, NPM
+v2.15 setup-user schema, worktree dashboard build env) in `PROGRESS.md`
+2026-09-13 section.
 
 ## Production performance state (2026-09-10 perf program, live)
 

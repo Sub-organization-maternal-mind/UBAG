@@ -1,6 +1,53 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-09-10
+Last updated: 2026-09-13
+
+## 2026-09-13 VPS2 deployed (213.163.201.37, ubag2.polytronx.com) — live at origin, TLS pending DNS fix
+
+Second in-line production box deployed with `docker-compose.vps2.yml` (commit
+`5295ed9`, includes the 2026-09-10 perf program): gateway + **local**
+postgres:16-alpine + nginx-dashboard + live browser + chat-reaper + a
+**dedicated** Nginx Proxy Manager edge (jc21 v2.15, openresty) publishing host
+80/443/81. Fully self-contained — no platform / oetwebsite_internal networks.
+
+Live proof at the origin (bypassing Cloudflare, Host-header direct):
+`/v1/ready` fully true; all 5 containers healthy; authed `GET /v1/jobs?limit=1`
+200 through the full edge chain (NPM → dashboard nginx → gateway → postgres);
+dashboard assets 200 with real bytes (CSS 110KB, entry chunks present, bundle
+references `/dashboard/_app/…`); facade E2E `job_000000000001` COMPLETED
+(model `mock`, exact token `VPS2-DEPLOY-SMOKE-*` in output). Rollback: N/A
+(new box; prior state was empty).
+
+Fresh secrets generated **on the VPS** in
+`/opt/docker/ubag/deploy/vps/env.local` (never in transit or transcript); env
+mirrors primary knobs (poll 75ms, daemon on, PAT enabled, facade wait 240s,
+actor superadmin). Operator `.htpasswd` copied from the primary. Dashboard
+dist built in an isolated worktree at HEAD with `UBAG_BASE_PATH=/dashboard`
+(Git-Bash quirk: needs `MSYS2_ENV_CONV_EXCL=UBAG_BASE_PATH`, and
+`pnpm generate:sdk-contracts` writes to the main checkout — copy
+`packages/sdk-typescript/dist` into the worktree before building).
+
+Gotchas captured for the next deploy:
+- `.htpasswd` must be **chmod 644**: at 600 the nginx worker cannot read it →
+  any authed request 500s while unauthenticated requests 401 normally.
+- NPM v2.15 API: no `/api/setup`; first admin is `POST /api/users` in setup
+  mode with `{name, nickname, email, roles, auth:{type:"password",secret}}`.
+- NPM v2.15 proxy-host blocks lack the ACME challenge include; fixed via
+  `advanced_config` injecting
+  `location ^~ /.well-known/acme-challenge/ { root /data/letsencrypt-acme-challenge; }`
+  (verified serving tokens for Host=ubag2).
+
+**BLOCKED on owner (one step left):** the Cloudflare record for
+`ubag2.polytronx.com` does **not** route to 213.163.201.37 — through CF, http
+returns an openresty-edge 404 and https returns 525, while the origin answers
+correctly on every direct probe (and nothing on this box runs openresty).
+Fix: point `ubag2` at `213.163.201.37` (proxied A record). Then finish TLS:
+`POST /api/nginx/certificates` for `ubag2.polytronx.com`, set
+`certificate_id` + `ssl_forced` on proxy host 1 — helper:
+`deploy/vps2/npm-setup.sh`. Until then http (via hosts-file override) serves
+the dashboard. NPM admin creds: root-only
+`/opt/docker/nginx-proxy-manager/ADMIN-CREDENTIALS.txt` (UI :81). One-time
+setup flow: `deploy/vps2/README.md` + `one-time-setup.sh`.
 
 ## 2026-09-10 Live pipeline perf program: 2-5x faster jobs, 4x smaller browser
 
