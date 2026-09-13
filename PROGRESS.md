@@ -67,6 +67,15 @@ setup record: `deploy/vps2/npm-setup.sh`; one-time flow:
 browser container are fresh — the operator signs in via the dashboard's
 Browser Sessions widget.
 
+**2026-09-13 later — DuckAI login shortcut on vps2 dashboard (live):**
+`LiveBrowser.svelte` provider quick-links gained `{label:"DuckAI",
+url:"https://duck.ai"}` (`8632121`); dist rebuilt in an isolated worktree
+(UBAG_BASE_PATH=/dashboard) and swapped onto vps2 — backup at
+`/opt/docker/ubag/apps/dashboard/dist.bak.duckai`, nginx-dashboard recreated
+healthy. Verified live: served chunk `nodes/7.PjMLmmeb.js` contains the
+DuckAI/duck.ai entry; /dashboard 200 authed. The primary
+(ubag.polytronx.com) picks this up on its next dashboard dist deploy.
+
 ## 2026-09-10 Live pipeline perf program: 2-5x faster jobs, 4x smaller browser
 
 Trigger: every AI provider on the VPS was failing. Root cause (`53ddf45`): a
