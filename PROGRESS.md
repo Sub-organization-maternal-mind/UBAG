@@ -2,6 +2,28 @@
 
 Last updated: 2026-09-13
 
+## 2026-09-13 Primary synced to latest main `cf8de88` (docs-parity deploy, live-verified)
+
+Owner ask: publish the vps2-session changes to the primary
+`185.252.233.186`. Functional deltas were already live there (gateway image
+ran `efd13d2` ⊇ strict `0cc04e2`; DuckAI dashboard dist from `8632121`;
+zero dashboard/deploy file changes since `8632121` — `cbf518f`/`cf8de88`
+are docs-only). Ran the standard flow anyway so the box is unambiguously
+on latest main: tracked-only `git archive` tarball of `cf8de88`
+(SHA-256 `51f2134…`) scp'd + extracted over `/opt/docker/ubag`
+(untracked secrets/DBs/dist untouched), tree backup
+`/opt/docker/ubag-sync-backups/ubag-pre-cf8de88-20260913T2131Z`,
+`UBAG_BUILD_COMMIT` bumped in `deploy/vps/env.local`,
+`docker compose -f docker-compose.vps.yml up -d --build gateway
+chat-reaper` (compose also recreated the browser — profile volume intact,
+operator logins persist). Verified live: gateway
+`UBAG_BUILD_COMMIT=cf8de88371e8…`, `/v1/ready` fully true (all 7 checks),
+4/4 containers healthy, 0 panics, facade mock smoke `job_000000000422`
+COMPLETED with exact token `UBAG-CF8DE88-PRIMARY-OK`. Rollback: re-tag
+the prior gateway image + restore the sync-backup snapshot. vps2 remains
+on image `0cc04e2` (functionally identical code; `efd13d2..cf8de88` adds
+docs only) — no vps2 changes were needed.
+
 ## 2026-09-13 STRICT picker enforcement is now the facade default — live on both boxes
 
 Owner mandate: the model/reasoning settings the operator defines — explicit

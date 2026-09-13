@@ -2,6 +2,20 @@
 
 Last updated: 2026-09-13
 
+## Primary on latest main `cf8de88` (2026-09-13, live-verified)
+
+Primary `185.252.233.186` re-synced to main HEAD `cf8de88` — docs-only
+delta over its prior `efd13d2` build (strict-by-default `0cc04e2` code
+identical on both). Tracked-only tarball extracted over
+`/opt/docker/ubag` (env.local/.htpasswd/.oet-pat.json/DBs/dist
+untouched); gateway + chat-reaper rebuilt and recreated (browser
+recreated too, profile volume kept). Verified:
+`UBAG_BUILD_COMMIT=cf8de88371e8…`, `/v1/ready` fully true, 4/4
+containers healthy, 0 panics, mock smoke `job_000000000422` exact token
+`UBAG-CF8DE88-PRIMARY-OK`. Rollback: prior gateway image (from
+`efd13d2`) + `/opt/docker/ubag-sync-backups/ubag-pre-cf8de88-20260913T2131Z`.
+vps2 stays on image `0cc04e2` — same functional code.
+
 ## Facade strict-by-default (2026-09-13, live on both boxes)
 
 `ubag_strict` now defaults to STRICT (`0cc04e2`, CI green, YAML fix
