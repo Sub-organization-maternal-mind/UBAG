@@ -215,6 +215,7 @@
     { label: 'Claude', url: 'https://claude.ai' },
     { label: 'Gemini', url: 'https://gemini.google.com' },
     { label: 'DeepSeek', url: 'https://chat.deepseek.com' },
+    { label: 'DuckAI', url: 'https://duck.ai' },
   ];
 
   onMount(() => {
