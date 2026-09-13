@@ -2,7 +2,7 @@
 
 Last updated: 2026-09-13
 
-## 2026-09-13 VPS2 deployed (213.163.201.37, ubag2.polytronx.com) — live at origin, TLS pending DNS fix
+## 2026-09-13 VPS2 deployed (213.163.201.37, ubag2.polytronx.com) — LIVE over HTTPS
 
 Second in-line production box deployed with `docker-compose.vps2.yml` (commit
 `5295ed9`, includes the 2026-09-10 perf program): gateway + **local**
@@ -37,17 +37,35 @@ Gotchas captured for the next deploy:
   `location ^~ /.well-known/acme-challenge/ { root /data/letsencrypt-acme-challenge; }`
   (verified serving tokens for Host=ubag2).
 
-**BLOCKED on owner (one step left):** the Cloudflare record for
-`ubag2.polytronx.com` does **not** route to 213.163.201.37 — through CF, http
-returns an openresty-edge 404 and https returns 525, while the origin answers
-correctly on every direct probe (and nothing on this box runs openresty).
-Fix: point `ubag2` at `213.163.201.37` (proxied A record). Then finish TLS:
-`POST /api/nginx/certificates` for `ubag2.polytronx.com`, set
-`certificate_id` + `ssl_forced` on proxy host 1 — helper:
-`deploy/vps2/npm-setup.sh`. Until then http (via hosts-file override) serves
-the dashboard. NPM admin creds: root-only
-`/opt/docker/nginx-proxy-manager/ADMIN-CREDENTIALS.txt` (UI :81). One-time
-setup flow: `deploy/vps2/README.md` + `one-time-setup.sh`.
+**TLS finished same day (owner fixed the DNS record):** Cloudflare now routes
+`ubag2.polytronx.com` → 213.163.201.37 (http 301 from our NPM instead of the
+edge openresty 404). Let's Encrypt cert issued via
+`POST /api/nginx/certificates` (cert `npm-2`, valid to 2026-12-12, HTTP-01
+through Cloudflare to origin :80), attached to proxy host 1 with
+`ssl_forced` + `http2_support`. Live proof through Cloudflare HTTPS:
+`/healthz` → `ok`; `/` → 301 `/dashboard/`; `/dashboard/` 401 unauth → 200
+with Basic Auth; authed `/v1/jobs?limit=1` → 200. Browser-side cert is
+Cloudflare's universal SSL (expected); origin TLS is the LE cert.
+
+Deploy gotchas captured for the next deploy:
+- `.htpasswd` must be **chmod 644**: at 600 the nginx worker cannot read it →
+  any authed request 500s while unauthenticated requests 401 normally.
+- NPM v2.15 API: no `/api/setup`; first admin is `POST /api/users` in setup
+  mode with `{name, nickname, email, roles, auth:{type:"password",secret}}`.
+  The LE contact email comes from the admin user's email; certificates meta
+  only allows `dns_challenge` etc. (no letsencrypt_email).
+- **Do NOT inject a `/.well-known/acme-challenge/` location via
+  `advanced_config`** — the proxy-host template adds it itself once a cert is
+  attached; duplicating it makes `nginx -t` fail (duplicate location) and NPM
+  silently rolls back by DELETING the generated conf (only visible with
+  `DEBUG=true`). `advanced_config` stays empty.
+
+NPM admin creds: root-only
+`/opt/docker/nginx-proxy-manager/ADMIN-CREDENTIALS.txt` (UI :81). Full
+setup record: `deploy/vps2/npm-setup.sh`; one-time flow:
+`deploy/vps2/README.md` + `one-time-setup.sh`. Provider logins in the vps2
+browser container are fresh — the operator signs in via the dashboard's
+Browser Sessions widget.
 
 ## 2026-09-10 Live pipeline perf program: 2-5x faster jobs, 4x smaller browser
 
