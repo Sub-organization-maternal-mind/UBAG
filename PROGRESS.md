@@ -2,6 +2,25 @@
 
 Last updated: 2026-09-13
 
+## 2026-09-13 vps2 PAT issued + cf8de88 smoke PASS (job_000000000006)
+
+Owner asked the primary session to self-serve the missing vps2 smoke
+credential. Mechanism (mirrors the dashboard's own path): the dashboard
+nginx injects `Authorization: Bearer ${UBAG_GATEWAY_SECRET}` into /v1/
+proxy calls — the app secret IS the master Bearer credential — and
+`POST /v1/auth/pat` (pat_handlers.go) requires the superadmin actor,
+which vps2's `UBAG_ACTOR_ROLE=superadmin` provides. Issued ON the box via
+a scp'd script (secret never transited the transcript in plaintext):
+`{"tenant_id":"tenant_oet","app_id":"oet-platform","role":"service",
+"ttl_seconds":-1}` → HTTP 201, token (len 53) saved root-only at
+`/opt/docker/ubag/deploy/vps/.smoke-pat.json` (chmod 600; token only ever
+printed masked). Live proof on the cf8de88 build: facade mock smoke
+`job_000000000006` COMPLETED with exact token `UBAG-VPS2-CF8DE88-SMOKE-OK`
+— the previously SKIPPED verify step (e) on vps2 is now closed; both
+boxes' cf8de88 builds are smoke-verified. Future vps2 relay TASKs: smoke
+credential = that on-box file (have the executor read it like
+`.oet-pat.json` on the primary).
+
 ## 2026-09-13 vps2 synced to latest main `cf8de88` via executor relay — both boxes on same commit
 
 Follow-up to the primary sync above: the owner's vps2 agent session executed

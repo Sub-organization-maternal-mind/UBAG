@@ -13,9 +13,13 @@ primary session staged the tarball + re-verified independently: ready
 true, containers healthy, htpasswd 644, 0 panics, backup
 `/opt/docker/ubag-sync-backups/ubag-pre-cf8de88-20260913T174536Z` on
 vps2 and `ubag-pre-cf8de88-20260913T2131Z` on the primary. vps2 smoke
-remains unexercised on this build (no PAT on that box — operator issues
-one when needed). For future vps2 work prefer the relay: stage artifacts
-over SSH, fill the TASK block, owner pastes into the vps2 session.
+later closed same day: a PAT was issued on-box (app-secret Bearer →
+`POST /v1/auth/pat`, tenant_oet/oet-platform/service, no expiry) and
+saved root-only at `/opt/docker/ubag/deploy/vps/.smoke-pat.json`; facade
+mock `job_000000000006` COMPLETED with exact token
+`UBAG-VPS2-CF8DE88-SMOKE-OK`. For future vps2 work prefer the relay:
+stage artifacts over SSH, fill the TASK block, owner pastes into the
+vps2 session; smoke credential = the on-box `.smoke-pat.json`.
 
 ## Primary on latest main `cf8de88` (2026-09-13, live-verified)
 
