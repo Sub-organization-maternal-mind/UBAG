@@ -73,8 +73,11 @@ url:"https://duck.ai"}` (`8632121`); dist rebuilt in an isolated worktree
 (UBAG_BASE_PATH=/dashboard) and swapped onto vps2 — backup at
 `/opt/docker/ubag/apps/dashboard/dist.bak.duckai`, nginx-dashboard recreated
 healthy. Verified live: served chunk `nodes/7.PjMLmmeb.js` contains the
-DuckAI/duck.ai entry; /dashboard 200 authed. The primary
-(ubag.polytronx.com) picks this up on its next dashboard dist deploy.
+DuckAI/duck.ai entry; /dashboard 200 authed. **Also deployed to the primary
+(185.252.233.186) same day** — same swap flow (backup
+`apps/dashboard/dist.bak.duckai`), container healthy, verified live through
+Cloudflare: /dashboard 200 authed, served chunk carries the DuckAI/duck.ai
+entry.
 
 ## 2026-09-10 Live pipeline perf program: 2-5x faster jobs, 4x smaller browser
 
