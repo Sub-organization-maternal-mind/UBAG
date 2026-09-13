@@ -1,0 +1,230 @@
+# UBAG — VPS2 profile (213.163.201.37, dedicated "second in line" production
+# box, https://ubag2.polytronx.com).
+#
+# Sibling of docker-compose.vps.yml (185.252.233.186) with the shared-box
+# dependencies replaced by local ones — this box is dedicated, so nothing is
+# shared and nothing needs to join an external platform network:
+#   - Postgres runs HERE as a compose service (postgres:16-alpine) instead of
+#     the primary's shared /opt/platform stack. The gateway entrypoint applies
+#     migrations/postgres/0001-0010 itself (0008+ needs pg_partman and is
+#     tolerated to fail, same as the small profile).
+#   - Ingress is a dedicated Nginx Proxy Manager stack at
+#     /opt/docker/nginx-proxy-manager on this box (publishes host 80/443/81),
+#     terminating TLS for ubag2.polytronx.com with Let's Encrypt and forwarding
+#     to ubag-vps2-nginx-dashboard:80 over the shared
+#     nginx-proxy-manager_default network (same pattern proven on the primary
+#     for ubag.polytronx.com behind Cloudflare).
+#   - No oetwebsite_internal network: the OET stack lives on the primary only.
+#     If OET ever moves here, add that external network to the gateway then.
+#
+# Service layout, resource limits, healthchecks, spool/artifact/ledger volumes,
+# static browser IP (172.28.0.10) and safe-mode behavior are identical to
+# docker-compose.vps.yml — see its header for the full rationale.
+#
+# Deploy: from /opt/docker/ubag on the VPS,
+#   docker compose -f docker-compose.vps2.yml --env-file deploy/vps/env.local up -d --build
+# (env.local lives at the same deploy/vps/ path as the primary — different
+# secrets, see deploy/vps2/README.md)
+
+name: ubag-vps2
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ubag-vps2-postgres
+    restart: unless-stopped
+    cpus: "0.50"
+    mem_limit: 512m
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ubag}
+      POSTGRES_USER: ${POSTGRES_USER:-ubag}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/vps/env.local}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # $$ = literal $ for the in-container shell; POSTGRES_USER/DB are
+      # container env, so this is independent of compose interpolation.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ubag-private
+
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/small/gateway.Dockerfile
+    image: ${UBAG_GATEWAY_IMAGE:-ubag/gateway:vps2-local}
+    # One full core avoids throttling the embedded Python worker (same budget
+    # as the primary; this 4-core box has headroom).
+    cpus: "${UBAG_GATEWAY_CPUS:-1.00}"
+    mem_limit: 1300m
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      UBAG_GATEWAY_ADDR: ":8080"
+      GOMAXPROCS: "1"
+      GOMEMLIMIT: "950MiB"
+      UBAG_APP_SECRET: ${UBAG_APP_SECRET:?Set UBAG_APP_SECRET in deploy/vps/env.local}
+      UBAG_API_VERSION: ${UBAG_API_VERSION:-2026-05-22}
+      UBAG_GATEWAY_VERSION: ${UBAG_GATEWAY_VERSION:-0.0.0-vps2}
+      UBAG_BUILD_COMMIT: ${UBAG_BUILD_COMMIT:-local}
+      UBAG_ACTOR_ROLE: ${UBAG_ACTOR_ROLE:-}
+      # PAT issuance (POST /v1/auth/pat) is opt-in server-side: env.local alone
+      # only feeds interpolation, so it must be listed here to reach the
+      # container (learned the hard way on the primary — see AGENT_HANDOFF.md).
+      UBAG_PAT_ENABLED: ${UBAG_PAT_ENABLED:-false}
+      UBAG_PAT_DEFAULT_TTL_MS: ${UBAG_PAT_DEFAULT_TTL_MS:-}
+      UBAG_FACADE_MAX_WAIT_MS: ${UBAG_FACADE_MAX_WAIT_MS:-}
+      UBAG_GATEWAY_STORE: postgres
+      # Full DSN lives in deploy/vps/env.local and points at the local
+      # postgres service above (postgres:5432).
+      UBAG_POSTGRES_DSN: ${UBAG_POSTGRES_DSN:?Set UBAG_POSTGRES_DSN in deploy/vps/env.local}
+      UBAG_IDEMPOTENCY_TTL_HOURS: ${UBAG_IDEMPOTENCY_TTL_HOURS:-24}
+      UBAG_DATABASE_MAX_OPEN_CONNS: ${UBAG_DATABASE_MAX_OPEN_CONNS:-5}
+      UBAG_DATABASE_MAX_IDLE_CONNS: ${UBAG_DATABASE_MAX_IDLE_CONNS:-2}
+      UBAG_DATABASE_CONN_MAX_LIFETIME_SECONDS: ${UBAG_DATABASE_CONN_MAX_LIFETIME_SECONDS:-300}
+      # No queue — jobs spool to disk and are picked up in-process by the worker.
+      UBAG_EXECUTOR_MODE: file
+      UBAG_EXECUTOR_SPOOL_DIR: /var/lib/ubag/executor-spool
+      UBAG_ARTIFACT_STORE: localfs
+      UBAG_ARTIFACT_DIR: /var/lib/ubag/artifacts
+      UBAG_WORKER_CONSUMER_ENABLED: "true"
+      # python:3.12-slim (this image's runtime base) installs its interpreter
+      # under /usr/local/bin, not /usr/bin.
+      UBAG_WORKER_PYTHON: /usr/local/bin/python3
+      # Live provider targets route to the Playwright CDP-attach engine;
+      # target=mock still falls through to the registry mock adapter.
+      UBAG_WORKER_SCRIPT: /app/apps/worker/run_live_worker.py
+      UBAG_WORKER_DAEMON: ${UBAG_WORKER_DAEMON:-false}
+      UBAG_WORKER_DAEMON_SCRIPT: ${UBAG_WORKER_DAEMON_SCRIPT:-/app/apps/worker/run_worker_daemon.py}
+      # MUST be the browser's IP, not its service name: Chrome's DevTools HTTP
+      # endpoint rejects any Host header that isn't localhost or an IP.
+      UBAG_REMOTE_BROWSER_ENDPOINT: ${UBAG_REMOTE_BROWSER_ENDPOINT:-http://172.28.0.10:9223}
+      # Perf settings carried over from the primary (2026-09-07 program).
+      UBAG_WORKER_POLL_INTERVAL_MS: ${UBAG_WORKER_POLL_INTERVAL_MS:-150}
+      UBAG_WORKER_CONCURRENCY: ${UBAG_WORKER_CONCURRENCY:-1}
+      UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-1500000}
+      UBAG_WEBHOOK_WORKER_ENABLED: "false"
+      UBAG_WEBHOOK_SECRET: ${UBAG_WEBHOOK_SECRET:-}
+      # Chat ledger = the reaper's allowlist (see primary compose for rationale).
+      UBAG_CHAT_LEDGER_ENABLED: ${UBAG_CHAT_LEDGER_ENABLED:-true}
+      UBAG_CHAT_LEDGER_PATH: /var/lib/ubag/chat-ledger/ledger.jsonl
+    volumes:
+      - executor_spool:/var/lib/ubag/executor-spool
+      - artifact_data:/var/lib/ubag/artifacts
+      - chat_ledger:/var/lib/ubag/chat-ledger
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/v1/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ubag-private
+
+  nginx-dashboard:
+    image: nginx:alpine
+    container_name: ubag-vps2-nginx-dashboard
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+    cpus: "0.15"
+    mem_limit: 96m
+    environment:
+      UBAG_GATEWAY_SECRET: ${UBAG_APP_SECRET:?Set UBAG_APP_SECRET in deploy/vps/env.local}
+      NGINX_ENVSUBST_FILTER: "UBAG_"
+    volumes:
+      - "./deploy/small/nginx-dashboard/default.conf.template:/etc/nginx/templates/default.conf.template:ro"
+      - "./deploy/vps/nginx-dashboard/.htpasswd:/etc/nginx/.htpasswd:ro"
+      - "./apps/dashboard/dist:/srv/dashboard:ro"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    networks:
+      - ubag-private
+      # The dedicated NPM stack on this box (at /opt/docker/nginx-proxy-manager)
+      # reaches this container by name as ubag-vps2-nginx-dashboard:80 — no
+      # host port published for the dashboard itself.
+      - nginx-proxy-manager_default
+
+  # Headed Google Chrome on Xvfb — the operator signs in to providers here via
+  # the dashboard's Browser Sessions widget; the live worker attaches over CDP.
+  # Safe-mode intact: a human does the login, UBAG never types credentials.
+  browser:
+    build:
+      context: .
+      dockerfile: deploy/vps/browser/Dockerfile
+    image: ${UBAG_BROWSER_IMAGE:-ubag/vps-browser:local}
+    container_name: ubag-vps2-browser
+    restart: unless-stopped
+    cpus: "1.0"
+    mem_limit: 1900m
+    environment:
+      UBAG_BROWSER_GEOMETRY: ${UBAG_BROWSER_GEOMETRY:-1280x800x24}
+      UBAG_BROWSER_START_URL: ${UBAG_BROWSER_START_URL:-https://chatgpt.com}
+    volumes:
+      - browser_profile:/profiles
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:58090/health >/dev/null 2>&1 && wget -qO- http://127.0.0.1:58091/json/version >/dev/null 2>&1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 45s
+    networks:
+      ubag-private:
+        # Static IP for the gateway's CDP endpoint (see REMOTE_BROWSER_ENDPOINT).
+        ipv4_address: 172.28.0.10
+
+  # Deletes UBAG's own stale job chats (ledger-only allowlist). Inert unless
+  # UBAG_CHAT_REAPER_ENABLED=true in env.local.
+  chat-reaper:
+    image: ${UBAG_GATEWAY_IMAGE:-ubag/gateway:vps2-local}
+    container_name: ubag-vps2-chat-reaper
+    restart: unless-stopped
+    cpus: "0.10"
+    mem_limit: 256m
+    depends_on:
+      browser:
+        condition: service_healthy
+    environment:
+      UBAG_CHAT_REAPER_ENABLED: ${UBAG_CHAT_REAPER_ENABLED:-false}
+      UBAG_CHAT_TTL_SECONDS: ${UBAG_CHAT_TTL_SECONDS:-7200}
+      UBAG_CHAT_LEDGER_PATH: /var/lib/ubag/chat-ledger/ledger.jsonl
+      UBAG_REMOTE_BROWSER_ENDPOINT: ${UBAG_REMOTE_BROWSER_ENDPOINT:-http://172.28.0.10:9223}
+      UBAG_CHAT_REAPER_INTERVAL_SECONDS: ${UBAG_CHAT_REAPER_INTERVAL_SECONDS:-900}
+    volumes:
+      - chat_ledger:/var/lib/ubag/chat-ledger
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'while true; do python3 /app/apps/worker/run_chat_reaper.py || echo "chat-reaper: cycle failed"; sleep "${UBAG_CHAT_REAPER_INTERVAL_SECONDS:-900}"; done'
+    networks:
+      - ubag-private
+
+networks:
+  ubag-private:
+    # NOT internal: the browser container needs outbound internet to reach the
+    # AI providers. Only app-tier traffic rides here (gateway ↔ browser ↔
+    # nginx ↔ postgres); no container publishes a host port, so dropping
+    # `internal` grants egress only. Pinned subnet for the browser's static IP.
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+  nginx-proxy-manager_default:
+    # Created by the NPM stack at /opt/docker/nginx-proxy-manager on this box.
+    external: true
+
+volumes:
+  postgres_data:
+  executor_spool:
+  artifact_data:
+  browser_profile:
+  chat_ledger:
