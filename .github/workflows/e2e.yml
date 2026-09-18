@@ -23,7 +23,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: '20' }
       - name: Cache Playwright browsers
-        uses: actions/cache@v7
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
