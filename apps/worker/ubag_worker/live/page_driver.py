@@ -930,19 +930,26 @@ class PlaywrightPageDriver(PageDriver):
         # This only changes how the element is *found*; reading the response is
         # unchanged, so response completeness is unaffected.
         deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
-        probe_ms = max(1, min(250, timeout_ms))  # 0 would mean "no timeout" to Playwright
         last_error: Optional[Exception] = None
         while True:
             for candidate in candidates:
                 try:
                     locator = self._page.locator(_visible(candidate)).first
-                    locator.wait_for(state="visible", timeout=probe_ms)
-                    return locator
+                    # Instant count() probe, NOT locator.wait_for: wait_for
+                    # depends on Playwright's injected visibility reporter,
+                    # which needs several CDP round trips before its first
+                    # answer (~4s over an SSH-tunnelled operator attach). Any
+                    # sub-second probe budget times out even when the element
+                    # is rendered; count() confirms a visible-chained match in
+                    # one round trip at any link latency.
+                    if locator.count() > 0:
+                        return locator
                 except Exception as exc:  # noqa: BLE001 - try next fallback
                     last_error = exc
                     continue
             if time.monotonic() >= deadline:
                 raise DriftDetectedError(group.name, group.baseline_version) from last_error
+            time.sleep(0.1)
 
     def _snapshot_counts(self, group) -> "dict[str, int]":  # pragma: no cover - requires real browser
         """Per-candidate match counts for a selector group, right now.
@@ -978,7 +985,6 @@ class PlaywrightPageDriver(PageDriver):
         import time
 
         deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
-        probe_ms = 250 if timeout_ms > 250 else timeout_ms
         poll_s = 0.25
         last_error: Optional[Exception] = None
         while True:
@@ -989,8 +995,16 @@ class PlaywrightPageDriver(PageDriver):
                     if locator.count() <= base:
                         continue
                     newest = locator.last
-                    newest.wait_for(state="visible", timeout=probe_ms)
-                    return newest
+                    # Instant visibility check, NOT wait_for(250ms): the
+                    # injected reporter wait_for relies on needs several CDP
+                    # round trips (~4s over an SSH-tunnelled attach), so a
+                    # 250ms confirmation budget timed out forever even after
+                    # the reply rendered — which read as selector drift on a
+                    # healthy page. Keep polling; the container may still be
+                    # mid-render.
+                    if newest.is_visible():
+                        return newest
+                    continue
                 except Exception as exc:  # noqa: BLE001 - try next fallback / keep waiting
                     last_error = exc
                     continue
@@ -1014,19 +1028,22 @@ class PlaywrightPageDriver(PageDriver):
         import time
 
         deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
-        probe_ms = 250 if timeout_ms > 250 else timeout_ms
         last_error: Optional[Exception] = None
         while True:
             for candidate in group.as_list():
                 try:
                     locator = self._page.locator(candidate).last
-                    locator.wait_for(state="visible", timeout=probe_ms)
-                    return locator
+                    # Instant check (see _await_new_response): a 250ms
+                    # wait_for confirmation budget times out on high-latency
+                    # CDP links even after the element has rendered.
+                    if locator.is_visible():
+                        return locator
                 except Exception as exc:  # noqa: BLE001 - try next fallback
                     last_error = exc
                     continue
             if time.monotonic() >= deadline:
                 raise DriftDetectedError(group.name, group.baseline_version) from last_error
+            time.sleep(0.1)
 
     def response_container_present(self, selectors: ProviderSelectors) -> bool:
         """Warm-reuse emptiness probe against the drift-baselined container.
@@ -1054,21 +1071,27 @@ class PlaywrightPageDriver(PageDriver):
         # miss used to cost 3x the budget, and detect_login_state's 4s probe ran
         # 12s on a slow-rendering composer. A visible element short-circuits at
         # the first probe, so a hit is never slower than before.
+        #
+        # The probe itself is an INSTANT count() check, NOT locator.wait_for:
+        # wait_for depends on Playwright's injected visibility reporter, which
+        # needs several CDP round trips before its first answer (~4s over an
+        # SSH-tunnelled operator attach). The old 250ms probe budget timed out
+        # every time on such a link even when the element was rendered — surfacing
+        # spurious manual_login_required for an already-authenticated session —
+        # while count() confirms a visible-chained match in one round trip.
         import time
 
         deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
-        probe_ms = max(1, min(250, timeout_ms))  # 0 would mean "no timeout" to Playwright
         while True:
             for candidate in candidates:
                 try:
-                    self._page.locator(_visible(candidate)).first.wait_for(
-                        state="visible", timeout=probe_ms
-                    )
-                    return True
-                except Exception:  # noqa: BLE001
+                    if self._page.locator(_visible(candidate)).count() > 0:
+                        return True
+                except Exception:  # noqa: BLE001 - an unqueryable candidate reads absent
                     continue
             if time.monotonic() >= deadline:
                 return False
+            time.sleep(0.1)
 
     def _visible_now(self, group) -> bool:  # pragma: no cover - requires real browser
         """Instant, non-waiting presence check: is any candidate visible right now?"""
@@ -1084,12 +1107,14 @@ class PlaywrightPageDriver(PageDriver):
         import time
 
         deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
-        probe_ms = max(1, min(250, timeout_ms))  # 0 would mean "no timeout" to Playwright
+        # Visibility gate via instant count() (see _present_any for why wait_for
+        # is unusable on high-latency CDP links).
         while True:
             for candidate in candidates:
                 locator = self._page.locator(_visible(candidate))
                 try:
-                    locator.first.wait_for(state="visible", timeout=probe_ms)
+                    if locator.count() == 0:
+                        continue
                 except Exception:  # noqa: BLE001 - not on screen (yet); try next fallback
                     continue
                 # Providers render the same control twice (ChatGPT: a collapsed
@@ -1109,7 +1134,12 @@ class PlaywrightPageDriver(PageDriver):
                 matches.sort(key=lambda match: not self._hit_target_ok(match))
                 for match in matches:
                     try:
-                        match.click(timeout=max(500, min(timeout_ms, 1500)))
+                        # The click itself needs actionability checks plus
+                        # several round trips, so the per-attempt budget floor
+                        # is 2.5s — 500-1500ms times out on a remote link even
+                        # when the click would land. The overall deadline still
+                        # bounds the loop.
+                        match.click(timeout=max(2500, min(timeout_ms, 4000)))
                         return True
                     except Exception:  # noqa: BLE001 - covered/detached; try the next match
                         continue
@@ -1432,8 +1462,13 @@ class PlaywrightPageDriver(PageDriver):
         for label in consent_labels:
             try:
                 button = self._page.get_by_role("button", name=label).first
-                button.wait_for(state="visible", timeout=800)
-                button.click(timeout=1500)
+                # Instant visibility check + a click budget that survives a
+                # high-latency CDP link (see _present_any). A wait_for(800ms)
+                # confirmation times out over the tunnel even when the consent
+                # button is on screen.
+                if not button.is_visible():
+                    continue
+                button.click(timeout=3000)
                 self._page.wait_for_timeout(300)
                 return True
             except Exception:  # noqa: BLE001 - try the next candidate label
