@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"log/slog"
 	"math"
 	"net/url"
+	"sync/atomic"
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
@@ -33,6 +35,29 @@ type DeliveryWorker struct {
 	RetryPolicy  RetryPolicy
 	Now          func() time.Time
 	Breakers     *resilience.Registry // optional; nil disables circuit-breaker retry delay
+
+	// runErrors counts RunOnce failures observed by Run. Previously these ended
+	// the worker outright with no counter, so a delivery loop that had stopped
+	// was indistinguishable from an idle one.
+	runErrors atomic.Uint64
+}
+
+func (w *DeliveryWorker) recordRunError() {
+	if w == nil {
+		return
+	}
+	w.runErrors.Add(1)
+}
+
+// RunErrors reports how many delivery iterations have failed. Exported to
+// /v1/metrics as ubag_webhook_worker_run_errors_total: a non-zero value means
+// delivery is retrying, and a value that stops growing while callbacks are
+// still queued means the loop is not making progress.
+func (w *DeliveryWorker) RunErrors() uint64 {
+	if w == nil {
+		return 0
+	}
+	return w.runErrors.Load()
 }
 
 func (w *DeliveryWorker) Ready(ctx context.Context) error {
@@ -48,26 +73,65 @@ func (w *DeliveryWorker) Ready(ctx context.Context) error {
 	return w.Store.Ready(ctx)
 }
 
+// Run drives the delivery loop until ctx is cancelled.
+//
+// A transient store error (a blip on LeaseDue, a failed MarkDelivered) must not
+// end delivery for the lifetime of the process. The loop previously returned on
+// the first error, and serve.Run only logged it, so one hiccup silently
+// stopped every job_callback in the outbox from ever being delivered - with no
+// metric and no health signal. Errors are now counted, logged, and retried with
+// capped exponential backoff, matching WorkerConsumer.runSerial. Only ctx
+// cancellation returns.
 func (w *DeliveryWorker) Run(ctx context.Context) error {
 	pollInterval := w.PollInterval
 	if pollInterval <= 0 {
 		pollInterval = time.Second
 	}
+	maxBackoff := pollInterval * 16
+	if maxBackoff < 5*time.Second {
+		maxBackoff = 5 * time.Second
+	}
+	consecutiveErrors := 0
 	for {
 		processed, err := w.RunOnce(ctx)
 		if err != nil {
-			return err
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			consecutiveErrors++
+			w.recordRunError()
+			delay := pollInterval * time.Duration(1<<min(consecutiveErrors, 5))
+			if delay > maxBackoff {
+				delay = maxBackoff
+			}
+			slog.Error("webhook delivery iteration failed; retrying",
+				"error", err,
+				"consecutive_errors", consecutiveErrors,
+				"retry_in", delay)
+			if err := sleepCtx(ctx, delay); err != nil {
+				return err
+			}
+			continue
 		}
+		consecutiveErrors = 0
 		if processed {
 			continue
 		}
-		timer := time.NewTimer(pollInterval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
+		if err := sleepCtx(ctx, pollInterval); err != nil {
+			return err
 		}
+	}
+}
+
+// sleepCtx waits for d, or returns early if ctx is cancelled.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 

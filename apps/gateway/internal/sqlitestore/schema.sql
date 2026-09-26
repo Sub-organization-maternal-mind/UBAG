@@ -76,6 +76,32 @@ CREATE INDEX IF NOT EXISTS idx_gateway_jobs_retry_of
   ON gateway_jobs (retry_of)
   WHERE retry_of IS NOT NULL;
 
+-- Tenant-independent operational scans. Every other jobs index leads with
+-- tenant_id, so none of them can serve a bare `WHERE status = ?` predicate.
+-- These are the shapes the background loops and the metrics endpoint actually
+-- issue:
+--   * executor.StaleJobReaper.SweepOnce  - WHERE status = ? AND updated_at < ?
+--     once per non-terminal status, every 60s, with no tenant filter.
+--   * executor.CountsByStatus            - GROUP BY status, per metrics scrape.
+--   * attachments gate + /v1/jobs list   - WHERE status = ?.
+-- Without these, each of those is a full gateway_jobs scan including all seven
+-- JSON columns. There was also no index on updated_at at all.
+--
+-- Deliberately NOT a partial index. A partial index restricted to non-terminal
+-- statuses is smaller, but SQLite (and Postgres) will only use one when the
+-- query's WHERE clause implies the index predicate, and neither planner infers
+-- that `status = 'queued'` implies `status NOT IN ('completed', ...)`. Verified
+-- with EXPLAIN QUERY PLAN: the partial form produced "SCAN gateway_jobs" for
+-- the reaper's exact query. TestStatusUpdatedIndexIsUsedByReaperQuery pins
+-- that the planner really does pick this index.
+CREATE INDEX IF NOT EXISTS idx_gateway_jobs_status_updated
+  ON gateway_jobs (status, updated_at);
+
+-- Supports ORDER BY created_at for the jobs list when no tenant predicate is
+-- supplied (the reaper and operator collections both do this).
+CREATE INDEX IF NOT EXISTS idx_gateway_jobs_created
+  ON gateway_jobs (created_at DESC, id);
+
 CREATE TABLE IF NOT EXISTS gateway_job_events (
   id TEXT PRIMARY KEY,
   job_id TEXT NOT NULL REFERENCES gateway_jobs(id) ON DELETE CASCADE,

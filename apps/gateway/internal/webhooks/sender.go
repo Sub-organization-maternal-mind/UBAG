@@ -168,8 +168,23 @@ func (s HTTPSender) Send(ctx context.Context, delivery Delivery) (AttemptResult,
 		}
 		return result, nil
 	}
-	if breaker != nil && response.StatusCode >= 500 {
-		breaker.RecordFailure()
+	// Every terminal outcome must be recorded on the breaker. Recording only
+	// >= 500 left inflight un-decremented for 3xx/4xx, so a breaker sitting in
+	// half-open (inflight == HalfOpenMaxInflight) was refused every subsequent
+	// call for the life of the process: one endpoint answering 404 permanently
+	// dead-lettered all delivery to that host.
+	//
+	// A 5xx means the endpoint is unhealthy, so it counts against the breaker.
+	// A 3xx/4xx means the endpoint answered, so from the breaker's point of
+	// view the dependency is healthy and the breaker re-closes. Whether THIS
+	// delivery succeeds is a separate concern, already handled by the retry and
+	// dead-letter path via result.Retryable and the attempt count.
+	if breaker != nil {
+		if response.StatusCode >= 500 {
+			breaker.RecordFailure()
+		} else {
+			breaker.RecordSuccess()
+		}
 	}
 	result.ErrorClass = errorClassForStatus(response.StatusCode)
 	result.ErrorMessage = fmt.Sprintf("webhook endpoint returned HTTP %d", response.StatusCode)

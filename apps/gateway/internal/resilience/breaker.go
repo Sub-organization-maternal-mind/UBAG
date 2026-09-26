@@ -42,16 +42,25 @@ type Config struct {
 	CooldownMax time.Duration
 	// HalfOpenMaxInflight is the maximum number of concurrent probes allowed in half-open.
 	HalfOpenMaxInflight int
+	// HalfOpenProbeTimeout bounds how long a half-open probe may stay
+	// outstanding before the breaker re-arms itself. Callers are expected to
+	// record exactly one Success or Failure per Allow() that returned true;
+	// this is the safety net for a caller that does not, or for a probe whose
+	// result is lost. Without it a single un-recorded probe pins inflight at
+	// HalfOpenMaxInflight and every later Allow() is refused forever. Zero
+	// disables the re-arm (not recommended).
+	HalfOpenProbeTimeout time.Duration
 }
 
 // DefaultConfig returns a Config with sensible production defaults.
 func DefaultConfig() Config {
 	return Config{
-		FailureThreshold:    5,
-		SuccessBudget:       2,
-		CooldownBase:        5 * time.Second,
-		CooldownMax:         60 * time.Second,
-		HalfOpenMaxInflight: 1,
+		FailureThreshold:     5,
+		SuccessBudget:        2,
+		CooldownBase:         5 * time.Second,
+		CooldownMax:          60 * time.Second,
+		HalfOpenMaxInflight:  1,
+		HalfOpenProbeTimeout: 30 * time.Second,
 	}
 }
 
@@ -67,6 +76,7 @@ type Breaker struct {
 	openCount       int // cumulative consecutive opens (for cooldown growth)
 	openedAt        time.Time
 	cooldownForOpen time.Duration
+	halfOpenAt      time.Time // when the current half-open window opened
 
 	// now is called to get the current time. Defaults to time.Now.
 	// Unexported; injectable in same-package tests via direct field assignment.
@@ -91,6 +101,9 @@ func New(cfg Config) *Breaker {
 	if cfg.HalfOpenMaxInflight <= 0 {
 		cfg.HalfOpenMaxInflight = def.HalfOpenMaxInflight
 	}
+	if cfg.HalfOpenProbeTimeout <= 0 {
+		cfg.HalfOpenProbeTimeout = def.HalfOpenProbeTimeout
+	}
 	return &Breaker{
 		cfg: cfg,
 		now: time.Now,
@@ -113,7 +126,10 @@ func (b *Breaker) cooldown(openCount int) time.Duration {
 // Closed: always true.
 // Open: false, unless the cooldown has elapsed — in that case transition to
 // half-open and admit the first probe.
-// Half-open: true until HalfOpenMaxInflight probes are in-flight; false thereafter.
+// Half-open: true until HalfOpenMaxInflight probes are in-flight; false
+// thereafter. A window whose probes were never recorded (or whose results were
+// lost) is re-armed once HalfOpenProbeTimeout elapses, so a missing
+// RecordSuccess/RecordFailure cannot wedge the breaker shut permanently.
 func (b *Breaker) Allow() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -131,9 +147,18 @@ func (b *Breaker) Allow() bool {
 		b.state = StateHalfOpen
 		b.inflight = 1
 		b.successes = 0
+		b.halfOpenAt = now
 		return true
 
 	case StateHalfOpen:
+		// Re-arm a stale window: a probe was admitted but never resolved, so
+		// inflight can be stuck at the cap and refuse every later call.
+		if b.cfg.HalfOpenProbeTimeout > 0 && !b.halfOpenAt.IsZero() &&
+			b.now().Sub(b.halfOpenAt) >= b.cfg.HalfOpenProbeTimeout {
+			b.inflight = 0
+			b.successes = 0
+			b.halfOpenAt = b.now()
+		}
 		if b.inflight >= b.cfg.HalfOpenMaxInflight {
 			return false
 		}
