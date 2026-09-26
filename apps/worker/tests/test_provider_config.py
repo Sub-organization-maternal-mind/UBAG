@@ -134,28 +134,30 @@ class NewChatAndConfigTests(unittest.TestCase):
 
         configured = _event(events, "session.configured")
         keys = {s["key"] for s in configured["data"]["settings"]}
-        self.assertEqual(keys, {"mode", "deepthink"})
+        # Re-baselined 2026-09-26: the Expert/Instant/Vision mode pills are gone
+        # from the live composer; DeepThink is the only declared setting.
+        self.assertEqual(keys, {"deepthink"})
         self.assertEqual(driver.submitted_prompt, "Reply with the word ready.")
 
     def test_idempotent_already_set_vs_set(self):
-        selectors = get_provider_selectors("deepseek_web")
-        # DeepThink is already correct; mode must still be applied.
-        driver = MockPageDriver(config_already=["deepthink"])
-        events = LiveSessionEngine(selectors).run(_payload("deepseek_web"), driver=driver)
+        selectors = get_provider_selectors("chatgpt_web")
+        # Thinking is already correct; the model must still be applied.
+        driver = MockPageDriver(config_already=["thinking"])
+        events = LiveSessionEngine(selectors).run(_payload("chatgpt_web"), driver=driver)
         by_key = {s["key"]: s for s in _event(events, "session.configured")["data"]["settings"]}
 
-        self.assertEqual(by_key["deepthink"]["state"], "already_set")
-        self.assertEqual(by_key["mode"]["state"], "set")
+        self.assertEqual(by_key["thinking"]["state"], "already_set")
+        self.assertEqual(by_key["model"]["state"], "set")
 
     def test_setting_drift_blocks_with_setting_group(self):
         selectors = get_provider_selectors("deepseek_web")
-        driver = MockPageDriver(drift_group="setting:mode")
+        driver = MockPageDriver(drift_group="setting:deepthink")
         events = LiveSessionEngine(selectors).run(_payload("deepseek_web"), driver=driver)
         blocked = [e for e in events if e["type"] == "blocked"]
 
         self.assertTrue(blocked)
         self.assertEqual(blocked[0]["data"]["reason"], "selector_drift_detected")
-        self.assertEqual(blocked[0]["data"]["selector_group"], "setting:mode")
+        self.assertEqual(blocked[0]["data"]["selector_group"], "setting:deepthink")
         # never proceeds to submit / completion on a config drift
         self.assertNotIn("completed", _types(events))
 
@@ -198,16 +200,22 @@ class NewChatAndConfigTests(unittest.TestCase):
         )
 
     def test_provider_config_overrides_desired_value(self):
+        # Re-baselined 2026-09-26: the old deepseek "mode" choice override test
+        # moved to the deepthink toggle (the only remaining deepseek setting);
+        # the choice-override path is covered by the duckai reasoning test.
         selectors = get_provider_selectors("deepseek_web")
         driver = MockPageDriver()
         events = LiveSessionEngine(selectors).run(
-            _payload("deepseek_web", provider_config={"mode": "Vision"}),
+            _payload("deepseek_web", provider_config={"deepthink": False}),
             driver=driver,
         )
         by_key = {s["key"]: s for s in _event(events, "session.configured")["data"]["settings"]}
-        self.assertEqual(by_key["mode"]["desired"], "Vision")
+        self.assertEqual(by_key["deepthink"]["desired"], False)
 
-    def test_deepseek_attachment_job_defaults_to_file_capable_instant_mode(self):
+    def test_deepseek_attachment_job_attaches_files_without_mode_preselection(self):
+        # Re-baselined 2026-09-26: one always-present multi-file input replaced
+        # the Expert/Instant/Vision mode split, so attachments no longer force a
+        # file-capable mode.
         selectors = get_provider_selectors("deepseek_web")
         driver = MockPageDriver()
         payload = _payload("deepseek_web")
@@ -226,7 +234,7 @@ class NewChatAndConfigTests(unittest.TestCase):
             setting["key"]: setting
             for setting in _event(events, "session.configured")["data"]["settings"]
         }
-        self.assertEqual(by_key["mode"]["desired"], "Instant")
+        self.assertEqual(list(by_key), ["deepthink"])
         self.assertEqual(driver.attached_files, ["/tmp/report.txt"])
 
     def test_config_disabled_skips_picker_but_records_skip(self):

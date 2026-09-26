@@ -2680,7 +2680,6 @@ const loginRequiredErrorClass = "provider_login_required"
 var providerDisplayNames = map[string]string{
 	"gemini":     "Gemini",
 	"chatgpt":    "ChatGPT",
-	"claude":     "Claude",
 	"deepseek":   "DeepSeek",
 	"perplexity": "Perplexity",
 	"mistral":    "Mistral",
@@ -3212,7 +3211,6 @@ func targetCatalog() []map[string]any {
 		{"key": "mock", "adapter_key": "mock", "display_name": "Mock Target", "safe_mode": true, "manual_login_required": false},
 		{"key": "deepseek_web", "adapter_key": "deepseek_web", "display_name": "DeepSeek Web", "safe_mode": true, "manual_login_required": true},
 		{"key": "chatgpt_web", "adapter_key": "chatgpt_web", "display_name": "ChatGPT Web", "safe_mode": true, "manual_login_required": true},
-		{"key": "claude_web", "adapter_key": "claude_web", "display_name": "Claude Web", "safe_mode": true, "manual_login_required": true},
 		{"key": "gemini_web", "adapter_key": "gemini_web", "display_name": "Gemini Web", "safe_mode": true, "manual_login_required": true},
 		{"key": "mistral_lechat", "adapter_key": "mistral_lechat", "display_name": "Mistral Le Chat", "safe_mode": true, "manual_login_required": true},
 		{"key": "perplexity_web", "adapter_key": "perplexity_web", "display_name": "Perplexity Web", "safe_mode": true, "manual_login_required": true},
@@ -3227,7 +3225,6 @@ func adapterCatalog() []map[string]any {
 		{"key": "mock", "kind": "mock", "stage": "v0", "capabilities": []string{"submit", "stream", "extract", "normalize"}},
 		{"key": "deepseek_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
 		{"key": "chatgpt_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
-		{"key": "claude_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
 		{"key": "gemini_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
 		{"key": "mistral_lechat", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
 		{"key": "perplexity_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},

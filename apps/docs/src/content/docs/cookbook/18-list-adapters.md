@@ -28,11 +28,11 @@ Response:
       "drift_detected": false
     },
     {
-      "id": "anthropic-claude",
-      "provider": "anthropic",
+      "id": "web-deepseek",
+      "provider": "deepseek",
       "version": "1.4.0",
       "status": "healthy",
-      "commands": ["send_message", "create_artifact"]
+      "commands": ["send_message"]
     }
   ]
 }

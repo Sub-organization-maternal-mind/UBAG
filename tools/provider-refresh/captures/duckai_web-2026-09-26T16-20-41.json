@@ -1,0 +1,1207 @@
+{
+  "id": "duckai_web",
+  "captured_at": "2026-09-26T16:20:41.400Z",
+  "cdp": "http://127.0.0.1:15923",
+  "opened_tab": false,
+  "url": "https://duck.ai/",
+  "title": "Duck.ai by DuckDuckGo. Private AI chat. Free.",
+  "likely_login_wall": false,
+  "loginish": [],
+  "composers": [
+    {
+      "tag": "textarea",
+      "placeholder": "Ask anything privately"
+    }
+  ],
+  "manifest_catalog_compare": {
+    "model": {
+      "kind": "choice",
+      "values": [
+        {
+          "value": "GPT-5.6 Luna",
+          "seen": false
+        },
+        {
+          "value": "GPT-5.4 mini",
+          "seen": false
+        },
+        {
+          "value": "Mistral Small 4",
+          "seen": false
+        },
+        {
+          "value": "gpt-oss 120B",
+          "seen": false
+        },
+        {
+          "value": "Gemma 4 31B",
+          "seen": false
+        }
+      ]
+    },
+    "reasoning": {
+      "kind": "choice",
+      "values": [
+        {
+          "value": "Fast",
+          "seen": false
+        },
+        {
+          "value": "Reasoning",
+          "seen": true
+        }
+      ]
+    },
+    "web_search": {
+      "kind": "toggle",
+      "note": "toggle state not verifiable read-only"
+    }
+  },
+  "menu_captures": {
+    "menu": {
+      "roles": [],
+      "generic": [
+        {
+          "role": "section",
+          "label": "Duck.aiNew ChatCTRL + ⇧ + ONew Voice ChatNew ImageCTRL + ⇧ + IChatsYou'll reach the local ",
+          "testid": "duckai-sidebar"
+        },
+        {
+          "role": "button",
+          "label": "Hide sidebar, CTRL + ⇧ + S"
+        },
+        {
+          "role": "search"
+        },
+        {
+          "role": "button",
+          "label": "Close search"
+        },
+        {
+          "role": "button",
+          "label": "New ChatCTRL + ⇧ + O"
+        },
+        {
+          "role": "button",
+          "label": "New Voice Chat"
+        },
+        {
+          "role": "button",
+          "label": "New ImageCTRL + ⇧ + I"
+        },
+        {
+          "role": "button",
+          "label": "Delete chats",
+          "testid": "delete-all-chats-button"
+        },
+        {
+          "role": "button",
+          "label": "Search chats"
+        },
+        {
+          "role": "status",
+          "label": "You'll reach the local storage limit soonGet more chat storage with Sync & Backup.Sync & B",
+          "testid": "ChatStorageAlertNotice"
+        },
+        {
+          "role": "p",
+          "label": "You'll reach the local storage limit soon",
+          "testid": "ChatStorageAlertNoticeTitle"
+        },
+        {
+          "role": "p",
+          "label": "Get more chat storage with Sync & Backup.",
+          "testid": "ChatStorageAlertNoticeBody"
+        },
+        {
+          "role": "button",
+          "label": "Sync & Backup"
+        },
+        {
+          "role": "button",
+          "label": "Hide"
+        },
+        {
+          "role": "div",
+          "label": "Token request handlingOKPong responsePong reply promptPong replyPong replyPong responseRep",
+          "testid": "ChatsList"
+        },
+        {
+          "role": "button",
+          "label": "Token request handling"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "OK"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Pong response"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Pong reply prompt"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Pong reply"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Pong reply"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Pong response"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Reply with exactly one word: ready"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Preparation"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Ready"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Reply with exactly one word: ready"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "English translation"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Reply with exactly one word: ready"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Verify3223"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Reply with exactly the single word VERIFY2850 and nothing else."
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Ok"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "OK"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Math addition"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Reply with the single word OK. user: ping — reply with a single word."
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "OK"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Parity smoke analysis"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Code extraction request"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Latest stable Linux kernel 6.9 released in 2026 UBAG_DUCKAI_SEARCH_OK"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "bat and ball puzzle UBAG_DUCKAI_REASON_OK"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Unclear instruction"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Reply with exactly READY-4412 and nothing else."
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Reply with exactly READY-9923 and nothing else."
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Reply with exactly READY-8831 and nothing else."
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Reply with exactly READY-7742 and nothing else."
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Reply with exactly READY-7742 and nothing else."
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "UBAG_DUCKAI_FAST_OK"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "UBAG_DUCKAI_FAST_OK"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Code extraction from PDF"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Linux kernel 6.9? UBAG_DUCKAI_SEARCH_OK"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        },
+        {
+          "role": "button",
+          "label": "Bat and ball puzzle"
+        },
+        {
+          "role": "button",
+          "label": "Delete Chat"
+        },
+        {
+          "role": "button",
+          "label": "menu"
+        }
+      ]
+    }
+  },
+  "selector_checks": {
+    "prompt_input": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "textarea[name='user-prompt']",
+          "count": 1
+        },
+        {
+          "sel": "textarea[placeholder*='Ask anything']",
+          "count": 1
+        },
+        {
+          "sel": "textarea",
+          "count": 1
+        },
+        {
+          "sel": "submit_button",
+          "count": 0
+        },
+        {
+          "sel": "button[aria-label='Send']",
+          "count": 1
+        },
+        {
+          "sel": "button[type='submit']",
+          "count": 1
+        },
+        {
+          "sel": "button[aria-label*='Submit']",
+          "count": 0
+        },
+        {
+          "sel": "response_container",
+          "count": 0
+        },
+        {
+          "sel": "[data-testid='user-message'] + div",
+          "count": 0
+        },
+        {
+          "sel": "final_answer_container",
+          "count": 0
+        },
+        {
+          "sel": "[data-testid='user-message'] + div p",
+          "count": 0
+        },
+        {
+          "sel": "authenticated_signal",
+          "count": 0
+        },
+        {
+          "sel": "textarea[name='user-prompt']",
+          "count": 1
+        },
+        {
+          "sel": "textarea[placeholder*='Ask anything']",
+          "count": 1
+        },
+        {
+          "sel": "nav",
+          "count": 0
+        },
+        {
+          "sel": "login_signal",
+          "count": 0
+        },
+        {
+          "sel": "input[type='password']",
+          "count": 0
+        },
+        {
+          "sel": "a[href*='login']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": [
+        "xpath=//*[@data-testid='user-message']/following-sibling::*[1]",
+        "xpath=//*[@data-testid='user-message']/following-sibling::*[1]//p",
+        "text=Sign in"
+      ]
+    },
+    "streaming_indicator": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "button[aria-label='Stop generating']",
+          "count": 1
+        },
+        {
+          "sel": "button[aria-label*='Stop']",
+          "count": 1
+        },
+        {
+          "sel": ".result-streaming",
+          "count": 0
+        },
+        {
+          "sel": "file_input",
+          "count": 0
+        },
+        {
+          "sel": "input[name='upload']",
+          "count": 1
+        },
+        {
+          "sel": "input[type='file']",
+          "count": 1
+        },
+        {
+          "sel": "attach_menu_button",
+          "count": 0
+        },
+        {
+          "sel": "button[data-testid='duckai-attach-button']",
+          "count": 1
+        },
+        {
+          "sel": "button[aria-label*='Add images or PDFs']",
+          "count": 1
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "new_chat": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "button[aria-label*='New Chat']",
+          "count": 0
+        },
+        {
+          "sel": "[aria-label*='New Chat']",
+          "count": 0
+        },
+        {
+          "sel": "button[data-testid='model-picker-button']",
+          "count": 1
+        }
+      ],
+      "playwrightOnly": [
+        "button:has-text('New Chat')"
+      ]
+    }
+  },
+  "desired_defaults": {
+    "model": "GPT-5.6 Luna",
+    "reasoning": "Reasoning",
+    "web_search": false
+  },
+  "raw_controls": [
+    {
+      "tag": "section",
+      "label": "Duck.aiNew ChatCTRL + ⇧ + ONew Voice ChatNew ImageCTRL + ⇧ + IChatsYou'll reach the local ",
+      "testid": "duckai-sidebar"
+    },
+    {
+      "tag": "button",
+      "label": "Hide sidebar, CTRL + ⇧ + S"
+    },
+    {
+      "tag": "button",
+      "label": "Close search"
+    },
+    {
+      "tag": "button",
+      "label": "New ChatCTRL + ⇧ + O"
+    },
+    {
+      "tag": "button",
+      "label": "New Voice Chat"
+    },
+    {
+      "tag": "button",
+      "label": "New ImageCTRL + ⇧ + I"
+    },
+    {
+      "tag": "button",
+      "label": "Delete chats",
+      "testid": "delete-all-chats-button"
+    },
+    {
+      "tag": "button",
+      "label": "Search chats"
+    },
+    {
+      "tag": "div",
+      "role": "status",
+      "label": "You'll reach the local storage limit soonGet more chat storage with Sync & Backup.Sync & B",
+      "testid": "ChatStorageAlertNotice"
+    },
+    {
+      "tag": "p",
+      "label": "You'll reach the local storage limit soon",
+      "testid": "ChatStorageAlertNoticeTitle"
+    },
+    {
+      "tag": "p",
+      "label": "Get more chat storage with Sync & Backup.",
+      "testid": "ChatStorageAlertNoticeBody"
+    },
+    {
+      "tag": "button",
+      "label": "Sync & Backup"
+    },
+    {
+      "tag": "button",
+      "label": "Hide"
+    },
+    {
+      "tag": "div",
+      "label": "Token request handlingOKPong responsePong reply promptPong replyPong replyPong responseRep",
+      "testid": "ChatsList"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Delete Chat"
+    },
+    {
+      "tag": "button",
+      "label": "menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Settings & More",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "a",
+      "label": "DuckDuckGo"
+    },
+    {
+      "tag": "a",
+      "label": "Get the App"
+    },
+    {
+      "tag": "div",
+      "testid": "duckai-top-toolbar"
+    },
+    {
+      "tag": "button",
+      "label": "private"
+    },
+    {
+      "tag": "div",
+      "label": "CancelToolsReasoning5.6 Luna",
+      "testid": "duckai-chat-input"
+    },
+    {
+      "tag": "button",
+      "label": "Delete chat"
+    },
+    {
+      "tag": "button",
+      "label": "Dictate"
+    },
+    {
+      "tag": "button",
+      "label": "Add images or PDFs",
+      "testid": "duckai-attach-button"
+    },
+    {
+      "tag": "button",
+      "label": "Tools",
+      "expanded": "false",
+      "haspopup": "menu",
+      "testid": "duckai-tools-button"
+    },
+    {
+      "tag": "button",
+      "label": "Reasoning mode",
+      "expanded": "false",
+      "haspopup": "menu",
+      "testid": "duckai-reasoning-button"
+    },
+    {
+      "tag": "button",
+      "label": "5.6 Luna",
+      "expanded": "false",
+      "haspopup": "menu",
+      "testid": "model-picker-button"
+    },
+    {
+      "tag": "button",
+      "label": "Send"
+    },
+    {
+      "tag": "button",
+      "label": "Stop generating"
+    }
+  ]
+}

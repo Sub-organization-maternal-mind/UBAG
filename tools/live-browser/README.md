@@ -2,7 +2,7 @@
 
 Streams a **real Chrome** into the dashboard's **Browser Sessions** page and
 forwards your mouse/keyboard back to it, so an operator can log into providers
-(ChatGPT, Claude, Gemini, DeepSeek, …) interactively from inside the dashboard —
+(ChatGPT, Gemini, DeepSeek, …) interactively from inside the dashboard —
 no separate window, no Docker, no VNC.
 
 It's the ToS-safe "human logs in once, in their own session" model: the bridge

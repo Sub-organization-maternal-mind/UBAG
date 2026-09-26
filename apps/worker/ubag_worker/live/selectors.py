@@ -211,27 +211,44 @@ CHATGPT_WEB = ProviderSelectors(
     provider_id="chatgpt_web",
     display_name="ChatGPT Web",
     target_url="https://chatgpt.com/",
-    selector_version="2026-08-10-advanced-model-menu",
+    # Re-baselined 2026-09-26 against live chatgpt.com (logged-in): the composer
+    # was rebuilt (ComposerModeSurface/ComposerLayoutRoot, no __composer-pill
+    # classes, no data-testid='send-button'); the "Show advanced options" menu is
+    # gone - the model picker is now a single button (aria-label "Select ChatGPT
+    # model") whose menu lists menuitemradio rows with aria-checked, and the
+    # effort pill is a [aria-label*='Thinking effort'] div whose label embeds the
+    # current value ("Thinking effortMedium"). Assistant replies render under
+    # div[data-content-search-unit-key*='assistant'] with a MarkdownRoot child;
+    # the old data-message-author-role/article DOM is gone.
+    selector_version="2026-09-26-composer-rebased",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
+            "div[contenteditable='true'][data-virtualkeyboard='true']",
+            "div[contenteditable='true'][data-placeholder*='Ask']",
             "#prompt-textarea",
             "textarea[data-id='root']",
-            "div[contenteditable='true'][data-virtualkeyboard='true']",
             "textarea[placeholder*='Message']",
         ),
     ),
     submit_button=SelectorGroup(
         "submit_button",
         (
-            "button[data-testid='send-button']",
             "button[aria-label*='Send']",
+            "button[data-testid='send-button']",
             "button[type='submit']",
         ),
     ),
     response_container=SelectorGroup(
         "response_container",
         (
+            # Verified 2026-09-26: assistant turns are
+            # div[data-content-search-unit-key*='assistant'] wrapping
+            # div.MarkdownRoot-* > [data-testid='chatgpt-writing-block'].
+            "[data-content-search-unit-key*='assistant']",
+            "div[class*='MarkdownRoot']",
+            "[data-testid='chatgpt-writing-block']",
+            # legacy fallbacks (pre-2026-09 composer DOM):
             "div[data-message-author-role='assistant']",
             "div.markdown.prose",
             "[data-testid^='conversation-turn'] .markdown",
@@ -303,19 +320,18 @@ CHATGPT_WEB = ProviderSelectors(
     # The worker resolves this default when no per-job override is present;
     # the gateway forwards UBAG_PROVIDER_CONFIG_CHATGPT_WEB into the worker
     # subprocess env (see executor minimalWorkerEnv) so an operator override
-    # survives process boundaries. A drifted Effort menu fails CLOSED as
+    # survives process boundaries. A drifted effort setting fails CLOSED as
     # selector_drift_detected (required=True) instead of answering off-Medium.
     #
-    # Re-verified 2026-08-10 against live chatgpt.com. The composer pill still
-    # carries the current effort label ("Medium"), but its compact menu now shows
-    # a Power slider and an Advanced toggle. Expanding Advanced reveals separate
-    # Model and Effort submenu openers; their options remain menuitemradio rows
-    # with aria-checked='true' on the selected value. Escape closes the picker and
-    # resets it to compact mode, so each setting follows the complete path.
-    #
-    # role=menuitemradio remains load-bearing: each submenu opener also contains
-    # the current value, so text matching without the role would click the opener
-    # rather than read or apply the actual option.
+    # Re-baselined 2026-09-26 against live chatgpt.com: the flattened single
+    # model menu (button aria-label "Select ChatGPT model") shows
+    # menuitemradio rows Latest / GPT-5.6 Sol / GPT-5.5 ("Leaving on October
+    # 14") / Pro with aria-checked on the current one - "Latest" is the
+    # account default, the pinned operator default GPT-5.6 Sol remains
+    # selectable. The effort pill div (aria-label "Thinking effort<value>")
+    # opens a menu of the same menuitemradio shape; its label embeds the
+    # current value, so satisfied_when reads the pill without opening anything
+    # when the desired value is already active.
     #
     # Order matters: model is enforced BEFORE thinking, because switching model can
     # reset the intelligence level (settings are applied in declaration order).
@@ -326,14 +342,9 @@ CHATGPT_WEB = ProviderSelectors(
             desired="GPT-5.6 Sol",
             open_steps=(
                 (
-                    "button.__composer-pill[aria-haspopup='menu']",
-                    "button[class*='composer-pill'][aria-haspopup='menu']",
+                    "button[aria-label*='Select ChatGPT model']",
+                    "[data-composer-layout] button[aria-haspopup='menu']",
                 ),
-                (
-                    "[role='menuitem'][aria-label='Show advanced options']",
-                    "[role='menuitem'][aria-expanded='false']:has-text(\"Advanced\")",
-                ),
-                ("[role='menuitem'][aria-haspopup='menu']:has-text(\"Model\")",),
             ),
             satisfied_when="[role='menuitemradio'][aria-checked='true']:has-text(\"{value}\")",
             apply_click="[role='menuitemradio']:has-text(\"{value}\")",
@@ -344,17 +355,18 @@ CHATGPT_WEB = ProviderSelectors(
             desired="Medium",
             open_steps=(
                 (
-                    "button.__composer-pill[aria-haspopup='menu']",
-                    "button[class*='composer-pill'][aria-haspopup='menu']",
+                    "[aria-label*='Thinking effort']",
                 ),
-                (
-                    "[role='menuitem'][aria-label='Show advanced options']",
-                    "[role='menuitem'][aria-expanded='false']:has-text(\"Advanced\")",
-                ),
-                ("[role='menuitem'][aria-haspopup='menu']:has-text(\"Effort\")",),
             ),
-            satisfied_when="[role='menuitemradio'][aria-checked='true']:has-text(\"{value}\")",
+            satisfied_when="[aria-label*='Thinking effort']:has-text(\"{value}\")",
             apply_click="[role='menuitemradio']:has-text(\"{value}\")",
+            # Verified 2026-09-26: the effort pill only renders for models that
+            # expose adjustable effort (the account default "Latest" does; the
+            # pinned "GPT-5.6 Sol" runs a fixed effort and shows NO pill). A
+            # missing pill under Sol is the UI's real answer, not drift, so the
+            # setting is best-effort: enforced whenever the pill exists,
+            # reported as "unverified" (never a job-failing drift) otherwise.
+            required=False,
         ),
     ),
     # Medium intelligence thinks before answering, so give the reader the longer
@@ -362,75 +374,18 @@ CHATGPT_WEB = ProviderSelectors(
     reasoning=True,
 )
 
-CLAUDE_WEB = ProviderSelectors(
-    provider_id="claude_web",
-    display_name="Claude Web",
-    target_url="https://claude.ai/",
-    selector_version="2026-05-22-baseline-unverified",
-    prompt_input=SelectorGroup(
-        "prompt_input",
-        (
-            "div[contenteditable='true'].ProseMirror",
-            "div[contenteditable='true'][role='textbox']",
-            "fieldset div[contenteditable='true']",
-        ),
-    ),
-    submit_button=SelectorGroup(
-        "submit_button",
-        (
-            "button[aria-label='Send message']",
-            "button[aria-label*='Send']",
-            "button[type='submit']",
-        ),
-    ),
-    response_container=SelectorGroup(
-        "response_container",
-        (
-            "div[data-testid='assistant-message']",
-            "div.font-claude-message",
-            "[data-is-streaming] .prose",
-        ),
-    ),
-    authenticated_signal=SelectorGroup(
-        "authenticated_signal",
-        (
-            "div[contenteditable='true'].ProseMirror",
-            "nav[aria-label='Conversations']",
-            "button[data-testid='user-menu-button']",
-        ),
-    ),
-    login_signal=SelectorGroup(
-        "login_signal",
-        (
-            "button[data-testid='login']",
-            "a[href*='login']",
-            "text=Continue with Google",
-        ),
-    ),
-    streaming_indicator=SelectorGroup(
-        "streaming_indicator",
-        (
-            "button[aria-label='Stop response']",
-            "[data-is-streaming='true']",
-            "button[aria-label*='Stop']",
-        ),
-    ),
-    drift_signature_nodes=("main", "fieldset", "div.ProseMirror"),
-    file_input=SelectorGroup(
-        "file_input",
-        (
-            "input[data-testid='file-upload']",
-            "input[type='file']",
-            "input[accept*='audio']",
-        ),
-    ),
-)
-
 DEEPSEEK_WEB = ProviderSelectors(
     provider_id="deepseek_web",
     display_name="DeepSeek Web",
     target_url="https://chat.deepseek.com/",
-    selector_version="2026-07-24-attachment-modes-verified",
+    # Re-baselined 2026-09-26 against live chat.deepseek.com (logged-in): the
+    # Expert/Instant/Vision mode pills are GONE from the composer - the footer
+    # now renders two div.ds-toggle-button switches (DeepThink, Search) driven
+    # by aria-pressed. The `mode` model_catalog setting was removed with them;
+    # declaring a setting the UI cannot render would fail every job with
+    # selector_drift_detected. Reply containers (div.ds-markdown.*) verified
+    # unchanged.
+    selector_version="2026-09-26-deepthink-toggle",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
@@ -504,12 +459,12 @@ DEEPSEEK_WEB = ProviderSelectors(
     file_input=SelectorGroup(
         "file_input",
         (
-            # Verified live 2026-07-24: DeepSeek renders no file input in
-            # Expert mode. Instant and Vision inject one multi-file input;
-            # engine.py selects a compatible mode before attachment jobs.
+            # Verified live 2026-09-26: one multi-file input sits next to the
+            # composer (accepts documents/images); the old Expert/Instant/Vision
+            # mode split no longer exists, so no mode pre-selection is needed.
             "input[type='file']",
         ),
-        baseline_version="2026-07-24-instant-vision",
+        baseline_version="2026-09-26-composer",
     ),
     # Verified 2026-06-29 against live chat.deepseek.com: the composer sidebar
     # exposes a "New chat" control whose label is a <span>New chat</span> inside a
@@ -522,23 +477,19 @@ DEEPSEEK_WEB = ProviderSelectors(
             "span:text-is('New chat')",
         ),
     ),
-    # Operator default (always-on): Expert mode + DeepThink reasoning. Verified
-    # 2026-06-29: mode pills render as role=radio (active => aria-checked='true');
-    # DeepThink is a div.ds-toggle-button whose ON state adds
-    # 'ds-toggle-button--selected' (blue). Idempotent: only clicked when not set.
+    # Operator default (always-on): DeepThink reasoning ON. Verified 2026-06-29
+    # as a div.ds-toggle-button whose ON state adds 'ds-toggle-button--selected'
+    # (blue); re-verified 2026-09-26: the button now also carries aria-pressed
+    # (checked live true), which is the primary ON signal. Idempotent: only
+    # clicked when not set. The old Expert/Instant/Vision mode choice was
+    # removed with its UI (see selector_version note).
     settings=(
-        ProviderSetting(
-            key="mode",
-            kind="choice",
-            desired="Expert",
-            satisfied_when="[role='radio'][aria-checked='true']:has-text(\"{value}\")",
-            apply_click="[role='radio']:has-text(\"{value}\")",
-        ),
         ProviderSetting(
             key="deepthink",
             kind="toggle",
             desired=True,
             on_when=(
+                "div.ds-toggle-button[aria-pressed='true']:has-text('DeepThink')",
                 "div.ds-toggle-button--selected:has(span:text-is('DeepThink'))",
                 ".ds-toggle-button--selected:has-text('DeepThink')",
             ),
@@ -1149,7 +1100,6 @@ PROVIDER_SELECTORS = {
     selectors.provider_id: selectors
     for selectors in (
         CHATGPT_WEB,
-        CLAUDE_WEB,
         DEEPSEEK_WEB,
         GEMINI_WEB,
         MISTRAL_LECHAT,
@@ -1169,7 +1119,6 @@ def get_provider_selectors(provider_id: str) -> ProviderSelectors:
 
 __all__ = [
     "CHATGPT_WEB",
-    "CLAUDE_WEB",
     "DEEPSEEK_WEB",
     "GEMINI_WEB",
     "DUCKAI_WEB",

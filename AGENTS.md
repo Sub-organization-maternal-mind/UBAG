@@ -31,6 +31,18 @@ Default Hallmark mode for this project:
 - Do not invent metrics, testimonials, logos, or product claims. Use real project content or clearly marked placeholders.
 - Do not delete existing production routes, components, or design files as part of a redesign without explicit user confirmation.
 
+## Provider Refresh Skill (AI provider UI drift)
+
+Use the project-scoped provider-refresh skill whenever work touches AI provider adapters, model selectors, thinking/reasoning settings, or when jobs fail with `selector_drift_detected`, or when a provider (ChatGPT, Gemini, DeepSeek, DuckAI, …) has renamed models or rebuilt their web UI.
+
+Skill path:
+
+- `D:\Projects\UBAG\.codex\skills\provider-refresh\SKILL.md`
+
+The skill is agent-agnostic (plain markdown — point any coding agent at that path). Default mode: treat "check/fix/update provider selectors or models" as `providers verify all` first, then `providers rebase <id>` per provider with findings. Hard rules inside the skill are binding: human-only logins, menu-only interaction during verification, no guessed selectors, targeted tests only.
+
+Tooling (no dependencies): `tools/provider-refresh/provider-probe.mjs` (live DOM capture + diff), `tools/provider-refresh/verify-settings.mjs` (live canary of the click paths), `tools/provider-refresh/check-provider-selectors.mjs` (static cross-file gate, wired as `pnpm check:provider-selectors`).
+
 ## Continuation Ledger
 
 - Before further implementation, read `PROGRESS.md` and `AGENT_HANDOFF.md`.

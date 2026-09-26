@@ -45,7 +45,7 @@ Concurrency is **tab-parallel**, not request-parallel. The worker opens a bounde
 
 ## Multi-provider browser (§12.7)
 
-A single browser instance can host contexts for multiple providers at once (for example ChatGPT, Claude, Gemini). Each provider context remains fully isolated:
+A single browser instance can host contexts for multiple providers at once (for example ChatGPT, Gemini, DeepSeek). Each provider context remains fully isolated:
 
 - separate storage state and cookies,
 - separate identity binding,

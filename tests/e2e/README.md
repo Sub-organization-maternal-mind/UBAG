@@ -11,7 +11,6 @@ export UBAG_E2E_GATEWAY=http://localhost:8081
 export UBAG_E2E_APP_SECRET=<your_app_secret>
 # Optional: provider credentials
 export UBAG_E2E_CHATGPT_EMAIL=...
-export UBAG_E2E_CLAUDE_EMAIL=...
 
 make e2e
 # or: UBAG_E2E=1 npx playwright test tests/e2e/

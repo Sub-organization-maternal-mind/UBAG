@@ -11,6 +11,7 @@ export default defineConfig({
   define: {
     __UBAG_DEFAULT_GATEWAY_URL__: JSON.stringify(process.env.UBAG_DEV_DEFAULT_GATEWAY_URL || ''),
     __UBAG_DEFAULT_APP_SECRET__: JSON.stringify(process.env.UBAG_DEV_DEFAULT_APP_SECRET || ''),
+    __UBAG_DEFAULT_LIVE_BROWSER_WS__: JSON.stringify(process.env.UBAG_DEV_DEFAULT_LIVE_BROWSER_WS || ''),
   },
   build: {
     outDir: 'dist',

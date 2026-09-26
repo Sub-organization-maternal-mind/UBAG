@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
 
+  // Build-time default (see vite.config.ts `define`, same pattern as
+  // settings.ts): lets a local deployment bake in a tunnelled remote bridge —
+  // e.g. the production VPS Chrome reached over an SSH tunnel — so every
+  // operator browser profile works with zero manual setup.
+  declare const __UBAG_DEFAULT_LIVE_BROWSER_WS__: string | undefined;
+
   // The live-browser bridge (tools/live-browser/bridge.mjs) streams the real
   // Chrome as JPEG frames over this WebSocket and accepts mouse/keyboard input
   // back. localStorage override lets an operator point at a non-default bridge.
@@ -8,6 +14,12 @@
     if (typeof localStorage !== 'undefined') {
       const stored = localStorage.getItem('ubag_live_browser_ws');
       if (stored) return stored;
+    }
+    if (
+      typeof __UBAG_DEFAULT_LIVE_BROWSER_WS__ !== 'undefined' &&
+      __UBAG_DEFAULT_LIVE_BROWSER_WS__
+    ) {
+      return __UBAG_DEFAULT_LIVE_BROWSER_WS__;
     }
     // Served from a real host (VPS deployment): the bridge runs in a container
     // behind nginx at /live-ws on the same origin. Use wss/ws to match the page
@@ -24,6 +36,29 @@
   }
 
   let { wsUrl = defaultWsUrl() }: { wsUrl?: string } = $props();
+
+  // An override saved in this browser (an earlier deployment's setup hint)
+  // beats every default above — a stale one points at a port no bridge
+  // listens on and the panel shows Offline with no visible reason. Track the
+  // source so the offline panel can show exactly what is being dialed and
+  // offer a one-click reset back to the built-in default.
+  let savedWsUrl = $state<string | null>(null);
+  try {
+    savedWsUrl =
+      typeof localStorage !== 'undefined'
+        ? localStorage.getItem('ubag_live_browser_ws')
+        : null;
+  } catch {
+    savedWsUrl = null;
+  }
+  let activeWsUrl = $state(savedWsUrl || wsUrl);
+
+  function resetBridgeUrl() {
+    try { localStorage.removeItem('ubag_live_browser_ws'); } catch { /* ignore */ }
+    savedWsUrl = null;
+    activeWsUrl = defaultWsUrl();
+    reconnect();
+  }
 
   let canvas = $state<HTMLCanvasElement | null>(null);
   let ctx: CanvasRenderingContext2D | null = null;
@@ -56,7 +91,7 @@
     connecting = true;
     manualClose = false;
     try {
-      ws = new WebSocket(wsUrl);
+      ws = new WebSocket(activeWsUrl);
     } catch {
       connecting = false;
       scheduleRetry();
@@ -212,7 +247,6 @@
 
   const providerShortcuts = [
     { label: 'ChatGPT', url: 'https://chatgpt.com' },
-    { label: 'Claude', url: 'https://claude.ai' },
     { label: 'Gemini', url: 'https://gemini.google.com' },
     { label: 'DeepSeek', url: 'https://chat.deepseek.com' },
     { label: 'DuckAI', url: 'https://duck.ai' },
@@ -296,6 +330,11 @@
       <div class="flex items-center justify-center" style="min-height: 24rem;">
         <div class="text-center text-xs text-ink-mute space-y-2 px-8 max-w-md">
           <p class="font-medium text-ink text-sm">Live browser bridge not connected</p>
+          <p>Trying <span class="font-mono text-ink-soft break-all">{activeWsUrl}</span>{savedWsUrl ? ' — saved in this browser' : ''}.</p>
+          {#if savedWsUrl}
+            <p>That bridge URL was saved here earlier and may be stale; reset it to use the built-in default.</p>
+            <button onclick={resetBridgeUrl} class="px-3 py-1 rounded bg-accent text-paper-soft text-xs font-medium hover:bg-accent-deep transition-colors">Reset saved bridge URL</button>
+          {/if}
           <p>Start it with the desktop launcher, or run:</p>
           <code class="block bg-paper-soft border border-rule rounded px-3 py-2 text-ink-soft font-mono text-[11px] break-all">node tools/live-browser/bridge.mjs</code>
           <p class="text-ink-mute">It launches a real Chrome with a persistent profile so your provider logins are remembered.</p>

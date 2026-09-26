@@ -39,7 +39,7 @@ The previous plan correctly identified the pivot from *one desktop app → one b
 - **Legacy apps** — through the localhost Sidecar Connector (no code changes needed to the legacy app).
 
 ### 1.3 What sits behind the gateway
-- **Web AI chat targets** — DeepSeek Web, Claude.ai, ChatGPT, Gemini, Mistral Le Chat, Perplexity, Poe, Kimi, Qwen Chat, You.com, plus any future site.
+- **Web AI chat targets** — DeepSeek Web, ChatGPT, Gemini, Mistral Le Chat, Perplexity, Poe, Kimi, Qwen Chat, You.com, plus any future site. (Claude.ai was supported as `claude_web` until it was retired from the product on 2026-09-26; later sections mentioning it are historical.)
 - **Custom internal portals** — hospital PACS/RIS, EMRs, ERP web UIs, ticketing systems, dashboards.
 - **Generic web tasks** — form fill, data extraction, OCR cleanup pipelines, document download, multi-step workflows.
 

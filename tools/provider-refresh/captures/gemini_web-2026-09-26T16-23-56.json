@@ -1,0 +1,860 @@
+{
+  "id": "gemini_web",
+  "captured_at": "2026-09-26T16:23:56.394Z",
+  "cdp": "http://127.0.0.1:15923",
+  "opened_tab": true,
+  "url": "https://gemini.google.com/app",
+  "title": "Google Gemini",
+  "likely_login_wall": false,
+  "loginish": [],
+  "composers": [
+    {
+      "tag": "rich-textarea"
+    },
+    {
+      "tag": "div",
+      "placeholder": "Enter a prompt for Gemini"
+    },
+    {
+      "tag": "div"
+    }
+  ],
+  "manifest_catalog_compare": {
+    "model": {
+      "kind": "choice",
+      "values": [
+        {
+          "value": "3.8 Flash",
+          "seen": false
+        },
+        {
+          "value": "3.7 Flash",
+          "seen": false
+        },
+        {
+          "value": "3.6 Flash",
+          "seen": false
+        },
+        {
+          "value": "3.5 Flash",
+          "seen": false
+        },
+        {
+          "value": "3.1 Flash-Lite",
+          "seen": false
+        },
+        {
+          "value": "3.1 Pro",
+          "seen": false
+        }
+      ]
+    },
+    "thinking": {
+      "kind": "toggle",
+      "note": "toggle state not verifiable read-only"
+    }
+  },
+  "menu_captures": {
+    "Settings": {
+      "roles": [
+        {
+          "role": "menuitem",
+          "label": "Personal Intelligence"
+        },
+        {
+          "role": "menuitem",
+          "label": "Import memory to Gemini"
+        },
+        {
+          "role": "menuitem",
+          "label": "Usage limits"
+        },
+        {
+          "role": "menuitem",
+          "label": "Scheduled actions"
+        },
+        {
+          "role": "menuitem",
+          "label": "Gems"
+        },
+        {
+          "role": "menuitem",
+          "label": "Your public links"
+        },
+        {
+          "role": "menuitem",
+          "label": "Theme"
+        },
+        {
+          "role": "menuitem",
+          "label": "Manage subscription"
+        },
+        {
+          "role": "menuitem",
+          "label": "Upgrade to Google AI Ultra"
+        },
+        {
+          "role": "menuitem",
+          "label": "Gemini Notebook"
+        },
+        {
+          "role": "menuitem",
+          "label": "Media watermark"
+        },
+        {
+          "role": "menuitem",
+          "label": "Send feedback"
+        },
+        {
+          "role": "menuitem",
+          "label": "Help"
+        }
+      ],
+      "generic": [
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Side Navigation"
+        },
+        {
+          "role": "button",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Main actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Additional actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Activity Doctor Ai Pro"
+        },
+        {
+          "role": "button",
+          "label": "Gemini Apps Activity"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Settings"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "textbox",
+          "label": "Enter a prompt for Gemini"
+        },
+        {
+          "role": "button",
+          "label": "Upload & tools"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "tooltip",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "tooltip",
+          "label": "Images"
+        },
+        {
+          "role": "tooltip",
+          "label": "Videos"
+        },
+        {
+          "role": "tooltip",
+          "label": "Library"
+        },
+        {
+          "role": "tooltip",
+          "label": "Settings"
+        },
+        {
+          "role": "tooltip",
+          "label": "Gems"
+        },
+        {
+          "role": "tooltip",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "tooltip",
+          "label": "Turn on temporary chat"
+        },
+        {
+          "role": "menu",
+          "label": "Personal Intelligence Import memory to Gemini Usage limits Scheduled actions Gems Your pub"
+        },
+        {
+          "role": "menuitem",
+          "label": "Personal Intelligence"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Import memory to Gemini"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Usage limits"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Scheduled actions"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Gems"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Your public links"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Theme"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Manage subscription"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Upgrade to Google AI Ultra"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Gemini Notebook"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Media watermark"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Send feedback"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Help"
+        },
+        {
+          "role": "img"
+        }
+      ]
+    },
+    "Upload & tools": {
+      "roles": [
+        {
+          "role": "menuitem",
+          "label": "Personal Intelligence"
+        },
+        {
+          "role": "menuitem",
+          "label": "Import memory to Gemini"
+        },
+        {
+          "role": "menuitem",
+          "label": "Usage limits"
+        },
+        {
+          "role": "menuitem",
+          "label": "Scheduled actions"
+        },
+        {
+          "role": "menuitem",
+          "label": "Gems"
+        },
+        {
+          "role": "menuitem",
+          "label": "Your public links"
+        },
+        {
+          "role": "menuitem",
+          "label": "Theme"
+        },
+        {
+          "role": "menuitem",
+          "label": "Manage subscription"
+        },
+        {
+          "role": "menuitem",
+          "label": "Upgrade to Google AI Ultra"
+        },
+        {
+          "role": "menuitem",
+          "label": "Gemini Notebook"
+        },
+        {
+          "role": "menuitem",
+          "label": "Media watermark"
+        },
+        {
+          "role": "menuitem",
+          "label": "Send feedback"
+        },
+        {
+          "role": "menuitem",
+          "label": "Help"
+        }
+      ],
+      "generic": [
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Side Navigation"
+        },
+        {
+          "role": "button",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Main actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Additional actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Activity Doctor Ai Pro"
+        },
+        {
+          "role": "button",
+          "label": "Gemini Apps Activity"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Settings"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "textbox",
+          "label": "Enter a prompt for Gemini"
+        },
+        {
+          "role": "button",
+          "label": "Upload & tools"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "tooltip",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "tooltip",
+          "label": "Images"
+        },
+        {
+          "role": "tooltip",
+          "label": "Videos"
+        },
+        {
+          "role": "tooltip",
+          "label": "Library"
+        },
+        {
+          "role": "tooltip",
+          "label": "Settings"
+        },
+        {
+          "role": "tooltip",
+          "label": "Gems"
+        },
+        {
+          "role": "tooltip",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "tooltip",
+          "label": "Turn on temporary chat"
+        },
+        {
+          "role": "menu",
+          "label": "Personal Intelligence Import memory to Gemini Usage limits Scheduled actions Gems Your pub"
+        },
+        {
+          "role": "menuitem",
+          "label": "Personal Intelligence"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Import memory to Gemini"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Usage limits"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Scheduled actions"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Gems"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Your public links"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Theme"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Manage subscription"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Upgrade to Google AI Ultra"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Gemini Notebook"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Media watermark"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Send feedback"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Help"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menu",
+          "label": "Menu options"
+        },
+        {
+          "role": "separator"
+        }
+      ]
+    }
+  },
+  "selector_checks": {
+    "prompt_input": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "div.ql-editor[contenteditable='true']",
+          "count": 1
+        },
+        {
+          "sel": "rich-textarea div.ql-editor[contenteditable='true']",
+          "count": 1
+        },
+        {
+          "sel": "div[contenteditable='true'][aria-label*='Enter a prompt']",
+          "count": 1
+        },
+        {
+          "sel": "div[contenteditable='true'][data-placeholder='Ask Gemini']",
+          "count": 1
+        },
+        {
+          "sel": "textarea[aria-label*='prompt']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "submit_button": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[aria-label*='Send message']",
+          "count": 0
+        },
+        {
+          "sel": "button.send-button",
+          "count": 0
+        },
+        {
+          "sel": "button[mattooltip*='Send']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "response_container": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "message-content",
+          "count": 0
+        },
+        {
+          "sel": "div.markdown",
+          "count": 0
+        },
+        {
+          "sel": ".markdown",
+          "count": 0
+        },
+        {
+          "sel": "model-response",
+          "count": 0
+        },
+        {
+          "sel": "message-content.model-response-text",
+          "count": 0
+        },
+        {
+          "sel": "div.model-response-text",
+          "count": 0
+        },
+        {
+          "sel": "div[data-response-index]",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "authenticated_signal": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "rich-textarea",
+          "count": 1
+        },
+        {
+          "sel": "a[aria-label*='Google Account']",
+          "count": 2
+        },
+        {
+          "sel": "img.gb_P",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "login_signal": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "a[href*='accounts.google.com']",
+          "count": 2
+        },
+        {
+          "sel": "input[type='email']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": [
+        "text=Sign in"
+      ]
+    },
+    "streaming_indicator": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[aria-label*='Stop']",
+          "count": 0
+        },
+        {
+          "sel": "div.blinking-cursor",
+          "count": 0
+        },
+        {
+          "sel": "progress-bar",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "file_input": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "input[type='file']",
+          "count": 0
+        },
+        {
+          "sel": "input[name='Filedata']",
+          "count": 0
+        },
+        {
+          "sel": "input[accept*='audio']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "upload_menu_button": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "button[aria-label*='Upload' i]",
+          "count": 1
+        },
+        {
+          "sel": "button[mattooltip*='Upload' i]",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "upload_files_item": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "[role='menuitem'][aria-label*='Upload files' i]",
+          "count": 0
+        },
+        {
+          "sel": "button[aria-label*='Upload files' i]",
+          "count": 0
+        },
+        {
+          "sel": "[aria-label*='Upload files' i]",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "new_chat": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "a[aria-label='New chat']",
+          "count": 1
+        },
+        {
+          "sel": ".side-nav-sparkle-button",
+          "count": 0
+        },
+        {
+          "sel": "[data-test-id='new-chat-button']",
+          "count": 1
+        }
+      ],
+      "playwrightOnly": []
+    }
+  },
+  "desired_defaults": {
+    "model": "3.8 Flash",
+    "thinking": false
+  },
+  "raw_controls": [
+    {
+      "tag": "button",
+      "label": "Close sidebar"
+    },
+    {
+      "tag": "a",
+      "label": "New chat"
+    },
+    {
+      "tag": "a",
+      "label": "Search chats"
+    },
+    {
+      "tag": "a",
+      "label": "Images"
+    },
+    {
+      "tag": "a",
+      "label": "Videos"
+    },
+    {
+      "tag": "a",
+      "label": "Library"
+    },
+    {
+      "tag": "button",
+      "label": "Gemini Apps Activity"
+    },
+    {
+      "tag": "a",
+      "label": "Google Account: Doctor Ai (xhsjs5901@gmail.com)"
+    },
+    {
+      "tag": "button",
+      "label": "Settings",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "rich-textarea",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Upload & tools",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Dictate (^⇧D)"
+    }
+  ]
+}

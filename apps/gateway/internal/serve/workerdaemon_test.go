@@ -98,7 +98,6 @@ func TestWorkerDaemonRoutesOnlyLiveWebTargets(t *testing.T) {
 
 	for _, target := range []string{
 		"chatgpt_web",
-		"claude_web",
 		"deepseek_web",
 		"gemini_web",
 		"mistral_lechat",
@@ -121,8 +120,8 @@ func TestWorkerDaemonRoutesOnlyLiveWebTargets(t *testing.T) {
 		}
 	}
 
-	if len(daemonTargets) != 7 {
-		t.Fatalf("daemon targets = %v, want all seven live web providers", daemonTargets)
+	if len(daemonTargets) != 6 {
+		t.Fatalf("daemon targets = %v, want all six live web providers", daemonTargets)
 	}
 	if len(fallbackTargets) != 4 {
 		t.Fatalf("fallback targets = %v, want mock/generic/unknown", fallbackTargets)

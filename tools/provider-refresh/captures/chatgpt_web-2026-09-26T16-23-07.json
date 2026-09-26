@@ -1,0 +1,2959 @@
+{
+  "id": "chatgpt_web",
+  "captured_at": "2026-09-26T16:23:07.931Z",
+  "cdp": "http://127.0.0.1:15923",
+  "opened_tab": false,
+  "url": "https://chatgpt.com/",
+  "title": "ChatGPT",
+  "likely_login_wall": false,
+  "loginish": [],
+  "composers": [
+    {
+      "tag": "div",
+      "placeholder": "Ask ChatGPT"
+    }
+  ],
+  "manifest_catalog_compare": {
+    "model": {
+      "kind": "choice",
+      "values": [
+        {
+          "value": "GPT-5.6 Sol",
+          "seen": false
+        },
+        {
+          "value": "GPT-5.5",
+          "seen": false
+        },
+        {
+          "value": "GPT-5.4",
+          "seen": false
+        },
+        {
+          "value": "GPT-5.3",
+          "seen": false
+        },
+        {
+          "value": "o3",
+          "seen": false
+        }
+      ]
+    },
+    "thinking": {
+      "kind": "choice",
+      "values": [
+        {
+          "value": "Instant",
+          "seen": false
+        },
+        {
+          "value": "Medium",
+          "seen": false
+        },
+        {
+          "value": "High",
+          "seen": false
+        }
+      ]
+    }
+  },
+  "menu_captures": {
+    "Explore": {
+      "roles": [],
+      "generic": [
+        {
+          "role": "img",
+          "label": "ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Search"
+        },
+        {
+          "role": "button",
+          "label": "Hide sidebar"
+        },
+        {
+          "role": "navigation",
+          "label": "Chat history"
+        },
+        {
+          "role": "button",
+          "label": "New chat"
+        },
+        {
+          "role": "button",
+          "label": "Scheduled"
+        },
+        {
+          "role": "button",
+          "label": "Library"
+        },
+        {
+          "role": "button",
+          "label": "Plugins"
+        },
+        {
+          "role": "button",
+          "label": "Explore"
+        },
+        {
+          "role": "button",
+          "label": "Projects"
+        },
+        {
+          "role": "button",
+          "label": "Project sidebar options"
+        },
+        {
+          "role": "button",
+          "label": "Add new project"
+        },
+        {
+          "role": "list",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "listitem",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Project actions for OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "New chat in OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "Recents"
+        },
+        {
+          "role": "button",
+          "label": "Chat sidebar options"
+        },
+        {
+          "role": "button",
+          "label": "Filter chats and work"
+        },
+        {
+          "role": "button",
+          "label": "New chat"
+        },
+        {
+          "role": "list",
+          "label": "Compare Samsung And Motorola Mobiles Update Provider Model Selectors اردو میں تبدیلی Conve"
+        },
+        {
+          "role": "listitem",
+          "label": "Compare Samsung And Motorola Mobiles"
+        },
+        {
+          "role": "group",
+          "label": "Compare Samsung And Motorola Mobiles"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Update Provider Model Selectors"
+        },
+        {
+          "role": "group",
+          "label": "Update Provider Model Selectors"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "اردو میں تبدیلی"
+        },
+        {
+          "role": "group",
+          "label": "اردو میں تبدیلی"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Convert To GPT 6 Sol Prompt"
+        },
+        {
+          "role": "group",
+          "label": "Convert To GPT 6 Sol Prompt"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "OCR Prompt Preparation"
+        },
+        {
+          "role": "group",
+          "label": "OCR Prompt Preparation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Improve House Front Image"
+        },
+        {
+          "role": "group",
+          "label": "Improve House Front Image"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Codex Task Interpretation"
+        },
+        {
+          "role": "group",
+          "label": "Codex Task Interpretation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Face Verification Tools"
+        },
+        {
+          "role": "group",
+          "label": "Face Verification Tools"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Coding Instructions"
+        },
+        {
+          "role": "group",
+          "label": "Coding Instructions"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Working status check"
+        },
+        {
+          "role": "group",
+          "label": "Working status check"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Loading chats"
+        },
+        {
+          "role": "status",
+          "label": "Loading chats"
+        },
+        {
+          "role": "button",
+          "label": "Open profile menu"
+        },
+        {
+          "role": "separator"
+        },
+        {
+          "role": "status",
+          "label": "A workspace member hit a limitTurn on auto-reload to automatically add credits and prevent"
+        },
+        {
+          "role": "button",
+          "label": "Turn on auto-reload"
+        },
+        {
+          "role": "div",
+          "testid": "app-shell-header-context-menu-surface"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "group",
+          "label": "Composer mode"
+        },
+        {
+          "role": "button",
+          "label": "Chat"
+        },
+        {
+          "role": "button",
+          "label": "Work"
+        },
+        {
+          "role": "main",
+          "label": "Ready when you are.Ready when you are.💻Every weekday, prioritize OET reviews by real regr"
+        },
+        {
+          "role": "button",
+          "label": "💻Every weekday, prioritize OET reviews by real regressions, CI blockers, and merge risk"
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "presentation",
+          "label": "Thinking effortMedium"
+        },
+        {
+          "role": "button",
+          "label": "Add files and more"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "textbox",
+          "label": "Ask ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Select ChatGPT model"
+        },
+        {
+          "role": "button",
+          "label": "Dictate"
+        },
+        {
+          "role": "button",
+          "label": "Start Voice"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        }
+      ]
+    },
+    "Project sidebar options": {
+      "roles": [
+        {
+          "role": "menuitem",
+          "label": "Organize sidebar"
+        },
+        {
+          "role": "menuitem",
+          "label": "Sort chats by"
+        }
+      ],
+      "generic": [
+        {
+          "role": "img",
+          "label": "ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Search"
+        },
+        {
+          "role": "button",
+          "label": "Hide sidebar"
+        },
+        {
+          "role": "navigation",
+          "label": "Chat history"
+        },
+        {
+          "role": "button",
+          "label": "New chat"
+        },
+        {
+          "role": "button",
+          "label": "Scheduled"
+        },
+        {
+          "role": "button",
+          "label": "Library"
+        },
+        {
+          "role": "button",
+          "label": "Plugins"
+        },
+        {
+          "role": "button",
+          "label": "Explore"
+        },
+        {
+          "role": "button",
+          "label": "Projects"
+        },
+        {
+          "role": "button",
+          "label": "Project sidebar options"
+        },
+        {
+          "role": "button",
+          "label": "Add new project"
+        },
+        {
+          "role": "list",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "listitem",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Project actions for OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "New chat in OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "Recents"
+        },
+        {
+          "role": "button",
+          "label": "Chat sidebar options"
+        },
+        {
+          "role": "button",
+          "label": "Filter chats and work"
+        },
+        {
+          "role": "button",
+          "label": "New chat"
+        },
+        {
+          "role": "list",
+          "label": "Compare Samsung And Motorola Mobiles Update Provider Model Selectors اردو میں تبدیلی Conve"
+        },
+        {
+          "role": "listitem",
+          "label": "Compare Samsung And Motorola Mobiles"
+        },
+        {
+          "role": "group",
+          "label": "Compare Samsung And Motorola Mobiles"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Update Provider Model Selectors"
+        },
+        {
+          "role": "group",
+          "label": "Update Provider Model Selectors"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "اردو میں تبدیلی"
+        },
+        {
+          "role": "group",
+          "label": "اردو میں تبدیلی"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Convert To GPT 6 Sol Prompt"
+        },
+        {
+          "role": "group",
+          "label": "Convert To GPT 6 Sol Prompt"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "OCR Prompt Preparation"
+        },
+        {
+          "role": "group",
+          "label": "OCR Prompt Preparation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Improve House Front Image"
+        },
+        {
+          "role": "group",
+          "label": "Improve House Front Image"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Codex Task Interpretation"
+        },
+        {
+          "role": "group",
+          "label": "Codex Task Interpretation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Face Verification Tools"
+        },
+        {
+          "role": "group",
+          "label": "Face Verification Tools"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Coding Instructions"
+        },
+        {
+          "role": "group",
+          "label": "Coding Instructions"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Working status check"
+        },
+        {
+          "role": "group",
+          "label": "Working status check"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Loading chats"
+        },
+        {
+          "role": "status",
+          "label": "Loading chats"
+        },
+        {
+          "role": "button",
+          "label": "Open profile menu"
+        },
+        {
+          "role": "separator"
+        },
+        {
+          "role": "status",
+          "label": "A workspace member hit a limitTurn on auto-reload to automatically add credits and prevent"
+        },
+        {
+          "role": "button",
+          "label": "Turn on auto-reload"
+        },
+        {
+          "role": "div",
+          "testid": "app-shell-header-context-menu-surface"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "group",
+          "label": "Composer mode"
+        },
+        {
+          "role": "button",
+          "label": "Chat"
+        },
+        {
+          "role": "button",
+          "label": "Work"
+        },
+        {
+          "role": "main",
+          "label": "Ready when you are.Ready when you are.💻Every weekday, prioritize OET reviews by real regr"
+        },
+        {
+          "role": "button",
+          "label": "💻Every weekday, prioritize OET reviews by real regressions, CI blockers, and merge risk"
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "presentation",
+          "label": "Thinking effortMedium"
+        },
+        {
+          "role": "button",
+          "label": "Add files and more"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "textbox",
+          "label": "Ask ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Select ChatGPT model"
+        },
+        {
+          "role": "button",
+          "label": "Dictate"
+        },
+        {
+          "role": "button",
+          "label": "Start Voice"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "menu",
+          "label": "Organize sidebar Sort chats by"
+        },
+        {
+          "role": "menuitem",
+          "label": "Organize sidebar"
+        },
+        {
+          "role": "menuitem",
+          "label": "Sort chats by"
+        }
+      ]
+    },
+    "Project actions for OET with Dr Hesham Project": {
+      "roles": [
+        {
+          "role": "menuitem",
+          "label": "Share project"
+        },
+        {
+          "role": "menuitem",
+          "label": "Rename project"
+        },
+        {
+          "role": "menuitem",
+          "label": "Project settings"
+        },
+        {
+          "role": "menuitem",
+          "label": "Project home"
+        },
+        {
+          "role": "menuitem",
+          "label": "Pin project"
+        },
+        {
+          "role": "menuitem",
+          "label": "Delete project"
+        }
+      ],
+      "generic": [
+        {
+          "role": "img",
+          "label": "ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Search"
+        },
+        {
+          "role": "button",
+          "label": "Hide sidebar"
+        },
+        {
+          "role": "navigation",
+          "label": "Chat history"
+        },
+        {
+          "role": "button",
+          "label": "New chat"
+        },
+        {
+          "role": "button",
+          "label": "Scheduled"
+        },
+        {
+          "role": "button",
+          "label": "Library"
+        },
+        {
+          "role": "button",
+          "label": "Plugins"
+        },
+        {
+          "role": "button",
+          "label": "Explore"
+        },
+        {
+          "role": "button",
+          "label": "Projects"
+        },
+        {
+          "role": "button",
+          "label": "Project sidebar options"
+        },
+        {
+          "role": "button",
+          "label": "Add new project"
+        },
+        {
+          "role": "list",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "listitem",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Project actions for OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "New chat in OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "Recents"
+        },
+        {
+          "role": "button",
+          "label": "Chat sidebar options"
+        },
+        {
+          "role": "button",
+          "label": "Filter chats and work"
+        },
+        {
+          "role": "button",
+          "label": "New chat"
+        },
+        {
+          "role": "list",
+          "label": "Compare Samsung And Motorola Mobiles Update Provider Model Selectors اردو میں تبدیلی Conve"
+        },
+        {
+          "role": "listitem",
+          "label": "Compare Samsung And Motorola Mobiles"
+        },
+        {
+          "role": "group",
+          "label": "Compare Samsung And Motorola Mobiles"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Update Provider Model Selectors"
+        },
+        {
+          "role": "group",
+          "label": "Update Provider Model Selectors"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "اردو میں تبدیلی"
+        },
+        {
+          "role": "group",
+          "label": "اردو میں تبدیلی"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Convert To GPT 6 Sol Prompt"
+        },
+        {
+          "role": "group",
+          "label": "Convert To GPT 6 Sol Prompt"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "OCR Prompt Preparation"
+        },
+        {
+          "role": "group",
+          "label": "OCR Prompt Preparation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Improve House Front Image"
+        },
+        {
+          "role": "group",
+          "label": "Improve House Front Image"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Codex Task Interpretation"
+        },
+        {
+          "role": "group",
+          "label": "Codex Task Interpretation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Face Verification Tools"
+        },
+        {
+          "role": "group",
+          "label": "Face Verification Tools"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Coding Instructions"
+        },
+        {
+          "role": "group",
+          "label": "Coding Instructions"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Working status check"
+        },
+        {
+          "role": "group",
+          "label": "Working status check"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Loading chats"
+        },
+        {
+          "role": "status",
+          "label": "Loading chats"
+        },
+        {
+          "role": "button",
+          "label": "Open profile menu"
+        },
+        {
+          "role": "separator"
+        },
+        {
+          "role": "status",
+          "label": "A workspace member hit a limitTurn on auto-reload to automatically add credits and prevent"
+        },
+        {
+          "role": "button",
+          "label": "Turn on auto-reload"
+        },
+        {
+          "role": "div",
+          "testid": "app-shell-header-context-menu-surface"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "group",
+          "label": "Composer mode"
+        },
+        {
+          "role": "button",
+          "label": "Chat"
+        },
+        {
+          "role": "button",
+          "label": "Work"
+        },
+        {
+          "role": "main",
+          "label": "Ready when you are.Ready when you are.💻Every weekday, prioritize OET reviews by real regr"
+        },
+        {
+          "role": "button",
+          "label": "💻Every weekday, prioritize OET reviews by real regressions, CI blockers, and merge risk"
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "presentation",
+          "label": "Thinking effortMedium"
+        },
+        {
+          "role": "button",
+          "label": "Add files and more"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "textbox",
+          "label": "Ask ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Select ChatGPT model"
+        },
+        {
+          "role": "button",
+          "label": "Dictate"
+        },
+        {
+          "role": "button",
+          "label": "Start Voice"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "menu",
+          "label": "Share projectRename project Project settingsProject homePin project Delete project"
+        },
+        {
+          "role": "menuitem",
+          "label": "Share project"
+        },
+        {
+          "role": "menuitem",
+          "label": "Rename project"
+        },
+        {
+          "role": "menuitem",
+          "label": "Project settings"
+        },
+        {
+          "role": "menuitem",
+          "label": "Project home"
+        },
+        {
+          "role": "menuitem",
+          "label": "Pin project"
+        },
+        {
+          "role": "menuitem",
+          "label": "Delete project"
+        }
+      ]
+    },
+    "Chat sidebar options": {
+      "roles": [
+        {
+          "role": "menuitem",
+          "label": "Organize sidebar"
+        },
+        {
+          "role": "menuitem",
+          "label": "Sort chats by"
+        },
+        {
+          "role": "menuitemcheckbox",
+          "label": "Projects",
+          "checked": "true"
+        }
+      ],
+      "generic": [
+        {
+          "role": "img",
+          "label": "ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Search"
+        },
+        {
+          "role": "button",
+          "label": "Hide sidebar"
+        },
+        {
+          "role": "navigation",
+          "label": "Chat history"
+        },
+        {
+          "role": "button",
+          "label": "New chat"
+        },
+        {
+          "role": "button",
+          "label": "Scheduled"
+        },
+        {
+          "role": "button",
+          "label": "Library"
+        },
+        {
+          "role": "button",
+          "label": "Plugins"
+        },
+        {
+          "role": "button",
+          "label": "Explore"
+        },
+        {
+          "role": "button",
+          "label": "Projects"
+        },
+        {
+          "role": "button",
+          "label": "Project sidebar options"
+        },
+        {
+          "role": "button",
+          "label": "Add new project"
+        },
+        {
+          "role": "list",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "listitem",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Project actions for OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "New chat in OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "Recents"
+        },
+        {
+          "role": "button",
+          "label": "Chat sidebar options"
+        },
+        {
+          "role": "button",
+          "label": "Filter chats and work"
+        },
+        {
+          "role": "button",
+          "label": "New chat"
+        },
+        {
+          "role": "list",
+          "label": "Compare Samsung And Motorola Mobiles Update Provider Model Selectors اردو میں تبدیلی Conve"
+        },
+        {
+          "role": "listitem",
+          "label": "Compare Samsung And Motorola Mobiles"
+        },
+        {
+          "role": "group",
+          "label": "Compare Samsung And Motorola Mobiles"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Update Provider Model Selectors"
+        },
+        {
+          "role": "group",
+          "label": "Update Provider Model Selectors"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "اردو میں تبدیلی"
+        },
+        {
+          "role": "group",
+          "label": "اردو میں تبدیلی"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Convert To GPT 6 Sol Prompt"
+        },
+        {
+          "role": "group",
+          "label": "Convert To GPT 6 Sol Prompt"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "OCR Prompt Preparation"
+        },
+        {
+          "role": "group",
+          "label": "OCR Prompt Preparation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Improve House Front Image"
+        },
+        {
+          "role": "group",
+          "label": "Improve House Front Image"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Codex Task Interpretation"
+        },
+        {
+          "role": "group",
+          "label": "Codex Task Interpretation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Face Verification Tools"
+        },
+        {
+          "role": "group",
+          "label": "Face Verification Tools"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Coding Instructions"
+        },
+        {
+          "role": "group",
+          "label": "Coding Instructions"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Working status check"
+        },
+        {
+          "role": "group",
+          "label": "Working status check"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Loading chats"
+        },
+        {
+          "role": "status",
+          "label": "Loading chats"
+        },
+        {
+          "role": "button",
+          "label": "Open profile menu"
+        },
+        {
+          "role": "separator"
+        },
+        {
+          "role": "status",
+          "label": "A workspace member hit a limitTurn on auto-reload to automatically add credits and prevent"
+        },
+        {
+          "role": "button",
+          "label": "Turn on auto-reload"
+        },
+        {
+          "role": "div",
+          "testid": "app-shell-header-context-menu-surface"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "group",
+          "label": "Composer mode"
+        },
+        {
+          "role": "button",
+          "label": "Chat"
+        },
+        {
+          "role": "button",
+          "label": "Work"
+        },
+        {
+          "role": "main",
+          "label": "Ready when you are.Ready when you are.💻Every weekday, prioritize OET reviews by real regr"
+        },
+        {
+          "role": "button",
+          "label": "💻Every weekday, prioritize OET reviews by real regressions, CI blockers, and merge risk"
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "presentation",
+          "label": "Thinking effortMedium"
+        },
+        {
+          "role": "button",
+          "label": "Add files and more"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "textbox",
+          "label": "Ask ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Select ChatGPT model"
+        },
+        {
+          "role": "button",
+          "label": "Dictate"
+        },
+        {
+          "role": "button",
+          "label": "Start Voice"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "menu",
+          "label": "Organize sidebar Sort chats byShowProjects"
+        },
+        {
+          "role": "menuitem",
+          "label": "Organize sidebar"
+        },
+        {
+          "role": "menuitem",
+          "label": "Sort chats by"
+        },
+        {
+          "role": "menuitemcheckbox",
+          "label": "Projects",
+          "checked": "true"
+        }
+      ]
+    },
+    "Filter chats and work": {
+      "roles": [
+        {
+          "role": "menuitemradio",
+          "label": "All",
+          "checked": "true"
+        },
+        {
+          "role": "menuitemradio",
+          "label": "Chat",
+          "checked": "false"
+        },
+        {
+          "role": "menuitemradio",
+          "label": "Work",
+          "checked": "false"
+        }
+      ],
+      "generic": [
+        {
+          "role": "img",
+          "label": "ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Search"
+        },
+        {
+          "role": "button",
+          "label": "Hide sidebar"
+        },
+        {
+          "role": "navigation",
+          "label": "Chat history"
+        },
+        {
+          "role": "button",
+          "label": "New chat"
+        },
+        {
+          "role": "button",
+          "label": "Scheduled"
+        },
+        {
+          "role": "button",
+          "label": "Library"
+        },
+        {
+          "role": "button",
+          "label": "Plugins"
+        },
+        {
+          "role": "button",
+          "label": "Explore"
+        },
+        {
+          "role": "button",
+          "label": "Projects"
+        },
+        {
+          "role": "button",
+          "label": "Project sidebar options"
+        },
+        {
+          "role": "button",
+          "label": "Add new project"
+        },
+        {
+          "role": "list",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "listitem",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Project actions for OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "New chat in OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "Recents"
+        },
+        {
+          "role": "button",
+          "label": "Chat sidebar options"
+        },
+        {
+          "role": "button",
+          "label": "Filter chats and work"
+        },
+        {
+          "role": "button",
+          "label": "New chat"
+        },
+        {
+          "role": "list",
+          "label": "Compare Samsung And Motorola Mobiles Update Provider Model Selectors اردو میں تبدیلی Conve"
+        },
+        {
+          "role": "listitem",
+          "label": "Compare Samsung And Motorola Mobiles"
+        },
+        {
+          "role": "group",
+          "label": "Compare Samsung And Motorola Mobiles"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Update Provider Model Selectors"
+        },
+        {
+          "role": "group",
+          "label": "Update Provider Model Selectors"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "اردو میں تبدیلی"
+        },
+        {
+          "role": "group",
+          "label": "اردو میں تبدیلی"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Convert To GPT 6 Sol Prompt"
+        },
+        {
+          "role": "group",
+          "label": "Convert To GPT 6 Sol Prompt"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "OCR Prompt Preparation"
+        },
+        {
+          "role": "group",
+          "label": "OCR Prompt Preparation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Improve House Front Image"
+        },
+        {
+          "role": "group",
+          "label": "Improve House Front Image"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Codex Task Interpretation"
+        },
+        {
+          "role": "group",
+          "label": "Codex Task Interpretation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Face Verification Tools"
+        },
+        {
+          "role": "group",
+          "label": "Face Verification Tools"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Coding Instructions"
+        },
+        {
+          "role": "group",
+          "label": "Coding Instructions"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Working status check"
+        },
+        {
+          "role": "group",
+          "label": "Working status check"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Loading chats"
+        },
+        {
+          "role": "status",
+          "label": "Loading chats"
+        },
+        {
+          "role": "button",
+          "label": "Open profile menu"
+        },
+        {
+          "role": "separator"
+        },
+        {
+          "role": "status",
+          "label": "A workspace member hit a limitTurn on auto-reload to automatically add credits and prevent"
+        },
+        {
+          "role": "button",
+          "label": "Turn on auto-reload"
+        },
+        {
+          "role": "div",
+          "testid": "app-shell-header-context-menu-surface"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "group",
+          "label": "Composer mode"
+        },
+        {
+          "role": "button",
+          "label": "Chat"
+        },
+        {
+          "role": "button",
+          "label": "Work"
+        },
+        {
+          "role": "main",
+          "label": "Ready when you are.Ready when you are.💻Every weekday, prioritize OET reviews by real regr"
+        },
+        {
+          "role": "button",
+          "label": "💻Every weekday, prioritize OET reviews by real regressions, CI blockers, and merge risk"
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "presentation",
+          "label": "Thinking effortMedium"
+        },
+        {
+          "role": "button",
+          "label": "Add files and more"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "textbox",
+          "label": "Ask ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Select ChatGPT model"
+        },
+        {
+          "role": "button",
+          "label": "Dictate"
+        },
+        {
+          "role": "button",
+          "label": "Start Voice"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "menu",
+          "label": "AllChatWork"
+        },
+        {
+          "role": "menuitemradio",
+          "label": "All",
+          "checked": "true"
+        },
+        {
+          "role": "menuitemradio",
+          "label": "Chat",
+          "checked": "false"
+        },
+        {
+          "role": "menuitemradio",
+          "label": "Work",
+          "checked": "false"
+        }
+      ]
+    },
+    "Chat actions": {
+      "roles": [
+        {
+          "role": "menuitem",
+          "label": "Rename"
+        },
+        {
+          "role": "menuitem",
+          "label": "Pin"
+        },
+        {
+          "role": "menuitem",
+          "label": "Move to project"
+        },
+        {
+          "role": "menuitem",
+          "label": "Share"
+        },
+        {
+          "role": "menuitem",
+          "label": "Archive"
+        },
+        {
+          "role": "menuitem",
+          "label": "Delete"
+        }
+      ],
+      "generic": [
+        {
+          "role": "img",
+          "label": "ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Search"
+        },
+        {
+          "role": "button",
+          "label": "Hide sidebar"
+        },
+        {
+          "role": "navigation",
+          "label": "Chat history"
+        },
+        {
+          "role": "button",
+          "label": "New chat"
+        },
+        {
+          "role": "button",
+          "label": "Scheduled"
+        },
+        {
+          "role": "button",
+          "label": "Library"
+        },
+        {
+          "role": "button",
+          "label": "Plugins"
+        },
+        {
+          "role": "button",
+          "label": "Explore"
+        },
+        {
+          "role": "button",
+          "label": "Projects"
+        },
+        {
+          "role": "button",
+          "label": "Project sidebar options"
+        },
+        {
+          "role": "button",
+          "label": "Add new project"
+        },
+        {
+          "role": "list",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "listitem",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "OET with Dr Hesham Project"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Project actions for OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "New chat in OET with Dr Hesham Project"
+        },
+        {
+          "role": "button",
+          "label": "Recents"
+        },
+        {
+          "role": "button",
+          "label": "Chat sidebar options"
+        },
+        {
+          "role": "button",
+          "label": "Filter chats and work"
+        },
+        {
+          "role": "button",
+          "label": "New chat"
+        },
+        {
+          "role": "list",
+          "label": "Compare Samsung And Motorola Mobiles Update Provider Model Selectors اردو میں تبدیلی Conve"
+        },
+        {
+          "role": "listitem",
+          "label": "Compare Samsung And Motorola Mobiles"
+        },
+        {
+          "role": "group",
+          "label": "Compare Samsung And Motorola Mobiles"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Update Provider Model Selectors"
+        },
+        {
+          "role": "group",
+          "label": "Update Provider Model Selectors"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "اردو میں تبدیلی"
+        },
+        {
+          "role": "group",
+          "label": "اردو میں تبدیلی"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Convert To GPT 6 Sol Prompt"
+        },
+        {
+          "role": "group",
+          "label": "Convert To GPT 6 Sol Prompt"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "OCR Prompt Preparation"
+        },
+        {
+          "role": "group",
+          "label": "OCR Prompt Preparation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Improve House Front Image"
+        },
+        {
+          "role": "group",
+          "label": "Improve House Front Image"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Codex Task Interpretation"
+        },
+        {
+          "role": "group",
+          "label": "Codex Task Interpretation"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Face Verification Tools"
+        },
+        {
+          "role": "group",
+          "label": "Face Verification Tools"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Coding Instructions"
+        },
+        {
+          "role": "group",
+          "label": "Coding Instructions"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Working status check"
+        },
+        {
+          "role": "group",
+          "label": "Working status check"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Chat actions"
+        },
+        {
+          "role": "button",
+          "label": "Pin chat"
+        },
+        {
+          "role": "listitem",
+          "label": "Loading chats"
+        },
+        {
+          "role": "status",
+          "label": "Loading chats"
+        },
+        {
+          "role": "button",
+          "label": "Open profile menu"
+        },
+        {
+          "role": "separator"
+        },
+        {
+          "role": "status",
+          "label": "A workspace member hit a limitTurn on auto-reload to automatically add credits and prevent"
+        },
+        {
+          "role": "button",
+          "label": "Turn on auto-reload"
+        },
+        {
+          "role": "div",
+          "testid": "app-shell-header-context-menu-surface"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "group",
+          "label": "Composer mode"
+        },
+        {
+          "role": "button",
+          "label": "Chat"
+        },
+        {
+          "role": "button",
+          "label": "Work"
+        },
+        {
+          "role": "main",
+          "label": "Ready when you are.Ready when you are.💻Every weekday, prioritize OET reviews by real regr"
+        },
+        {
+          "role": "button",
+          "label": "💻Every weekday, prioritize OET reviews by real regressions, CI blockers, and merge risk"
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "presentation",
+          "label": "Thinking effortMedium"
+        },
+        {
+          "role": "button",
+          "label": "Add files and more"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "textbox",
+          "label": "Ask ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Select ChatGPT model"
+        },
+        {
+          "role": "button",
+          "label": "Dictate"
+        },
+        {
+          "role": "button",
+          "label": "Start Voice"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "menu",
+          "label": "RenamePinMove to projectShareArchiveDelete"
+        },
+        {
+          "role": "menuitem",
+          "label": "Rename"
+        },
+        {
+          "role": "menuitem",
+          "label": "Pin"
+        },
+        {
+          "role": "menuitem",
+          "label": "Move to project"
+        },
+        {
+          "role": "menuitem",
+          "label": "Share"
+        },
+        {
+          "role": "menuitem",
+          "label": "Archive"
+        },
+        {
+          "role": "menuitem",
+          "label": "Delete"
+        }
+      ]
+    }
+  },
+  "selector_checks": {
+    "prompt_input": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "#prompt-textarea",
+          "count": 0
+        },
+        {
+          "sel": "textarea[data-id='root']",
+          "count": 0
+        },
+        {
+          "sel": "div[contenteditable='true'][data-virtualkeyboard='true']",
+          "count": 1
+        },
+        {
+          "sel": "textarea[placeholder*='Message']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "submit_button": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[data-testid='send-button']",
+          "count": 0
+        },
+        {
+          "sel": "button[aria-label*='Send']",
+          "count": 0
+        },
+        {
+          "sel": "button[type='submit']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "response_container": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "div[data-message-author-role='assistant']",
+          "count": 0
+        },
+        {
+          "sel": "div.markdown.prose",
+          "count": 0
+        },
+        {
+          "sel": "[data-testid^='conversation-turn'] .markdown",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "authenticated_signal": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "#prompt-textarea",
+          "count": 0
+        },
+        {
+          "sel": "nav[aria-label='Chat history']",
+          "count": 1
+        },
+        {
+          "sel": "button[data-testid='profile-button']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "login_signal": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[data-testid='login-button']",
+          "count": 0
+        },
+        {
+          "sel": "a[href*='auth/login']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": [
+        "text=Log in"
+      ]
+    },
+    "streaming_indicator": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[data-testid='stop-button']",
+          "count": 0
+        },
+        {
+          "sel": "button[aria-label*='Stop']",
+          "count": 0
+        },
+        {
+          "sel": ".result-streaming",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "file_input": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "input[type='file'][multiple]",
+          "count": 3
+        },
+        {
+          "sel": "input[type='file']",
+          "count": 3
+        },
+        {
+          "sel": "input[accept*='audio']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "new_chat": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "a[data-testid='create-new-chat-button']",
+          "count": 0
+        },
+        {
+          "sel": "button[aria-label*='New chat']",
+          "count": 3
+        }
+      ],
+      "playwrightOnly": [
+        "a[href='/']:has-text('New chat')"
+      ]
+    }
+  },
+  "desired_defaults": {
+    "model": "GPT-5.6 Sol",
+    "thinking": "Medium"
+  },
+  "raw_controls": [
+    {
+      "tag": "button",
+      "label": "Search"
+    },
+    {
+      "tag": "button",
+      "label": "Hide sidebar",
+      "expanded": "true"
+    },
+    {
+      "tag": "button",
+      "label": "New chat"
+    },
+    {
+      "tag": "button",
+      "label": "Scheduled"
+    },
+    {
+      "tag": "button",
+      "label": "Library"
+    },
+    {
+      "tag": "button",
+      "label": "Plugins"
+    },
+    {
+      "tag": "button",
+      "label": "Explore",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "role": "button",
+      "label": "Projects",
+      "expanded": "true"
+    },
+    {
+      "tag": "button",
+      "label": "Project sidebar options",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Add new project"
+    },
+    {
+      "tag": "button",
+      "label": "Project actions for OET with Dr Hesham Project",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "New chat in OET with Dr Hesham Project"
+    },
+    {
+      "tag": "button",
+      "role": "button",
+      "label": "Recents",
+      "expanded": "true"
+    },
+    {
+      "tag": "button",
+      "label": "Chat sidebar options",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Filter chats and work",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "New chat"
+    },
+    {
+      "tag": "a",
+      "label": "Compare Samsung And Motorola Mobiles"
+    },
+    {
+      "tag": "button",
+      "label": "Chat actions",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Pin chat"
+    },
+    {
+      "tag": "a",
+      "label": "Update Provider Model Selectors"
+    },
+    {
+      "tag": "button",
+      "label": "Chat actions",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Pin chat"
+    },
+    {
+      "tag": "a",
+      "label": "اردو میں تبدیلی"
+    },
+    {
+      "tag": "button",
+      "label": "Chat actions",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Pin chat"
+    },
+    {
+      "tag": "a",
+      "label": "Convert To GPT 6 Sol Prompt"
+    },
+    {
+      "tag": "button",
+      "label": "Chat actions",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Pin chat"
+    },
+    {
+      "tag": "a",
+      "label": "OCR Prompt Preparation"
+    },
+    {
+      "tag": "button",
+      "label": "Chat actions",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Pin chat"
+    },
+    {
+      "tag": "a",
+      "label": "Improve House Front Image"
+    },
+    {
+      "tag": "button",
+      "label": "Chat actions",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Pin chat"
+    },
+    {
+      "tag": "a",
+      "label": "Codex Task Interpretation"
+    },
+    {
+      "tag": "button",
+      "label": "Chat actions",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Pin chat"
+    },
+    {
+      "tag": "a",
+      "label": "Face Verification Tools"
+    },
+    {
+      "tag": "button",
+      "label": "Chat actions",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Pin chat"
+    },
+    {
+      "tag": "a",
+      "label": "Coding Instructions"
+    },
+    {
+      "tag": "button",
+      "label": "Chat actions",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Pin chat"
+    },
+    {
+      "tag": "a",
+      "label": "Working status check"
+    },
+    {
+      "tag": "button",
+      "label": "Chat actions",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Pin chat"
+    },
+    {
+      "tag": "button",
+      "label": "Open profile menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Turn on auto-reload"
+    },
+    {
+      "tag": "div",
+      "testid": "app-shell-header-context-menu-surface"
+    },
+    {
+      "tag": "button",
+      "label": "Temporary chat"
+    },
+    {
+      "tag": "button",
+      "label": "Chat"
+    },
+    {
+      "tag": "button",
+      "label": "Work"
+    },
+    {
+      "tag": "button",
+      "label": "💻Every weekday, prioritize OET reviews by real regressions, CI blockers, and merge risk"
+    },
+    {
+      "tag": "button",
+      "label": "Dismiss suggestion"
+    },
+    {
+      "tag": "button",
+      "label": "Add files and more",
+      "expanded": "false"
+    },
+    {
+      "tag": "button",
+      "label": "Select ChatGPT model",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Dictate"
+    },
+    {
+      "tag": "button",
+      "label": "Start Voice"
+    }
+  ]
+}

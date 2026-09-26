@@ -1,0 +1,4671 @@
+{
+  "id": "gemini_web",
+  "captured_at": "2026-09-26T16:25:52.246Z",
+  "cdp": "http://127.0.0.1:15923",
+  "opened_tab": false,
+  "url": "https://gemini.google.com/app",
+  "title": "Google Gemini",
+  "likely_login_wall": false,
+  "loginish": [],
+  "composers": [
+    {
+      "tag": "rich-textarea"
+    },
+    {
+      "tag": "div",
+      "placeholder": "Enter a prompt for Gemini"
+    },
+    {
+      "tag": "div"
+    }
+  ],
+  "composer_neighborhood": [
+    {
+      "tag": "div",
+      "role": "textbox",
+      "label": "Enter a prompt for Gemini",
+      "aria": {
+        "aria-multiline": "true",
+        "aria-label": "Enter a prompt for Gemini"
+      }
+    }
+  ],
+  "manifest_catalog_compare": {
+    "model": {
+      "kind": "choice",
+      "values": [
+        {
+          "value": "3.8 Flash",
+          "seen": true
+        },
+        {
+          "value": "3.7 Flash",
+          "seen": false
+        },
+        {
+          "value": "3.6 Flash",
+          "seen": false
+        },
+        {
+          "value": "3.5 Flash",
+          "seen": true
+        },
+        {
+          "value": "3.1 Flash-Lite",
+          "seen": false
+        },
+        {
+          "value": "3.1 Pro",
+          "seen": true
+        }
+      ]
+    },
+    "thinking": {
+      "kind": "toggle",
+      "note": "toggle state not verifiable read-only"
+    }
+  },
+  "menu_captures": {
+    "Open mode picker, currently Flash": {
+      "roles": [
+        {
+          "role": "menuitem",
+          "label": "3.5 Flash-Lite Fastest answers"
+        },
+        {
+          "role": "menuitem",
+          "label": "3.8 Flash All-around help"
+        },
+        {
+          "role": "menuitem",
+          "label": "3.1 Pro Advanced reasoning"
+        },
+        {
+          "role": "menuitem",
+          "label": "Extended thinking Complex problem solving"
+        },
+        {
+          "role": "menuitem",
+          "label": "Personal Intelligence"
+        },
+        {
+          "role": "menuitem",
+          "label": "Import memory to Gemini"
+        },
+        {
+          "role": "menuitem",
+          "label": "Usage limits"
+        },
+        {
+          "role": "menuitem",
+          "label": "Scheduled actions"
+        },
+        {
+          "role": "menuitem",
+          "label": "Gems"
+        },
+        {
+          "role": "menuitem",
+          "label": "Your public links"
+        },
+        {
+          "role": "menuitem",
+          "label": "Theme"
+        },
+        {
+          "role": "menuitem",
+          "label": "Manage subscription"
+        },
+        {
+          "role": "menuitem",
+          "label": "Upgrade to Google AI Ultra"
+        },
+        {
+          "role": "menuitem",
+          "label": "Gemini Notebook"
+        },
+        {
+          "role": "menuitem",
+          "label": "Media watermark"
+        },
+        {
+          "role": "menuitem",
+          "label": "Send feedback"
+        },
+        {
+          "role": "menuitem",
+          "label": "Help"
+        }
+      ],
+      "generic": [
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Side Navigation"
+        },
+        {
+          "role": "button",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Main actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Additional actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Notebooks"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "New notebookCloud-Based Enterprise PACS Implementation and Strategic JustificationBuilding"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Recents"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "UntitledRacemose Neurocysticercosis Brain MRI AnalysisCasual Leave Application for DoctorC"
+        },
+        {
+          "role": "button",
+          "label": "More options for Untitled"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Racemose Neurocysticercosis Brain MRI Analysis"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Casual Leave Application for Doctor"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Neck Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Pelvic Doppler Ultrasound Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for MRI Temporal Bone Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Confirmation of Instructions"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen Pelvis Report Generation"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT IVU Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CE-CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Scan Report: Sughranbibi"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Left Leg Vascular Doppler Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten Breast Cancer Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Detailed MRI Lumbosacral Spine Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR Transcription"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Chest Scan Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CTA Brain Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Reply"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Ping Pong Response Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Activity Doctor Ai Pro"
+        },
+        {
+          "role": "button",
+          "label": "Gemini Apps Activity"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Settings"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Germany"
+        },
+        {
+          "role": "button",
+          "label": "Update location"
+        },
+        {
+          "role": "textbox",
+          "label": "Enter a prompt for Gemini"
+        },
+        {
+          "role": "button",
+          "label": "Upload & tools"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Flash 3.5 Flash-Lite Fastest answers 3.8 Flash All-around help 3.1 Pro Advanced reasoning "
+        },
+        {
+          "role": "button",
+          "label": "Open mode picker, currently Flash"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menu",
+          "label": "3.5 Flash-Lite Fastest answers 3.8 Flash All-around help 3.1 Pro Advanced reasoning Extend"
+        },
+        {
+          "role": "menuitem",
+          "label": "3.5 Flash-Lite Fastest answers"
+        },
+        {
+          "role": "menuitem",
+          "label": "3.8 Flash All-around help"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "3.1 Pro Advanced reasoning"
+        },
+        {
+          "role": "separator"
+        },
+        {
+          "role": "menuitem",
+          "label": "Extended thinking Complex problem solving"
+        },
+        {
+          "role": "button",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "tooltip",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "tooltip",
+          "label": "Images"
+        },
+        {
+          "role": "tooltip",
+          "label": "Videos"
+        },
+        {
+          "role": "tooltip",
+          "label": "Library"
+        },
+        {
+          "role": "tooltip",
+          "label": "Settings"
+        },
+        {
+          "role": "tooltip",
+          "label": "Gems"
+        },
+        {
+          "role": "tooltip",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "tooltip",
+          "label": "Turn on temporary chat"
+        },
+        {
+          "role": "menu",
+          "label": "Personal Intelligence Import memory to Gemini Usage limits Scheduled actions Gems Your pub"
+        },
+        {
+          "role": "menuitem",
+          "label": "Personal Intelligence"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Import memory to Gemini"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Usage limits"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Scheduled actions"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "menuitem",
+          "label": "Gems"
+        },
+        {
+          "role": "img"
+        }
+      ]
+    },
+    "Settings": {
+      "roles": [],
+      "generic": [
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Side Navigation"
+        },
+        {
+          "role": "button",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Main actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Additional actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Notebooks"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "New notebookCloud-Based Enterprise PACS Implementation and Strategic JustificationBuilding"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Recents"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "UntitledRacemose Neurocysticercosis Brain MRI AnalysisCasual Leave Application for DoctorC"
+        },
+        {
+          "role": "button",
+          "label": "More options for Untitled"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Racemose Neurocysticercosis Brain MRI Analysis"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Casual Leave Application for Doctor"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Neck Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Pelvic Doppler Ultrasound Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for MRI Temporal Bone Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Confirmation of Instructions"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen Pelvis Report Generation"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT IVU Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CE-CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Scan Report: Sughranbibi"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Left Leg Vascular Doppler Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten Breast Cancer Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Detailed MRI Lumbosacral Spine Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR Transcription"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Chest Scan Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CTA Brain Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Reply"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Ping Pong Response Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Activity Doctor Ai Pro"
+        },
+        {
+          "role": "button",
+          "label": "Gemini Apps Activity"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Settings"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Germany"
+        },
+        {
+          "role": "button",
+          "label": "Update location"
+        },
+        {
+          "role": "textbox",
+          "label": "Enter a prompt for Gemini"
+        },
+        {
+          "role": "button",
+          "label": "Upload & tools"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Flash"
+        },
+        {
+          "role": "button",
+          "label": "Open mode picker, currently Flash"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "tooltip",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "tooltip",
+          "label": "Images"
+        },
+        {
+          "role": "tooltip",
+          "label": "Videos"
+        },
+        {
+          "role": "tooltip",
+          "label": "Library"
+        },
+        {
+          "role": "tooltip",
+          "label": "Settings"
+        },
+        {
+          "role": "tooltip",
+          "label": "Gems"
+        },
+        {
+          "role": "tooltip",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "tooltip",
+          "label": "Turn on temporary chat"
+        }
+      ]
+    },
+    "Upload & tools": {
+      "roles": [],
+      "generic": [
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Side Navigation"
+        },
+        {
+          "role": "button",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Main actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Additional actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Notebooks"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "New notebookCloud-Based Enterprise PACS Implementation and Strategic JustificationBuilding"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Recents"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "UntitledRacemose Neurocysticercosis Brain MRI AnalysisCasual Leave Application for DoctorC"
+        },
+        {
+          "role": "button",
+          "label": "More options for Untitled"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Racemose Neurocysticercosis Brain MRI Analysis"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Casual Leave Application for Doctor"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Neck Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Pelvic Doppler Ultrasound Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for MRI Temporal Bone Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Confirmation of Instructions"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen Pelvis Report Generation"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT IVU Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CE-CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Scan Report: Sughranbibi"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Left Leg Vascular Doppler Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten Breast Cancer Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Detailed MRI Lumbosacral Spine Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR Transcription"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Chest Scan Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CTA Brain Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Reply"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Ping Pong Response Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Activity Doctor Ai Pro"
+        },
+        {
+          "role": "button",
+          "label": "Gemini Apps Activity"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Settings"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Germany"
+        },
+        {
+          "role": "button",
+          "label": "Update location"
+        },
+        {
+          "role": "textbox",
+          "label": "Enter a prompt for Gemini"
+        },
+        {
+          "role": "button",
+          "label": "Upload & tools"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Flash"
+        },
+        {
+          "role": "button",
+          "label": "Open mode picker, currently Flash"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "tooltip",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "tooltip",
+          "label": "Images"
+        },
+        {
+          "role": "tooltip",
+          "label": "Videos"
+        },
+        {
+          "role": "tooltip",
+          "label": "Library"
+        },
+        {
+          "role": "tooltip",
+          "label": "Settings"
+        },
+        {
+          "role": "tooltip",
+          "label": "Gems"
+        },
+        {
+          "role": "tooltip",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "tooltip",
+          "label": "Turn on temporary chat"
+        },
+        {
+          "role": "menu",
+          "label": "Menu options"
+        },
+        {
+          "role": "separator"
+        }
+      ]
+    },
+    "Theme": {
+      "roles": [],
+      "generic": [
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Side Navigation"
+        },
+        {
+          "role": "button",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Main actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Additional actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Notebooks"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "New notebookCloud-Based Enterprise PACS Implementation and Strategic JustificationBuilding"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Recents"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "UntitledRacemose Neurocysticercosis Brain MRI AnalysisCasual Leave Application for DoctorC"
+        },
+        {
+          "role": "button",
+          "label": "More options for Untitled"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Racemose Neurocysticercosis Brain MRI Analysis"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Casual Leave Application for Doctor"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Neck Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Pelvic Doppler Ultrasound Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for MRI Temporal Bone Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Confirmation of Instructions"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen Pelvis Report Generation"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT IVU Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CE-CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Scan Report: Sughranbibi"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Left Leg Vascular Doppler Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten Breast Cancer Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Detailed MRI Lumbosacral Spine Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR Transcription"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Chest Scan Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CTA Brain Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Reply"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Ping Pong Response Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Activity Doctor Ai Pro"
+        },
+        {
+          "role": "button",
+          "label": "Gemini Apps Activity"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Settings"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Germany"
+        },
+        {
+          "role": "button",
+          "label": "Update location"
+        },
+        {
+          "role": "textbox",
+          "label": "Enter a prompt for Gemini"
+        },
+        {
+          "role": "button",
+          "label": "Upload & tools"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Flash"
+        },
+        {
+          "role": "button",
+          "label": "Open mode picker, currently Flash"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "tooltip",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "tooltip",
+          "label": "Images"
+        },
+        {
+          "role": "tooltip",
+          "label": "Videos"
+        },
+        {
+          "role": "tooltip",
+          "label": "Library"
+        },
+        {
+          "role": "tooltip",
+          "label": "Settings"
+        },
+        {
+          "role": "tooltip",
+          "label": "Gems"
+        },
+        {
+          "role": "tooltip",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "tooltip",
+          "label": "Turn on temporary chat"
+        },
+        {
+          "role": "menu",
+          "label": "Menu options"
+        },
+        {
+          "role": "separator"
+        }
+      ]
+    },
+    "Media watermark": {
+      "roles": [],
+      "generic": [
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Side Navigation"
+        },
+        {
+          "role": "button",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Main actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Additional actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Notebooks"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "New notebookCloud-Based Enterprise PACS Implementation and Strategic JustificationBuilding"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Recents"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "UntitledRacemose Neurocysticercosis Brain MRI AnalysisCasual Leave Application for DoctorC"
+        },
+        {
+          "role": "button",
+          "label": "More options for Untitled"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Racemose Neurocysticercosis Brain MRI Analysis"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Casual Leave Application for Doctor"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Neck Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Pelvic Doppler Ultrasound Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for MRI Temporal Bone Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Confirmation of Instructions"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen Pelvis Report Generation"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT IVU Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CE-CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Scan Report: Sughranbibi"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Left Leg Vascular Doppler Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten Breast Cancer Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Detailed MRI Lumbosacral Spine Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR Transcription"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Chest Scan Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CTA Brain Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Reply"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Ping Pong Response Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Activity Doctor Ai Pro"
+        },
+        {
+          "role": "button",
+          "label": "Gemini Apps Activity"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Settings"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Germany"
+        },
+        {
+          "role": "button",
+          "label": "Update location"
+        },
+        {
+          "role": "textbox",
+          "label": "Enter a prompt for Gemini"
+        },
+        {
+          "role": "button",
+          "label": "Upload & tools"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Flash"
+        },
+        {
+          "role": "button",
+          "label": "Open mode picker, currently Flash"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "tooltip",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "tooltip",
+          "label": "Images"
+        },
+        {
+          "role": "tooltip",
+          "label": "Videos"
+        },
+        {
+          "role": "tooltip",
+          "label": "Library"
+        },
+        {
+          "role": "tooltip",
+          "label": "Settings"
+        },
+        {
+          "role": "tooltip",
+          "label": "Gems"
+        },
+        {
+          "role": "tooltip",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "tooltip",
+          "label": "Turn on temporary chat"
+        },
+        {
+          "role": "menu",
+          "label": "Menu options"
+        },
+        {
+          "role": "separator"
+        }
+      ]
+    },
+    "Help": {
+      "roles": [],
+      "generic": [
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Side Navigation"
+        },
+        {
+          "role": "button",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Main actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Additional actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Notebooks"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "New notebookCloud-Based Enterprise PACS Implementation and Strategic JustificationBuilding"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Recents"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "UntitledRacemose Neurocysticercosis Brain MRI AnalysisCasual Leave Application for DoctorC"
+        },
+        {
+          "role": "button",
+          "label": "More options for Untitled"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Racemose Neurocysticercosis Brain MRI Analysis"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Casual Leave Application for Doctor"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Neck Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Pelvic Doppler Ultrasound Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for MRI Temporal Bone Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Confirmation of Instructions"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen Pelvis Report Generation"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT IVU Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CE-CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Scan Report: Sughranbibi"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Left Leg Vascular Doppler Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten Breast Cancer Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Detailed MRI Lumbosacral Spine Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR Transcription"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Chest Scan Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CTA Brain Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Reply"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Ping Pong Response Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Activity Doctor Ai Pro"
+        },
+        {
+          "role": "button",
+          "label": "Gemini Apps Activity"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Settings"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Germany"
+        },
+        {
+          "role": "button",
+          "label": "Update location"
+        },
+        {
+          "role": "textbox",
+          "label": "Enter a prompt for Gemini"
+        },
+        {
+          "role": "button",
+          "label": "Upload & tools"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Flash"
+        },
+        {
+          "role": "button",
+          "label": "Open mode picker, currently Flash"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "tooltip",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "tooltip",
+          "label": "Images"
+        },
+        {
+          "role": "tooltip",
+          "label": "Videos"
+        },
+        {
+          "role": "tooltip",
+          "label": "Library"
+        },
+        {
+          "role": "tooltip",
+          "label": "Settings"
+        },
+        {
+          "role": "tooltip",
+          "label": "Gems"
+        },
+        {
+          "role": "tooltip",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "tooltip",
+          "label": "Turn on temporary chat"
+        },
+        {
+          "role": "menu",
+          "label": "Menu options"
+        },
+        {
+          "role": "separator"
+        }
+      ]
+    },
+    "Upload files. Documents, data, code files": {
+      "roles": [],
+      "generic": [
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Side Navigation"
+        },
+        {
+          "role": "button",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Main actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Additional actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Notebooks"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "New notebookCloud-Based Enterprise PACS Implementation and Strategic JustificationBuilding"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Recents"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "UntitledRacemose Neurocysticercosis Brain MRI AnalysisCasual Leave Application for DoctorC"
+        },
+        {
+          "role": "button",
+          "label": "More options for Untitled"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Racemose Neurocysticercosis Brain MRI Analysis"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Casual Leave Application for Doctor"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Neck Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Pelvic Doppler Ultrasound Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for MRI Temporal Bone Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Confirmation of Instructions"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen Pelvis Report Generation"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT IVU Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CE-CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Scan Report: Sughranbibi"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Left Leg Vascular Doppler Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten Breast Cancer Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Detailed MRI Lumbosacral Spine Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR Transcription"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Chest Scan Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CTA Brain Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Reply"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Ping Pong Response Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Activity Doctor Ai Pro"
+        },
+        {
+          "role": "button",
+          "label": "Gemini Apps Activity"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Settings"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Germany"
+        },
+        {
+          "role": "button",
+          "label": "Update location"
+        },
+        {
+          "role": "textbox",
+          "label": "Enter a prompt for Gemini"
+        },
+        {
+          "role": "button",
+          "label": "Upload & tools"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Flash"
+        },
+        {
+          "role": "button",
+          "label": "Open mode picker, currently Flash"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "tooltip",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "tooltip",
+          "label": "Images"
+        },
+        {
+          "role": "tooltip",
+          "label": "Videos"
+        },
+        {
+          "role": "tooltip",
+          "label": "Library"
+        },
+        {
+          "role": "tooltip",
+          "label": "Settings"
+        },
+        {
+          "role": "tooltip",
+          "label": "Gems"
+        },
+        {
+          "role": "tooltip",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "tooltip",
+          "label": "Turn on temporary chat"
+        },
+        {
+          "role": "menu",
+          "label": "Menu options"
+        },
+        {
+          "role": "separator"
+        }
+      ]
+    },
+    "Add from Drive. Sheets, Docs, Slides": {
+      "roles": [],
+      "generic": [
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Side Navigation"
+        },
+        {
+          "role": "button",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Main actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Additional actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Notebooks"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "New notebookCloud-Based Enterprise PACS Implementation and Strategic JustificationBuilding"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Recents"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "UntitledRacemose Neurocysticercosis Brain MRI AnalysisCasual Leave Application for DoctorC"
+        },
+        {
+          "role": "button",
+          "label": "More options for Untitled"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Racemose Neurocysticercosis Brain MRI Analysis"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Casual Leave Application for Doctor"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Neck Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Pelvic Doppler Ultrasound Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for MRI Temporal Bone Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Confirmation of Instructions"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen Pelvis Report Generation"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT IVU Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CE-CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Scan Report: Sughranbibi"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Left Leg Vascular Doppler Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten Breast Cancer Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Detailed MRI Lumbosacral Spine Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR Transcription"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Chest Scan Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CTA Brain Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Reply"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Ping Pong Response Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Activity Doctor Ai Pro"
+        },
+        {
+          "role": "button",
+          "label": "Gemini Apps Activity"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Settings"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Germany"
+        },
+        {
+          "role": "button",
+          "label": "Update location"
+        },
+        {
+          "role": "textbox",
+          "label": "Enter a prompt for Gemini"
+        },
+        {
+          "role": "button",
+          "label": "Upload & tools"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Flash"
+        },
+        {
+          "role": "button",
+          "label": "Open mode picker, currently Flash"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "tooltip",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "tooltip",
+          "label": "Images"
+        },
+        {
+          "role": "tooltip",
+          "label": "Videos"
+        },
+        {
+          "role": "tooltip",
+          "label": "Library"
+        },
+        {
+          "role": "tooltip",
+          "label": "Settings"
+        },
+        {
+          "role": "tooltip",
+          "label": "Gems"
+        },
+        {
+          "role": "tooltip",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "tooltip",
+          "label": "Turn on temporary chat"
+        },
+        {
+          "role": "menu",
+          "label": "Menu options"
+        },
+        {
+          "role": "separator"
+        }
+      ]
+    },
+    "More uploads": {
+      "roles": [],
+      "generic": [
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Side Navigation"
+        },
+        {
+          "role": "button",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Main actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Additional actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Notebooks"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "New notebookCloud-Based Enterprise PACS Implementation and Strategic JustificationBuilding"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Recents"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "UntitledRacemose Neurocysticercosis Brain MRI AnalysisCasual Leave Application for DoctorC"
+        },
+        {
+          "role": "button",
+          "label": "More options for Untitled"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Racemose Neurocysticercosis Brain MRI Analysis"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Casual Leave Application for Doctor"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Neck Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Pelvic Doppler Ultrasound Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for MRI Temporal Bone Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Confirmation of Instructions"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen Pelvis Report Generation"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT IVU Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CE-CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Scan Report: Sughranbibi"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Left Leg Vascular Doppler Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten Breast Cancer Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Detailed MRI Lumbosacral Spine Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR Transcription"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Chest Scan Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CTA Brain Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Reply"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Ping Pong Response Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Activity Doctor Ai Pro"
+        },
+        {
+          "role": "button",
+          "label": "Gemini Apps Activity"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Settings"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Germany"
+        },
+        {
+          "role": "button",
+          "label": "Update location"
+        },
+        {
+          "role": "textbox",
+          "label": "Enter a prompt for Gemini"
+        },
+        {
+          "role": "button",
+          "label": "Upload & tools"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Flash"
+        },
+        {
+          "role": "button",
+          "label": "Open mode picker, currently Flash"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "tooltip",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "tooltip",
+          "label": "Images"
+        },
+        {
+          "role": "tooltip",
+          "label": "Videos"
+        },
+        {
+          "role": "tooltip",
+          "label": "Library"
+        },
+        {
+          "role": "tooltip",
+          "label": "Settings"
+        },
+        {
+          "role": "tooltip",
+          "label": "Gems"
+        },
+        {
+          "role": "tooltip",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "tooltip",
+          "label": "Turn on temporary chat"
+        },
+        {
+          "role": "menu",
+          "label": "Menu options"
+        },
+        {
+          "role": "separator"
+        }
+      ]
+    },
+    "More tools": {
+      "roles": [],
+      "generic": [
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Side Navigation"
+        },
+        {
+          "role": "button",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Main actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "Additional actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Notebooks"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "New notebookCloud-Based Enterprise PACS Implementation and Strategic JustificationBuilding"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Open notebook actions menu"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Toggle Recents"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "navigation",
+          "label": "UntitledRacemose Neurocysticercosis Brain MRI AnalysisCasual Leave Application for DoctorC"
+        },
+        {
+          "role": "button",
+          "label": "More options for Untitled"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Racemose Neurocysticercosis Brain MRI Analysis"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Casual Leave Application for Doctor"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Neck Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Pelvic Doppler Ultrasound Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for MRI Temporal Bone Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Confirmation of Instructions"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen Pelvis Report Generation"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT IVU Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CE-CT Abdomen & Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CT Abdomen and Pelvis Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Scan Report: Sughranbibi"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Left Leg Vascular Doppler Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten Breast Cancer Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Detailed MRI Lumbosacral Spine Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR Transcription"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Handwritten CT Report OCR"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for HRCT Chest Scan Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for CTA Brain Radiology Report"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Reply"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Simple Ping Pong Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "More options for Ping Pong Response Test"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Activity Doctor Ai Pro"
+        },
+        {
+          "role": "button",
+          "label": "Gemini Apps Activity"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Settings"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Germany"
+        },
+        {
+          "role": "button",
+          "label": "Update location"
+        },
+        {
+          "role": "textbox",
+          "label": "Enter a prompt for Gemini"
+        },
+        {
+          "role": "button",
+          "label": "Upload & tools"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "group",
+          "label": "Flash"
+        },
+        {
+          "role": "button",
+          "label": "Open mode picker, currently Flash"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "button",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "img"
+        },
+        {
+          "role": "tooltip",
+          "label": "Dictate (^⇧D)"
+        },
+        {
+          "role": "tooltip",
+          "label": "Images"
+        },
+        {
+          "role": "tooltip",
+          "label": "Videos"
+        },
+        {
+          "role": "tooltip",
+          "label": "Library"
+        },
+        {
+          "role": "tooltip",
+          "label": "Settings"
+        },
+        {
+          "role": "tooltip",
+          "label": "Gems"
+        },
+        {
+          "role": "tooltip",
+          "label": "Close sidebar"
+        },
+        {
+          "role": "tooltip",
+          "label": "Turn on temporary chat"
+        },
+        {
+          "role": "menu",
+          "label": "Menu options"
+        },
+        {
+          "role": "separator"
+        }
+      ]
+    }
+  },
+  "selector_checks": {
+    "prompt_input": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "div.ql-editor[contenteditable='true']",
+          "count": 1
+        },
+        {
+          "sel": "rich-textarea div.ql-editor[contenteditable='true']",
+          "count": 1
+        },
+        {
+          "sel": "div[contenteditable='true'][aria-label*='Enter a prompt']",
+          "count": 1
+        },
+        {
+          "sel": "div[contenteditable='true'][data-placeholder='Ask Gemini']",
+          "count": 1
+        },
+        {
+          "sel": "textarea[aria-label*='prompt']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "submit_button": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[aria-label*='Send message']",
+          "count": 0
+        },
+        {
+          "sel": "button.send-button",
+          "count": 0
+        },
+        {
+          "sel": "button[mattooltip*='Send']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "response_container": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "message-content",
+          "count": 0
+        },
+        {
+          "sel": "div.markdown",
+          "count": 0
+        },
+        {
+          "sel": ".markdown",
+          "count": 0
+        },
+        {
+          "sel": "model-response",
+          "count": 0
+        },
+        {
+          "sel": "message-content.model-response-text",
+          "count": 0
+        },
+        {
+          "sel": "div.model-response-text",
+          "count": 0
+        },
+        {
+          "sel": "div[data-response-index]",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "authenticated_signal": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "rich-textarea",
+          "count": 1
+        },
+        {
+          "sel": "a[aria-label*='Google Account']",
+          "count": 2
+        },
+        {
+          "sel": "img.gb_P",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "login_signal": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "a[href*='accounts.google.com']",
+          "count": 2
+        },
+        {
+          "sel": "input[type='email']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": [
+        "text=Sign in"
+      ]
+    },
+    "streaming_indicator": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[aria-label*='Stop']",
+          "count": 0
+        },
+        {
+          "sel": "div.blinking-cursor",
+          "count": 0
+        },
+        {
+          "sel": "progress-bar",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "file_input": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "input[type='file']",
+          "count": 3
+        },
+        {
+          "sel": "input[name='Filedata']",
+          "count": 0
+        },
+        {
+          "sel": "input[accept*='audio']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "upload_menu_button": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "button[aria-label*='Upload' i]",
+          "count": 2
+        },
+        {
+          "sel": "button[mattooltip*='Upload' i]",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "upload_files_item": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "[role='menuitem'][aria-label*='Upload files' i]",
+          "count": 1
+        },
+        {
+          "sel": "button[aria-label*='Upload files' i]",
+          "count": 1
+        },
+        {
+          "sel": "[aria-label*='Upload files' i]",
+          "count": 1
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "new_chat": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "a[aria-label='New chat']",
+          "count": 2
+        },
+        {
+          "sel": ".side-nav-sparkle-button",
+          "count": 2
+        },
+        {
+          "sel": "[data-test-id='new-chat-button']",
+          "count": 1
+        }
+      ],
+      "playwrightOnly": []
+    }
+  },
+  "desired_defaults": {
+    "model": "3.8 Flash",
+    "thinking": false
+  },
+  "raw_controls": [
+    {
+      "tag": "a",
+      "label": "New chat"
+    },
+    {
+      "tag": "button",
+      "label": "Temporary chat"
+    },
+    {
+      "tag": "button",
+      "label": "Close sidebar"
+    },
+    {
+      "tag": "a",
+      "label": "New chat"
+    },
+    {
+      "tag": "a",
+      "label": "Search chats"
+    },
+    {
+      "tag": "a",
+      "label": "Images"
+    },
+    {
+      "tag": "a",
+      "label": "Videos"
+    },
+    {
+      "tag": "a",
+      "label": "Library"
+    },
+    {
+      "tag": "a",
+      "label": "Gems"
+    },
+    {
+      "tag": "button",
+      "label": "Toggle Notebooks",
+      "expanded": "true"
+    },
+    {
+      "tag": "a",
+      "label": "New notebook"
+    },
+    {
+      "tag": "a",
+      "label": "Cloud-Based Enterprise PACS Implementation and Strategic Justification"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "true"
+    },
+    {
+      "tag": "button",
+      "label": "Open notebook actions menu"
+    },
+    {
+      "tag": "a",
+      "label": "Building Agentic Memory Systems for GitHub Copilot"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "true"
+    },
+    {
+      "tag": "button",
+      "label": "Open notebook actions menu"
+    },
+    {
+      "tag": "a",
+      "label": "All notebooks"
+    },
+    {
+      "tag": "button",
+      "label": "Toggle Recents",
+      "expanded": "true"
+    },
+    {
+      "tag": "a",
+      "label": "Untitled"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Untitled"
+    },
+    {
+      "tag": "a",
+      "label": "Racemose Neurocysticercosis Brain MRI Analysis"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Racemose Neurocysticercosis Brain MRI Analysis"
+    },
+    {
+      "tag": "a",
+      "label": "Casual Leave Application for Doctor"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Casual Leave Application for Doctor"
+    },
+    {
+      "tag": "a",
+      "label": "CT Neck Radiology Report"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for CT Neck Radiology Report"
+    },
+    {
+      "tag": "a",
+      "label": "Pelvic Doppler Ultrasound Report"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Pelvic Doppler Ultrasound Report"
+    },
+    {
+      "tag": "a",
+      "label": "MRI Temporal Bone Radiology Report"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for MRI Temporal Bone Radiology Report"
+    },
+    {
+      "tag": "a",
+      "label": "Confirmation of Instructions"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Confirmation of Instructions"
+    },
+    {
+      "tag": "a",
+      "label": "CT Abdomen Pelvis Report Generation"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for CT Abdomen Pelvis Report Generation"
+    },
+    {
+      "tag": "a",
+      "label": "CT IVU Radiology Report"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for CT IVU Radiology Report"
+    },
+    {
+      "tag": "a",
+      "label": "CT Abdomen and Pelvis Report"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for CT Abdomen and Pelvis Report"
+    },
+    {
+      "tag": "a",
+      "label": "CT Abdomen & Pelvis Report"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for CT Abdomen & Pelvis Report"
+    },
+    {
+      "tag": "a",
+      "label": "CE-CT Abdomen & Pelvis Report"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for CE-CT Abdomen & Pelvis Report"
+    },
+    {
+      "tag": "a",
+      "label": "CT Abdomen and Pelvis Report"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for CT Abdomen and Pelvis Report"
+    },
+    {
+      "tag": "a",
+      "label": "HRCT Scan Report: Sughranbibi"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for HRCT Scan Report: Sughranbibi"
+    },
+    {
+      "tag": "a",
+      "label": "Left Leg Vascular Doppler Report"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Left Leg Vascular Doppler Report"
+    },
+    {
+      "tag": "a",
+      "label": "Handwritten Breast Cancer Radiology Report"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Handwritten Breast Cancer Radiology Report"
+    },
+    {
+      "tag": "a",
+      "label": "Detailed MRI Lumbosacral Spine Report"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Detailed MRI Lumbosacral Spine Report"
+    },
+    {
+      "tag": "a",
+      "label": "Handwritten CT Report OCR Transcription"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Handwritten CT Report OCR Transcription"
+    },
+    {
+      "tag": "a",
+      "label": "Handwritten CT Report OCR"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Handwritten CT Report OCR"
+    },
+    {
+      "tag": "a",
+      "label": "HRCT Chest Scan Report"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for HRCT Chest Scan Report"
+    },
+    {
+      "tag": "a",
+      "label": "CTA Brain Radiology Report"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for CTA Brain Radiology Report"
+    },
+    {
+      "tag": "a",
+      "label": "Simple Ping Pong Test"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Simple Ping Pong Test"
+    },
+    {
+      "tag": "a",
+      "label": "Simple Ping Pong Reply"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Simple Ping Pong Reply"
+    },
+    {
+      "tag": "a",
+      "label": "Simple Ping Pong Test"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Simple Ping Pong Test"
+    },
+    {
+      "tag": "a",
+      "label": "Ping Pong Response Test"
+    },
+    {
+      "tag": "gem-icon-button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "More options for Ping Pong Response Test"
+    },
+    {
+      "tag": "button",
+      "label": "Gemini Apps Activity"
+    },
+    {
+      "tag": "a",
+      "label": "Google Account: Doctor Ai (xhsjs5901@gmail.com)"
+    },
+    {
+      "tag": "button",
+      "label": "Settings",
+      "expanded": "true",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "rich-textarea",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Upload & tools",
+      "expanded": "true",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Open mode picker, currently Flash",
+      "expanded": "false",
+      "haspopup": "true"
+    },
+    {
+      "tag": "button",
+      "label": "Dictate (^⇧D)"
+    },
+    {
+      "tag": "a",
+      "role": "menuitem",
+      "label": "Personal Intelligence"
+    },
+    {
+      "tag": "a",
+      "role": "menuitem",
+      "label": "Import memory to Gemini"
+    },
+    {
+      "tag": "a",
+      "role": "menuitem",
+      "label": "Usage limits"
+    },
+    {
+      "tag": "a",
+      "role": "menuitem",
+      "label": "Scheduled actions"
+    },
+    {
+      "tag": "a",
+      "role": "menuitem",
+      "label": "Gems"
+    },
+    {
+      "tag": "a",
+      "role": "menuitem",
+      "label": "Your public links"
+    },
+    {
+      "tag": "button",
+      "role": "menuitem",
+      "label": "Theme",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "a",
+      "role": "menuitem",
+      "label": "Manage subscription"
+    },
+    {
+      "tag": "a",
+      "role": "menuitem",
+      "label": "Upgrade to Google AI Ultra"
+    },
+    {
+      "tag": "a",
+      "role": "menuitem",
+      "label": "Gemini Notebook"
+    },
+    {
+      "tag": "button",
+      "role": "menuitem",
+      "label": "Media watermark",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "role": "menuitem",
+      "label": "Send feedback"
+    },
+    {
+      "tag": "button",
+      "role": "menuitem",
+      "label": "Help",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "role": "menuitem",
+      "label": "Upload files. Documents, data, code files",
+      "haspopup": "dialog"
+    },
+    {
+      "tag": "button"
+    },
+    {
+      "tag": "button",
+      "role": "menuitem",
+      "label": "Add from Drive. Sheets, Docs, Slides",
+      "haspopup": "dialog"
+    },
+    {
+      "tag": "button",
+      "label": "More uploads",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button"
+    },
+    {
+      "tag": "button"
+    },
+    {
+      "tag": "button",
+      "role": "menuitemcheckbox",
+      "label": "Create image",
+      "checked": "false"
+    },
+    {
+      "tag": "button",
+      "role": "menuitemcheckbox",
+      "label": "Create video",
+      "checked": "false"
+    },
+    {
+      "tag": "button",
+      "label": "More tools",
+      "expanded": "false",
+      "haspopup": "menu"
+    }
+  ]
+}

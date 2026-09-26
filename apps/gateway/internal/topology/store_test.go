@@ -17,7 +17,7 @@ func seededMemoryStore() *MemoryStore {
 	store.AddInstance(BrowserInstance{InstanceID: "inst-z", WorkerID: "w9", TenantID: "tenant-2", Engine: "firefox", State: "ready", CreatedAt: time.Now()})
 
 	store.AddContext(ProviderContext{ContextID: "ctx-a", InstanceID: "inst-a", TenantID: "tenant-1", TargetID: "chatgpt_web", IdentityRef: "id-1", LoginState: "authenticated", ConversationModel: "url", HasStorageState: true, MaxTabs: 2, CreatedAt: time.Now()})
-	store.AddContext(ProviderContext{ContextID: "ctx-z", InstanceID: "inst-z", TenantID: "tenant-2", TargetID: "claude_web", IdentityRef: "id-9", LoginState: "logged_out", ConversationModel: "spa-singleton", MaxTabs: 1, CreatedAt: time.Now()})
+	store.AddContext(ProviderContext{ContextID: "ctx-z", InstanceID: "inst-z", TenantID: "tenant-2", TargetID: "deepseek_web", IdentityRef: "id-9", LoginState: "logged_out", ConversationModel: "spa-singleton", MaxTabs: 1, CreatedAt: time.Now()})
 
 	store.AddTab(BrowserTab{TabID: "tab-a", ContextID: "ctx-a", State: "ready", CreatedAt: time.Now()})
 	store.AddTab(BrowserTab{TabID: "tab-z", ContextID: "ctx-z", State: "busy", CreatedAt: time.Now()})
@@ -86,14 +86,14 @@ func TestMemoryStoreUpdateLoginState(t *testing.T) {
 		t.Fatalf("last_health_at not stamped: %+v", contexts[0].LastHealthAt)
 	}
 
-	// Tenant isolation: updating (tenant-1, claude_web) must not touch tenant-2's
-	// claude_web context.
-	updated, err = store.UpdateContextLoginState(ctx, "tenant-1", "claude_web", "login_required", at)
+	// Tenant isolation: updating (tenant-1, deepseek_web) must not touch tenant-2's
+	// deepseek_web context.
+	updated, err = store.UpdateContextLoginState(ctx, "tenant-1", "deepseek_web", "login_required", at)
 	if err != nil {
 		t.Fatalf("update login state: %v", err)
 	}
 	if updated != 0 {
-		t.Fatalf("expected 0 rows updated for missing (tenant-1, claude_web), got %d", updated)
+		t.Fatalf("expected 0 rows updated for missing (tenant-1, deepseek_web), got %d", updated)
 	}
 	other, _ := store.ListContexts(ctx, ContextFilter{TenantID: "tenant-2"})
 	if len(other) != 1 || other[0].LoginState != "logged_out" {
@@ -209,7 +209,7 @@ func TestSQLiteStoreRedactionAndJoin(t *testing.T) {
 	}
 	if _, err := db.ExecContext(ctx,
 		`INSERT INTO gateway_provider_contexts (context_id, instance_id, tenant_id, target_id, identity_ref, login_state, conversation_model, max_tabs, created_at) VALUES (?,?,?,?,?,?,?,?,?)`,
-		"ctx-2", "inst-1", "tenant-2", "claude_web", "id-2", "logged_out", "url", 2, now); err != nil {
+		"ctx-2", "inst-1", "tenant-2", "deepseek_web", "id-2", "logged_out", "url", 2, now); err != nil {
 		t.Fatalf("seed context 2: %v", err)
 	}
 	if _, err := db.ExecContext(ctx,
@@ -280,7 +280,7 @@ func TestSQLiteStoreNullableFields(t *testing.T) {
 func TestConcurrencyRegistry(t *testing.T) {
 	registry := NewConcurrencyRegistry()
 	registry.Report("tenant-1", ConcurrencyView{Target: "chatgpt_web", IdentityRef: "id-1", CurrentCap: 3, Min: 1, Max: 5, InFlight: 2, LastChangeReason: "decrease"})
-	registry.Report("tenant-1", ConcurrencyView{Target: "claude_web", IdentityRef: "id-2", CurrentCap: 1})
+	registry.Report("tenant-1", ConcurrencyView{Target: "deepseek_web", IdentityRef: "id-2", CurrentCap: 1})
 	registry.Report("tenant-2", ConcurrencyView{Target: "chatgpt_web", IdentityRef: "id-9", CurrentCap: 4})
 
 	views := registry.List("tenant-1")
@@ -288,7 +288,7 @@ func TestConcurrencyRegistry(t *testing.T) {
 		t.Fatalf("expected 2 views for tenant-1, got %d", len(views))
 	}
 	// Sorted by target then identity.
-	if views[0].Target != "chatgpt_web" || views[1].Target != "claude_web" {
+	if views[0].Target != "chatgpt_web" || views[1].Target != "deepseek_web" {
 		t.Fatalf("unexpected ordering: %+v", views)
 	}
 	if views[0].LastChangeAt.IsZero() {

@@ -1,0 +1,612 @@
+{
+  "id": "deepseek_web",
+  "captured_at": "2026-09-26T16:24:05.541Z",
+  "cdp": "http://127.0.0.1:15923",
+  "opened_tab": true,
+  "url": "https://chat.deepseek.com/",
+  "title": "DeepSeek - Into the Unknown",
+  "likely_login_wall": false,
+  "loginish": [],
+  "composers": [
+    {
+      "tag": "textarea",
+      "placeholder": "Message DeepSeek"
+    }
+  ],
+  "manifest_catalog_compare": {
+    "mode": {
+      "kind": "choice",
+      "values": [
+        {
+          "value": "Expert",
+          "seen": false
+        },
+        {
+          "value": "Instant",
+          "seen": false
+        },
+        {
+          "value": "Vision",
+          "seen": false
+        }
+      ]
+    },
+    "deepthink": {
+      "kind": "toggle",
+      "note": "toggle state not verifiable read-only"
+    }
+  },
+  "menu_captures": {},
+  "selector_checks": {
+    "prompt_input": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "textarea[placeholder='Message DeepSeek']",
+          "count": 1
+        },
+        {
+          "sel": "textarea#chat-input",
+          "count": 0
+        },
+        {
+          "sel": "textarea[placeholder*='Message']",
+          "count": 1
+        },
+        {
+          "sel": "div[contenteditable='true']",
+          "count": 0
+        },
+        {
+          "sel": "submit_button",
+          "count": 0
+        },
+        {
+          "sel": "div[role='button'][aria-disabled='false']",
+          "count": 0
+        },
+        {
+          "sel": "div[role='button'].ds-button--primary.ds-button--circle:not([class*='disabled'])",
+          "count": 0
+        },
+        {
+          "sel": "div[role='button'].ds-button--primary.ds-button--circle",
+          "count": 1
+        },
+        {
+          "sel": "button[type='submit']",
+          "count": 0
+        },
+        {
+          "sel": "button[aria-label*='Send']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "response_container": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "div.ds-markdown.ds-assistant-message-main-content",
+          "count": 0
+        },
+        {
+          "sel": "div[class*='message'][class*='assistant']",
+          "count": 0
+        },
+        {
+          "sel": "div.markdown-body",
+          "count": 0
+        },
+        {
+          "sel": "div.ds-markdown",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": [
+        "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' ds-markdown ')][not(ancestor::*[contains(@class, 'ds-think')])]"
+      ]
+    },
+    "final_answer_container": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "div.ds-markdown.ds-assistant-message-main-content",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": [
+        "xpath=//div[contains(concat(' ', normalize-space(@class), ' '), ' ds-markdown ')][not(ancestor::*[contains(@class, 'ds-think')])]"
+      ]
+    },
+    "authenticated_signal": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "textarea#chat-input",
+          "count": 0
+        },
+        {
+          "sel": "textarea[placeholder*='Message']",
+          "count": 1
+        },
+        {
+          "sel": "div[class*='sidebar']",
+          "count": 0
+        },
+        {
+          "sel": "img[alt*='avatar']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "login_signal": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[class*='login']",
+          "count": 0
+        },
+        {
+          "sel": "input[type='password']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": [
+        "text=Log in"
+      ]
+    },
+    "streaming_indicator": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "div[class*='stop']",
+          "count": 0
+        },
+        {
+          "sel": ".result-streaming",
+          "count": 0
+        },
+        {
+          "sel": "div[aria-label*='Stop']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "file_input": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "input[type='file']",
+          "count": 1
+        },
+        {
+          "sel": "new_chat",
+          "count": 0
+        },
+        {
+          "sel": "div[tabindex='0']:has(> span:text-is('New chat'))",
+          "error": true
+        },
+        {
+          "sel": "div:has(> span:text-is('New chat'))",
+          "error": true
+        },
+        {
+          "sel": "span:text-is('New chat')",
+          "error": true
+        }
+      ],
+      "playwrightOnly": []
+    }
+  },
+  "desired_defaults": {
+    "mode": "Expert",
+    "deepthink": true
+  },
+  "raw_controls": [
+    {
+      "tag": "a",
+      "label": "PONG request"
+    },
+    {
+      "tag": "a",
+      "label": "PONG"
+    },
+    {
+      "tag": "a",
+      "label": "PONG"
+    },
+    {
+      "tag": "a",
+      "label": "PONG"
+    },
+    {
+      "tag": "a",
+      "label": "PONG"
+    },
+    {
+      "tag": "a",
+      "label": "PONG"
+    },
+    {
+      "tag": "a",
+      "label": "PONG"
+    },
+    {
+      "tag": "a",
+      "label": "Project techstack scan"
+    },
+    {
+      "tag": "a",
+      "label": "Project techstack scan"
+    },
+    {
+      "tag": "a",
+      "label": "Ready"
+    },
+    {
+      "tag": "a",
+      "label": "Ready"
+    },
+    {
+      "tag": "a",
+      "label": "Ready"
+    },
+    {
+      "tag": "a",
+      "label": "Ready one word"
+    },
+    {
+      "tag": "a",
+      "label": "Ready"
+    },
+    {
+      "tag": "a",
+      "label": "Project techstack scan"
+    },
+    {
+      "tag": "a",
+      "label": "Web app tech stack analysis"
+    },
+    {
+      "tag": "a",
+      "label": "Web app tech stack analysis"
+    },
+    {
+      "tag": "a",
+      "label": "Web app tech stack analysis"
+    },
+    {
+      "tag": "a",
+      "label": "Web app tech stack analysis"
+    },
+    {
+      "tag": "a",
+      "label": "Envelope probe"
+    },
+    {
+      "tag": "a",
+      "label": "Project tech stack scan"
+    },
+    {
+      "tag": "a",
+      "label": "Verify exact word"
+    },
+    {
+      "tag": "a",
+      "label": "Working check"
+    },
+    {
+      "tag": "a",
+      "label": "Working"
+    },
+    {
+      "tag": "a",
+      "label": "OK"
+    },
+    {
+      "tag": "a",
+      "label": "Agent check"
+    },
+    {
+      "tag": "a",
+      "label": "Read note.txt"
+    },
+    {
+      "tag": "a",
+      "label": "Read note.txt"
+    },
+    {
+      "tag": "a",
+      "label": "Read note.txt"
+    },
+    {
+      "tag": "a",
+      "label": "Read note.txt"
+    },
+    {
+      "tag": "a",
+      "label": "Read note.txt"
+    },
+    {
+      "tag": "a",
+      "label": "Read note.txt"
+    },
+    {
+      "tag": "a",
+      "label": "Read note.txt"
+    },
+    {
+      "tag": "a",
+      "label": "Read note"
+    },
+    {
+      "tag": "a",
+      "label": "Read note file"
+    },
+    {
+      "tag": "a",
+      "label": "Read note file"
+    },
+    {
+      "tag": "a",
+      "label": "note.txt"
+    },
+    {
+      "tag": "a",
+      "label": "auto-ok"
+    },
+    {
+      "tag": "a",
+      "label": "auto-ok"
+    },
+    {
+      "tag": "a",
+      "label": "2026-09-10,Thursday,Pakistan,Web,English2+2"
+    },
+    {
+      "tag": "a",
+      "label": "auto-ok"
+    },
+    {
+      "tag": "a",
+      "label": "OK"
+    },
+    {
+      "tag": "a",
+      "label": "Single word reply"
+    },
+    {
+      "tag": "a",
+      "label": "2026-09-08,Tuesday,France,Web,English"
+    },
+    {
+      "tag": "a",
+      "label": "token"
+    },
+    {
+      "tag": "a",
+      "label": "OK"
+    },
+    {
+      "tag": "a",
+      "label": "UBAG_PARITY_SMOKE"
+    },
+    {
+      "tag": "a",
+      "label": "2026-09-07,Tuesday,France,Web,English"
+    },
+    {
+      "tag": "a",
+      "label": "OK"
+    },
+    {
+      "tag": "a",
+      "label": "20-Day OET Study Plan"
+    },
+    {
+      "tag": "a",
+      "label": "CT KUB report editing refinement"
+    },
+    {
+      "tag": "a",
+      "label": "CT KUB Report Polishing"
+    },
+    {
+      "tag": "a",
+      "label": "Assistant Ready to Help"
+    },
+    {
+      "tag": "a",
+      "label": "2026-07-23,Friday,France,Web,en"
+    },
+    {
+      "tag": "a",
+      "label": "RADIOPAD DEEPSEEK OK"
+    },
+    {
+      "tag": "a",
+      "label": "4 times 4 equals 16"
+    },
+    {
+      "tag": "a",
+      "label": "6 times 7 equals 42"
+    },
+    {
+      "tag": "a",
+      "label": "17 times 23 calculation"
+    },
+    {
+      "tag": "a",
+      "label": "Pong Response"
+    },
+    {
+      "tag": "a",
+      "label": "Pong response"
+    },
+    {
+      "tag": "a",
+      "label": "Single word OK response"
+    },
+    {
+      "tag": "a",
+      "label": "Single word OK response"
+    },
+    {
+      "tag": "a",
+      "label": "CT KUB Report Generation"
+    },
+    {
+      "tag": "a",
+      "label": "Production Connectivity Test Response"
+    },
+    {
+      "tag": "a",
+      "label": "Verification Response"
+    },
+    {
+      "tag": "a",
+      "label": "Single word ok response"
+    },
+    {
+      "tag": "a",
+      "label": "Deepseek Web Round 3 Confirmation"
+    },
+    {
+      "tag": "a",
+      "label": "Deepseek Web Round 2 Confirmation"
+    },
+    {
+      "tag": "a",
+      "label": "Round 1 Status Confirmation"
+    },
+    {
+      "tag": "a",
+      "label": "Round 2 Ready Go"
+    },
+    {
+      "tag": "a",
+      "label": "Round 1 Deepseek Web Ready"
+    },
+    {
+      "tag": "a",
+      "label": "25 percent of 80 calculation"
+    },
+    {
+      "tag": "a",
+      "label": "Radiology Backwards Spelling"
+    },
+    {
+      "tag": "a",
+      "label": "First four prime numbers"
+    },
+    {
+      "tag": "a",
+      "label": "12 times 12 answer"
+    },
+    {
+      "tag": "a",
+      "label": "12 times 12 answer"
+    },
+    {
+      "tag": "a",
+      "label": "17 times 23 prime factorization"
+    },
+    {
+      "tag": "a",
+      "label": "17 times 23 prime factorization"
+    },
+    {
+      "tag": "a",
+      "label": "Impression for CT Chest"
+    },
+    {
+      "tag": "a",
+      "label": "CT Chest Impression"
+    },
+    {
+      "tag": "a",
+      "label": "No findings provided"
+    },
+    {
+      "tag": "a",
+      "label": "One-sentence normal chest CT impression"
+    },
+    {
+      "tag": "a",
+      "label": "CT Chest Impression"
+    },
+    {
+      "tag": "a",
+      "label": "Normal CT follow-up"
+    },
+    {
+      "tag": "a",
+      "label": "Normal CT impression"
+    },
+    {
+      "tag": "a",
+      "label": "CT Chest Impression"
+    },
+    {
+      "tag": "a",
+      "label": "Chest X-ray Impression"
+    },
+    {
+      "tag": "a",
+      "label": "17 times 23"
+    },
+    {
+      "tag": "a",
+      "label": "17 times 23"
+    },
+    {
+      "tag": "a",
+      "label": "Chest X-ray normal impression"
+    },
+    {
+      "tag": "a",
+      "label": "Standard normal chest X-ray impression"
+    },
+    {
+      "tag": "a",
+      "label": "Chest X-ray normal impression"
+    },
+    {
+      "tag": "a",
+      "label": "10 plus 5"
+    },
+    {
+      "tag": "a",
+      "label": "Capital of Japan"
+    },
+    {
+      "tag": "a",
+      "label": "7 times 6"
+    },
+    {
+      "tag": "a",
+      "label": "Heart chambers"
+    },
+    {
+      "tag": "a",
+      "label": "2026-06-21,Sunday,France,Web,English"
+    },
+    {
+      "tag": "a",
+      "label": "Normal adult body temperature Celsius"
+    },
+    {
+      "tag": "a",
+      "label": "Resting heart rate range"
+    },
+    {
+      "tag": "a",
+      "label": "2026-06-20,Sunday,France,Web,EnglishBETA||BETA"
+    }
+  ]
+}

@@ -1,0 +1,130 @@
+{
+  "started_at": "2026-09-26T16:36:50.790Z",
+  "providers": {
+    "duckai_web": {
+      "settings": [
+        {
+          "key": "model",
+          "kind": "choice",
+          "desired": "GPT-5.6 Luna",
+          "steps": [
+            "attempt1: open via button[data-testid='model-picker-button']",
+            "attempt1: satisfied=false (checked {\"n\":-1})",
+            "attempt1: apply_click via [role='menuitemradio']:has-text(\"GPT-5.6 Luna\")",
+            "attempt2: open via button[data-testid='model-picker-button']",
+            "attempt2: satisfied=false (checked {\"n\":-1})",
+            "attempt2: apply_click FAILED",
+            "attempt3: open via button[data-testid='model-picker-button']",
+            "attempt3: satisfied=false (checked {\"n\":-1})"
+          ],
+          "state": "unverified"
+        },
+        {
+          "key": "reasoning",
+          "kind": "choice",
+          "desired": "Reasoning",
+          "steps": [
+            "attempt1: open via button[data-testid='duckai-reasoning-button']",
+            "attempt1: satisfied=false (checked {\"n\":-1})",
+            "attempt1: apply_click via [role='menuitemradio']:has-text(\"Reasoning\")",
+            "attempt2: open via button[data-testid='duckai-reasoning-button']",
+            "attempt2: satisfied=false (checked {\"n\":-1})",
+            "attempt2: apply_click via [role='menuitemradio']:has-text(\"Reasoning\")",
+            "attempt3: open via button[data-testid='duckai-reasoning-button']",
+            "attempt3: satisfied=false (checked {\"n\":-1})"
+          ],
+          "state": "unverified"
+        },
+        {
+          "key": "web_search",
+          "kind": "toggle",
+          "desired": false,
+          "steps": [
+            "attempt1: open via button[data-testid='duckai-tools-button']",
+            "attempt1: satisfied=true (checked {\"onWhen\":\"[aria-checked='true']:has-text(\\\"Web Search\\\")\",\"n\":0})"
+          ],
+          "state": "already_set"
+        }
+      ]
+    },
+    "chatgpt_web": {
+      "settings": [
+        {
+          "key": "model",
+          "kind": "choice",
+          "desired": "GPT-5.6 Sol",
+          "steps": [
+            "attempt1: open via button[aria-label*='Select ChatGPT model']",
+            "attempt1: satisfied=false (checked {\"n\":-1})",
+            "attempt1: apply_click via [role='menuitemradio']:has-text(\"GPT-5.6 Sol\")",
+            "attempt2: open via button[aria-label*='Select ChatGPT model']",
+            "attempt2: satisfied=false (checked {\"n\":-1})",
+            "attempt2: apply_click via [role='menuitemradio']:has-text(\"GPT-5.6 Sol\")",
+            "attempt3: open via button[aria-label*='Select ChatGPT model']",
+            "attempt3: satisfied=false (checked {\"n\":-1})"
+          ],
+          "state": "unverified"
+        },
+        {
+          "key": "thinking",
+          "kind": "choice",
+          "desired": "Medium",
+          "steps": [
+            "attempt1: open FAILED (no candidate visible)",
+            "attempt1: satisfied=false (checked {\"n\":-1})",
+            "attempt1: apply_click FAILED",
+            "attempt2: open FAILED (no candidate visible)",
+            "attempt2: satisfied=false (checked {\"n\":-1})",
+            "attempt2: apply_click FAILED",
+            "attempt3: open FAILED (no candidate visible)",
+            "attempt3: satisfied=false (checked {\"n\":-1})"
+          ],
+          "state": "unverified"
+        }
+      ]
+    },
+    "gemini_web": {
+      "settings": [
+        {
+          "key": "model",
+          "kind": "choice",
+          "desired": "3.8 Flash",
+          "steps": [
+            "attempt1: open via button[data-test-id='bard-mode-menu-button']",
+            "attempt1: satisfied=false (checked {\"n\":-1})",
+            "attempt1: apply_click via gem-menu-item:has-text(\"3.8 Flash\")",
+            "attempt2: open via button[data-test-id='bard-mode-menu-button']",
+            "attempt2: satisfied=false (checked {\"n\":-1})",
+            "attempt2: apply_click via gem-menu-item:has-text(\"3.8 Flash\")",
+            "attempt3: open via button[data-test-id='bard-mode-menu-button']",
+            "attempt3: satisfied=false (checked {\"n\":-1})"
+          ],
+          "state": "unverified"
+        },
+        {
+          "key": "thinking",
+          "kind": "toggle",
+          "desired": false,
+          "steps": [
+            "attempt1: open via button[data-test-id='bard-mode-menu-button']",
+            "attempt1: satisfied=true (checked {\"onWhen\":\"gem-menu-item.selected:has-text('Extended thinking')\",\"n\":0})"
+          ],
+          "state": "already_set"
+        }
+      ]
+    },
+    "deepseek_web": {
+      "settings": [
+        {
+          "key": "deepthink",
+          "kind": "toggle",
+          "desired": true,
+          "steps": [
+            "attempt1: satisfied=true (checked {\"onWhen\":\"div.ds-toggle-button[aria-pressed='true']:has-text('DeepThink')\",\"n\":1})"
+          ],
+          "state": "already_set"
+        }
+      ]
+    }
+  }
+}

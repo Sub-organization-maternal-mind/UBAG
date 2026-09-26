@@ -91,7 +91,7 @@ services:
       # under /usr/local/bin, not /usr/bin.
       UBAG_WORKER_PYTHON: /usr/local/bin/python3
       # run_live_worker.py routes live provider targets (chatgpt_web, gemini_web,
-      # deepseek_web, claude_web, ...) to the Playwright CDP-attach engine, and
+      # deepseek_web, ...) to the Playwright CDP-attach engine, and
       # target=mock still falls through to the registry mock adapter — so mock
       # jobs keep working unchanged (verified in run_live_worker.py routing).
       UBAG_WORKER_SCRIPT: /app/apps/worker/run_live_worker.py

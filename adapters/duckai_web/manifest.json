@@ -29,11 +29,20 @@
     "settings": {
       "model": {
         "kind": "choice",
-        "values": ["GPT-5.6 Luna", "GPT-5.4 mini", "Claude Haiku 4.5", "Mistral Small 4", "gpt-oss 120B", "Gemma 4 31B"]
+        "values": [
+          "GPT-5.6 Luna",
+          "GPT-5.4 mini",
+          "Mistral Small 4",
+          "gpt-oss 120B",
+          "Gemma 4 31B"
+        ]
       },
       "reasoning": {
         "kind": "choice",
-        "values": ["Fast", "Reasoning"]
+        "values": [
+          "Fast",
+          "Reasoning"
+        ]
       },
       "web_search": {
         "kind": "toggle"
@@ -44,8 +53,21 @@
     "max_files": 10,
     "max_file_bytes": 33554432,
     "accepted": [
-      { "kind": "document", "content_types": ["application/pdf"] },
-      { "kind": "image", "content_types": ["image/png", "image/jpeg", "image/webp", "image/gif"] }
+      {
+        "kind": "document",
+        "content_types": [
+          "application/pdf"
+        ]
+      },
+      {
+        "kind": "image",
+        "content_types": [
+          "image/png",
+          "image/jpeg",
+          "image/webp",
+          "image/gif"
+        ]
+      }
     ]
   },
   "selector_strategy": {

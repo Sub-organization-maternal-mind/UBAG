@@ -1,6 +1,142 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-09-13
+Last updated: 2026-09-26
+
+## 2026-09-26 — claude_web removed; all four live providers re-verified against current UIs; provider-refresh skill + tooling
+
+Owner mandate: delete Claude as an AI provider completely, re-align the
+remaining providers' selectors/model lists with their CURRENT web UIs, and
+make the refresh repeatable for any coding agent.
+
+**Claude removal (complete, tests green).** Deleted `adapters/claude_web/`
+(4-file fail-closed stub, no model catalog); removed the registry.json entry
+AND its `REQUIRED_ADAPTER_IDS` entry in adapter_registry.py (paired change —
+the worker loader hard-fails on mismatch); removed the CLAUDE_WEB block +
+PROVIDER_SELECTORS entry + __all__ from live/selectors.py; gateway
+targetCatalog/adapterCatalog/providerDisplayNames/warmDaemonTargets/
+minimalWorkerEnv entries; LiveBrowser "Claude" shortcut (dashboard rebuilt);
+"Claude Haiku 4.5" removed from duckai_web's model catalog (owner: no Claude
+models anywhere). Tests repointed (adapter_registry alias, live_adapters
+claude cases -> deepseek, orchestration/topology fixtures, workerdaemon
+7->6, server_test capability map, e2e drift fixture). Docs: README, CLAUDE.md,
+AGENT_HANDOFF, docs-site tables, blueprints got a "retired 2026-09-26" note
+(history untouched; CLAUDE.md-the-tool and the hallmark skill are NOT the
+provider and stay). No DB migrations needed (providers are config; orphan
+claude_web rows are harmless TEXT).
+
+**Live rebase (all four verified in the logged-in production Chrome via
+CDP — read-only DOM reads + menu clicks only, no prompt submissions).**
+- chatgpt_web: composer rebuilt upstream (no __composer-pill, no
+  data-testid='send-button', "Show advanced options" menu gone). New picker =
+  button[aria-label*='Select ChatGPT model'] with menuitemradio rows
+  (aria-checked): Latest / GPT-5.6 Sol / GPT-5.5 ("Leaving on October 14") /
+  Pro; 5.4/5.3/o3 REMOVED from the manifest, Latest+Pro added. Effort is now
+  a pill div [aria-label*='Thinking effort'] whose label embeds the current
+  value ("Thinking effortMedium") — satisfied_when reads the pill directly.
+  The pill only renders for models exposing adjustable effort: verified live
+  that "Latest" shows it and pinned "GPT-5.6 Sol" does NOT (fixed effort) →
+  thinking is now required=False (best-effort; a missing pill under Sol is
+  the UI's real answer, not drift) so Sol jobs cannot fail on it. Operator
+  default kept: GPT-5.6 Sol + Medium. Live verify: model SET (n=1),
+  thinking best-effort. selector_version 2026-09-26-composer-rebased;
+  response_container rebased to
+  [data-content-search-unit-key*='assistant'] / div[class*='MarkdownRoot'] /
+  [data-testid='chatgpt-writing-block'] (legacy fallbacks kept).
+- gemini_web: selectors verified ALREADY CORRECT (gem-menu-item.selected
+  satisfied_when + aria-label mode-picker open_steps work live; Extended
+  thinking round-trip re-verified: item gains .selected when ON, restored
+  OFF). Menu now offers only 3.8 Flash / 3.1 Pro / 3.5 Flash-Lite → manifest
+  pruned from 6 values (3.7/3.6/3.5 Flash gone upstream). Default kept:
+  3.8 Flash + thinking off.
+- deepseek_web: the Expert/Instant/Vision mode pills are GONE from the
+  composer (now just DeepThink + Search ds-toggle-buttons with aria-pressed).
+  `mode` REMOVED from manifest + selectors + the envelope's attachment
+  Instant-mode preselection; deepthink toggle re-based on aria-pressed
+  (verified live true). Default kept: deepthink ON.
+- duckai_web: NO DRIFT — all 5 manifest values seen in the live picker
+  (GPT-5.6 Luna current), Reasoning ON verified, selector testids unchanged.
+
+**Provider-refresh kit (the repeatable mechanism).**
+- `tools/provider-refresh/lib.mjs` — manifest + selectors.py parsers.
+- `tools/provider-refresh/provider-probe.mjs` — read-only live DOM capture +
+  diff (composer neighborhood, control dumps, menu enumeration via
+  --open-menus, frozen-tab fallback, layered tunnel/Chrome errors).
+- `tools/provider-refresh/verify-settings.mjs` — live canary replaying
+  ensure_provider_config (open → satisfied → apply → re-check) with a
+  Playwright `:has-text` matcher shim; classifies required-unverified
+  (fail) vs best-effort (warn).
+- `tools/provider-refresh/check-provider-selectors.mjs` — static gate
+  (manifests <-> selectors <-> REQUIRED_ADAPTER_IDS <-> registry <-> pins
+  <-> dashboard shortcuts <-> gateway catalog <-> selector_version),
+  wired as `pnpm check:provider-selectors` inside `pnpm check`.
+- `.codex/skills/provider-refresh/SKILL.md` — agent-agnostic skill (verify /
+  rebase / add / remove verbs, hard rules, report format) + AGENTS.md
+  section so every coding agent in this repo loads it.
+
+**Tunnel self-healing (ops).** A wedged SSH tunnel still LISTENS locally with
+no data flowing — the old port-listen check passed while the Live Browser was
+dead (observed today: three restart attempts incl. a bind-failed zombie).
+start-local.ps1 now verifies all three forwards with REAL traffic (Postgres
+SSLRequest handshake + HTTP probes), kills zombie ssh tunnels by command-line
+signature, and starts `tunnel-watchdog.ps1` (30s cycle, mutex-guarded,
+logs/tunnel-watchdog.log) which keeps them self-healed after the script exits.
+
+Validation: worker test modules test_adapter_registry / test_live_adapters /
+test_orchestration_topology / test_provider_config all OK; go test
+./internal/{topology,serve,httpapi,executor} all ok; go vet clean;
+check-provider-selectors passes; dashboard bundle rebuilt (no Claude refs).
+
+## 2026-09-26 — Live Browser "Offline" root-caused: stale browser override beat the baked bridge URL (fixed + verified)
+
+Symptom: dashboard Browser Sessions → Live Browser stuck at "Offline / Live
+browser bridge not connected" on the local no-Docker deployment
+(localhost:58180) despite the earlier same-day fix (baking
+`UBAG_DEV_DEFAULT_LIVE_BROWSER_WS=ws://127.0.0.1:15990` into the bundle and
+rebuilding dist).
+
+Diagnosis (evidence, not guesses):
+- SSH tunnel: the running ssh.exe (started 18:08) carries all three forwards
+  (15432/15923/15990) and every port answers; `GET 127.0.0.1:15990/health` →
+  `{"ok":true,...}`, CDP `127.0.0.1:15923/json/version` → Chrome/153. A raw
+  Node WebSocket through the tunnel completes the handshake and receives the
+  bridge `meta` frame — tunnel + prod bridge + container bind (cf8de88
+  entrypoint sets `UBAG_LIVE_BROWSER_BIND=0.0.0.0`) are all healthy.
+- Fresh-browser test (ZCode IAB, empty localStorage): the SAME served bundle
+  connects instantly and streams frames → server chain exonerated.
+- Reproduced the exact screenshot: setting
+  `localStorage['ubag_live_browser_ws']='ws://127.0.0.1:58090'` (the stale
+  pre-tunnel default, left over from an earlier session's setup hint) flips
+  the widget to the identical Offline panel. Root cause: the component trusts
+  a saved override over the baked default, and an earlier deployment told the
+  operator to save one — a stale value is invisible and unfixable from the UI.
+
+Fixes:
+- `LiveBrowser.svelte`: the offline panel now shows exactly what is being
+  dialed ("Trying ws://… — saved in this browser"), explains a saved URL may
+  be stale, and offers a one-click **Reset saved bridge URL** button
+  (clears the localStorage key and reconnects). `connect()` dials the tracked
+  `activeWsUrl` so the reset takes effect without a reload.
+- `start-local.ps1` (latent bug, hardened): the "tunnel already up" check now
+  requires ALL THREE ports (15432/15923/15990); a partially-forwarded tunnel
+  from an older script version is detected, killed (matched by its
+  `-L 15432:127.0.0.1:15432` command line), and relaunched with all forwards;
+  the post-launch wait verifies all three too. Closing hint replaced with the
+  stale-override explanation.
+- Dashboard rebuilt (13.5s, `pnpm --filter @ubag/dashboard build` with the
+  three UBAG_DEV_DEFAULT_* envs); served by `serve-dashboard.mjs` from dist.
+
+Verified in-browser (IAB): stale override → Offline panel shows dialed URL +
+Reset button → click Reset → green "Live", production Chrome frames render in
+the viewport (screenshot in session artifacts).
+
+Applied to the operator's actual Chrome via desktop control (2026-09-26, this
+session): the dashboard tab was still running the PRE-bake bundle (loaded
+before the 18:33 rebuild, never refreshed — that is why the earlier fix
+"didn't work"). No localStorage override was actually set in that profile.
+Activating the tab, clicking Reload, and re-observing: green "Live", targets
+dropdown populated, production Chrome frames streaming. The Reset-button and
+diagnostics hardening stays as defense-in-depth for any profile that does
+hold a stale override.
 
 ## 2026-09-13 vps2 PAT issued + cf8de88 smoke PASS (job_000000000006)
 

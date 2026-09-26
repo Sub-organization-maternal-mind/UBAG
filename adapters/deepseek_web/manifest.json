@@ -26,16 +26,34 @@
   ],
   "model_catalog": {
     "settings": {
-      "mode": { "kind": "choice", "values": ["Expert", "Instant", "Vision"] },
-      "deepthink": { "kind": "toggle" }
+      "deepthink": {
+        "kind": "toggle"
+      }
     }
   },
   "attachments": {
     "max_files": 10,
     "max_file_bytes": 33554432,
     "accepted": [
-      { "kind": "document", "content_types": ["application/pdf", "text/plain", "text/markdown", "text/csv", "application/json"] },
-      { "kind": "image", "content_types": ["image/png", "image/jpeg", "image/gif", "image/webp"] }
+      {
+        "kind": "document",
+        "content_types": [
+          "application/pdf",
+          "text/plain",
+          "text/markdown",
+          "text/csv",
+          "application/json"
+        ]
+      },
+      {
+        "kind": "image",
+        "content_types": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp"
+        ]
+      }
     ]
   },
   "selector_strategy": {

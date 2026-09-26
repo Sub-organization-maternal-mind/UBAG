@@ -13,7 +13,6 @@ description: AI target adapter rollout plan.
 
 - DeepSeek Web
 - ChatGPT Web
-- Claude Web
 - Gemini Web
 - Mistral Le Chat
 - Perplexity Web

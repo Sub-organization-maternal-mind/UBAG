@@ -15,7 +15,6 @@ The blueprint names multiple web AI targets, but Milestone 0 should prevent the 
 | `generic_chat` | Config-driven chat UI with selectors and URLs in YAML. | Manual login required when the target is not public. | Covers simple chat sites and helps prove manifest-driven behavior. |
 | `generic_form` | Config-driven form fill and extraction. | Manual login required when the target is not public. | Supports non-AI portals and internal tools. |
 | `deepseek_web` | Prompt run, prompt stream, conversation resume. | Manual login required. | First real AI web target for Phase 3 MVP. |
-| `claude_web` | Prompt stream, conversation resume, file upload later. | Manual login required. | Useful for critique or second-pass workflows. |
 | `chatgpt_web` | Prompt run, prompt stream, conversation resume. | Manual login required. | Requires careful account and policy handling. |
 | `gemini_web` | Prompt run and prompt stream. | Manual login required. | Scope file and app integrations separately. |
 | `mistral_lechat` | Prompt run and prompt stream. | Manual login required. | Keep model/provider UI variants explicit. |
@@ -63,15 +62,15 @@ The exact thresholds can change by target. The shape is the contract: canary, co
 
 ## Provider capability matrix
 
-| Capability | Mock | Generic chat | DeepSeek | Claude | ChatGPT | Gemini | Mistral | Perplexity |
+| Capability | Mock | Generic chat | DeepSeek | ChatGPT | Gemini | Mistral | Perplexity |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Prompt run | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Streaming | Yes | Optional | Yes | Yes | Yes | Yes | Yes | Optional |
-| Conversation resume | Yes | Optional | Yes | Yes | Yes | Later | Later | Later |
-| File upload | Yes | Optional | Later | Later | Later | Later | Later | Later |
-| Downloads | Yes | Optional | Later | Later | Later | Later | Later | Later |
-| Manual login | No | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Drift baseline | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Prompt run | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Streaming | Yes | Optional | Yes | Yes | Yes | Yes | Optional |
+| Conversation resume | Yes | Optional | Yes | Yes | Later | Later | Later |
+| File upload | Yes | Optional | Later | Later | Later | Later | Later |
+| Downloads | Yes | Optional | Later | Later | Later | Later | Later |
+| Manual login | No | Yes | Yes | Yes | Yes | Yes | Yes |
+| Drift baseline | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 
 `Later` means not part of the first stable adapter contract for that target. It must not be silently implemented outside the manifest.
 

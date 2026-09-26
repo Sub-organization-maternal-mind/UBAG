@@ -4,7 +4,7 @@
 // Launches a real Chrome with a PERSISTENT profile (so provider logins survive
 // restarts), attaches over the Chrome DevTools Protocol, streams JPEG frames to
 // the dashboard over a WebSocket, and forwards mouse/keyboard input back into
-// Chrome via CDP Input.*. This lets an operator open chatgpt.com / claude.ai /
+// Chrome via CDP Input.*. This lets an operator open chatgpt.com / gemini.google.com /
 // etc. and log in interactively from inside the dashboard's Browser Sessions
 // panel — the ToS-safe "human logs in once, in their own session" model.
 //

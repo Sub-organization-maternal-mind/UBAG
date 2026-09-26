@@ -247,11 +247,36 @@ func (c *WorkerConsumer) runSerial(ctx context.Context) error {
 	if pollInterval <= 0 {
 		pollInterval = defaultWorkerPollInterval
 	}
+	consecutiveErrors := 0
 	for {
 		processed, err := c.RunOnce(ctx)
 		if err != nil {
-			return err
+			// A transient store error (e.g. a dropped database connection)
+			// must not kill the consumer: the queue serves jobs 24/7 and a
+			// dead consumer silently freezes every queued job until the
+			// gateway is manually restarted. RunOnce has already requeued or
+			// poisoned the lease on each of its error paths, so back off and
+			// keep polling. Context cancellation still exits.
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			consecutiveErrors++
+			backoff := pollInterval * time.Duration(1<<min(consecutiveErrors, 5))
+			if backoff > 30*time.Second {
+				backoff = 30 * time.Second
+			}
+			slog.Warn("worker consumer run failed; backing off",
+				"error", err, "consecutive_errors", consecutiveErrors, "backoff", backoff)
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+			continue
 		}
+		consecutiveErrors = 0
 		if processed {
 			continue
 		}
@@ -1466,7 +1491,6 @@ func minimalWorkerEnv() []string {
 		"UBAG_PROVIDER_CONFIG_CHATGPT_WEB":    {},
 		"UBAG_PROVIDER_CONFIG_GEMINI_WEB":     {},
 		"UBAG_PROVIDER_CONFIG_DEEPSEEK_WEB":   {},
-		"UBAG_PROVIDER_CONFIG_CLAUDE_WEB":     {},
 		"UBAG_PROVIDER_CONFIG_MISTRAL_LECHAT": {},
 		"UBAG_PROVIDER_CONFIG_PERPLEXITY_WEB": {},
 		"UBAG_PROVIDER_CONFIG_DUCKAI_WEB":     {},

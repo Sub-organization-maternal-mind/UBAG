@@ -1072,7 +1072,6 @@ func workerDaemonEnabled() bool {
 
 var warmDaemonTargets = map[string]struct{}{
 	"chatgpt_web":    {},
-	"claude_web":     {},
 	"deepseek_web":   {},
 	"gemini_web":     {},
 	"mistral_lechat": {},

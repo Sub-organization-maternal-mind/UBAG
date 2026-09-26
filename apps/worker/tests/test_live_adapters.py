@@ -33,7 +33,6 @@ from ubag_worker.live.selectors import (  # noqa: E402
 
 _LIVE_PROVIDERS = (
     "chatgpt_web",
-    "claude_web",
     "deepseek_web",
     "gemini_web",
     "mistral_lechat",
@@ -118,26 +117,30 @@ class SelectorConfigTests(unittest.TestCase):
         candidates = get_provider_selectors("deepseek_web").authenticated_signal.as_list()
         self.assertIn("textarea[placeholder*='Message']", candidates)
 
-    def test_chatgpt_settings_follow_advanced_model_menu(self):
+    def test_chatgpt_settings_follow_flattened_model_menu(self):
+        # Re-baselined 2026-09-26: the composer pill + "Show advanced options"
+        # path is gone; the model picker is a single button and the effort pill
+        # embeds the current value in its own aria-label.
         selectors = get_provider_selectors("chatgpt_web")
         settings = {setting.key: setting for setting in selectors.settings}
 
-        self.assertEqual(selectors.selector_version, "2026-08-10-advanced-model-menu")
-        self.assertIn(
-            "[role='menuitem'][aria-label='Show advanced options']",
-            settings["model"].open_steps[1],
+        self.assertEqual(selectors.selector_version, "2026-09-26-composer-rebased")
+        self.assertEqual(
+            settings["model"].open_steps,
+            (
+                (
+                    "button[aria-label*='Select ChatGPT model']",
+                    "[data-composer-layout] button[aria-haspopup='menu']",
+                ),
+            ),
         )
         self.assertEqual(
-            settings["model"].open_steps[2],
-            ("[role='menuitem'][aria-haspopup='menu']:has-text(\"Model\")",),
-        )
-        self.assertIn(
-            "[role='menuitem'][aria-label='Show advanced options']",
-            settings["thinking"].open_steps[1],
+            settings["thinking"].open_steps,
+            (("[aria-label*='Thinking effort']",),),
         )
         self.assertEqual(
-            settings["thinking"].open_steps[2],
-            ("[role='menuitem'][aria-haspopup='menu']:has-text(\"Effort\")",),
+            settings["thinking"].satisfied_when,
+            "[aria-label*='Thinking effort']:has-text(\"{value}\")",
         )
 
 
@@ -185,14 +188,14 @@ class EngineHappyPathTests(unittest.TestCase):
         self.assertFalse(driver.closed)
 
     def test_event_envelope_matches_worker_protocol(self):
-        engine = LiveSessionEngine(get_provider_selectors("claude_web"))
-        events = engine.run(_payload("claude_web"), driver=MockPageDriver())
+        engine = LiveSessionEngine(get_provider_selectors("deepseek_web"))
+        events = engine.run(_payload("deepseek_web"), driver=MockPageDriver())
         for index, event in enumerate(events, start=1):
             self.assertEqual(event["sequence"], index)
             for field in ("api_version", "event_id", "job_id", "trace_id", "type", "created_at", "data"):
                 self.assertIn(field, event)
             self.assertTrue(event["event_id"].startswith("evt_"))
-            self.assertEqual(event["job_id"], "job_live_claude_web")
+            self.assertEqual(event["job_id"], "job_live_deepseek_web")
 
     def test_profile_label_never_leaks_full_path(self):
         engine = LiveSessionEngine(get_provider_selectors("deepseek_web"))
@@ -303,16 +306,16 @@ class SecurityInvariantTests(unittest.TestCase):
         self.assertIn("must not include credentials", str(raised.exception))
 
     def test_payload_with_password_is_rejected(self):
-        engine = LiveSessionEngine(get_provider_selectors("claude_web"))
-        bad = _payload("claude_web")
+        engine = LiveSessionEngine(get_provider_selectors("deepseek_web"))
+        bad = _payload("deepseek_web")
         bad["job"]["password"] = "hunter2"
         with self.assertRaises(LiveSessionError):
             engine.run(bad, driver=MockPageDriver())
 
     def test_user_data_dir_path_is_allowed(self):
-        engine = LiveSessionEngine(get_provider_selectors("claude_web"))
+        engine = LiveSessionEngine(get_provider_selectors("deepseek_web"))
         events = engine.run(
-            _payload("claude_web", user_data_dir="var/profiles/claude_web/alice"),
+            _payload("deepseek_web", user_data_dir="var/profiles/deepseek_web/alice"),
             driver=MockPageDriver(),
         )
         self.assertEqual(_types(events)[-1], "completed")

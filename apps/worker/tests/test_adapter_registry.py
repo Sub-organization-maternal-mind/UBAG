@@ -65,7 +65,6 @@ class AdapterRegistryTests(unittest.TestCase):
 
         self.assertEqual(index["deepseek"]["id"], "deepseek_web")
         self.assertEqual(index["chatgpt"]["id"], "chatgpt_web")
-        self.assertEqual(index["claude"]["id"], "claude_web")
         self.assertEqual(index["gemini"]["id"], "gemini_web")
         self.assertEqual(index["mistral"]["id"], "mistral_lechat")
         self.assertEqual(index["mistral_web"]["id"], "mistral_lechat")

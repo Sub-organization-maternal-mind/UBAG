@@ -211,7 +211,7 @@ thinking OFF, facade best-effort picker config (drift skips, never fails;
 ✓, gemini ✓ (exact tokens `…284/290/295`), chatgpt ✓ after merge fix
 (`…297` with merged `{"_enabled":false,"model":"..."}`). OET main
 `bb991e60` (Build & Deploy SUCCESS): catalog sync (allowlist + dropdown +
-seeder refresh + tests). Claude/mistral/perplexity = operator manual
+seeder refresh + tests). Mistral/perplexity = operator manual
 logins (safe-mode, NOT bugs). Rollback: prior image + env.local backup.
 Full evidence in `PROGRESS.md` top section.
 
@@ -237,11 +237,11 @@ VPS `185.252.233.186` gateway serves the OpenAI facade WITH `ubag_attachments`
 attachments (PDF/image/audio/video/voice) now flow through facade calls —
 declare in the body, 202-held `ubag_job_id`, PUT each key to
 `/v1/jobs/{id}/artifacts/{key}`, poll/replay resolves the completion.
-Per-target manifest policy enforced (ChatGPT/Claude/Gemini/Mistral/Perplexity
+Per-target manifest policy enforced (ChatGPT/Gemini/Mistral/Perplexity
 full file kinds; DeepSeek docs+images; Duck.ai PDF+images; `mock` rejects).
 Deploy smoke `job_000000000269` (text 200) + `job_000000000270` (202-held).
 Group E status: OCR/transcription/summarise-JSON now servable via this shape
-(OET-side routing still needed); direct-Claude listening, Whisper-ASR,
+(OET-side routing still needed); Whisper-ASR,
 embeddings, strict-JSON are OET-backend integration points, not UBAG gaps.
 Rollback: prior image + env.local backup (unchanged). Full evidence in
 `PROGRESS.md` top section.
@@ -483,7 +483,7 @@ Key runtime facts for the next agent:
 - New route `GET /v1/conversations` (`job:read`, nil-safe 501 when disabled).
 - `job.model_settings` is a flat map keyed by each adapter's own `ProviderSetting.key`; the gateway validates it against the adapter manifest `model_catalog` and copies it into the worker envelope `options.provider_config`. Client-supplied `options.provider_config` is stripped at create time.
 - Worker emits `conversation.thread_bound/_broken/_rebound` with a **flat** top-level `thread_ref` (chat URL only) — the gateway `WorkerConsumer` reads `data.thread_ref` non-recursively; keep any new emitter flat.
-- Next roadmap slices (not started): provider expansion (Kimi/Minimax/Claude activation), automatic provider fallback/routing, mobile push alerting.
+- Next roadmap slices (not started): provider expansion (Kimi/Minimax activation), automatic provider fallback/routing, mobile push alerting.
 - Follow-ups: promote the dashboard `/conversations` page into the sidebar nav (requires updating the §24.2 17-page inventory + the e2e count); add typed `model_settings` to gRPC/proto if a typed non-HTTP surface is wanted.
 
 Host note: bare `python` on the current Windows host resolves to a broken Store alias stub; use `C:\Users\Admin\AppData\Local\Python\bin\python.exe` with `PYTHONPATH="apps/worker;adapters/mock"`. The single gateway test `TestProcessWorkerRunnerRunsPythonWorkerFromGatewayEnvelope` fails only for this alias reason.
@@ -503,7 +503,7 @@ Current implemented or validateable scope:
 - Opt-in Postgres gateway stores for jobs, events, worker-event dedupe keys, and idempotency records via `UBAG_GATEWAY_STORE=postgres`.
 - Edge queue and SQLite/localfs-oriented storage contracts plus migrations and conformance checks; gateway runtime persistence is memory by default and Postgres/MinIO when configured.
 - Python worker, deterministic mock adapter, safe-mode provider manifests, manual-session events, artifact policies, and secret-material rejection.
-- Safe-mode adapter coverage for DeepSeek, ChatGPT, Claude, Gemini, Mistral, Perplexity, generic chat, generic form, and mock.
+- Safe-mode adapter coverage for DeepSeek, ChatGPT, Gemini, Mistral, Perplexity, generic chat, generic form, and mock. (claude_web retired 2026-09-26.)
 - TypeScript/JavaScript and Go SDK wave with generated operation-level contract-manifest freshness checks for system, job, job-event, artifact list/upload/download/delete, operator collection, webhook replay, workflow/template list, cache, apps/devices/audit, metrics, and stream entrypoint endpoints.
 - TypeScript CLI with health/ready/version, diagnose, create/get/list/cancel/retry, event/artifact/operator/webhook/cache/metrics commands, SSE streaming, mock-run, and adapter-test coverage.
 - Loopback sidecar with `/health`, `/v1/*` proxy, mutating-route idempotency generation including artifact PUT/DELETE, and public-binding guard.

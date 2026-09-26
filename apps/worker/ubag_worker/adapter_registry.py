@@ -37,7 +37,6 @@ REQUIRED_ADAPTER_IDS = (
     "generic_form",
     "deepseek_web",
     "chatgpt_web",
-    "claude_web",
     "gemini_web",
     "mistral_lechat",
     "perplexity_web",

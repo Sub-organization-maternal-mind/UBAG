@@ -38,7 +38,7 @@ class TopologyTests(unittest.TestCase):
             tenant_id="t1", target_id="chatgpt_web", identity_ref="acct_a"
         )
         b = fleet.get_or_create_context(
-            tenant_id="t1", target_id="claude_web", identity_ref="acct_a"
+            tenant_id="t1", target_id="deepseek_web", identity_ref="acct_a"
         )
         self.assertNotEqual(a.context_id, b.context_id)
         self.assertEqual(a.instance_id, b.instance_id)

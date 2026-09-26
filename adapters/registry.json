@@ -31,10 +31,6 @@
       "manifest": "chatgpt_web/manifest.json"
     },
     {
-      "id": "claude_web",
-      "manifest": "claude_web/manifest.json"
-    },
-    {
       "id": "gemini_web",
       "manifest": "gemini_web/manifest.json"
     },

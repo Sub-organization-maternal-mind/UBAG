@@ -25,19 +25,71 @@
   ],
   "model_catalog": {
     "settings": {
-      "model": { "kind": "choice", "values": ["3.8 Flash", "3.7 Flash", "3.6 Flash", "3.5 Flash", "3.1 Flash-Lite", "3.1 Pro"] },
-      "thinking": { "kind": "toggle" }
+      "model": {
+        "kind": "choice",
+        "values": [
+          "3.8 Flash",
+          "3.1 Pro",
+          "3.5 Flash-Lite"
+        ]
+      },
+      "thinking": {
+        "kind": "toggle"
+      }
     }
   },
   "attachments": {
     "max_files": 10,
     "max_file_bytes": 33554432,
     "accepted": [
-      { "kind": "document", "content_types": ["application/pdf", "text/plain", "text/markdown", "text/csv", "application/json"] },
-      { "kind": "image", "content_types": ["image/png", "image/jpeg", "image/gif", "image/webp"] },
-      { "kind": "audio", "content_types": ["audio/webm", "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/ogg"] },
-      { "kind": "voice", "content_types": ["audio/webm", "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/ogg"] },
-      { "kind": "video", "content_types": ["video/mp4", "video/webm"] }
+      {
+        "kind": "document",
+        "content_types": [
+          "application/pdf",
+          "text/plain",
+          "text/markdown",
+          "text/csv",
+          "application/json"
+        ]
+      },
+      {
+        "kind": "image",
+        "content_types": [
+          "image/png",
+          "image/jpeg",
+          "image/gif",
+          "image/webp"
+        ]
+      },
+      {
+        "kind": "audio",
+        "content_types": [
+          "audio/webm",
+          "audio/wav",
+          "audio/x-wav",
+          "audio/mpeg",
+          "audio/mp4",
+          "audio/ogg"
+        ]
+      },
+      {
+        "kind": "voice",
+        "content_types": [
+          "audio/webm",
+          "audio/wav",
+          "audio/x-wav",
+          "audio/mpeg",
+          "audio/mp4",
+          "audio/ogg"
+        ]
+      },
+      {
+        "kind": "video",
+        "content_types": [
+          "video/mp4",
+          "video/webm"
+        ]
+      }
     ]
   },
   "selector_strategy": {

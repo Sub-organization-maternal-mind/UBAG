@@ -96,3 +96,9 @@ apps/gateway/internal/executor/Python/
 
 # ZCode session tool state (local only)
 .commandcode/
+
+# Local deployment runtime logs (tunnel watchdog, etc.)
+/logs/
+
+# Local gateway runtime artifacts (chat ledger spool)
+/chat-ledger/

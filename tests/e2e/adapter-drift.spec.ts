@@ -19,14 +19,6 @@ test.describe('Adapter drift detection canaries', () => {
       ],
     },
     {
-      name: 'claude-web',
-      url: 'https://claude.ai',
-      selectors: [
-        { name: 'input-box', selector: 'div[contenteditable="true"], textarea[placeholder]' },
-        { name: 'send-button', selector: 'button[aria-label*="send" i], button[type="submit"]' },
-      ],
-    },
-    {
       name: 'gemini',
       url: 'https://gemini.google.com',
       selectors: [
