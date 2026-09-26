@@ -18,12 +18,8 @@ declare const __UBAG_DEFAULT_APP_SECRET__: string | undefined;
 // Default gateway URL, in priority order:
 //   1. Whatever the user explicitly saved (localStorage) — always wins.
 //   2. The local-dev build-time default, when one is baked in.
-//   3. The page's own origin, for production (dashboard + gateway share one
-//      nginx origin there, so this is correct with zero configuration).
-// Without (2), any browser profile that has never saved a value — a fresh
-// profile, Incognito, or cleared storage — silently defaulted to the
-// dashboard's OWN origin (fallback 3), which is wrong whenever the gateway
-// runs on a different port, and looked like the settings kept "resetting."
+//   3. The page's own origin. Vite proxies /v1 during local development;
+//      the production dashboard and gateway already share an nginx origin.
 function defaultGatewayUrl(): string {
   if (!browser) return 'http://127.0.0.1:58080';
   const stored = localStorage.getItem('ubag_gateway_url');

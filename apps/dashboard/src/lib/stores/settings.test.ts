@@ -13,10 +13,10 @@ describe('dashboard gateway URL', () => {
     localStorage.removeItem('ubag_gateway_url');
   });
 
-  it('uses the running local gateway instead of the Vite origin for a fresh session', async () => {
+  it('uses the Vite origin that proxies gateway requests for a fresh session', async () => {
     const { settings } = await import('./settings');
 
-    expect(get(settings).gatewayUrl).toBe('http://127.0.0.1:58080');
+    expect(get(settings).gatewayUrl).toBe(window.location.origin);
   });
 
   it('keeps an explicitly saved gateway URL', async () => {

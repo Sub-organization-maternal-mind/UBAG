@@ -26,6 +26,12 @@ export default defineConfig({
     // other local dev servers on this machine.
     port: 58179,
     strictPort: false,
+    proxy: {
+      '/v1': {
+        target: process.env.UBAG_DEV_DEFAULT_GATEWAY_URL || 'http://127.0.0.1:58080',
+        changeOrigin: true,
+      },
+    },
   },
   preview: {
     port: 58180,
