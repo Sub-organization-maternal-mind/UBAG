@@ -123,6 +123,16 @@ services:
       # Covers auth readiness (57 s), manual login (300 s), three bounded
       # reasoning attempts (3 x 360 s), and cleanup without clipping a valid job.
       UBAG_WORKER_MAX_RUNTIME_MS: ${UBAG_WORKER_MAX_RUNTIME_MS:-1500000}
+      UBAG_ANTIGRAVITY_ENABLED: ${UBAG_ANTIGRAVITY_ENABLED:-true}
+      UBAG_ANTIGRAVITY_PROVIDER: ${UBAG_ANTIGRAVITY_PROVIDER:-sdk}
+      UBAG_ANTIGRAVITY_MODEL: ${UBAG_ANTIGRAVITY_MODEL:-gemini-3.8-flash}
+      UBAG_ANTIGRAVITY_EFFORT: ${UBAG_ANTIGRAVITY_EFFORT:-medium}
+      UBAG_ANTIGRAVITY_MAX_CONCURRENT: ${UBAG_ANTIGRAVITY_MAX_CONCURRENT:-2}
+      UBAG_ANTIGRAVITY_MAX_MODEL_CALLS: ${UBAG_ANTIGRAVITY_MAX_MODEL_CALLS:-20}
+      UBAG_ANTIGRAVITY_MAX_TOOL_CALLS: ${UBAG_ANTIGRAVITY_MAX_TOOL_CALLS:-50}
+      UBAG_ANTIGRAVITY_COMPACTION: ${UBAG_ANTIGRAVITY_COMPACTION:-true}
+      UBAG_ANTIGRAVITY_TOOL_OUTPUT_MAX_CHARS: ${UBAG_ANTIGRAVITY_TOOL_OUTPUT_MAX_CHARS:-10000}
+      UBAG_ANTIGRAVITY_RETRY_MAX: ${UBAG_ANTIGRAVITY_RETRY_MAX:-3}
       UBAG_WEBHOOK_WORKER_ENABLED: "false"
       UBAG_WEBHOOK_SECRET: ${UBAG_WEBHOOK_SECRET:-}
       # Record every chat a live job creates, so the chat-reaper below can only
@@ -197,8 +207,12 @@ services:
     image: ${UBAG_BROWSER_IMAGE:-ubag/vps-browser:local}
     container_name: ubag-vps-browser
     restart: unless-stopped
-    cpus: "1.0"
-    mem_limit: 1900m
+    # Raised 2026-09-27 after the wedged-Chrome incident: 1.0 CPU / 1900MB
+    # starved Chrome under the worker + screencast load (watchdog pkill loop,
+    # instant worker-attach failures, dead screencast). 2.0 CPU / 4GB per
+    # owner directive; the box has 6 cores / 11GB.
+    cpus: "2.0"
+    mem_limit: 4096m
     environment:
       UBAG_BROWSER_GEOMETRY: ${UBAG_BROWSER_GEOMETRY:-1280x800x24}
       # about:blank keeps the operator's idle tab at ~30MB instead of a parked

@@ -279,6 +279,56 @@ func (d *FileSpoolDispatcher) CancelLease(_ context.Context, lease FileSpoolLeas
 	return d.moveLeasePath(lease.Path, d.cancelledDir())
 }
 
+// RecoverOrphanLeases moves lease files stranded in leased/ back to pending so
+// their jobs re-run. A gateway restart or crash mid-RunOnce otherwise strands
+// the lease forever: nothing else ever touches leased/, the stale-job reaper
+// does not know the spool, and the job stays non-terminal while the queue
+// grows behind it (2026-09-26/27 incident). Returns the number of envelopes
+// recovered.
+func (d *FileSpoolDispatcher) RecoverOrphanLeases() (int, error) {
+	entries, err := os.ReadDir(d.leasedDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	recovered := 0
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		source := filepath.Join(d.leasedDir(), entry.Name())
+		jobID := strings.TrimSuffix(entry.Name(), ".json")
+		// Lease files are "<jobID>.<leaseID>.json"; the pending envelope is
+		// "<jobID>.json".
+		if idx := strings.LastIndex(jobID, "."); idx > 0 {
+			jobID = jobID[:idx]
+		}
+		if err := os.MkdirAll(d.pendingDir(), 0o700); err != nil {
+			return recovered, err
+		}
+		target := d.envelopePath(jobID)
+		if _, err := os.Stat(target); err == nil {
+			// A pending envelope for this job already exists — the stranded
+			// lease is a stale duplicate; park it in cancelled/ instead of
+			// overwriting the live envelope.
+			_ = d.moveLeasePath(source, d.cancelledDir())
+			continue
+		} else if !os.IsNotExist(err) {
+			return recovered, err
+		}
+		if err := os.Rename(source, target); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return recovered, err
+		}
+		recovered++
+	}
+	return recovered, nil
+}
+
 func (d *FileSpoolDispatcher) pendingDir() string {
 	return filepath.Join(d.root, "pending")
 }

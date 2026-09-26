@@ -452,13 +452,49 @@ function makeDecoder(onText, onClose) {
 async function main() {
   await ensureChrome();
 
-  const clients = new Set();
+  // socket -> { id, since, hidden }. Admin surface for the dashboard: any
+  // client can list/kick viewers, and hidden (backgrounded) tabs stop
+  // receiving frames so a forgotten tab can't keep the screencast hot on a
+  // small CPU budget (2026-09-27 incident: 6 concurrent dashboard tabs).
+  const clients = new Map();
+  let nextClientId = 1;
+  let streamingOn = false;
+  const visibleClientCount = () => {
+    let n = 0;
+    for (const c of clients.values()) if (!c.hidden) n++;
+    return n;
+  };
+  const clientList = () =>
+    [...clients.entries()].map(([sock, c]) => ({
+      id: c.id,
+      since: c.since,
+      hidden: c.hidden,
+      alive: !sock.destroyed,
+    }));
+  function broadcastClients() {
+    for (const [sock, c] of clients) {
+      if (sock.destroyed) continue;
+      sock.write(
+        encodeFrame(
+          Buffer.from(JSON.stringify({ type: 'clients', self: c.id, clients: clientList() })),
+          0x1
+        )
+      );
+    }
+  }
+  function syncStreaming() {
+    const want = visibleClientCount() > 0;
+    if (want !== streamingOn) {
+      streamingOn = want;
+      page.setStreaming(want);
+    }
+  }
 
   function broadcastFrame(base64) {
     if (clients.size === 0) return;
     const frame = encodeFrame(Buffer.from(base64, 'base64'), 0x2); // binary
-    for (const sock of clients) {
-      if (!sock.destroyed) sock.write(frame);
+    for (const [sock, c] of clients) {
+      if (!sock.destroyed && !c.hidden) sock.write(frame);
     }
   }
   function broadcastMeta(meta) {
@@ -476,6 +512,8 @@ async function main() {
   await page.attach(null);
 
   function sendFrameTo(sock, base64) {
+    const c = clients.get(sock);
+    if (c?.hidden) return; // backgrounded tab: no frames until it's visible again
     if (!sock.destroyed) sock.write(encodeFrame(Buffer.from(base64, 'base64'), 0x2));
   }
 
@@ -483,7 +521,7 @@ async function main() {
   // page session. Debounced by `recovering` so overlapping triggers coalesce.
   let recovering = false;
   async function recover() {
-    if (recovering || clients.size === 0) return;
+    if (recovering || visibleClientCount() === 0) return;
     recovering = true;
     try {
       broadcastMeta({ status: 'recovering' });
@@ -505,7 +543,7 @@ async function main() {
   // even on a static page. A failed capture means Chrome/the page target died,
   // so kick off recovery.
   setInterval(async () => {
-    if (clients.size === 0) return;
+    if (visibleClientCount() === 0) return;
     if (Date.now() - lastFrameAt < 700) return;
     const shot = await page.captureOnce();
     if (shot) { lastFrameAt = Date.now(); broadcastFrame(shot); }
@@ -532,15 +570,30 @@ async function main() {
         `Sec-WebSocket-Accept: ${wsAccept(key)}\r\n\r\n`
     );
     socket.setNoDelay(true);
-    clients.add(socket);
-    log(`dashboard connected (${clients.size} live)`);
-    if (clients.size === 1) page.setStreaming(true);
+    const clientId = String(nextClientId++);
+    clients.set(socket, { id: clientId, since: Date.now(), hidden: true });
+    // Start hidden: the client announces its real visibility right after open
+    // (a backgrounded dashboard tab must not hold the screencast hot).
+    log(`dashboard connected (${visibleClientCount()} live / ${clients.size} total)`);
+    syncStreaming();
+    broadcastClients();
     // Every disconnect path funnels here so the screencast stops exactly once
     // the last viewer is gone.
     const dropClient = (announce) => {
       if (!clients.delete(socket)) return;
-      if (announce) log(`dashboard disconnected (${clients.size} live)`);
-      if (clients.size === 0) page.setStreaming(false);
+      if (announce) log(`dashboard disconnected (${visibleClientCount()} live / ${clients.size} total)`);
+      syncStreaming();
+      broadcastClients();
+    };
+    const kickClient = (id) => {
+      for (const [sock, c] of clients) {
+        if (c.id === id) {
+          log(`admin kicked client ${id}`);
+          sock.destroy(); // close handler runs dropClient
+          return true;
+        }
+      }
+      return false;
     };
 
     // Push current meta immediately so the new client can size its canvas.
@@ -571,6 +624,36 @@ async function main() {
               break;
             }
             case 'attach': await page.attach(m.targetId); break;
+            case 'visibility': {
+              const c = clients.get(socket);
+              if (c) {
+                c.hidden = Boolean(m.hidden);
+                syncStreaming();
+                broadcastClients();
+                if (!c.hidden) {
+                  // Became visible: push an instant frame instead of waiting
+                  // for the keepalive tick.
+                  page.captureOnce().then((shot) => { if (shot) sendFrameTo(socket, shot); });
+                }
+              }
+              break;
+            }
+            case 'clients': {
+              socket.write(
+                encodeFrame(
+                  Buffer.from(JSON.stringify({ type: 'clients', self: clientId, clients: clientList() })),
+                  0x1
+                )
+              );
+              break;
+            }
+            case 'kick': {
+              const done = typeof m.id === 'string' ? kickClient(m.id) : false;
+              if (!done) {
+                socket.write(encodeFrame(Buffer.from(JSON.stringify({ type: 'kick_failed', id: m.id ?? null })), 0x1));
+              }
+              break;
+            }
           }
         } catch (e) {
           log('input error', e.message);

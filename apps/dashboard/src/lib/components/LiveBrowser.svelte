@@ -74,6 +74,13 @@
   let hasFrame = $state(false);
   let capturing = $state(false);
 
+  // Live-stream viewer registry (from the bridge): the admin can see every
+  // dashboard tab streaming the production Chrome and terminate any of them —
+  // each forgotten background tab keeps the screencast hot on the VPS.
+  let clients = $state<{ id: string; since: number; hidden: boolean; alive: boolean }[]>([]);
+  let myClientId = $state('');
+  let showClients = $state(false);
+
   let deviceW = $state(1280);
   let deviceH = $state(720);
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -103,6 +110,9 @@
       connecting = false;
       connected = true;
       send({ t: 'targets' });
+      // Register our real visibility so a backgrounded dashboard tab stops
+      // receiving frames (and stops holding the VPS screencast hot).
+      send({ t: 'visibility', hidden: document.hidden });
     };
 
     ws.onclose = () => {
@@ -119,7 +129,10 @@
       if (typeof ev.data === 'string') {
         let m: Record<string, unknown>;
         try { m = JSON.parse(ev.data); } catch { return; }
-        if (m.type === 'meta') {
+        if (m.type === 'clients') {
+          myClientId = String(m.self ?? '');
+          clients = (m.clients as typeof clients) ?? [];
+        } else if (m.type === 'meta') {
           if (m.deviceWidth) deviceW = m.deviceWidth as number;
           if (m.deviceHeight) deviceH = m.deviceHeight as number;
           if (m.url) { currentUrl = m.url as string; if (document.activeElement !== urlEl) urlInput = m.url as string; }
@@ -255,6 +268,10 @@
   onMount(() => {
     if (canvas) ctx = canvas.getContext('2d');
     connect();
+    // Keep the bridge informed when this tab is backgrounded/restored.
+    const onVisibility = () => send({ t: 'visibility', hidden: document.hidden });
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
   });
 
   onDestroy(() => {
@@ -301,6 +318,44 @@
           <option value={t.id}>{t.title || t.url}</option>
         {/each}
       </select>
+    {/if}
+
+    <!-- Viewer registry: admin visibility + terminate (resource control) -->
+    {#if connected}
+      <div class="relative shrink-0">
+        <button
+          type="button"
+          onclick={() => (showClients = !showClients)}
+          class="px-2.5 py-1 rounded border border-rule text-ink text-xs hover:bg-rule-soft transition-colors"
+          aria-label="Live stream viewers"
+        >
+          viewers {clients.length}
+        </button>
+        {#if showClients}
+          <div class="absolute right-0 top-full mt-1 w-72 rounded border border-rule bg-paper-soft shadow-md z-10 p-2">
+            <p class="text-[10px] font-mono text-ink-mute px-1 pb-1">Live stream viewers</p>
+            {#each clients as c (c.id)}
+              <div class="flex items-center gap-1.5 px-1 py-1 rounded hover:bg-rule-soft">
+                <span class="font-mono text-xs text-ink">#{c.id}</span>
+                {#if c.id === myClientId}<span class="text-[10px] text-ink-mute">(you)</span>{/if}
+                {#if c.hidden}
+                  <span class="text-[10px] text-ink-mute">hidden</span>
+                {:else}
+                  <span class="text-[10px] text-success">streaming</span>
+                {/if}
+                <span class="text-[10px] text-ink-mute ml-auto">{Math.max(1, Math.round((Date.now() - c.since) / 60000))}m</span>
+                <button
+                  type="button"
+                  onclick={() => send({ t: 'kick', id: c.id })}
+                  class="px-1.5 py-0.5 rounded border border-rule text-[10px] text-danger hover:bg-danger-soft transition-colors"
+                >Terminate</button>
+              </div>
+            {:else}
+              <p class="text-xs text-ink-mute px-1 py-1">No viewers connected.</p>
+            {/each}
+          </div>
+        {/if}
+      </div>
     {/if}
 
     <label class="flex items-center gap-1.5 text-xs text-ink-soft cursor-pointer select-none shrink-0">

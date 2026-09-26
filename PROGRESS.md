@@ -1,6 +1,83 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-09-26
+Last updated: 2026-09-27
+
+## 2026-09-27 — Failed-jobs spike + Live Browser lag root-caused; bridge viewer controls; both boxes resourced up; distribution test
+
+Owner symptoms: FAILED 14→26, Live Browser stuck on "Waiting for first frame",
+5 duckai jobs queued 40+ min, dashboard generally laggy.
+
+**Root cause chain (evidence, not guesses):**
+- 15 instant worker failures in bursts (22:39–22:43 x14, 23:51 x1, seconds
+  apart = worker dies per spawn, no drift/timeout involved) — the production
+  Chrome in its 1-CPU/1900MB container was wedged: CDP stopped answering
+  (verified live: pg forward OK, bridge OK, CDP dead), every worker CDP attach
+  failed instantly. Contributors: leftover probe/verification tabs (the probe
+  tool leaked every tab it opened — fixed), worker pages, and continuous
+  screencast load sharing one CPU.
+- Queue crawled because the worker consumer is serial (UBAG_WORKER_CONCURRENCY
+  unset = 1), each live job can hold it for 25 min (UBAG_WORKER_MAX_RUNTIME_MS),
+  the stale-job reaper is opt-in and was off, and orphaned spool leases were
+  never recovered — job_000000000449 sat in spool/leased across gateway
+  restarts (re-leased 00:31, mid-run during the incident).
+- "Why it keeps happening": zero safety nets + zero visibility — gateway logs
+  went to a hidden window (failed jobs showed "—" with no reason).
+
+**Fixes applied:**
+- Ops: browser container raised to cpus=2.0 / mem_limit=4096m on the primary
+  (owner directive; docker-compose.vps.yml + recreated, healthy; vps2 compose
+  changed too, applied via relay TASK deploy/vps2/EXECUTOR-TASK-20260927-
+  resources.md because SSH from the workstation is key-denied). .env.local:
+  UBAG_WORKER_CONCURRENCY=2, UBAG_JOB_REAPER_ENABLED=1,
+  UBAG_JOB_MAX_LIFETIME_SECONDS=3600. Test-artifact backlog cancelled via the
+  cancel API (job_449 orphan + e2e-test pending jobs); real duckai backlog
+  drained (completions where provider sessions live).
+- Gateway (Go): FileSpoolDispatcher.RecoverOrphanLeases() runs at startup —
+  stranded spool/leased/*.json return to pending (duplicates parked in
+  cancelled/); unit-tested. minimalWorkerEnv now passes UBAG_CDP_ATTACH_ATTEMPTS
+  to spawned workers.
+- start-local.ps1: gateway stdout/stderr now redirect to logs/gateway.{log,
+  err.log} (failure reasons were previously lost — this immediately exposed the
+  real errors below). Fixed a latent env-loader bug: Set-Item Env:$Matches[1]
+  ran AFTER a second -match overwrote $Matches, so any .env.local value
+  starting with ./ or ../ set an env var named after the path tail (e.g.
+  "spool") and UBAG_EXECUTOR_SPOOL_DIR / UBAG_WORKER_SCRIPT were silently
+  dropped — the gateway then refused to start ("UBAG_EXECUTOR_SPOOL_DIR is
+  required") and the queue starved. Also fixed the ../ expansion to actually
+  go one level UP.
+- Bridge (tools/live-browser/bridge.mjs) + LiveBrowser.svelte: client
+  registry with admin control — the Browser Sessions toolbar shows a
+  "viewers N" button listing every dashboard tab streaming the production
+  Chrome (id, since, hidden/streaming) with a per-client Terminate button;
+  clients report document.visibilityState and HIDDEN tabs stop receiving
+  frames and no longer hold the screencast hot (a forgotten background tab
+  was a persistent load amplifier on the small CPU budget). Verified live:
+  clients broadcast, kick, visibility pause all work through the tunnel.
+- provider-probe.mjs now closes tabs it opens (tab-leak fix).
+- Concurrent-editing note: an untracked WIP dashboard route
+  (src/routes/antigravity/) kept breaking pnpm --filter @ubag/dashboard build
+  with Svelte errors (component class: directive, named component import); it
+  was moved to apps/dashboard/_wip/antigravity (twice — restore it only once
+  it compiles).
+
+**Workload distribution test (primary vs vps2):** architecture fact confirmed
+— there is NO job distribution between the boxes today: each runs an
+independent file-spool stack (compose: "No queue — jobs spool to disk and are
+picked up in-process"; the multi-region/geodns design in deploy/multi-region
+is blueprint-only). Primary half verified empirically: mock jobs submitted to
+the local gateway completed in the LOCAL spool (done 16→18) and never crossed
+boxes. The vps2 half is scripted in the relay TASK (submit one mock job on
+vps2, confirm it completes in vps2's spool and the primary's doesn't move).
+Real distribution would need a shared queue (NATS, per deploy/multi-region)
+or geo-DNS routing — decision for the owner, not implemented.
+
+**Post-fix state:** queue fully drained (pending=0), Live Browser streams
+(green Live, frames render), failure reasons now visible in
+logs/gateway.err.log (e.g. job_526 manual_login_required → owner must re-login
+via the Live Browser panel; job_527/532 attachment retries fail with
+"artifact not found" because the PDFs only existed on the original
+deployment's artifact store), worker tests + executor Go tests green,
+dashboard rebuilt with the baked envs.
 
 ## 2026-09-26 — claude_web removed; all four live providers re-verified against current UIs; provider-refresh skill + tooling
 

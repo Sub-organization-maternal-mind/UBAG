@@ -236,3 +236,54 @@ func sampleJob() jobstore.Job {
 		UpdatedAt:      time.Date(2026, 5, 23, 12, 0, 0, 0, time.UTC),
 	}
 }
+
+func TestFileSpoolDispatcherRecoversOrphanLeases(t *testing.T) {
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	job := sampleJob()
+	if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+		t.Fatalf("EnqueueJob: %v", err)
+	}
+
+	// Simulate a gateway crash mid-RunOnce: the pending envelope was leased
+	// (renamed with a lease-id suffix) and the process died before resolving it.
+	leasedName := filepath.Join(dispatcher.leasedDir(), job.ID+".lease-1.json")
+	if err := os.Rename(filepath.Join(dispatcher.pendingDir(), job.ID+".json"), leasedName); err != nil {
+		t.Fatalf("simulate lease: %v", err)
+	}
+
+	recovered, err := dispatcher.RecoverOrphanLeases()
+	if err != nil {
+		t.Fatalf("RecoverOrphanLeases: %v", err)
+	}
+	if recovered != 1 {
+		t.Fatalf("expected 1 recovered lease, got %d", recovered)
+	}
+	if _, err := os.Stat(filepath.Join(dispatcher.pendingDir(), job.ID+".json")); err != nil {
+		t.Fatalf("envelope not back in pending: %v", err)
+	}
+	if entries, _ := os.ReadDir(dispatcher.leasedDir()); len(entries) != 0 {
+		t.Fatalf("leased dir not empty: %d entries", len(entries))
+	}
+
+	// A stranded lease whose pending envelope already exists is a stale
+	// duplicate — it must be parked in cancelled/, not duplicated into pending.
+	if err := os.MkdirAll(dispatcher.pendingDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dispatcher.pendingDir(), job.ID+".json"), []byte(`{"fresh":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(leasedName, []byte(`{"stale":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err = dispatcher.RecoverOrphanLeases()
+	if err != nil {
+		t.Fatalf("RecoverOrphanLeases (duplicate): %v", err)
+	}
+	if recovered != 0 {
+		t.Fatalf("duplicate lease must not count as recovered, got %d", recovered)
+	}
+	if entries, _ := os.ReadDir(dispatcher.cancelledDir()); len(entries) != 1 {
+		t.Fatalf("duplicate lease must be parked in cancelled/, found %d", len(entries))
+	}
+}

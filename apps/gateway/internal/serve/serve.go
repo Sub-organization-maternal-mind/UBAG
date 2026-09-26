@@ -380,7 +380,16 @@ func newDispatcherFromEnv() (executor.Dispatcher, error) {
 		if spoolDir == "" {
 			return nil, fmt.Errorf("UBAG_EXECUTOR_SPOOL_DIR is required when UBAG_EXECUTOR_MODE=file")
 		}
-		return executor.NewFileSpoolDispatcher(spoolDir), nil
+		dispatcher := executor.NewFileSpoolDispatcher(spoolDir)
+		// A previous process may have died mid-RunOnce (upgrade, crash, killed
+		// window): its leases are stranded in spool/leased forever unless they
+		// are returned to pending at startup.
+		if recovered, err := dispatcher.RecoverOrphanLeases(); err != nil {
+			slog.Warn("file spool lease recovery failed", "error", err)
+		} else if recovered > 0 {
+			slog.Info("recovered orphaned spool leases", "count", recovered)
+		}
+		return dispatcher, nil
 	case "nats":
 		url, streamName, subject := natsDispatcherConfigFromEnv()
 		return executor.NewNATSDispatcher(url, streamName, subject), nil
