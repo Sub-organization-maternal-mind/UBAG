@@ -84,6 +84,10 @@ services:
       # Full DSN lives in deploy/vps/env.local and points at the local
       # postgres service above (postgres:5432).
       UBAG_POSTGRES_DSN: ${UBAG_POSTGRES_DSN:?Set UBAG_POSTGRES_DSN in deploy/vps/env.local}
+      # Migrations are fail-closed; 0008_blueprint_schema.sql needs the
+      # pgvector + pg_partman extensions so it stays opt-in. See
+      # deploy/small/gateway-entrypoint.sh.
+      UBAG_ALLOW_OPTIONAL_MIGRATIONS: ${UBAG_ALLOW_OPTIONAL_MIGRATIONS:-0}
       UBAG_IDEMPOTENCY_TTL_HOURS: ${UBAG_IDEMPOTENCY_TTL_HOURS:-24}
       UBAG_DATABASE_MAX_OPEN_CONNS: ${UBAG_DATABASE_MAX_OPEN_CONNS:-5}
       UBAG_DATABASE_MAX_IDLE_CONNS: ${UBAG_DATABASE_MAX_IDLE_CONNS:-2}

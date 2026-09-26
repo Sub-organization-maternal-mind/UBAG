@@ -47,6 +47,25 @@ apps/gateway/artifacts/
 apps/gateway/coverage.out
 apps/gateway/coverage.html
 
+# Root-level gateway runtime state. These directories hold REAL JOB PAYLOADS
+# (prompts, provider replies, attached artifacts) and must never enter a
+# build context - a hosted CI runner would receive a copy of them.
+# `deploy/render/nginx-dashboard.Dockerfile` does `COPY . .`, so without these
+# entries every image build uploads the whole local job spool.
+/spool/
+/artifacts/
+/chat-ledger/
+/logs/
+
+# gateway.Dockerfile does `COPY apps/gateway ./`, so runtime state under that
+# directory is copied into the image even though it is ignored by git.
+/apps/gateway/chat-ledger/
+/apps/gateway/_gw_run.py
+/apps/gateway/*.exe~
+
+# Local agent session state
+.zcode/
+
 var/
 tmp/
 coverage/

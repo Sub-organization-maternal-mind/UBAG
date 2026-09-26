@@ -168,4 +168,52 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
+// The gateway entrypoint must never start the service on a partially applied
+// schema. It previously logged "WARNING - migration ... failed, continuing",
+// which made a half-migrated database the expected outcome: psql runs with
+// ON_ERROR_STOP=1, so 0008 aborted at its `CREATE EXTENSION` and NONE of its
+// tables were created, yet the gateway booted and reported ready. Assert the
+// fail-closed contract structurally rather than by string match, so a
+// "continue on error" regression is caught even if the wording changes.
+const entrypoint = read('deploy/small/gateway-entrypoint.sh');
+if (!/ON_ERROR_STOP=1/.test(entrypoint)) {
+  failures.push('deploy/small/gateway-entrypoint.sh must run psql with ON_ERROR_STOP=1');
+}
+if (!/^\s*exit 1\s*$/m.test(entrypoint)) {
+  failures.push(
+    'deploy/small/gateway-entrypoint.sh must exit non-zero on a failed migration (fail-closed)'
+  );
+}
+if (/migration \$f failed, continuing/i.test(entrypoint)) {
+  failures.push(
+    'deploy/small/gateway-entrypoint.sh must not continue after a failed migration'
+  );
+}
+// The extension-dependent migration must stay opt-in and must stay listed in
+// OPTIONAL_MIGRATIONS, otherwise every managed Postgres without pg_partman
+// crash-loops on boot.
+if (!/OPTIONAL_MIGRATIONS="[^"]*0008_blueprint_schema\.sql/.test(entrypoint)) {
+  failures.push(
+    'deploy/small/gateway-entrypoint.sh must list 0008_blueprint_schema.sql in OPTIONAL_MIGRATIONS'
+  );
+}
+
+// The opt-in flag has to actually reach the container, in every profile that
+// builds from deploy/small/gateway.Dockerfile (env.local alone only feeds
+// compose interpolation - it does not inject).
+for (const compose of [
+  'docker-compose.small.yml',
+  'docker-compose.vps.yml',
+  'docker-compose.vps2.yml'
+]) {
+  if (!read(compose).includes('UBAG_ALLOW_OPTIONAL_MIGRATIONS')) {
+    failures.push(`${compose} must pass UBAG_ALLOW_OPTIONAL_MIGRATIONS to the gateway service`);
+  }
+}
+
+if (failures.length > 0) {
+  console.error(failures.join('\n'));
+  process.exit(1);
+}
+
 console.log('Small deployment NATS/MinIO/webhook checks passed');

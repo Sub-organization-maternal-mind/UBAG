@@ -2,7 +2,9 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -198,23 +200,101 @@ func runPostgresMigrations(ctx context.Context, dsn, migrationsDir string) (stri
 	return applyMigrations(ctx, db, migrationsDir, "$1")
 }
 
-// applyMigrations creates the schema_migrations table if needed, reads SQL
-// files from migrationsDir, and applies each one that hasn't been applied yet.
+// isLegacyPlaceholderChecksum reports whether a recorded checksum predates real
+// verification, in which case it carries no information about the file on disk
+// and a mismatch must be tolerated rather than treated as drift.
+//
+// Three conventions are in the wild, all of which are uninformative:
+//   - ""            - migrations/postgres/0009..0012 write an empty checksum
+//   - "manual-v0*"  - 0001..0007 per-dialect hand-written placeholders
+//   - "sha256:placeholder*" - 0008
+//
+// Anything else is a real sha256 and IS enforced. Matching on the prefix rather
+// than enumerating keeps this correct as further migrations are added using the
+// same conventions, instead of hard-failing an existing deployment on its next
+// migrate run.
+func isLegacyPlaceholderChecksum(sum string) bool {
+	if sum == "" {
+		return true
+	}
+	return strings.HasPrefix(sum, "manual-v0") ||
+		strings.HasPrefix(sum, "sha256:placeholder")
+}
+
+// migrationVersion derives the ledger key from a migration filename. The SQL
+// files themselves record the SHORT form ("0001"), so that is the canonical
+// key; the long filename form is also probed because earlier versions of this
+// runner recorded that instead.
+func migrationVersion(filename string) string {
+	base := strings.TrimSuffix(filename, ".sql")
+	if i := strings.Index(base, "_"); i > 0 {
+		if prefix := base[:i]; strings.Trim(prefix, "0123456789") == "" {
+			return prefix
+		}
+	}
+	return base
+}
+
+// legacyAppliedVersions returns the versions recorded by the pre-unification
+// runner, which used a separate "schema_migrations" table keyed by the full
+// filename. Any error is swallowed: the table usually does not exist, and it
+// is only ever an extra source of "already applied" truth.
+func legacyAppliedVersions(ctx context.Context, db *sql.DB) map[string]bool {
+	applied := map[string]bool{}
+	rows, err := db.QueryContext(ctx, "SELECT version FROM schema_migrations")
+	if err != nil {
+		return applied
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			continue
+		}
+		applied[v] = true
+	}
+	return applied
+}
+
+// applyMigrations applies every not-yet-applied .sql file in migrationsDir
+// against the canonical gateway_schema_migrations ledger - the same table, the
+// same short version key and the same checksum column that the migration files
+// themselves write. The runner previously used its own "schema_migrations"
+// table keyed by the full filename, so a database migrated by the container
+// entrypoint (psql, the production path) looked untouched to `ubag db-migrate`
+// and every migration was re-applied on top of it.
+//
 // placeholder is "?" for SQLite and "$1" for Postgres.
 func applyMigrations(ctx context.Context, db *sql.DB, migrationsDir string, placeholder string) (string, error) {
 	if placeholder != "?" && placeholder != "$1" {
 		return "", fmt.Errorf("migrate: unsupported placeholder %q (must be ? or $1)", placeholder)
 	}
 
-	// Ensure the tracking table exists.
-	_, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+	// Ensure the canonical tracking table exists. It is normally created by
+	// migration 0001 itself, but the runner must work on an empty database.
+	//
+	// The column set and defaults MUST match the table the migration files
+	// create (migrations/postgres/0001_gateway_stores.sql and
+	// internal/sqlitestore/schema.sql). Every shipped migration records itself
+	// with a three-column INSERT that omits applied_at, relying on that
+	// default. If this table were created without the default, 0001's own
+	// CREATE TABLE IF NOT EXISTS would be a no-op and its ledger INSERT would
+	// fail on the NOT NULL constraint - i.e. migrating a fresh database would
+	// break on the very first file.
+	appliedAtDefault := "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+	if placeholder == "$1" {
+		appliedAtDefault = "now()"
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS gateway_schema_migrations (
 		version    TEXT PRIMARY KEY,
 		name       TEXT NOT NULL,
-		applied_at TEXT NOT NULL
-	)`)
-	if err != nil {
-		return "", fmt.Errorf("migrate: create schema_migrations: %w", err)
+		checksum   TEXT NOT NULL DEFAULT '',
+		applied_at TEXT NOT NULL DEFAULT (`+appliedAtDefault+`)
+	)`); err != nil {
+		return "", fmt.Errorf("migrate: create gateway_schema_migrations: %w", err)
 	}
+
+	legacy := legacyAppliedVersions(ctx, db)
 
 	// Read migration files.
 	entries, err := os.ReadDir(migrationsDir)
@@ -240,29 +320,47 @@ func applyMigrations(ctx context.Context, db *sql.DB, migrationsDir string, plac
 
 	var lines []string
 	for _, filename := range files {
-		// version = filename without .sql extension
-		version := strings.TrimSuffix(filename, ".sql")
+		version := migrationVersion(filename)
+		longKey := strings.TrimSuffix(filename, ".sql")
 
-		// Check if already applied.
-		var existing string
-		checkSQL := "SELECT version FROM schema_migrations WHERE version = " + placeholder
-		row := db.QueryRowContext(ctx, checkSQL, version)
-		scanErr := row.Scan(&existing)
-		if scanErr != nil && scanErr != sql.ErrNoRows {
-			return "", fmt.Errorf("migrate: check version %q: %w", version, scanErr)
-		}
-
-		if scanErr == nil {
-			// Already applied.
-			lines = append(lines, "skipped "+version+" (already applied)")
-			continue
-		}
-
-		// Read and execute the migration file.
+		// Read the file up front: its bytes are both the checksum input and
+		// the statement to execute.
 		sqlPath := filepath.Join(migrationsDir, filename)
 		sqlBytes, err := os.ReadFile(sqlPath)
 		if err != nil {
 			return "", fmt.Errorf("migrate: read %q: %w", filename, err)
+		}
+		sum := sha256.Sum256(sqlBytes)
+		checksum := hex.EncodeToString(sum[:])
+
+		// Check if already applied, and whether the file changed since.
+		var recordedName, recordedSum string
+		checkSQL := "SELECT name, checksum FROM gateway_schema_migrations WHERE version = " + placeholder
+		row := db.QueryRowContext(ctx, checkSQL, version)
+		scanErr := row.Scan(&recordedName, &recordedSum)
+		if scanErr != nil && scanErr != sql.ErrNoRows {
+			return "", fmt.Errorf("migrate: check version %q: %w", version, scanErr)
+		}
+
+		applied := scanErr == nil
+		if !applied && (legacy[version] || legacy[longKey]) {
+			// Recorded by the old runner under the filename key. Adopt it
+			// rather than re-running the statements.
+			applied = true
+		}
+
+		if applied {
+			// Drift check: refuse to skip silently when the file on disk no
+			// longer matches what was applied. Legacy placeholder checksums
+			// carry no information and are always tolerated.
+			if recordedSum != "" && recordedSum != checksum && !isLegacyPlaceholderChecksum(recordedSum) {
+				return "", fmt.Errorf(
+					"migrate: %s was already applied with checksum %s but the file on disk hashes to %s; "+
+						"an already-applied migration was edited - add a new migration file instead",
+					filename, recordedSum, checksum)
+			}
+			lines = append(lines, "skipped "+version+" (already applied)")
+			continue
 		}
 
 		// Apply the migration inside a transaction for atomicity.
@@ -275,15 +373,22 @@ func applyMigrations(ctx context.Context, db *sql.DB, migrationsDir string, plac
 			return "", fmt.Errorf("migrate: apply %q: %w", filename, err)
 		}
 
-		// Record the migration. Use dialect-appropriate placeholders.
+		// Record the migration. The migration files write their own ledger row,
+		// so this must not conflict with it.
 		var insertSQL string
 		if placeholder == "$1" {
-			insertSQL = "INSERT INTO schema_migrations (version, name, applied_at) VALUES ($1, $2, $3)"
+			insertSQL = "INSERT INTO gateway_schema_migrations (version, name, checksum, applied_at) " +
+				"VALUES ($1, $2, $3, $4) ON CONFLICT (version) DO NOTHING"
 		} else {
-			insertSQL = "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)"
+			insertSQL = "INSERT INTO gateway_schema_migrations (version, name, checksum, applied_at) " +
+				"VALUES (?, ?, ?, ?) ON CONFLICT (version) DO NOTHING"
 		}
 		appliedAt := time.Now().UTC().Format(time.RFC3339)
-		if _, err := tx.ExecContext(ctx, insertSQL, version, version, appliedAt); err != nil {
+		name := strings.TrimPrefix(longKey, version+"_")
+		if name == "" {
+			name = longKey
+		}
+		if _, err := tx.ExecContext(ctx, insertSQL, version, name, checksum, appliedAt); err != nil {
 			_ = tx.Rollback()
 			return "", fmt.Errorf("migrate: record %q: %w", filename, err)
 		}

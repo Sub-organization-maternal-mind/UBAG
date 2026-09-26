@@ -102,3 +102,21 @@ apps/gateway/internal/executor/Python/
 
 # Local gateway runtime artifacts (chat ledger spool)
 /chat-ledger/
+
+# Root-level gateway runtime state. These hold REAL JOB PAYLOADS - prompts,
+# provider replies and operator-attached artifacts - which in a clinical
+# deployment are patient data. They are never build inputs and must never
+# reach git. (The mirrored entries in .dockerignore keep them out of the
+# image build context, which uploads to hosted CI runners.)
+/spool/
+/artifacts/
+/logs/
+
+# Same runtime state when the gateway is run from apps/gateway. chat-ledger/
+# in particular is copied wholesale into the image by gateway.Dockerfile
+# (`COPY apps/gateway ./`), so it must be excluded from the build context.
+apps/gateway/chat-ledger/
+apps/gateway/_gw_run.py
+
+# Local ZCode agent session state
+.zcode/
