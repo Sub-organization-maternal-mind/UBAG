@@ -10,6 +10,13 @@ on:
       - 'apps/gateway/**'
       - 'deploy/installers/**'
 
+# Least privilege by default. The `release` job below re-declares the write
+# scopes it needs (contents/packages for the GitHub release + GHCR push, and
+# id-token for cosign keyless signing), so the PR-triggered `snapshot` job runs
+# with read-only access instead of inheriting the repository default.
+permissions:
+  contents: read
+
 jobs:
   # Snapshot dry-run on PRs
   snapshot:

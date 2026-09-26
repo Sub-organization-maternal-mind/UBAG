@@ -1,4 +1,5 @@
 {{- if .Values.prometheus.enabled }}
+{{- $job := include "ubag.fullname" . }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -11,15 +12,23 @@ spec:
   groups:
     # ---------------------------------------------------------------------------
     # Gateway availability SLO — 5xx error rate must stay below 1 % over 1 h
+    #
+    # Metric names here are the ones the gateway actually writes in
+    # handleMetrics (internal/httpapi/server.go). The previous expressions used
+    # `http_requests_total` and filtered on `status=`, neither of which exists:
+    # the real series is `ubag_gateway_http_requests_total` and the label is
+    # `status_class` (values "2xx".."5xx"). tools/check-alert-metrics.mjs now
+    # gates every metric named in this file against the gateway's own
+    # emissions, so these cannot silently rot again.
     # ---------------------------------------------------------------------------
     - name: ubag.slo.availability
       rules:
         - alert: UBAGHighErrorRate
           expr: |
             (
-              rate(http_requests_total{job="{{ include "ubag.fullname" . }}",status=~"5.."}[5m])
+              rate(ubag_gateway_http_requests_total{job="{{ $job }}",status_class="5xx"}[5m])
               /
-              rate(http_requests_total{job="{{ include "ubag.fullname" . }}"}[5m])
+              clamp_min(rate(ubag_gateway_http_requests_total{job="{{ $job }}"}[5m]), 1e-9)
             ) > 0.01
           for: {{ .Values.prometheus.rules.errorRate.for | default "5m" }}
           labels:
@@ -30,43 +39,73 @@ spec:
             description: >-
               Gateway 5xx rate is {{ "{{" }} $value | humanizePercentage {{ "}}" }}
               over the last 5 minutes. SLO target is < 1 % over 1 h.
-            runbook_url: "https://github.com/ubag/ubag/blob/main/docs/runbooks/high-error-rate.md"
+            runbook_url: "https://github.com/ubag/ubag/blob/main/apps/docs/src/content/docs/operations/runbook.md"
 
     # ---------------------------------------------------------------------------
-    # Gateway latency SLO — p99 request duration must stay below 1 s
+    # Gateway mean latency
+    #
+    # The gateway publishes HTTP request duration as a _sum/_count pair only -
+    # there is no `_bucket` series for it (only the job/queue/ingest durations
+    # go through writeDurationHistogram). A `histogram_quantile` over
+    # ubag_gateway_http_request_duration_seconds_bucket therefore always
+    # returned no data and the old p99 alert could never fire. This alerts on
+    # the computable quantity and says so, rather than pretending to a p99.
     # ---------------------------------------------------------------------------
     - name: ubag.slo.latency
       rules:
-        - alert: UBAGHighLatencyP99
+        - alert: UBAGHighMeanLatency
           expr: |
-            histogram_quantile(
-              0.99,
-              rate(http_request_duration_seconds_bucket{job="{{ include "ubag.fullname" . }}"}[5m])
+            (
+              rate(ubag_gateway_http_request_duration_seconds_sum{job="{{ $job }}"}[5m])
+              /
+              clamp_min(rate(ubag_gateway_http_request_duration_seconds_count{job="{{ $job }}"}[5m]), 1e-9)
             ) > 1.0
           for: {{ .Values.prometheus.rules.latency.for | default "5m" }}
           labels:
             severity: {{ .Values.prometheus.rules.latency.severity | default "warning" }}
             slo: latency
           annotations:
-            summary: "UBAG p99 latency > 1 s"
+            summary: "UBAG mean request latency > 1 s"
             description: >-
-              Gateway p99 request duration is {{ "{{" }} $value | humanizeDuration {{ "}}" }},
-              which exceeds the 1 s SLO target.
-            runbook_url: "https://github.com/ubag/ubag/blob/main/docs/runbooks/high-latency.md"
+              Gateway MEAN request duration is {{ "{{" }} $value | humanizeDuration {{ "}}" }},
+              which exceeds the 1 s target. This is a mean, not a p99: the
+              gateway does not publish HTTP duration histogram buckets.
 
     # ---------------------------------------------------------------------------
-    # Job success-rate SLO — failed jobs must stay below 5 % over 6 h
+    # Job p99 duration — this one IS a real histogram.
+    # ubag_jobs_failed_total / ubag_jobs_completed_total do not exist; the
+    # gateway's job outcome counter is ubag_worker_jobs_processed_total with an
+    # `outcome` label, and job duration is published with _bucket via
+    # writeDurationHistogram, so a genuine p99 is computable here.
     # ---------------------------------------------------------------------------
     - name: ubag.slo.jobs
       rules:
+        - alert: UBAGHighJobDurationP99
+          expr: |
+            histogram_quantile(
+              0.99,
+              sum by (le) (
+                rate(ubag_jobs_duration_seconds_bucket{job="{{ $job }}"}[10m])
+              )
+            ) > 300
+          for: {{ .Values.prometheus.rules.jobDuration.for | default "15m" }}
+          labels:
+            severity: {{ .Values.prometheus.rules.jobDuration.severity | default "warning" }}
+            slo: job-latency
+          annotations:
+            summary: "UBAG job p99 duration > 5 min"
+            description: >-
+              Job p99 duration is {{ "{{" }} $value | humanizeDuration {{ "}}" }},
+              which exceeds the 5 minute target.
+
         - alert: UBAGHighJobFailureRate
           expr: |
             (
-              rate(ubag_jobs_failed_total{job="{{ include "ubag.fullname" . }}"}[6h])
+              sum(rate(ubag_worker_jobs_processed_total{job="{{ $job }}",outcome=~"failed|error"}[6h]))
               /
-              (
-                rate(ubag_jobs_completed_total{job="{{ include "ubag.fullname" . }}"}[6h])
-                + rate(ubag_jobs_failed_total{job="{{ include "ubag.fullname" . }}"}[6h])
+              clamp_min(
+                sum(rate(ubag_worker_jobs_processed_total{job="{{ $job }}"}[6h])),
+                1e-9
               )
             ) > 0.05
           for: {{ .Values.prometheus.rules.jobFailure.for | default "15m" }}
@@ -76,7 +115,51 @@ spec:
           annotations:
             summary: "UBAG job failure rate > 5%"
             description: >-
-              Background job failure rate is {{ "{{" }} $value | humanizePercentage {{ "}}" }}
+              Worker job failure rate is {{ "{{" }} $value | humanizePercentage {{ "}}" }}
               over the last 6 h. SLO target is < 5 % failed jobs.
-            runbook_url: "https://github.com/ubag/ubag/blob/main/docs/runbooks/high-job-failure-rate.md"
+            runbook_url: "https://github.com/ubag/ubag/blob/main/apps/docs/src/content/docs/operations/runbook.md"
+
+    # ---------------------------------------------------------------------------
+    # Liveness / saturation. ubag_gateway_ready is the metric to alert on, and
+    # ubag_queue_depth / ubag_webhook_outbox_depth are the backlog signals.
+    # ---------------------------------------------------------------------------
+    - name: ubag.slo.liveness
+      rules:
+        - alert: UBAGGatewayNotReady
+          expr: ubag_gateway_ready{job="{{ $job }}"} == 0
+          for: 2m
+          labels:
+            severity: critical
+            slo: availability
+          annotations:
+            summary: "UBAG gateway is not ready"
+            description: >-
+              ubag_gateway_ready has been 0 for more than 2 minutes. The
+              readiness probe aggregates every configured store plus the
+              executor and webhook outbox.
+
+        - alert: UBAGQueueBacklogGrowing
+          expr: ubag_queue_depth{job="{{ $job }}",state="queued"} > 500
+          for: 10m
+          labels:
+            severity: warning
+            slo: saturation
+          annotations:
+            summary: "UBAG queue backlog above 500 jobs"
+            description: >-
+              {{ "{{" }} $value {{ "}}" }} jobs have been queued for more than
+              10 minutes. Check worker concurrency and provider latency.
+
+        - alert: UBAGWebhookOutboxBacklog
+          expr: ubag_webhook_outbox_depth{job="{{ $job }}"} > 100
+          for: 10m
+          labels:
+            severity: warning
+            slo: saturation
+          annotations:
+            summary: "UBAG webhook outbox backlog above 100"
+            description: >-
+              {{ "{{" }} $value {{ "}}" }} webhook deliveries are pending.
+              Check delivery-worker health and
+              ubag_webhook_worker_run_errors_total.
 {{- end }}

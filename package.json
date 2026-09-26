@@ -17,6 +17,7 @@
     "test:deployment": "node tools/run-small-deployment-check.mjs",
     "check:blueprint": "node tools/check-blueprint-coverage.mjs",
     "check:contracts": "node tools/check-contracts.mjs",
+    "check:alert-metrics": "node tools/check-alert-metrics.mjs",
     "check:provider-selectors": "node tools/provider-refresh/check-provider-selectors.mjs",
     "lint:openapi": "pnpm --package=@redocly/cli dlx redocly lint packages/openapi/openapi.yaml",
     "lint:schemas": "pnpm --package=ajv-cli --package=ajv-formats dlx ajv compile -s \"packages/shared-schemas/schemas/*.json\" --spec=draft2020 -c ajv-formats",
@@ -44,7 +45,7 @@
     "test:benchmark": "node --test tools/benchmark/test/benchmark.test.mjs",
     "test:v0:local": "pnpm test:schema && pnpm test:edge-store && pnpm test:plugins && pnpm test:adapter-registry && pnpm test:security && pnpm test:worker && pnpm test:sidecar && pnpm test:sdk && pnpm test:conformance && pnpm test:observability && pnpm test:cli && pnpm test:dashboard && pnpm test:deployment && pnpm test:docs",
     "test:v0": "pnpm test:v0:local && pnpm test:gateway",
-    "check": "pnpm check:blueprint && pnpm check:contracts && pnpm check:provider-selectors && pnpm check:sdk-freshness && pnpm test:security && pnpm test:observability && pnpm test:dashboard && pnpm test:docs"
+    "check": "pnpm check:blueprint && pnpm check:contracts && pnpm check:provider-selectors && pnpm check:alert-metrics && pnpm check:sdk-freshness && pnpm test:security && pnpm test:observability && pnpm test:dashboard && pnpm test:docs"
   },
   "devDependencies": {},
   "pnpm": {

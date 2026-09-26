@@ -22,6 +22,14 @@ concurrency:
   group: gateway-image-${{ github.ref }}
   cancel-in-progress: true
 
+# This workflow builds the production image AND deploys to the VPS over SSH, so
+# it previously inherited the repository default token permissions with no
+# explicit scope. Default to read-only at the top level and let the two jobs that
+# genuinely need more declare it themselves - a compromised third-party action
+# in the build path then cannot push tags or releases.
+permissions:
+  contents: read
+
 jobs:
   # The gateway image bundles the Python worker that drives the browser, so this
   # gates the deploy on the worker suite. It runs in parallel with the build and

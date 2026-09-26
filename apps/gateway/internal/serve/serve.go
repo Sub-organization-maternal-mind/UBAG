@@ -132,6 +132,9 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("invalid webhook outbox configuration: %w", err)
 	}
 	webhookPolicy := newWebhookURLPolicyFromEnv()
+	// Set once the delivery worker exists; read by /v1/metrics through the
+	// closure wired into httpapi.Config below.
+	var webhookWorkerRunErrors func() uint64
 	webhookMaxAttempts, err := intFromEnv("UBAG_WEBHOOK_MAX_ATTEMPTS", 8)
 	if err != nil {
 		return fmt.Errorf("invalid webhook retry configuration: %w", err)
@@ -183,7 +186,18 @@ func Run(ctx context.Context) error {
 		Artifacts:        artifactStore,
 		Webhooks:         webhookStore,
 		WebhookURLPolicy: webhookPolicy,
-		FacadeMaxWait:    facadeMaxWait,
+		// Late-bound: the delivery worker is constructed further down, so the
+		// metrics endpoint reads the counter through a closure rather than a
+		// direct reference. Exposed as ubag_webhook_worker_run_errors_total so
+		// "delivery has stopped retrying" is distinguishable from "no callbacks
+		// are queued" - before this, Run's first error ended delivery silently.
+		WebhookWorkerRunErrors: func() uint64 {
+			if webhookWorkerRunErrors == nil {
+				return 0
+			}
+			return webhookWorkerRunErrors()
+		},
+		FacadeMaxWait: facadeMaxWait,
 
 		RateLimiter:       enterprise.rateLimiter,
 		RateLimitResolver: enterprise.rateResolver,
@@ -245,6 +259,7 @@ func Run(ctx context.Context) error {
 		if err := worker.Ready(ctx); err != nil {
 			return fmt.Errorf("webhook worker is not ready: %w", err)
 		}
+		webhookWorkerRunErrors = worker.RunErrors
 		go func() {
 			if err := worker.Run(ctx); err != nil && err != context.Canceled {
 				slog.Error("webhook worker stopped", "error", err)

@@ -65,11 +65,28 @@ jobs:
         run: node tools/check-nginx-dashboard.mjs
       - name: Lint Helm chart
         run: |
-          helm lint deploy/helm/ubag || echo "helm not installed, skipping"
+          # Install helm rather than skipping when it is missing: the `|| echo
+          # "helm not installed, skipping"` mask meant this check could never
+          # fail, and the chart's own comments state it must lint cleanly with
+          # the backing-service deploy toggles false (the default), so a
+          # failure here is a real regression.
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 -o get-helm-3
+          chmod +x get-helm-3
+          ./get-helm-3
+          helm version
+          # All optional in-cluster backing services are toggled off by default,
+          # so no subchart needs vendoring and this runs fully offline.
+          helm lint deploy/helm/ubag
+          helm template deploy/helm/ubag > /dev/null
+          helm template deploy/helm/ubag -f deploy/helm/ubag/values-ha.yaml > /dev/null
       - name: Validate Terraform modules
         run: node tools/check-enterprise-deploy.mjs
       - name: Check goreleaser config
-        run: goreleaser check || echo "goreleaser not installed, skipping"
+        run: |
+          # Installed, not skipped - the `|| echo "goreleaser not installed"`
+          # mask meant an invalid release config passed silently.
+          curl -fsSL https://goreleaser.com/install.sh | sh -s -- -b /usr/local/bin v2.5.1
+          goreleaser check
       - name: Validate GitOps manifests
         run: node tools/check-gitops.mjs
       - name: Validate installers
@@ -185,19 +202,103 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with: { fetch-depth: 0 }
       - uses: actions/setup-go@v7
         with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
+      - uses: actions/setup-node@v7
+        with: { node-version: "${{ env.NODE_VERSION }}" }
+      - uses: actions/setup-python@v6
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+
+      # Secret scanning. The repo builds its image with `context: .`, so any
+      # credential committed to the tree - including one that reached a job
+      # payload - would be uploaded to a hosted runner on the next build.
+      - name: gitleaks (secret scan)
+        uses: gitleaks/gitleaks-action@v2
+        env: { GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false" }
+
+      # These previously ran with `|| true`, so they could never fail a build
+      # and the scan was advisory decoration only.
       - name: govulncheck
         working-directory: apps/gateway
         env: { GOTOOLCHAIN: local }
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./... || true
-      - name: pip-audit
-        run: pipx run pip-audit -r apps/worker/requirements.txt || true
+        run: |
+          go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+          echo "govulncheck clean"
+
+      # pip-audit pointed at apps/worker/requirements.txt, which does not exist -
+      # the worker declares dependencies in pyproject.toml - so the audit was a
+      # permanent no-op.
+      - name: pip-audit (worker)
+        run: |
+          pip install --quiet pip-audit
+          pip-audit --strict --requirement <(python - <<'PY'
+          import tomllib, pathlib
+          data = tomllib.loads(pathlib.Path("apps/worker/pyproject.toml").read_text())
+          for dep in data["project"].get("dependencies", []):
+              print(dep)
+          for extra in data["project"].get("optional-dependencies", {}).values():
+              for dep in extra:
+                  print(dep)
+          PY
+          )
+
+      - name: pnpm audit (JS dependencies)
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile --ignore-scripts
+          pnpm audit --audit-level high
+
+      - name: cargo audit (Rust sidecar)
+        working-directory: packages/sidecar-rust
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
+      # The production image. It is the artifact gateway-image.yml ships, and it
+      # was previously never scanned.
+      - name: Build gateway image
+        run: docker build -t ubag/gateway:ci-scan -f deploy/small/gateway.Dockerfile .
+      - name: Trivy image scan (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ubag/gateway:ci-scan
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: IaC scan (Terraform / Compose / Helm)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+
       - name: Generate SBOM (syft)
         uses: anchore/sbom-action@v0
         with: { format: spdx-json, output-file: ubag.sbom.spdx.json }
       - uses: actions/upload-artifact@v7
         with: { name: sbom, path: ubag.sbom.spdx.json }
+
+  dependency-review:
+    name: Dependency review (PR only)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      # Blocks a PR that introduces a dependency with a known CVE or an
+      # AGPL/copyleft licence. Dependabot version bumps existed, but nothing
+      # gated what a PR was allowed to pull in.
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
 
   sidecar-rust:
     name: Sidecar (Rust)

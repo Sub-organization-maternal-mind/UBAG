@@ -22,6 +22,12 @@ spec:
       interval: {{ .Values.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
       honorLabels: {{ .Values.serviceMonitor.honorLabels }}
+      # Without an explicit jobLabel, Prometheus Operator populates the `job`
+      # label from app.kubernetes.io/name ("ubag"), so the PrometheusRule
+      # selectors `job="{{ include "ubag.fullname" . }}"` (which render as
+      # "<release>-ubag") never matched and no alert could ever fire. Pin job to
+      # the same value the rules use.
+      jobLabel: app.kubernetes.io/instance
   namespaceSelector:
     matchNames:
       - {{ .Release.Namespace }}

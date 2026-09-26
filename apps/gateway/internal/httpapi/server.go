@@ -108,6 +108,12 @@ type Config struct {
 
 	WebhookURLPolicy webhooks.URLPolicy
 
+	// WebhookWorkerRunErrors, when non-nil, supplies the delivery loop's
+	// consecutive-failure count for /v1/metrics. Optional: nil means the
+	// gateway is not running a delivery worker (or it runs in-process), and the
+	// counter is reported as 0.
+	WebhookWorkerRunErrors func() uint64
+
 	// Optional enterprise components. Every field below is nil-safe: when a
 	// component is nil the corresponding route returns a clean 501/empty
 	// result (or, for rate limiting, the middleware becomes a pass-through).
@@ -304,6 +310,9 @@ type Server struct {
 	artifactCaptures   atomic.Int64 // ubag_artifact_captures_total
 	webhookDeliveries  atomic.Int64 // ubag_webhook_deliveries_total
 
+	// Optional accessor for the delivery worker's failure count; nil-safe.
+	webhookWorkerRunErrors func() uint64
+
 	// OpenAI facade outcome counters (ubag_facade_jobs_total{outcome=...}).
 	facadeOutcomes labeledCounter
 
@@ -460,6 +469,8 @@ func NewServer(config Config) *Server {
 		templates:     config.Templates,
 		webhooks:      config.Webhooks,
 		webhookURLs:   config.WebhookURLPolicy,
+
+		webhookWorkerRunErrors: config.WebhookWorkerRunErrors,
 
 		rateLimiter:      config.RateLimiter,
 		rateResolver:     config.RateLimitResolver,
@@ -867,6 +878,19 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "ubag_webhook_deliveries_total{endpoint_kind=\"job_callback\",outcome=\"success\",error_class=\"none\"} %d\n", webhookDeliveries)
 	_, _ = fmt.Fprintf(w, "ubag_webhook_delivery_duration_seconds_count{endpoint_kind=\"job_callback\",outcome=\"success\"} %d\n", webhookDeliveries)
 	_, _ = fmt.Fprint(w, "ubag_webhook_delivery_duration_seconds_sum{endpoint_kind=\"job_callback\",outcome=\"success\"} 0\n")
+
+	// Webhook delivery-loop health. DeliveryWorker.Run used to return on the
+	// first store error and serve.Run only logged it, so a single blip stopped
+	// every job_callback from being delivered with no signal at all. The worker
+	// now counts those failures; this exposes them so "delivery has stopped" is
+	// distinguishable from "no callbacks are queued". Tools/check-alert-metrics.mjs
+	// gates that the metric named by the Helm alert exists.
+	webhookRunErrors := uint64(0)
+	if s.webhookWorkerRunErrors != nil {
+		webhookRunErrors = s.webhookWorkerRunErrors()
+	}
+	_, _ = fmt.Fprintf(w, "# TYPE ubag_webhook_worker_run_errors_total counter\n")
+	_, _ = fmt.Fprintf(w, "ubag_webhook_worker_run_errors_total{service=\"ubag-gateway\"} %d\n", webhookRunErrors)
 
 	_, _ = fmt.Fprint(w, "# TYPE ubag_jobs_duration_seconds histogram\n")
 	for _, status := range metricKeysWithDefaults(runtimeMetrics.jobDurations, []string{string(jobstore.StatusCompleted)}) {
@@ -3217,6 +3241,7 @@ func targetCatalog() []map[string]any {
 		{"key": "duckai_web", "adapter_key": "duckai_web", "display_name": "Duck.ai Web", "safe_mode": true, "manual_login_required": true},
 		{"key": "generic_chat", "adapter_key": "generic_chat", "display_name": "Generic Chat", "safe_mode": true, "manual_login_required": true},
 		{"key": "generic_form", "adapter_key": "generic_form", "display_name": "Generic Form", "safe_mode": true, "manual_login_required": true},
+		{"key": "antigravity_sdk", "adapter_key": "antigravity_sdk", "display_name": "Antigravity SDK", "safe_mode": true, "manual_login_required": false},
 	}
 }
 
@@ -3231,6 +3256,7 @@ func adapterCatalog() []map[string]any {
 		{"key": "duckai_web", "kind": "browser", "stage": "v1", "capabilities": []string{"manual_login", "submit", "stream", "extract", "normalize", "file_attach"}},
 		{"key": "generic_chat", "kind": "browser", "stage": "v0", "capabilities": []string{"manual_login", "submit", "extract", "normalize"}},
 		{"key": "generic_form", "kind": "browser", "stage": "v0", "capabilities": []string{"manual_login", "submit", "extract", "normalize"}},
+		{"key": "antigravity_sdk", "kind": "sdk", "stage": "v0", "capabilities": []string{"submit", "stream", "extract", "normalize", "multi_turn", "token_usage"}},
 	}
 	for _, entry := range catalog {
 		key, _ := entry["key"].(string)
