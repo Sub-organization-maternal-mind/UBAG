@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
+	"github.com/ubag/ubag/apps/gateway/internal/antigravity"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/attachments"
 	"github.com/ubag/ubag/apps/gateway/internal/conversations"
@@ -169,9 +170,10 @@ func (f WorkerRunFunc) RunWorker(ctx context.Context, envelope DispatchEnvelope)
 }
 
 type ProcessWorkerRunner struct {
-	Python     string
-	Script     string
-	MaxRuntime time.Duration
+	Python           string
+	Script           string
+	MaxRuntime       time.Duration
+	AntigravityStore *antigravity.Store
 	// Artifacts lets the runner materialize a job's declared attachments to local
 	// temp files (attachment_local_paths, plus audio_local_path for the single
 	// audio alias) for the worker to attach. Optional; when nil, materialization
@@ -1211,27 +1213,103 @@ func (r ProcessWorkerRunner) RunWorker(ctx context.Context, envelope DispatchEnv
 		return nil, err
 	}
 
-	command := exec.CommandContext(runCtx, python, script, "--input", "-")
-	command.Stdin = bytes.NewReader(payload)
-	stdout := &limitedBuffer{max: maxWorkerOutputBytes}
-	stderr := &limitedBuffer{max: maxWorkerStderrBytes}
-	command.Stdout = stdout
-	command.Stderr = stderr
-	command.Env = minimalWorkerEnv()
-	if err := command.Run(); err != nil {
-		if runCtx.Err() == context.DeadlineExceeded {
-			return nil, fmt.Errorf("worker process timed out after %s", maxRuntime)
+	run := func(accountSocket string) ([]jobstore.WorkerEvent, error) {
+		command := exec.CommandContext(runCtx, python, script, "--input", "-")
+		command.Stdin = bytes.NewReader(payload)
+		stdout := &limitedBuffer{max: maxWorkerOutputBytes}
+		stderr := &limitedBuffer{max: maxWorkerStderrBytes}
+		command.Stdout = stdout
+		command.Stderr = stderr
+		command.Env = workerEnvForTarget(envelope.Job.Target)
+		if accountSocket != "" {
+			command.Env = append(command.Env, "UBAG_ANTIGRAVITY_ACCOUNT_SOCKET="+accountSocket)
 		}
-		if runCtx.Err() == context.Canceled {
-			return nil, context.Canceled
+		if err := command.Run(); err != nil {
+			if runCtx.Err() == context.DeadlineExceeded {
+				return nil, fmt.Errorf("worker process timed out after %s", maxRuntime)
+			}
+			if runCtx.Err() == context.Canceled {
+				return nil, context.Canceled
+			}
+			slog.Error("worker process failed", "stderr", stderr.buf.String(), "stdout_bytes", stdout.buf.Len(), "error", err)
+			return nil, fmt.Errorf("worker process failed")
 		}
-		slog.Error("worker process failed", "stderr", stderr.buf.String(), "stdout_bytes", stdout.buf.Len(), "error", err)
-		return nil, fmt.Errorf("worker process failed")
+		if stdout.truncated {
+			return nil, fmt.Errorf("worker stdout exceeded %d bytes", maxWorkerOutputBytes)
+		}
+		return parseWorkerJSONL(stdout.Bytes())
 	}
-	if stdout.truncated {
-		return nil, fmt.Errorf("worker stdout exceeded %d bytes", maxWorkerOutputBytes)
+	if envelope.Job.Target != "antigravity_cli" {
+		return run("")
 	}
-	return parseWorkerJSONL(stdout.Bytes())
+	store := r.AntigravityStore
+	if store == nil {
+		store = antigravity.GetStore()
+	}
+	socketDir := strings.TrimSpace(os.Getenv("UBAG_ANTIGRAVITY_SOCKET_DIR"))
+	if socketDir == "" {
+		return nil, fmt.Errorf("isolated account socket directory is not configured")
+	}
+	requestedAccount, _ := envelope.Job.Options["antigravity_account_id"].(string)
+	return runIsolatedCLIAttempts(store, envelope.TenantID, requestedAccount, func(account antigravity.Account) (string, bool) {
+		if filepath.Base(account.ID) != account.ID || account.ID == "." {
+			return "", false
+		}
+		socketPath := antigravity.AccountSocketPath(socketDir, account.ID)
+		info, err := os.Lstat(socketPath)
+		return socketPath, err == nil && info.Mode()&os.ModeSocket != 0
+	}, run)
+}
+
+func runIsolatedCLIAttempts(
+	store *antigravity.Store, tenantID, requestedAccount string,
+	accountSocket func(antigravity.Account) (string, bool),
+	run func(string) ([]jobstore.WorkerEvent, error),
+) ([]jobstore.WorkerEvent, error) {
+	var quotaEvents []jobstore.WorkerEvent
+	for _, account := range store.EligibleAccounts(tenantID, time.Now()) {
+		if requestedAccount != "" && account.ID != requestedAccount {
+			continue
+		}
+		socket, ready := accountSocket(account)
+		if !ready {
+			continue
+		}
+		events, err := run(socket)
+		if err != nil {
+			return nil, err
+		}
+		if upfrontQuotaError(events) {
+			if err := store.MarkAccountExhausted(tenantID, account.ID, antigravity.DefaultCooldownSec); err != nil {
+				return events, nil
+			}
+			quotaEvents = events
+			if requestedAccount != "" {
+				break
+			}
+			continue
+		}
+		if err := store.MarkAccountUsed(tenantID, account.ID); err != nil {
+			slog.Error("failed to persist Antigravity account last-used time", "error", err)
+		}
+		return events, nil
+	}
+	if quotaEvents != nil {
+		return quotaEvents, nil
+	}
+	return nil, fmt.Errorf("no isolated account socket available for tenant")
+}
+
+func upfrontQuotaError(events []jobstore.WorkerEvent) bool {
+	for index, event := range events {
+		if event.Type == "failed" && index == len(events)-1 {
+			return event.Data["error_code"] == "OAUTH_QUOTA_EXHAUSTED"
+		}
+		if event.Type != "queued" && event.Type != "started" {
+			return false
+		}
+	}
+	return false
 }
 
 func parseWorkerJSONL(output []byte) ([]jobstore.WorkerEvent, error) {
@@ -1525,6 +1603,40 @@ func minimalWorkerEnv() []string {
 		}
 		if _, ok := allowed[strings.ToUpper(key)]; ok {
 			env = append(env, item)
+		}
+	}
+	return env
+}
+
+func workerEnvForTarget(target string) []string {
+	env := minimalWorkerEnv()
+	if target == "antigravity_cli" {
+		filtered := env[:0]
+		for _, item := range env {
+			key, _, _ := strings.Cut(item, "=")
+			if !strings.EqualFold(key, "HOME") && !strings.EqualFold(key, "USERPROFILE") {
+				filtered = append(filtered, item)
+			}
+		}
+		env = filtered
+	}
+	if target != "antigravity_sdk" && target != "antigravity_cli" {
+		return env
+	}
+
+	keys := []string{
+		"UBAG_ANTIGRAVITY_ENABLED", "UBAG_ANTIGRAVITY_MODEL", "UBAG_ANTIGRAVITY_EFFORT",
+	}
+	if target == "antigravity_sdk" {
+		keys = append(keys,
+			"GEMINI_API_KEY", "GOOGLE_GENAI_USE_VERTEXAI", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION",
+			"UBAG_ANTIGRAVITY_MAX_TOKENS", "UBAG_ANTIGRAVITY_MAX_MODEL_CALLS", "UBAG_ANTIGRAVITY_MAX_TOOL_CALLS",
+			"UBAG_ANTIGRAVITY_COMPACTION", "UBAG_ANTIGRAVITY_TOOL_OUTPUT_MAX_CHARS", "UBAG_ANTIGRAVITY_RETRY_MAX",
+		)
+	}
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok && value != "" {
+			env = append(env, key+"="+value)
 		}
 	}
 	return env

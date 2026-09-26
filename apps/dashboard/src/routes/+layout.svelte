@@ -11,7 +11,7 @@
     LayoutDashboard, Briefcase, Target, Puzzle, AppWindow, Smartphone,
     AlertTriangle, Globe, Webhook, FileText, GitBranch, Database,
     Shield, Users, CreditCard, Settings2, BarChart3, MessagesSquare, Sun, Moon, Menu, X,
-    KeyRound, ServerCog
+    KeyRound, ServerCog, Sparkles
   } from 'lucide-svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -38,6 +38,7 @@
     { href: '/quotas', label: 'Quotas & Billing', icon: CreditCard },
     { href: '/settings', label: 'Settings', icon: Settings2 },
     { href: '/metrics', label: 'Metrics', icon: BarChart3 },
+    { href: '/antigravity', label: 'Antigravity', icon: Sparkles },
   ];
 
   // Health polling state

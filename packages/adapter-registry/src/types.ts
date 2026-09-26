@@ -12,6 +12,15 @@ export type JsonObject = { [key: string]: JsonValue };
 export type AdapterStatus =
   | 'mock'
   | 'stub'
+  // A real, working adapter that talks to a provider through its own SDK rather
+  // than by driving a browser. Behaves like 'mock' for policy purposes (no
+  // browser, no manual login, artifact capture disabled) but is NOT a fail-closed
+  // stub. Must stay in sync with:
+  //   * schema/adapter-manifest.schema.json  "status" enum
+  //   * apps/worker/ubag_worker/adapter_registry.py  validate_manifest
+  // The three are the only thing declaring this vocabulary, and nothing
+  // cross-checks them, so all three must be edited together.
+  | 'native'
   | 'experimental'
   | 'beta'
   | 'stable'

@@ -1,0 +1,124 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Astro / Starlight
+dist/
+.astro/
+
+# Logs and local state
+*.log
+.codex/logs/
+.codex/test-output/
+**/.codex/test-output/
+.codex/*.log
+.codex/check-run.log
+.codex/rebuild.log
+.codex/v0-run.log
+.env
+.env.*
+deploy/small/env.local
+deploy/small/secrets/
+deploy/vps/env.local
+deploy/vps/nginx-dashboard/.htpasswd
+# OET provider PAT (issued on the VPS, root-only; never commit).
+deploy/vps/.oet-pat.json
+
+# Python generated files
+__pycache__/
+*.py[cod]
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Generated binaries
+*.exe
+
+# Go toolchain helpers and gateway local state
+.gotools/
+apps/gateway/ubag-gateway.db
+apps/gateway/ubag-gateway.db-*
+apps/gateway/coverage.out
+apps/gateway/coverage.html
+apps/gateway/artifacts/
+apps/gateway/*.log
+apps/dashboard/*.log
+
+# Live-browser bridge local state: the persistent Chrome profile (holds the
+# operator's provider logins/cookies) and its logs. NEVER commit these.
+tools/live-browser/chrome-profile/
+tools/live-browser/*.log
+
+# Playwright reports (local only)
+playwright-report/
+test-results/
+*.db-shm
+*.db-wal
+
+# Rust build output (sidecar-rust, sdk-rust)
+packages/sidecar-rust/target/
+packages/sdk-rust/target/
+
+# .NET build output (sdk-csharp)
+packages/sdk-csharp/**/bin/
+packages/sdk-csharp/**/obj/
+
+# JVM build output (sdk-java, sdk-kotlin)
+packages/sdk-java/**/.gradle/
+packages/sdk-java/**/build/
+packages/sdk-kotlin/**/.gradle/
+packages/sdk-kotlin/**/build/
+
+# UBAG runtime output planned for later phases
+var/
+tmp/
+coverage/
+
+# nginx-dashboard Basic Auth secret (generated per-deployment)
+deploy/small/nginx-dashboard/.htpasswd
+*.egg-info/
+apps/gateway/spool/
+apps/worker/*.log
+
+# Stray local Python distribution accidentally extracted inside the gateway - never commit
+apps/gateway/internal/executor/Python/
+
+# Understand-Anything analysis data
+.ua/
+
+# Local-only agent/analysis caches (never commit; preserved on disk)
+.claude/
+.codegraph/
+.serena/
+
+# ZCode session tool state (local only)
+.commandcode/
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+bower_components/
+jspm_packages/
+site-packages/
+venv/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+allure-results/
+allure-report/
+cdk.out/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）

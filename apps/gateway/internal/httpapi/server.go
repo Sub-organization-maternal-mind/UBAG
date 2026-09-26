@@ -33,6 +33,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/ubag/ubag/apps/gateway/internal/abac"
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
+	"github.com/ubag/ubag/apps/gateway/internal/antigravity"
 	"github.com/ubag/ubag/apps/gateway/internal/appjwt"
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/attachments"
@@ -83,13 +84,14 @@ var (
 )
 
 type Config struct {
-	APIVersion  string
-	Version     string
-	BuildCommit string
-	AppSecret   string
-	TenantID    string
-	AppID       string
-	ActorRole   string
+	APIVersion       string
+	Version          string
+	BuildCommit      string
+	AppSecret        string
+	TenantID         string
+	AppID            string
+	ActorRole        string
+	AntigravityStore *antigravity.Store
 
 	// DevCORSOrigin, when non-empty, adds permissive CORS headers for exactly
 	// this one origin and answers preflight OPTIONS requests with 204. It
@@ -253,22 +255,23 @@ type Config struct {
 }
 
 type Server struct {
-	apiVersion    string
-	version       string
-	buildCommit   string
-	appSecret     string
-	tenantID      string
-	appID         string
-	actorRole     string
-	devCORSOrigin string
-	maxBody       int64
-	jobs          jobstore.Store
-	idempotency   idempotency.Service
-	executor      executor.Dispatcher
-	artifactSt    artifacts.ArtifactStore
-	templates     templates.Store
-	webhooks      webhooks.OutboxStore
-	webhookURLs   webhooks.URLPolicy
+	apiVersion       string
+	version          string
+	buildCommit      string
+	appSecret        string
+	tenantID         string
+	appID            string
+	actorRole        string
+	antigravityStore *antigravity.Store
+	devCORSOrigin    string
+	maxBody          int64
+	jobs             jobstore.Store
+	idempotency      idempotency.Service
+	executor         executor.Dispatcher
+	artifactSt       artifacts.ArtifactStore
+	templates        templates.Store
+	webhooks         webhooks.OutboxStore
+	webhookURLs      webhooks.URLPolicy
 
 	rateLimiter         ratelimit.Limiter
 	rateResolver        *ratelimit.PolicyResolver
@@ -453,22 +456,23 @@ func NewServer(config Config) *Server {
 	}
 
 	server := &Server{
-		apiVersion:    config.APIVersion,
-		version:       config.Version,
-		buildCommit:   config.BuildCommit,
-		appSecret:     config.AppSecret,
-		tenantID:      strings.TrimSpace(config.TenantID),
-		appID:         strings.TrimSpace(config.AppID),
-		actorRole:     strings.TrimSpace(config.ActorRole),
-		devCORSOrigin: strings.TrimSpace(config.DevCORSOrigin),
-		maxBody:       config.MaxBodyBytes,
-		jobs:          config.Jobs,
-		idempotency:   config.Idempotency,
-		executor:      config.Executor,
-		artifactSt:    config.Artifacts,
-		templates:     config.Templates,
-		webhooks:      config.Webhooks,
-		webhookURLs:   config.WebhookURLPolicy,
+		apiVersion:       config.APIVersion,
+		version:          config.Version,
+		buildCommit:      config.BuildCommit,
+		appSecret:        config.AppSecret,
+		tenantID:         strings.TrimSpace(config.TenantID),
+		appID:            strings.TrimSpace(config.AppID),
+		actorRole:        strings.TrimSpace(config.ActorRole),
+		antigravityStore: config.AntigravityStore,
+		devCORSOrigin:    strings.TrimSpace(config.DevCORSOrigin),
+		maxBody:          config.MaxBodyBytes,
+		jobs:             config.Jobs,
+		idempotency:      config.Idempotency,
+		executor:         config.Executor,
+		artifactSt:       config.Artifacts,
+		templates:        config.Templates,
+		webhooks:         config.Webhooks,
+		webhookURLs:      config.WebhookURLPolicy,
 
 		webhookWorkerRunErrors: config.WebhookWorkerRunErrors,
 

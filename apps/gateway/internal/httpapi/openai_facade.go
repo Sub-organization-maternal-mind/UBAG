@@ -364,6 +364,13 @@ func facadeCuratedModelIDs(target string) []string {
 	if target == "chatgpt_web" {
 		return []string{"chatgpt_web" + facadeModelSeparator + "GPT-5.6 Sol + Medium"}
 	}
+	if target == "antigravity_sdk" {
+		return []string{
+			"antigravity_sdk" + facadeModelSeparator + "gemini-3.8-flash",
+			"antigravity_sdk" + facadeModelSeparator + "gemini-3.7-flash",
+			"antigravity_sdk" + facadeModelSeparator + "gemini-3.6-flash",
+		}
+	}
 	return nil
 }
 

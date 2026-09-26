@@ -10,7 +10,13 @@
 # Sessions -> click a provider -> log in inside the streamed VPS Chrome).
 # Until then every retry will pause again with manual_login_required.
 
-param([switch]$Apply)
+param(
+  [switch]$Apply,
+  # Optional comma-separated target filter, e.g. -Targets duckai_web,gemini_web.
+  # Useful when a provider's login is not restored yet: its jobs would only
+  # pause again at manual_login_required.
+  [string]$Targets
+)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = $PSScriptRoot
@@ -26,18 +32,24 @@ if (-not $secret) { throw 'UBAG_APP_SECRET not found in .env.local' }
 # retry can only fail again. They stay as history on purpose.
 $skip = @{ 'job_000000000247' = 'invalid target `gemini` (e2e-test artifact; registry only has gemini_web)' }
 
+$targetFilter = $null
+if ($Targets) { $targetFilter = ($Targets.Split(',') | ForEach-Object { $_.Trim() }) }
+
 $headers = @{
   Authorization     = "Bearer $secret"
   'Ubag-Api-Version' = '2026-05-22'
   'Content-Type'    = 'application/json'
 }
 
-$res = Invoke-RestMethod -Uri "$gatewayUrl/v1/jobs?limit=100" -Headers $headers -TimeoutSec 20
-$failed = @($res.jobs | Where-Object { $_.status -eq 'failed_retryable' })
+$res = Invoke-RestMethod -Uri "$gatewayUrl/v1/jobs?limit=100" -Headers $headers -TimeoutSec 60
+# timed_out jobs are retryable too: the 25-min runtime cap / stale-job reaper
+# catches jobs that sat queued during a wedged-consumer window.
+$failed = @($res.jobs | Where-Object { @('failed_retryable', 'timed_out') -contains $_.status })
 
 Write-Host ("Found {0} failed_retryable job(s) in the recent-100 window." -f $failed.Count)
 $targets = @()
 foreach ($j in $failed) {
+  if ($targetFilter -and ($targetFilter -notcontains $j.target)) { continue }
   if ($skip.ContainsKey($j.job_id)) {
     Write-Host ("  SKIP {0}  target={1}  ({2})" -f $j.job_id, $j.target, $skip[$j.job_id])
     continue
@@ -54,18 +66,25 @@ if (-not $Apply) {
 
 foreach ($j in $targets) {
   $idem = "retry-{0}-{1}" -f $j.job_id, (Get-Date -Format 'yyyyMMddHHmmss')
-  $postHeaders = @{
-    Authorization      = "Bearer $secret"
-    'Ubag-Api-Version' = '2026-05-22'
-    'Content-Type'     = 'application/json'
-    'Idempotency-Key'  = $idem
-  }
+  # POST via curl.exe: Invoke-RestMethod 5.1 intermittently returned 405 here
+  # (header/verb quirk) where curl against the same endpoint succeeds.
+  $out = & curl.exe -s --max-time 60 -X POST `
+    -H "Authorization: Bearer $secret" `
+    -H "Content-Type: application/json" `
+    -H "Ubag-Api-Version: 2026-05-22" `
+    -H "Idempotency-Key: $idem" `
+    -d '{}' `
+    "$gatewayUrl/v1/jobs/$($j.job_id)/retry" 2>&1
+  $outText = ($out | Out-String).Trim()
   try {
-    $r = Invoke-RestMethod -Method Post -Uri "$gatewayUrl/v1/jobs/$($j.job_id)/retry" `
-      -Headers $postHeaders -Body '{}' -TimeoutSec 20
-    Write-Host ("  -> {0} created as {1} ({2})" -f $j.job_id, $r.job_id, $r.status)
+    $r = $outText | ConvertFrom-Json
+    if ($r.job_id) {
+      Write-Host ("  -> {0} created as {1} ({2})" -f $j.job_id, $r.job_id, $r.status)
+    } else {
+      Write-Warning ("  -> {0} retry failed: {1}" -f $j.job_id, $outText.Substring(0, [Math]::Min(160, $outText.Length)))
+    }
   } catch {
-    Write-Warning ("  -> {0} retry failed: {1}" -f $j.job_id, $_.Exception.Message)
+    Write-Warning ("  -> {0} retry failed: {1}" -f $j.job_id, $outText.Substring(0, [Math]::Min(160, $outText.Length)))
   }
   Start-Sleep -Milliseconds 500
 }

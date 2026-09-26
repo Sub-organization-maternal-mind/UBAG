@@ -1,0 +1,41 @@
+{
+  "schema_version": "ubag.adapter.v0",
+  "id": "antigravity_cli",
+  "display_name": "Antigravity CLI",
+  "version": "0.1.0",
+  "status": "native",
+  "adapter_path": "antigravity_cli",
+  "entrypoint": "ubag_antigravity_cli_adapter.adapter:AntigravityCLIAdapter",
+  "target_homepage": "https://antigravity.google",
+  "aliases": ["agy", "antigravity_oauth"],
+  "login_posture": "none",
+  "supported_command_types": ["chat.prompt"],
+  "capabilities": ["multi_turn", "token_usage_tracking", "tool_calls"],
+  "model_catalog": {
+    "settings": {
+      "model": { "kind": "choice", "values": ["gemini-3.8-flash"] },
+      "effort": { "kind": "choice", "values": ["low", "medium", "high"] }
+    }
+  },
+  "selector_strategy": { "type": "none", "drift_baseline_required": false },
+  "artifact_policy": { "screenshots": "disabled", "dom_snapshots": "disabled", "recordings": "disabled" },
+  "safe_mode": {
+    "manual_login_required": true,
+    "user_owned_sessions_only": true,
+    "automated_login": "forbidden",
+    "credential_scraping": "forbidden",
+    "credential_storage": "forbidden",
+    "captcha_solving": "forbidden",
+    "captcha_bypass": "forbidden"
+  },
+  "credential_policy": {
+    "collect_credentials": false,
+    "read_credentials_from_payload": false,
+    "scrape_credentials": false,
+    "store_credentials": false
+  },
+  "captcha_policy": { "solve": false, "bypass": false, "delegate_to_solver": false, "manual_only": true },
+  "synthetic_test_prompts": ["Say hello"],
+  "resource_policy": { "network": "required", "browser": "not_required" },
+  "not_implemented_reason": ""
+}

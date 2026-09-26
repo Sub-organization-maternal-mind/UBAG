@@ -1,11 +1,18 @@
-<script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
-
+<script module lang="ts">
   // Build-time default (see vite.config.ts `define`, same pattern as
   // settings.ts): lets a local deployment bake in a tunnelled remote bridge —
   // e.g. the production VPS Chrome reached over an SSH tunnel — so every
   // operator browser profile works with zero manual setup.
+  //
+  // This lives in a module script because `declare` is only legal at module
+  // scope; svelte-check rejects a modifier-bearing declare inside the instance
+  // script. The symbol is still replaced textually by Vite's `define`, and the
+  // `typeof` guard in defaultWsUrl() handles an undefined injection.
   declare const __UBAG_DEFAULT_LIVE_BROWSER_WS__: string | undefined;
+</script>
+
+<script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
 
   // The live-browser bridge (tools/live-browser/bridge.mjs) streams the real
   // Chrome as JPEG frames over this WebSocket and accepts mouse/keyboard input

@@ -45,6 +45,14 @@
     {
       "id": "duckai_web",
       "manifest": "duckai_web/manifest.json"
+    },
+    {
+      "id": "antigravity_sdk",
+      "manifest": "antigravity_sdk/manifest.json"
+    },
+    {
+      "id": "antigravity_cli",
+      "manifest": "antigravity_cli/manifest.json"
     }
   ]
 }

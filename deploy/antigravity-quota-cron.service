@@ -1,0 +1,10 @@
+[Unit]
+Description=Antigravity quota refresh for UBAG
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/ubag/tools/antigravity-quota/refresh.py
+Environment=UBAG_GATEWAY_URL=http://localhost:8080
+Environment=UBAG_APP_SECRET=changeme
+Environment=AGY_QUOTA_BIN=/usr/local/bin/agy-quota

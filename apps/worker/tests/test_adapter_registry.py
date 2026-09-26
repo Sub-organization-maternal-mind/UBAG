@@ -1,6 +1,8 @@
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "apps" / "worker"))
@@ -75,6 +77,16 @@ class AdapterRegistryTests(unittest.TestCase):
         self.assertEqual(index["generic_chat"]["id"], "generic_chat")
         self.assertEqual(index["generic_form"]["id"], "generic_form")
         self.assertEqual(index["agy"]["id"], "antigravity_cli")
+
+    def test_antigravity_native_targets_require_explicit_opt_in(self):
+        with patch.dict(os.environ, {"UBAG_ANTIGRAVITY_ENABLED": "false"}), patch(
+            "ubag_worker.adapter_registry.instantiate_adapter"
+        ) as instantiate:
+            instantiate.return_value.run.return_value = []
+            for target in ("antigravity_sdk", "antigravity_cli", "agy"):
+                with self.subTest(target=target), self.assertRaisesRegex(ValueError, "disabled"):
+                    events_for_payload({"job": {"target": target, "input": {"prompt": "test"}}})
+            instantiate.assert_not_called()
 
     def test_mock_target_still_emits_events(self):
         events = events_for_payload(

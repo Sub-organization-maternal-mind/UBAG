@@ -100,6 +100,13 @@ func (s *Server) simpleRoutes() []routeDecl {
 		{"/v1/mfa/verify", s.handleMFAVerify},
 		{"/v1/admin/elevation", s.handleRequestElevation},
 		{"/v1/admin/elevation/{id}/approve", s.handleApproveElevation},
+		{"/v1/antigravity/accounts", s.handleAntigravityAccounts},
+		{"/v1/antigravity/accounts/{id}", s.handleAntigravityAccountByID},
+		{"/v1/antigravity/config", s.handleAntigravityConfig},
+		{"/v1/antigravity/test", s.handleAntigravityTest},
+		{"/v1/quotas/antigravity", s.handleAntigravityQuota},
+		{"/v1/quotas/antigravity/refresh", s.handleAntigravityQuota},
+		{"/v1/quotas/antigravity/{account}", s.handleAntigravityQuotaAccount},
 	}
 }
 

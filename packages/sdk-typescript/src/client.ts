@@ -272,6 +272,59 @@ export class UbagClient {
     return this.request("GET", `/v1/events${buildListQuery(params)}`, options);
   }
 
+  // -- Antigravity provider pool ------------------------------------------
+  // Typed wrappers for the /v1/antigravity surface. These routes serve a
+  // provider account pool (API-key backed), not browser sessions, so they are
+  // operator reads with no job semantics.
+  //
+  // The CLI previously called a generic `client.get(path)`, which UbagClient
+  // has never had - the SDK is deliberately typed with no untyped escape hatch,
+  // so these named methods are the supported way to reach these routes.
+
+  async getAntigravityAccounts(options: UbagRequestOptions = {}): Promise<UbagCollectionResponse> {
+    return this.request("GET", "/v1/antigravity/accounts", options);
+  }
+
+  async getAntigravityConfig(options: UbagRequestOptions = {}): Promise<Record<string, unknown>> {
+    return this.request("GET", "/v1/antigravity/config", options);
+  }
+
+  async getAntigravityQuota(options: UbagRequestOptions = {}): Promise<Record<string, unknown>> {
+    return this.request("GET", "/v1/quotas/antigravity", options);
+  }
+
+  async createAntigravityAccount(
+    account: { label: string; api_key: string; tier?: string },
+    options: UbagRequestOptions = {},
+  ): Promise<Record<string, unknown>> {
+    return this.request("POST", "/v1/antigravity/accounts", { ...options, body: account });
+  }
+
+  async deleteAntigravityAccount(
+    id: string,
+    options: UbagRequestOptions = {},
+  ): Promise<Record<string, unknown>> {
+    return this.request("DELETE", `/v1/antigravity/accounts/${encodeURIComponent(id)}`, options);
+  }
+
+  async updateAntigravityConfig(
+    config: Record<string, unknown>,
+    options: UbagRequestOptions = {},
+  ): Promise<Record<string, unknown>> {
+    return this.request("PUT", "/v1/antigravity/config", { ...options, body: config });
+  }
+
+  async testAntigravityAccount(
+    request: Record<string, unknown>,
+    options: UbagRequestOptions = {},
+  ): Promise<Record<string, unknown>> {
+    return this.request("POST", "/v1/antigravity/test", { ...options, body: request });
+  }
+
+  async refreshAntigravityQuota(options: UbagRequestOptions = {}): Promise<Record<string, unknown>> {
+    return this.request("POST", "/v1/quotas/antigravity/refresh", { ...options, body: {} });
+  }
+
   async listJobEvents(jobId: string, params: UbagListJobEventsParams = {}, options: UbagRequestOptions = {}): Promise<UbagJobEventsResponse> {
     const query = new URLSearchParams();
     addOptionalQuery(query, "cursor", params.cursor);
@@ -566,6 +619,42 @@ export class UbagClient {
     return (await response.json()) as T;
   }
 
+  async antigravityAccounts(options: UbagRequestOptions = {}): Promise<UbagAntigravityAccount[]> {
+    return this.request("GET", "/v1/antigravity/accounts", options);
+  }
+
+  async antigravityAddAccount(input: { label: string; api_key: string; tier: string }, options: UbagRequestOptions = {}): Promise<UbagAntigravityAccount> {
+    return this.request("POST", "/v1/antigravity/accounts", { ...options, body: input });
+  }
+
+  async antigravityRemoveAccount(id: string, options: UbagRequestOptions = {}): Promise<void> {
+    return this.requestRaw("DELETE", `/v1/antigravity/accounts/${id}`, options);
+  }
+
+  async antigravityUpdateAccount(id: string, patch: { enabled?: boolean; label?: string; tier?: string }, options: UbagRequestOptions = {}): Promise<UbagAntigravityAccount> {
+    return this.request("PUT", `/v1/antigravity/accounts/${id}`, { ...options, body: patch });
+  }
+
+  async antigravityConfig(options: UbagRequestOptions = {}): Promise<UbagAntigravityConfig> {
+    return this.request("GET", "/v1/antigravity/config", options);
+  }
+
+  async antigravitySetConfig(config: Partial<UbagAntigravityConfig>, options: UbagRequestOptions = {}): Promise<UbagAntigravityConfig> {
+    return this.request("PUT", "/v1/antigravity/config", { ...options, body: config });
+  }
+
+  async antigravityTest(input: { prompt: string; model?: string }, options: UbagRequestOptions = {}): Promise<{ job_id: string; status: string; model: string }> {
+    return this.request("POST", "/v1/antigravity/test", { ...options, body: input });
+  }
+
+  async antigravityQuota(options: UbagRequestOptions = {}): Promise<UbagAntigravityQuotaSummary> {
+    return this.request("GET", "/v1/quotas/antigravity", options);
+  }
+
+  async antigravityRefreshQuota(options: UbagRequestOptions = {}): Promise<UbagAntigravityQuotaSummary> {
+    return this.request("POST", "/v1/quotas/antigravity/refresh", { ...options, body: {} });
+  }
+
   private async requestRaw<T>(method: string, path: string, options: RawRequestOptions = {}): Promise<T> {
     const response = await this.fetchRaw(method, path, options);
     if (response.status === 204) {
@@ -626,6 +715,49 @@ export class UbagClient {
 
 export function createUbagClient(options: UbagClientOptions): UbagClient {
   return new UbagClient(options);
+}
+
+export interface UbagAntigravityAccount {
+  account_id: string;
+  label: string;
+  enabled: boolean;
+  tier: string;
+  last_used: string | null;
+  created_at: string;
+}
+
+export interface UbagAntigravityConfig {
+  default_model: string;
+  default_effort: string;
+  max_concurrent: number;
+  account_count: number;
+}
+
+export interface UbagAntigravityQuotaWindow {
+  remaining_percent: number;
+  reset_time: string | null;
+  is_exhausted: boolean;
+}
+
+export interface UbagAntigravityQuotaGroup {
+  name: string;
+  models: string[];
+  weekly: UbagAntigravityQuotaWindow;
+  five_hour: UbagAntigravityQuotaWindow;
+}
+
+export interface UbagAntigravityQuotaAccount {
+  account_id: string;
+  email: string;
+  tier: string;
+  status: string;
+  groups: UbagAntigravityQuotaGroup[];
+  last_refresh: string;
+}
+
+export interface UbagAntigravityQuotaSummary {
+  accounts: UbagAntigravityQuotaAccount[];
+  fetched_at: string;
 }
 
 export function generateIdempotencyKey(): string {

@@ -30,7 +30,16 @@ const ALL_ROUTES = [
   { path: '/quotas', name: 'quotas-billing' },
   { path: '/settings', name: 'settings' },
   { path: '/metrics', name: 'metrics' },
+  { path: '/antigravity', name: 'antigravity' },
 ];
+
+/**
+ * The expected number of sidebar nav links. Derived from ALL_ROUTES rather than
+ * hardcoded, so adding a page to the nav without listing it here (or vice
+ * versa) fails the completeness test instead of needing the magic number
+ * bumped in two places.
+ */
+const EXPECTED_NAV_COUNT = ALL_ROUTES.length;
 
 function navHrefSelector(path: string) {
   const staticHref = path === '/' ? './' : `.${path}`;
@@ -44,7 +53,7 @@ test.describe('Shell navigation', () => {
 
     const navLinks = page.locator('aside nav a[href]');
     const count = await navLinks.count();
-    expect(count).toBe(20);
+    expect(count).toBe(EXPECTED_NAV_COUNT);
 
     // Verify key hrefs are present
     for (const route of ALL_ROUTES) {
@@ -114,7 +123,17 @@ test.describe('Visual snapshots', () => {
   // (matches CI Ubuntu + playwright version, per 1710f34), then commit the
   // linux file and drop the name from this set. The routing suite above
   // still covers these pages on Linux.
-  const MISSING_LINUX_BASELINES = new Set(['conversations', 'security', 'administration']);
+  //
+  // `antigravity` joined this set on 2026-09-27 when the page was added: its
+  // chromium-win32 baseline is committed, but the Linux one cannot be produced
+  // from a Windows workstation. It is here for the same reason as the other
+  // three - a missing baseline is a platform-coverage gap, not a passing test.
+  const MISSING_LINUX_BASELINES = new Set([
+    'conversations',
+    'security',
+    'administration',
+    'antigravity'
+  ]);
 
   for (const route of ALL_ROUTES) {
     test(`${route.name} desktop snapshot`, async ({ page }) => {
@@ -174,7 +193,7 @@ test.describe('Accessibility (axe-core)', () => {
 });
 
 test.describe('§24.2 page set completeness', () => {
-  test('all 20 §24.2 pages have nav entries', async ({ page }) => {
+  test('every §24.2 page has a nav entry', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
@@ -187,11 +206,11 @@ test.describe('§24.2 page set completeness', () => {
     }
   });
 
-  test('§24.2 count is exactly 20', async ({ page }) => {
+  test('§24.2 count matches the route inventory', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('domcontentloaded');
 
     const count = await page.locator('aside nav a[href]').count();
-    expect(count).toBe(20);
+    expect(count).toBe(EXPECTED_NAV_COUNT);
   });
 });

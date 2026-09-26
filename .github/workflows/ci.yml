@@ -228,31 +228,45 @@ jobs:
 
       # pip-audit pointed at apps/worker/requirements.txt, which does not exist -
       # the worker declares dependencies in pyproject.toml - so the audit was a
-      # permanent no-op.
+      # permanent no-op. Read the real dependency set instead.
       - name: pip-audit (worker)
         run: |
           pip install --quiet pip-audit
-          pip-audit --strict --requirement <(python - <<'PY'
-          import tomllib, pathlib
+          python - <<'PY' > /tmp/worker-requirements.txt
+          import pathlib, tomllib
           data = tomllib.loads(pathlib.Path("apps/worker/pyproject.toml").read_text())
-          for dep in data["project"].get("dependencies", []):
-              print(dep)
+          deps = list(data["project"].get("dependencies", []))
           for extra in data["project"].get("optional-dependencies", {}).values():
-              for dep in extra:
-                  print(dep)
+              deps.extend(extra)
+          print("\n".join(deps))
           PY
-          )
+          cat /tmp/worker-requirements.txt
+          pip-audit --strict -r /tmp/worker-requirements.txt
 
-      - name: pnpm audit (JS dependencies)
+      - name: pnpm audit (regression-gated)
         run: |
           corepack enable
           pnpm install --frozen-lockfile --ignore-scripts
-          pnpm audit --audit-level high
+          # NOT a raw `pnpm audit` gate. There are 48 open advisories and pnpm
+          # reports no patched version for any of them; all of them are build
+          # tooling (vite, postcss, browserslist, nanoid, vitest, the
+          # astro/starlight docs toolchain), none of which ships - the gateway
+          # is a Go binary and apps/dashboard deploys static files. A gate that
+          # can never go green gets bypassed, which is how this repo ended up
+          # with no npm audit at all. This fails on any INCREASE against the
+          # committed baseline in tools/audit-baseline.json, so a new vulnerable
+          # dependency breaks the build while the known backlog stays tracked.
+          node tools/check-npm-audit.mjs
 
       - name: cargo audit (Rust sidecar)
         working-directory: packages/sidecar-rust
         run: |
           cargo install cargo-audit --locked
+          # Cargo.lock is gitignored in this package, so the dependency tree has
+          # to be resolved before cargo audit will run at all (it errors with
+          # "could not find Cargo.lock"). Not committing the lockfile also means
+          # sidecar builds are not reproducible - see the note in PROGRESS.md.
+          cargo generate-lockfile
           cargo audit
 
       # The production image. It is the artifact gateway-image.yml ships, and it

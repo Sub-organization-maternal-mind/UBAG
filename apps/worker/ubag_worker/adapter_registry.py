@@ -41,6 +41,8 @@ REQUIRED_ADAPTER_IDS = (
     "mistral_lechat",
     "perplexity_web",
     "duckai_web",
+    "antigravity_sdk",
+    "antigravity_cli",
 )
 
 _FORBIDDEN_SAFE_MODE_FIELDS = (
@@ -138,8 +140,8 @@ def validate_manifest(manifest: Mapping[str, Any], manifest_path: Path) -> None:
     _required_text(manifest, "display_name", "adapter %s" % manifest_id)
     _required_text(manifest, "version", "adapter %s" % manifest_id)
     status = _required_text(manifest, "status", "adapter %s" % manifest_id)
-    if status not in ("mock", "stub"):
-        raise AdapterRegistryError("adapter %s status must be mock or stub" % manifest_id)
+    if status not in ("mock", "stub", "native"):
+        raise AdapterRegistryError("adapter %s status must be mock, stub, or native" % manifest_id)
     _required_text(manifest, "entrypoint", "adapter %s" % manifest_id)
     adapter_path = _required_text(manifest, "adapter_path", "adapter %s" % manifest_id)
 
@@ -152,7 +154,7 @@ def validate_manifest(manifest: Mapping[str, Any], manifest_path: Path) -> None:
             raise AdapterRegistryError("adapter %s %s must be a non-empty list" % (manifest_id, list_field))
 
     artifact_policy = _required_mapping(manifest, "artifact_policy", "adapter %s" % manifest_id)
-    if status == "mock":
+    if status in ("mock", "native"):
         _require_policy_value(artifact_policy, manifest_id, "screenshots", "disabled")
         _require_policy_value(artifact_policy, manifest_id, "dom_snapshots", "disabled")
         _require_policy_value(artifact_policy, manifest_id, "recordings", "disabled")
@@ -221,6 +223,10 @@ def events_for_payload(payload: Mapping[str, Any]) -> List[JsonObject]:
         raise ValueError("job payload must be a JSON object")
 
     manifest = resolve_manifest_for_payload(payload)
+    if manifest["id"] in ("antigravity_sdk", "antigravity_cli"):
+        enabled = os.environ.get("UBAG_ANTIGRAVITY_ENABLED", "").strip().lower()
+        if enabled not in ("1", "true", "yes", "on"):
+            raise ValueError("adapter %s is disabled; set UBAG_ANTIGRAVITY_ENABLED=true" % manifest["id"])
     if _contains_disallowed_secret_material(payload):
         raise ValueError(
             "adapter %s payload must not include credentials, cookies, tokens, or secrets; "

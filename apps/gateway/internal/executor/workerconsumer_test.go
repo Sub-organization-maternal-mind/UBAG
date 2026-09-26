@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/alerts"
+	"github.com/ubag/ubag/apps/gateway/internal/antigravity"
 	"github.com/ubag/ubag/apps/gateway/internal/conversations"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
@@ -1204,6 +1205,96 @@ func TestProcessWorkerRunnerRunsPythonWorkerFromGatewayEnvelope(t *testing.T) {
 	}
 }
 
+func TestProcessWorkerRunnerRejectsCLIWithoutIsolatedAccountSocket(t *testing.T) {
+	store := antigravity.NewStore(t.TempDir())
+	if _, err := store.AddAccount("tenant_a", "Primary", "pro"); err != nil {
+		t.Fatalf("add OAuth slot: %v", err)
+	}
+	t.Setenv("UBAG_ANTIGRAVITY_SOCKET_DIR", t.TempDir())
+	_, err := (ProcessWorkerRunner{Python: "python", Script: "missing", AntigravityStore: store}).RunWorker(
+		context.Background(), DispatchEnvelope{TenantID: "tenant_a", Job: DispatchJob{Target: "antigravity_cli"}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "isolated account socket") {
+		t.Fatalf("missing isolated account socket should fail closed, got %v", err)
+	}
+}
+
+func TestAntigravityCLITriesNextAccountOnlyAfterUpfrontQuotaError(t *testing.T) {
+	store := antigravity.NewStore(t.TempDir())
+	first, _ := store.AddAccount("tenant_a", "First", "pro")
+	second, _ := store.AddAccount("tenant_a", "Second", "pro")
+	attempts := []string{}
+	events, err := runIsolatedCLIAttempts(store, "tenant_a", "", func(account antigravity.Account) (string, bool) {
+		return account.ID + ".sock", true
+	}, func(socket string) ([]jobstore.WorkerEvent, error) {
+		attempts = append(attempts, socket)
+		if socket == first.ID+".sock" {
+			return []jobstore.WorkerEvent{
+				{Type: "queued"}, {Type: "started"},
+				{Type: "failed", Data: map[string]any{"error_code": "OAUTH_QUOTA_EXHAUSTED"}},
+			}, nil
+		}
+		return []jobstore.WorkerEvent{{Type: "completed"}}, nil
+	})
+	if err != nil || len(events) != 1 || events[0].Type != "completed" {
+		t.Fatalf("quota failover events=%#v err=%v", events, err)
+	}
+	if len(attempts) != 2 || attempts[0] != first.ID+".sock" || attempts[1] != second.ID+".sock" {
+		t.Fatalf("account attempts = %#v", attempts)
+	}
+	if accounts := store.ListAccounts("tenant_a"); accounts[0].CooldownUntil == nil && accounts[1].CooldownUntil == nil {
+		t.Fatalf("quota account was not cooled down: %#v", accounts)
+	}
+}
+
+func TestAntigravityCLINeverReplaysAfterPartialOrAmbiguousFailure(t *testing.T) {
+	for _, failure := range []struct {
+		name   string
+		events []jobstore.WorkerEvent
+		err    error
+	}{
+		{"partial", []jobstore.WorkerEvent{{Type: "token"}, {Type: "failed", Data: map[string]any{"error_code": "OAUTH_QUOTA_EXHAUSTED"}}}, nil},
+		{"transport", nil, errors.New("socket closed after submission")},
+		{"other", []jobstore.WorkerEvent{{Type: "failed", Data: map[string]any{"error_code": "CLI_ERROR"}}}, nil},
+	} {
+		t.Run(failure.name, func(t *testing.T) {
+			store := antigravity.NewStore(t.TempDir())
+			if _, err := store.AddAccount("tenant_a", "First", "pro"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.AddAccount("tenant_a", "Second", "pro"); err != nil {
+				t.Fatal(err)
+			}
+			attempts := 0
+			_, _ = runIsolatedCLIAttempts(store, "tenant_a", "", func(account antigravity.Account) (string, bool) {
+				return account.ID + ".sock", true
+			}, func(string) ([]jobstore.WorkerEvent, error) {
+				attempts++
+				return failure.events, failure.err
+			})
+			if attempts != 1 {
+				t.Fatalf("ambiguous turn was replayed %d times", attempts)
+			}
+		})
+	}
+}
+
+func TestAntigravityPinnedCanaryNeverUsesAnotherAccount(t *testing.T) {
+	store := antigravity.NewStore(t.TempDir())
+	first, _ := store.AddAccount("tenant_a", "First", "pro")
+	second, _ := store.AddAccount("tenant_a", "Second", "pro")
+	attempts := []string{}
+	_, _ = runIsolatedCLIAttempts(store, "tenant_a", second.ID, func(account antigravity.Account) (string, bool) {
+		return account.ID + ".sock", true
+	}, func(socket string) ([]jobstore.WorkerEvent, error) {
+		attempts = append(attempts, socket)
+		return []jobstore.WorkerEvent{{Type: "failed", Data: map[string]any{"error_code": "OAUTH_QUOTA_EXHAUSTED"}}}, nil
+	})
+	if len(attempts) != 1 || attempts[0] != second.ID+".sock" || attempts[0] == first.ID+".sock" {
+		t.Fatalf("pinned canary attempted wrong account: %#v", attempts)
+	}
+}
+
 func TestMinimalWorkerEnvIncludesBrowserRuntimeConfigOnly(t *testing.T) {
 	t.Setenv("UBAG_REMOTE_BROWSER_ENDPOINT", "http://browser-viewer:9223")
 	t.Setenv("UBAG_BROWSER_ENGINE", "chromium")
@@ -1245,6 +1336,44 @@ func TestMinimalWorkerEnvIncludesBrowserRuntimeConfigOnly(t *testing.T) {
 	}
 	if _, ok := values["UBAG_POSTGRES_DSN"]; ok {
 		t.Fatal("database DSN must not be propagated to worker subprocess")
+	}
+}
+
+func TestWorkerEnvScopesAntigravityCredentials(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "test-only-sdk-key")
+	t.Setenv("UBAG_ANTIGRAVITY_MODEL", "gemini-3.8-flash")
+	t.Setenv("UBAG_ANTIGRAVITY_EFFORT", "high")
+	t.Setenv("AGY_BINARY", "agy")
+	t.Setenv("UBAG_APP_SECRET", "gateway-only-secret")
+
+	for _, target := range []string{"mock", "chatgpt_web", "antigravity_cli", "antigravity_sdk"} {
+		t.Run(target, func(t *testing.T) {
+			values := map[string]string{}
+			for _, item := range workerEnvForTarget(target) {
+				key, value, ok := strings.Cut(item, "=")
+				if ok {
+					values[key] = value
+				}
+			}
+			if _, ok := values["UBAG_APP_SECRET"]; ok {
+				t.Fatal("gateway secret leaked to worker")
+			}
+			if target == "antigravity_sdk" {
+				if values["GEMINI_API_KEY"] != "test-only-sdk-key" || values["UBAG_ANTIGRAVITY_EFFORT"] != "high" {
+					t.Fatal("SDK worker is missing its credential or effort")
+				}
+			} else if _, ok := values["GEMINI_API_KEY"]; ok {
+				t.Fatal("SDK credential leaked to another worker target")
+			}
+			if target == "antigravity_cli" {
+				if _, ok := values["AGY_BINARY"]; ok {
+					t.Fatal("gateway worker must never spawn the host CLI/keyring")
+				}
+				if _, ok := values["HOME"]; ok {
+					t.Fatal("CLI worker inherited the gateway home directory")
+				}
+			}
+		})
 	}
 }
 

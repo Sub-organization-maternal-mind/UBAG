@@ -14,18 +14,34 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/ubag-ga
 
 FROM python:3.12-slim
 
+ARG UBAG_ANTIGRAVITY_SLOT_1_ID=acct_1
+ARG UBAG_ANTIGRAVITY_SLOT_2_ID=acct_2
+ARG UBAG_ANTIGRAVITY_SLOT_3_ID=acct_3
+
 RUN apt-get update -qq && apt-get install -y --no-install-recommends wget postgresql-client \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd -r ubag \
+  && groupadd -g 10001 agy-ipc \
   && useradd -r -g ubag ubag \
+  && usermod -a -G agy-ipc ubag \
   && pip3 install --no-cache-dir "playwright>=1.49" \
-  && mkdir -p /var/lib/ubag/executor-spool /var/lib/ubag/chat-ledger \
-  && chown -R ubag:ubag /var/lib/ubag
+  && mkdir -p /var/lib/ubag/executor-spool /var/lib/ubag/chat-ledger /var/lib/ubag/antigravity /run/ubag-antigravity \
+  && chown -R ubag:ubag /var/lib/ubag \
+  && chown ubag:agy-ipc /run/ubag-antigravity \
+  && chmod 0770 /run/ubag-antigravity \
+  && for slot in "$UBAG_ANTIGRAVITY_SLOT_1_ID" "$UBAG_ANTIGRAVITY_SLOT_2_ID" "$UBAG_ANTIGRAVITY_SLOT_3_ID"; do \
+    echo "$slot" | grep -Eq '^acct_[0-9]+$' || exit 1; \
+    mkdir -p "/run/ubag-antigravity/$slot"; \
+    chown ubag:agy-ipc "/run/ubag-antigravity/$slot"; \
+    chmod 0770 "/run/ubag-antigravity/$slot"; \
+  done
 
 WORKDIR /app
 
 COPY --from=build /out/ubag-gateway /app/ubag-gateway
 COPY apps/worker /app/apps/worker
+ARG UBAG_WITH_ANTIGRAVITY_SDK=false
+RUN if [ "$UBAG_WITH_ANTIGRAVITY_SDK" = "true" ]; then pip3 install --no-cache-dir '/app/apps/worker[antigravity-sdk]'; fi
 COPY adapters /app/adapters
 # postgresql-client (psql) + these SQL files aren't needed by docker-compose.small.yml
 # (its own postgres-migrate service applies them via a host bind-mount instead), but

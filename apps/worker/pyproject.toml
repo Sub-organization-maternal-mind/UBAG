@@ -15,6 +15,9 @@ dependencies = []
 ubag-worker = "ubag_worker.cli:main"
 
 [project.optional-dependencies]
+antigravity-sdk = [
+    "google-antigravity==0.1.17",
+]
 live = [
     "playwright>=1.49",
 ]

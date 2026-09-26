@@ -77,6 +77,54 @@ process per job. Set it to `true` only when warm browser-page reuse is intended;
 `/app/apps/worker/run_worker_daemon.py`. Reused pages clear pending attachment
 state before the next job.
 
+## Antigravity CLI OAuth slots (opt-in, not yet production-verified)
+
+The `antigravity-oauth` profile installs the official `agy` Linux CLI into
+three separate worker containers. It does **not** install another Linux OS on
+the VPS. Each slot has its own persistent home and private IPC volume; the
+gateway mounts each socket volume under its account ID. Gemini API keys used
+by the SDK are separate and are never supplied to these workers.
+
+1. Create up to three OAuth account labels in the dashboard's Antigravity page.
+  Record the returned IDs. The Compose slot IDs default to `acct_1`, `acct_2`,
+  `acct_3`; if your IDs differ, set `UBAG_ANTIGRAVITY_SLOT_1_ID`, `_2_ID`, and
+  `_3_ID` to the corresponding account IDs in `deploy/vps/env.local` **before
+  rebuilding the gateway**. Do not sign in unused worker slots.
+2. Set `UBAG_ANTIGRAVITY_ENABLED=true` and
+  `UBAG_ANTIGRAVITY_SOCKET_DIR=/run/ubag-antigravity` in `env.local`. Start
+  the opt-in profile only when ready to verify the CLI and keyring:
+
+  ```sh
+  docker compose -f docker-compose.vps.yml --env-file deploy/vps/env.local --profile antigravity-oauth up -d --build
+  ```
+
+3. In your own SSH terminal, open **each configured worker separately** (change
+  the number for slots 2 and 3):
+
+  ```sh
+  docker compose -f docker-compose.vps.yml --env-file deploy/vps/env.local exec --user agy agy-slot-1 agy
+  ```
+
+  Follow the [official remote SSH OAuth instructions](https://antigravity.google/docs/cli/install/):
+  open the printed authorization URL yourself in your browser and enter the
+  resulting code **directly in your terminal**. Do not paste codes, passwords,
+  session tokens, or keyring files into the dashboard or logs. If a Linux
+  Secret Service unlock prompt appears, handle it in your terminal. Exit the
+  TUI when sign-in is complete; keep the account worker running.
+4. In the dashboard, refresh account status. A socket marked present **only
+  confirms a socket file exists**, not a valid login. Run a per-account canary
+  and inspect its job outcome under Jobs; `202 accepted` alone is not success.
+  If a slot is not reachable, check its worker and the slot ID mapping; do not
+  fall back to another account for a pinned canary.
+
+**Before enabling for real jobs:** verify the official CLI's authenticated
+JSONL output and quota-error shape, Linux Secret Service persistence after a
+worker restart, socket permissions with Docker on the VPS, and all three
+canary outcomes. Quota percentages and reset times remain unavailable; only
+an observed upfront structured quota rejection sets a temporary cooldown.
+Removing account metadata does not delete its worker home or log out its
+human-owned CLI session; deprovision the worker separately.
+
 ## Scope
 
 API + operator dashboard + live, manually authenticated browser adapters

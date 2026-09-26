@@ -124,3 +124,9 @@ apps/gateway/_gw_run.py
 
 # Local ZCode agent session state
 .zcode/
+
+# Scratch copies kept while a page is being built. The live copy under
+# src/routes/ is authoritative; a _wip/ duplicate is a stale snapshot that
+# silently diverges (this one did) and nothing type-checks it.
+apps/*/_wip/
+_wip/

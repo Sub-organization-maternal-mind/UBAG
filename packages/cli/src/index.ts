@@ -76,7 +76,15 @@ const COMMANDS = new Set([
   "stream",
   "stream-sse",
   "mock-run",
-  "adapter-test"
+  "adapter-test",
+  "antigravity-accounts",
+  "antigravity-add-account",
+  "antigravity-remove-account",
+  "antigravity-config",
+  "antigravity-set-config",
+  "antigravity-test",
+  "antigravity-quota",
+  "antigravity-refresh-quota"
 ]);
 const BOOLEAN_OPTIONS = new Set(["help", "json", "pretty", "no-auth", "raw"]);
 const VALUE_OPTIONS = new Set([
@@ -287,6 +295,30 @@ async function main(argv: string[]): Promise<number> {
       return runMockWorker(args);
     case "adapter-test":
       return runAdapterTest(args);
+    case "antigravity-accounts":
+      await runAntigravityAccounts(args);
+      return 0;
+    case "antigravity-add-account":
+      await runAntigravityAddAccount(args);
+      return 0;
+    case "antigravity-remove-account":
+      await runAntigravityRemoveAccount(args);
+      return 0;
+    case "antigravity-config":
+      await runAntigravityConfig(args);
+      return 0;
+    case "antigravity-set-config":
+      await runAntigravitySetConfig(args);
+      return 0;
+    case "antigravity-test":
+      await runAntigravityTest(args);
+      return 0;
+    case "antigravity-quota":
+      await runAntigravityQuota(args);
+      return 0;
+    case "antigravity-refresh-quota":
+      await runAntigravityRefreshQuota(args);
+      return 0;
     default:
       throw new CliUsageError(`unknown command "${args.command}"`);
   }
@@ -824,6 +856,78 @@ async function runAdapterTest(args: ParsedArgs): Promise<number> {
     throw new CliUsageError("adapter-test currently executes the safe local mock adapter; use --target mock");
   }
   return runMockWorker(args);
+}
+
+async function runAntigravityAccounts(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const response = await client.getAntigravityAccounts();
+  printJson(response, args);
+}
+
+async function runAntigravityAddAccount(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const label = getOption(args, "label");
+  const apiKey = getOption(args, "api-key");
+  const tier = getOption(args, "tier") ?? "free";
+  if (!label || !apiKey) {
+    throw new CliUsageError("antigravity-add-account requires --label and --api-key");
+  }
+  const response = await client.createAntigravityAccount({ label, api_key: apiKey, tier });
+  printJson(response, args);
+}
+
+async function runAntigravityRemoveAccount(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const id = getOption(args, "id");
+  if (!id) {
+    throw new CliUsageError("antigravity-remove-account requires --id");
+  }
+  const response = await client.deleteAntigravityAccount(id);
+  printJson(response, args);
+}
+
+async function runAntigravityConfig(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const response = await client.getAntigravityConfig();
+  printJson(response, args);
+}
+
+async function runAntigravitySetConfig(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const model = getOption(args, "model");
+  const effort = getOption(args, "effort");
+  const maxConcurrent = getOption(args, "max-concurrent");
+  const body: Record<string, unknown> = {};
+  if (model) body.default_model = model;
+  if (effort) body.default_effort = effort;
+  if (maxConcurrent) body.max_concurrent = parseInt(maxConcurrent, 10);
+  const response = await client.updateAntigravityConfig(body);
+  printJson(response, args);
+}
+
+async function runAntigravityTest(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const prompt = getOption(args, "prompt");
+  const model = getOption(args, "model");
+  if (!prompt) {
+    throw new CliUsageError("antigravity-test requires --prompt");
+  }
+  const body: Record<string, unknown> = { prompt };
+  if (model) body.model = model;
+  const response = await client.testAntigravityAccount(body);
+  printJson(response, args);
+}
+
+async function runAntigravityQuota(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const response = await client.getAntigravityQuota();
+  printJson(response, args);
+}
+
+async function runAntigravityRefreshQuota(args: ParsedArgs): Promise<void> {
+  const { client } = buildClient(args);
+  const response = await client.refreshAntigravityQuota();
+  printJson(response, args);
 }
 
 function buildClient(args: ParsedArgs): { client: ReturnType<typeof createUbagClient>; config: RuntimeConfig } {
