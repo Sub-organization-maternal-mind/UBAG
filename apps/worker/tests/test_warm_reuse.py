@@ -20,6 +20,18 @@ from ubag_worker.live.selectors import GEMINI_WEB
 
 
 class _StubLocator:
+    """Stands in for a Playwright Locator.
+
+    The driver probes with an INSTANT ``count()`` behind a ``>> visible=true``
+    chain, not ``locator.wait_for()`` - see _present_any in page_driver for why
+    (wait_for needs Playwright's injected visibility reporter, which costs
+    several CDP round trips before its first answer and times out on an
+    SSH-tunnelled attach). So the fake implements count(); a stub that only had
+    wait_for made every probe raise AttributeError, which the driver swallowed,
+    so the test silently exercised the "unqueryable" path instead of the one it
+    claimed to.
+    """
+
     def __init__(self, visible: bool) -> None:
         self._visible = visible
 
@@ -27,22 +39,49 @@ class _StubLocator:
     def first(self):
         return self
 
+    def count(self) -> int:
+        return 1 if self._visible else 0
+
     def wait_for(self, **_kwargs):
         if not self._visible:
             raise RuntimeError("selector matched nothing")
+        return self
+
+
+class _UnqueryableLocator:
+    """A locator whose every query fails, e.g. a severed CDP connection."""
+
+    @property
+    def first(self):
+        return self
+
+    def count(self) -> int:
+        raise RuntimeError("CDP session detached")
+
+    def wait_for(self, **_kwargs):
+        raise RuntimeError("CDP session detached")
 
 
 class _StubPage:
     """Stands in for a live Playwright page; no browser is launched."""
 
-    def __init__(self, *, visible: bool = False, closed: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        visible: bool = False,
+        closed: bool = False,
+        unqueryable: bool = False,
+    ) -> None:
         self._visible = visible
         self._closed = closed
+        self._unqueryable = unqueryable
 
     def is_closed(self) -> bool:
         return self._closed
 
     def locator(self, _selector):
+        if self._unqueryable:
+            return _UnqueryableLocator()
         return _StubLocator(self._visible)
 
 
@@ -144,6 +183,49 @@ class TestLiveDriverProbe:
         driver._page = _StubPage(visible=False)
 
         assert driver.response_container_present(GEMINI_WEB) is False
+
+
+class TestEmptinessMustBeProvable:
+    """The warm-reuse gate is the cross-patient-bleed boundary.
+
+    prepare_for_next_job may only return True when the page is PROVABLY empty.
+    A probe that could not run at all - a severed CDP connection, a locator that
+    raises - used to be swallowed and read as "no prior turn", so the tab was
+    pooled for reuse while it could still be showing the previous patient's
+    report. Unknown must never be laundered into empty.
+    """
+
+    def test_unqueryable_page_is_not_reported_as_empty(self):
+        driver = PlaywrightPageDriver()
+        driver._page = _StubPage(unqueryable=True)
+
+        # _visible_now_state must surface the uncertainty...
+        state = driver._visible_now_state(GEMINI_WEB.response_container)
+        assert state is None, f"expected tri-state None, got {state!r}"
+
+    def test_wait_until_absent_refuses_when_the_probe_cannot_run(self):
+        driver = PlaywrightPageDriver()
+        driver._page = _StubPage(unqueryable=True)
+
+        assert driver._wait_until_absent(
+            GEMINI_WEB.response_container, timeout_ms=200
+        ) is False, "an unprovable emptiness must refuse reuse, not grant it"
+
+    def test_wait_until_absent_grants_only_on_a_clean_miss(self):
+        driver = PlaywrightPageDriver()
+        driver._page = _StubPage(visible=False)
+
+        assert driver._wait_until_absent(
+            GEMINI_WEB.response_container, timeout_ms=200
+        ) is True, "a genuinely empty page must still be reusable"
+
+    def test_a_visible_prior_turn_still_refuses(self):
+        driver = PlaywrightPageDriver()
+        driver._page = _StubPage(visible=True)
+
+        assert driver._wait_until_absent(
+            GEMINI_WEB.response_container, timeout_ms=200
+        ) is False
 
 
 class TestLiveDriverOpenIsIdempotent:

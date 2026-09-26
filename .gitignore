@@ -36,6 +36,10 @@ Thumbs.db
 
 # Generated binaries
 *.exe
+# Editor/build backups of the above (e.g. ubag-gateway.exe~) are still 49MB
+# binaries. *.exe does not match the trailing-tilde form.
+*.exe~
+*~
 
 # Go toolchain helpers and gateway local state
 .gotools/

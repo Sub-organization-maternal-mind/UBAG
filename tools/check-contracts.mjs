@@ -259,16 +259,15 @@ for (const [file, terms] of Object.entries(docChecks)) {
   }
 }
 
-// Verify SDK contract manifests are not stale relative to generate-manifest.mjs output.
+// Verify SDK contract manifests are not stale relative to generate-manifest.mjs
+// output. `--check` byte-compares the generated files against a fresh render
+// and exits non-zero on any difference, so that call IS the gate; it must be
+// allowed to throw. The dead `if (false && ...)` git-status branch that used
+// to sit in this try block has been removed: it could never fire, it made the
+// block read as a disabled check, and a git-status check would in any case
+// false-positive on any legitimately dirty working tree.
 try {
   execSync("node tools/make-sdks/generate-manifest.mjs --check", { stdio: "pipe" });
-  const status = execSync(
-    "git status --porcelain packages/sdk-typescript/src/generated packages/sdk-go/generated_contract_manifest.go",
-    { encoding: "utf8" }
-  );
-  if (false && status.trim() !== "") {
-    failures.push("SDK contract manifest is stale — run: node tools/make-sdks/generate-manifest.mjs");
-  }
 } catch {
   failures.push("SDK contract manifest is stale - run: node tools/make-sdks/generate-manifest.mjs");
 }

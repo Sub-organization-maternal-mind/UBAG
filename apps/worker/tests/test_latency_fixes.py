@@ -42,6 +42,13 @@ class _Loc:
     def count(self):
         return self._count
 
+    def is_visible(self):
+        # _await_new_response and the streaming probe confirm visibility with an
+        # instant is_visible() rather than wait_for(250ms) - see the comment in
+        # page_driver._await_new_response for why wait_for is unusable over a
+        # high-latency CDP attach.
+        return self._count > 0
+
     def wait_for(self, **_kw):
         if not self._count:
             raise RuntimeError("not visible")
@@ -218,8 +225,17 @@ class TestProviderSignalledCompletion:
 
 class TestProbeBudgets:
     def test_tiny_timeouts_never_become_playwrights_infinite_zero(self):
-        """timeout=0 means 'wait forever' to Playwright; a 0/tiny budget must
-        still be a bounded probe."""
+        """timeout=0 means 'wait forever' to Playwright, so a 0/tiny budget must
+        still be a bounded probe.
+
+        The probe no longer passes a timeout to Playwright at all - it is an
+        instant count() behind a >> visible=true chain, because wait_for depends
+        on Playwright's injected visibility reporter, which costs several CDP
+        round trips before its first answer and times out on an
+        SSH-tunnelled attach. The property that matters is therefore stronger
+        than the original assertion: there is no code path by which a budget can
+        reach Playwright as a timeout at all, and a 0 budget still terminates.
+        """
         calls = []
 
         class _Page:
@@ -227,15 +243,26 @@ class TestProbeBudgets:
                 class _L:
                     first = property(lambda s: s)
 
-                    def wait_for(self, **kw):
-                        calls.append(kw["timeout"])
-                        raise RuntimeError("absent")
+                    def count(self):
+                        # Record every call so we can prove the loop polled and
+                        # that no timeout was ever handed down.
+                        calls.append(1)
+                        return 0
+
+                    def wait_for(self, **kw):  # pragma: no cover - must not be used
+                        raise AssertionError(
+                            "probe must not use wait_for: it is unusable over a "
+                            f"high-latency CDP link (got timeout={kw.get('timeout')!r})"
+                        )
 
                 return _L()
 
         driver = _driver(_Page())
         assert driver._present_any(["x"], timeout_ms=0) is False
-        assert calls and min(calls) >= 1
+        # Bounded: it polled at least once and then gave up rather than hanging
+        # or looping forever on a zero budget.
+        assert calls, "a 0ms budget must still perform a bounded probe"
+        assert min(calls) >= 1
 
     def test_reload_cadence_defaults_and_env(self, monkeypatch):
         monkeypatch.delenv("UBAG_WARM_RELOAD_EVERY", raising=False)
@@ -273,6 +300,13 @@ class TestCoveredDuplicateIsNotClickedFirst:
         class _Loc:
             first = property(lambda s: s)
 
+            def count(self):
+                # _click_any gates on an instant count() before ordering the
+                # visible matches (see page_driver._click_any); without it the
+                # gate raised, the loop skipped the candidate, and the test
+                # failed with a misleading "no click happened".
+                return len(matches)
+
             def wait_for(self, **_kw):
                 pass
 
@@ -297,6 +331,9 @@ class TestCoveredDuplicateIsNotClickedFirst:
 
         class _Loc:
             first = property(lambda s: s)
+
+            def count(self):
+                return len(matches)
 
             def wait_for(self, **_kw):
                 pass

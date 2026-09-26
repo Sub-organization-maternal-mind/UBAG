@@ -40,12 +40,29 @@ class _CountLocator:
 
 
 class _Element:
-    """A single resolved node -- Playwright's locator after ``.first``/``.last``."""
+    """A single resolved node.
+
+    In Playwright, ``locator(sel).first`` is still a Locator, so it answers
+    ``count()`` as well as the element methods. The driver's probe is
+    ``locator(_visible(cand)).first.count() > 0`` (see _first_visible), so this
+    fake must too - without it every probe raised AttributeError, the driver
+    swallowed it, and the test failed with a misleading DriftDetectedError
+    instead of exercising the read path.
+    """
 
     def __init__(self, *, text=None, on_action=None, visible=True):
         self._text = text
         self._on_action = on_action
         self._visible = visible
+
+    def count(self):
+        return 1 if self._visible else 0
+
+    def is_visible(self):
+        # _await_new_response confirms the newest node with an instant
+        # is_visible() rather than wait_for(250ms) - see the comment there for
+        # why wait_for is unusable over a high-latency CDP attach.
+        return self._visible
 
     def wait_for(self, **_kwargs):
         if not self._visible:

@@ -740,12 +740,25 @@ class PlaywrightPageDriver(PageDriver):
             return False
 
     def _wait_until_absent(self, group, *, timeout_ms: int) -> bool:  # pragma: no cover - requires real browser
-        """True once no candidate of ``group`` is visible; False at the deadline."""
+        """True once no candidate of ``group`` is visible; False otherwise.
+
+        Returns False in BOTH failure modes, deliberately:
+          * a candidate is still visible at the deadline, and
+          * a candidate could not be queried (the tri-state ``None``).
+        The second case used to be reported as "absent", which made a
+        transport error indistinguishable from a clean page and let a warm tab
+        that might still hold a prior turn be reused. Refusing to prove
+        emptiness is always safe: the caller simply goes cold.
+        """
         import time
 
         deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
         while True:
-            if not self._visible_now(group):
+            state = self._visible_now_state(group)
+            if state is None:
+                # Cannot prove the page is empty -> refuse reuse.
+                return False
+            if state is False:
                 return True
             if time.monotonic() >= deadline:
                 return False
@@ -1093,15 +1106,42 @@ class PlaywrightPageDriver(PageDriver):
                 return False
             time.sleep(0.1)
 
-    def _visible_now(self, group) -> bool:  # pragma: no cover - requires real browser
-        """Instant, non-waiting presence check: is any candidate visible right now?"""
+    def _visible_now_state(self, group):  # pragma: no cover - requires real browser
+        """Tri-state instant presence check for a selector group.
+
+        Returns:
+            True  - at least one candidate is visible.
+            False - every candidate was queried successfully and none matched.
+            None  - at least one candidate could not be queried at all.
+
+        The ``None`` case is the important one. A transient CDP failure while
+        probing used to be indistinguishable from a clean page: the exception
+        was swallowed and the candidate read as "absent", so
+        ``_wait_until_absent`` reported the page *provably empty* and
+        ``prepare_for_next_job`` returned True. The next job was then submitted
+        into a tab that could still be showing the previous patient's report.
+        Callers that gate reuse on emptiness must refuse on ``None``; callers
+        that only want a best-effort hint should use ``_visible_now``.
+        """
+        unqueryable = False
         for candidate in group.as_list():
             try:
                 if self._page.locator(_visible(candidate)).count() > 0:
                     return True
-            except Exception:  # noqa: BLE001 - an unqueryable candidate reads absent
-                continue
-        return False
+            except Exception:  # noqa: BLE001 - recorded, not silently absent
+                unqueryable = True
+        return None if unqueryable else False
+
+    def _visible_now(self, group) -> bool:  # pragma: no cover - requires real browser
+        """Instant, non-waiting presence check: is any candidate visible right now?
+
+        Best-effort boolean view of :meth:`_visible_now_state`. "Could not be
+        queried" is reported as not-visible here, which is correct for the
+        callers that only need a hint (e.g. streaming-indicator probes) but is
+        NOT safe for the warm-reuse emptiness gate - use _visible_now_state for
+        that.
+        """
+        return self._visible_now_state(group) is True
 
     def _click_any(self, candidates: Sequence[str], *, timeout_ms: int = 4000) -> bool:  # pragma: no cover
         import time
@@ -1136,10 +1176,11 @@ class PlaywrightPageDriver(PageDriver):
                     try:
                         # The click itself needs actionability checks plus
                         # several round trips, so the per-attempt budget floor
-                        # is 2.5s — 500-1500ms times out on a remote link even
-                        # when the click would land. The overall deadline still
-                        # bounds the loop.
-                        match.click(timeout=max(2500, min(timeout_ms, 4000)))
+                        # is 6s — 500-1500ms times out on a remote link even
+                        # when the click would land (a tunnelled CDP click
+                        # measures ~4s). The overall deadline still bounds the
+                        # loop.
+                        match.click(timeout=max(6000, min(timeout_ms, 8000)))
                         return True
                     except Exception:  # noqa: BLE001 - covered/detached; try the next match
                         continue

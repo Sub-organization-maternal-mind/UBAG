@@ -12,9 +12,21 @@ const smokePayload = JSON.stringify({
   }
 });
 
+// The worker suite is pytest-shaped. It used to run under
+// `python -m unittest discover`, which only collects unittest.TestCase
+// subclasses - 8 of the 25 test files are pytest-style and contributed ZERO
+// tests, including the whole warm-daemon reuse gate (the
+// cross-patient-bleed property), the leaked-tab registry, graceful shutdown,
+// daemon stdin/stdout framing and every latency fix. Measured: 188 collected
+// under unittest vs 265 under pytest.
+//
+// Worse, when pytest was absent those same 8 files became hard
+// ModuleNotFoundError collection errors, so the gap showed up as red rather
+// than as missing coverage. The mock adapter suite is genuinely unittest-style
+// and still runs under unittest.
 const commands = [
   ['python', ['-m', 'unittest', 'discover', '-s', 'adapters/mock/tests']],
-  ['python', ['-m', 'unittest', 'discover', '-s', 'apps/worker/tests']],
+  ['python', ['-m', 'pytest', '-q', 'apps/worker/tests']],
   ['python', ['-m', 'compileall', '-q', 'apps/worker', 'adapters/mock']]
 ];
 
