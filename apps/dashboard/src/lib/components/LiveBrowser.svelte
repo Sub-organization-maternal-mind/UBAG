@@ -80,6 +80,13 @@
   let clients = $state<{ id: string; since: number; hidden: boolean; alive: boolean }[]>([]);
   let myClientId = $state('');
   let showClients = $state(false);
+  let showTabs = $state(false);
+
+  function closeTab(targetId: string) {
+    send({ t: 'closetab', targetId });
+    // The bridge echoes a fresh targets list; poll once as a safety net.
+    setTimeout(() => send({ t: 'targets' }), 600);
+  }
 
   let deviceW = $state(1280);
   let deviceH = $state(720);
@@ -307,17 +314,41 @@
       <button type="button" onclick={newTab} class="px-2.5 py-1 rounded border border-rule text-ink text-xs hover:bg-rule-soft transition-colors">+ Tab</button>
     </form>
 
-    {#if targets.length > 1}
-      <select
-        class="px-2 py-1 rounded border border-rule bg-paper text-ink text-xs max-w-[10rem]"
-        value={currentTargetId}
-        onchange={(e) => switchTarget((e.target as HTMLSelectElement).value)}
-        aria-label="Switch tab"
-      >
-        {#each targets as t}
-          <option value={t.id}>{t.title || t.url}</option>
-        {/each}
-      </select>
+    <!-- Open tabs in the remote Chrome: view + terminate (resource control) -->
+    {#if connected && targets.length > 0}
+      <div class="relative shrink-0">
+        <button
+          type="button"
+          onclick={() => (showTabs = !showTabs)}
+          class="px-2.5 py-1 rounded border border-rule text-ink text-xs hover:bg-rule-soft transition-colors"
+          aria-label="Browser tabs"
+        >
+          tabs {targets.length}
+        </button>
+        {#if showTabs}
+          <div class="absolute right-0 top-full mt-1 w-72 rounded border border-rule bg-paper-soft shadow-md z-10 p-2">
+            <p class="text-[10px] font-mono text-ink-mute px-1 pb-1">Open tabs in the remote Chrome</p>
+            {#each targets as t (t.id)}
+              <div class="flex items-center gap-1.5 px-1 py-1 rounded hover:bg-rule-soft">
+                <button
+                  type="button"
+                  class="flex-1 min-w-0 text-left truncate text-xs {t.id === currentTargetId ? 'text-accent font-medium' : 'text-ink'}"
+                  title={t.url}
+                  onclick={() => { switchTarget(t.id); showTabs = false; }}
+                >{t.title || t.url || 'untitled'}</button>
+                <button
+                  type="button"
+                  onclick={() => closeTab(t.id)}
+                  class="px-1.5 py-0.5 rounded border border-rule text-[10px] text-danger hover:bg-danger-soft transition-colors shrink-0"
+                  aria-label="Terminate tab"
+                >Terminate</button>
+              </div>
+            {:else}
+              <p class="text-xs text-ink-mute px-1 py-1">No open tabs.</p>
+            {/each}
+          </div>
+        {/if}
+      </div>
     {/if}
 
     <!-- Viewer registry: admin visibility + terminate (resource control) -->

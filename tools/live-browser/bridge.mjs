@@ -624,6 +624,22 @@ async function main() {
               break;
             }
             case 'attach': await page.attach(m.targetId); break;
+            case 'closetab': {
+              // Admin action from the dashboard: close a real Chrome tab
+              // (frees its renderer). The healthcheck needs BOTH the bridge
+              // and Chrome CDP alive, so Chrome keeps its own new-tab page;
+              // closing every tab is allowed — the bridge re-attaches via
+              // recover() when the current target dies.
+              const tid = String(m.targetId || '');
+              const wasCurrent = tid !== '' && tid === page.targetId;
+              const res = await fetch(`http://127.0.0.1:${CDP_PORT}/json/close/${encodeURIComponent(tid)}`).catch(() => null);
+              const ok = Boolean(res && res.ok);
+              log(`closetab ${tid}: ${ok ? 'closed' : 'failed'}`);
+              const targets = await page.listPageTargets().catch(() => []);
+              socket.write(encodeFrame(Buffer.from(JSON.stringify({ type: 'targets', targets: targets.map((t) => ({ id: t.id, title: t.title, url: t.url })), current: page.targetId })), 0x1));
+              if (ok && wasCurrent) triggerRecover();
+              break;
+            }
             case 'visibility': {
               const c = clients.get(socket);
               if (c) {
