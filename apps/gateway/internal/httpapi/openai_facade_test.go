@@ -106,9 +106,19 @@ func TestResolveFacadeModel(t *testing.T) {
 	if !ok || target != "chatgpt_web" || settings["model"] != "GPT-5.6 Sol" {
 		t.Fatalf("target|setting = %q,%v,%v", target, settings, ok)
 	}
-	target, settings, ok = server.resolveFacadeModel("deepseek_web|Instant")
-	if !ok || target != "deepseek_web" || settings["mode"] != "Instant" {
-		t.Fatalf("deepseek setting = %q,%v,%v", target, settings, ok)
+	// deepseek_web's `mode` setting (Instant / Expert / Vision) was retired on
+	// 2026-09-26: those composer pills no longer exist upstream, so the
+	// manifest exposes only the `deepthink` toggle and `deepseek_web|Instant`
+	// is no longer a resolvable model ID. A toggle-kind setting is addressable
+	// only through a bare target, so the catalog case that remains meaningful
+	// is that the retired ID is now rejected.
+	if _, _, ok := server.resolveFacadeModel("deepseek_web|Instant"); ok {
+		t.Error("deepseek_web|Instant must no longer resolve: the mode setting was retired")
+	}
+	if target, settings, ok := server.resolveFacadeModel("deepseek_web"); !ok ||
+		target != "deepseek_web" || len(settings) != 0 {
+		t.Errorf("bare deepseek_web = %q,%v,%v; toggle-kind settings stay bare-target-only",
+			target, settings, ok)
 	}
 	// Thinking levels are choice-kind settings, so they resolve as model IDs
 	// through the same path (chatgpt thinking, duckai reasoning).

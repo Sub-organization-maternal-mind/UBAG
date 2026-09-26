@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -23,6 +24,15 @@ type privacyRequestReceipt struct {
 	TraceID    string    `json:"trace_id"`
 }
 
+// privacyActionFor maps a privacy request kind to its RBAC action. Erasure is
+// deliberately distinct from export.
+func privacyActionFor(kind compliance.RequestKind) string {
+	if kind == compliance.KindErase {
+		return "data:erase"
+	}
+	return "data:export"
+}
+
 func (s *Server) handlePrivacyExport(w http.ResponseWriter, r *http.Request) {
 	s.handlePrivacyRequest(w, r, compliance.KindExport)
 }
@@ -40,12 +50,21 @@ func (s *Server) handlePrivacyRequest(w http.ResponseWriter, r *http.Request, ki
 		s.writeError(w, r, http.StatusNotImplemented, validationError("UBAG-COMPLIANCE-DISABLED-001", "privacy request handling is not enabled on this server"))
 		return
 	}
-	if !s.authorizeGatewayAction(w, r, "data:export") {
+	// Erasure is gated on its own action, not on data:export. Sharing the
+	// export permission meant a principal granted read-only export rights
+	// could trigger GDPR Art. 17 erasure, which is destructive and
+	// irreversible. Export and erase are now separately grantable; admin
+	// holds both.
+	if !s.authorizeGatewayAction(w, r, privacyActionFor(kind)) {
 		return
 	}
 
 	var body privacyRequestBody
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.SubjectRef) == "" {
+	// Bounded read. This handler used json.NewDecoder(r.Body) directly, so a
+	// caller with job:read+data:export could stream an unbounded body into
+	// memory. The limit matches every other JSON handler in the package.
+	if err := json.NewDecoder(io.LimitReader(r.Body, s.maxBody)).Decode(&body); err != nil ||
+		strings.TrimSpace(body.SubjectRef) == "" {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-PRIVACY-001", "subject_ref is required"))
 		return
 	}

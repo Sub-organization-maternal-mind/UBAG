@@ -92,6 +92,7 @@ var roleActions = map[string]map[string]struct{}{
 		"rate_limit:manage": {},
 		"role:manage":       {},
 		"data:export":       {},
+		"data:erase":        {},
 		"alerts:read":       {},
 		"alerts:manage":     {},
 		"browser:read":      {},
