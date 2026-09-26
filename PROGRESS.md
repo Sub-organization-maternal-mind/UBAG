@@ -2,6 +2,48 @@
 
 Last updated: 2026-09-27
 
+## 2026-09-27 — Antigravity OAuth accounts: tenant-safe canaries, isolated sockets, admin route (local only)
+
+The Antigravity CLI integration remains **opt-in and not deployed**. Admin
+canaries now validate an enabled account against the request tenant, pin its
+ID in the job, and do not fail over to a different account on quota rejection.
+Automatic selection for unpinned jobs still rotates eligible accounts and
+fails over only on a structured upfront quota event. Deleting a slot can no
+longer reassign its ID to another tenant's still-signed-in worker: metadata
+now persists a monotonic next ID with atomic writes and reads legacy account
+arrays. Failed metadata writes roll back the in-memory account mutation.
+
+The VPS Compose profile now gives each of the three account workers a distinct
+IPC volume and persistent home. The gateway mounts each socket volume below
+the matching account ID; the image preinitializes those directories with the
+gateway/worker shared group, including custom slot IDs passed as build args.
+This limits one worker's access to another slot's socket. The mounted dashboard
+route uses keyless account metadata, read-only socket presence, observed
+cooldowns, honest unavailable-quota copy, and per-account canaries that report
+only **job acceptance**. The old unmounted `_wip` draft is untouched.
+Manual CLI OAuth sign-in, capacity limits (three workers total on this VPS),
+ID mapping, and the production gates are in `deploy/vps/README.md`. No
+credentials, authorization codes, or keyring data were accessed or copied.
+
+**Focused checks:** Go tests in `internal/antigravity`, `internal/executor`,
+and `internal/httpapi` for OAuth ID persistence, tenant scoping, pinned canaries,
+socket paths, and failover pass. `pnpm exec svelte-check --tsconfig ./tsconfig.json`
+reports 0 errors and 2 existing LiveBrowser warnings. PyYAML parses the VPS
+Compose file and confirms three distinct account IPC volumes mounted into the
+gateway. `git diff --check` on tracked deployment changes passes. The official
+CLI installation/auth instructions were checked against the current vendor
+documentation; Docker is unavailable on this Windows machine.
+
+**Remaining / runtime state:** No container build, Linux keyring persistence,
+socket permission probe, authenticated CLI JSONL or quota-error canary, or
+real-job outcome has been verified; OAuth remains disabled on production.
+The local dashboard Vite server is running at `http://127.0.0.1:5175/antigravity`
+for development only; it is not a working operator login or a deployed route.
+Mobile/browser gates at 320/375/414/768 px are **not verified**: the existing
+dev CSP blocks SvelteKit's inline bootstrap and a browser-only bypass exposes
+a shared layout hydration error before account data renders. The production
+build's CSP hash patch was not run as part of this targeted local pass.
+
 ## 2026-09-27 — Infrastructure hardening pass: data containment, fail-closed migrations, real gates (6 commits)
 
 A full infrastructure audit of the gateway, worker, deployment and CI surface

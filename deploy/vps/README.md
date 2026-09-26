@@ -84,6 +84,9 @@ three separate worker containers. It does **not** install another Linux OS on
 the VPS. Each slot has its own persistent home and private IPC volume; the
 gateway mounts each socket volume under its account ID. Gemini API keys used
 by the SDK are separate and are never supplied to these workers.
+This VPS profile provisions only three workers **total**, not three workers
+per tenant. Metadata for any other tenant has no worker unless separately
+provisioned with an account-specific socket and isolated home.
 
 1. Create up to three OAuth account labels in the dashboard's Antigravity page.
   Record the returned IDs. The Compose slot IDs default to `acct_1`, `acct_2`,
