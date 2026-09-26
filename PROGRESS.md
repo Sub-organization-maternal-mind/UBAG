@@ -200,6 +200,12 @@ runs `gofmt -w`.
 
 ## 2026-09-27 — Failed-jobs spike + Live Browser lag root-caused; bridge viewer controls; both boxes resourced up; distribution test
 
+Follow-up (same day): per-tab **Terminate** added — the tab dropdown became a
+panel (click-to-view + per-tab Terminate that closes the real Chrome tab via
+CDP /json/close with a fresh targets broadcast and recover-on-current-close);
+verified end-to-end (CDP tab count 3->2). Bridge redeployed to the primary
+image; commit 53d7071.
+
 Owner symptoms: FAILED 14→26, Live Browser stuck on "Waiting for first frame",
 5 duckai jobs queued 40+ min, dashboard generally laggy.
 
