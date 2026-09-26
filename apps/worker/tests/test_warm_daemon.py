@@ -6,6 +6,7 @@ may be reused -- reuse is only ever safe when the gate proves the page carries n
 prior conversation turn.
 """
 import pytest
+from attachment_paths import temp_attachment
 from ubag_worker.live.daemon import WarmWorkerDaemon
 from ubag_worker.live.page_driver import MockPageDriver, PlaywrightPageDriver
 from ubag_worker.live.selectors import get_provider_selectors
@@ -196,16 +197,16 @@ class TestIsolation:
         daemon = _daemon(factory)
 
         first = _payload()
-        first["attachment_local_paths"] = ["/tmp/first.pdf"]
+        first["attachment_local_paths"] = [temp_attachment("first.pdf")]
         second = _payload()
-        second["attachment_local_paths"] = ["/tmp/second.wav"]
+        second["attachment_local_paths"] = [temp_attachment("second.wav")]
 
         list(daemon.run_job(first))
         list(daemon.run_job(second))
 
         assert len(factory.built) == 1
         assert _FakeEngine.attachment_state_before_run == [[], []]
-        assert factory.built[0].attached_files == ["/tmp/second.wav"]
+        assert factory.built[0].attached_files == [temp_attachment("second.wav")]
 
     def test_real_engine_reuse_never_inherits_the_first_jobs_file_list(self):
         factory = _AttachmentRecordingFactory()
@@ -216,24 +217,24 @@ class TestIsolation:
             "first.pdf",
             "application/pdf",
             "document",
-            "/tmp/first.pdf",
+            temp_attachment("first.pdf"),
         )))
         list(daemon.run_job(_attachment_payload(
             "job_second",
             "second.wav",
             "audio/wav",
             "voice",
-            "/tmp/second.wav",
+            temp_attachment("second.wav"),
         )))
 
         assert len(factory.built) == 1
         driver = factory.built[0]
         assert driver.attachment_state_before_attach == [[], []]
         assert driver.attachment_batches == [
-            ["/tmp/first.pdf"],
-            ["/tmp/second.wav"],
+            [temp_attachment("first.pdf")],
+            [temp_attachment("second.wav")],
         ]
-        assert driver.attached_files == ["/tmp/second.wav"]
+        assert driver.attached_files == [temp_attachment("second.wav")]
 
     def test_different_profiles_never_share_a_driver(self):
         """A warm page belongs to one identity; sharing it across profiles would

@@ -13,6 +13,8 @@ import sys
 import unittest
 from pathlib import Path
 
+from attachment_paths import temp_attachment
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "apps" / "worker"))
 
@@ -34,7 +36,7 @@ def _audio_payload(
     target,
     *,
     key="dictation.webm",
-    local_path="/tmp/ubag/dictation.webm",
+    local_path=temp_attachment("dictation.webm"),
     prompt="Transcribe the attached audio verbatim.",
 ):
     job_input = {"prompt": prompt}
@@ -67,7 +69,7 @@ class AudioAttachTests(unittest.TestCase):
         types = _types(events)
 
         self.assertIn("file.attached", types)
-        self.assertEqual(driver.attached_files, ["/tmp/ubag/dictation.webm"])
+        self.assertEqual(driver.attached_files, [temp_attachment("dictation.webm")])
         self.assertEqual(driver.submitted_prompt, "Transcribe the attached audio verbatim.")
         self.assertIn("completed", types)
         # attach precedes prompt submission / completion

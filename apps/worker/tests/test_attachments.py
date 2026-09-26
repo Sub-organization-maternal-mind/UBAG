@@ -16,6 +16,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "apps" / "worker"))
 
+from attachment_paths import temp_attachment  # noqa: E402
 from ubag_worker.live import (  # noqa: E402
     LiveSessionEngine,
     LiveSessionError,
@@ -62,12 +63,12 @@ class MultiFileAttachTests(unittest.TestCase):
                 {"key": "report.pdf", "content_type": "application/pdf", "kind": "document"},
                 {"key": "note.webm", "content_type": "audio/webm", "kind": "voice"},
             ],
-            local_paths=["/tmp/ubag/report.pdf", "/tmp/ubag/note.webm"],
+            local_paths=[temp_attachment("report.pdf"), temp_attachment("note.webm")],
         )
         events = LiveSessionEngine(selectors).run(payload, driver=driver)
         types = _types(events)
 
-        self.assertEqual(driver.attached_files, ["/tmp/ubag/report.pdf", "/tmp/ubag/note.webm"])
+        self.assertEqual(driver.attached_files, [temp_attachment("report.pdf"), temp_attachment("note.webm")])
         self.assertIn("file.attached", types)
         self.assertLess(types.index("file.attached"), types.index("completed"))
         attached = next(e for e in events if e["type"] == "file.attached")
@@ -81,7 +82,7 @@ class MultiFileAttachTests(unittest.TestCase):
         payload = _attachments_payload(
             "generic_live_web",
             attachments=[{"key": "a.pdf", "content_type": "application/pdf", "kind": "document"}],
-            local_paths=["/tmp/ubag/a.pdf"],
+            local_paths=[temp_attachment("a.pdf")],
         )
         events = LiveSessionEngine(selectors).run(payload, driver=driver)
         blocked = [e for e in events if e["type"] == "blocked"]
@@ -95,7 +96,7 @@ class MultiFileAttachTests(unittest.TestCase):
         payload = _attachments_payload(
             "gemini_web",
             attachments=[{"key": "sub/a.pdf", "content_type": "application/pdf", "kind": "document"}],
-            local_paths=["/tmp/ubag/a.pdf"],
+            local_paths=[temp_attachment("a.pdf")],
         )
         with self.assertRaises(LiveSessionError):
             LiveSessionEngine(selectors).run(payload, driver=MockPageDriver())
@@ -112,7 +113,7 @@ class MultiFileAttachTests(unittest.TestCase):
                         "kind": "document",
                     }
                 ],
-                local_paths=["/tmp/ubag/a.pdf"],
+                local_paths=[temp_attachment("a.pdf")],
             )
             with self.subTest(key=key), self.assertRaises(LiveSessionError):
                 LiveSessionEngine(selectors).run(payload, driver=MockPageDriver())
@@ -123,7 +124,7 @@ class MultiFileAttachTests(unittest.TestCase):
                 {"key": "a.pdf", "content_type": "application/pdf", "kind": "document"},
                 {"key": "a.pdf", "content_type": "application/pdf", "kind": "document"},
             ],
-            local_paths=["/tmp/ubag/a.pdf", "/tmp/ubag/a-copy.pdf"],
+            local_paths=[temp_attachment("a.pdf"), temp_attachment("a-copy.pdf")],
         )
         with self.assertRaises(LiveSessionError):
             LiveSessionEngine(selectors).run(duplicate, driver=MockPageDriver())
@@ -142,7 +143,7 @@ class MultiFileAttachTests(unittest.TestCase):
                 _attachments_payload(
                     "gemini_web",
                     attachments=[attachment],
-                    local_paths=["/tmp/ubag/a.pdf"],
+                    local_paths=[temp_attachment("a.pdf")],
                 ),
                 driver=driver,
             )
@@ -160,7 +161,7 @@ class MultiFileAttachTests(unittest.TestCase):
                 {"key": "a.pdf", "content_type": "application/pdf", "kind": "document"},
                 {"key": "b.pdf", "content_type": "application/pdf", "kind": "document"},
             ],
-            local_paths=["/tmp/ubag/a.pdf"],
+            local_paths=[temp_attachment("a.pdf")],
         )
         with self.assertRaises(LiveSessionError):
             LiveSessionEngine(selectors).run(payload, driver=MockPageDriver())
@@ -175,11 +176,11 @@ class MultiFileAttachTests(unittest.TestCase):
         payload = _attachments_payload(
             "gemini_web",
             attachments=[{"key": "a.pdf", "content_type": "application/pdf", "kind": "document"}],
-            local_paths=["/tmp/ubag/a.pdf"],
+            local_paths=[temp_attachment("a.pdf")],
         )
         events = LiveSessionEngine(selectors).run(payload, driver=driver)
         self.assertTrue(driver.used_attach_trigger)
-        self.assertEqual(driver.attached_files, ["/tmp/ubag/a.pdf"])
+        self.assertEqual(driver.attached_files, [temp_attachment("a.pdf")])
         self.assertIn("file.attached", _types(events))
 
     def test_gemini_upload_trigger_drift_blocks(self):
@@ -188,7 +189,7 @@ class MultiFileAttachTests(unittest.TestCase):
         payload = _attachments_payload(
             "gemini_web",
             attachments=[{"key": "a.pdf", "content_type": "application/pdf", "kind": "document"}],
-            local_paths=["/tmp/ubag/a.pdf"],
+            local_paths=[temp_attachment("a.pdf")],
         )
         events = LiveSessionEngine(selectors).run(payload, driver=driver)
         blocked = [e for e in events if e["type"] == "blocked"]

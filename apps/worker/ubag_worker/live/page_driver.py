@@ -878,6 +878,16 @@ class PlaywrightPageDriver(PageDriver):
         # engine then decides fail vs. restart). Never raises DriftDetectedError.
         if not thread_ref:
             return False
+        # Fail closed on anything that is not an https URL on the provider's own
+        # origin. thread_ref reaches this as job-payload data and is navigated in
+        # the AUTHENTICATED browser, after which the page content is read back
+        # and returned as the job result. The gateway only ever stores a URL a
+        # previous run read off page.url, so the loop is closed today - but that
+        # closure was procedural, not enforced. A provider-side redirect, an open
+        # redirect in a provider SPA, or a poisoned row would otherwise navigate
+        # the logged-in session to an attacker origin and ship its content back.
+        if not _is_same_origin_https(thread_ref, selectors.target_url):
+            return False
         self._fresh_chat = False
         try:
             self._page.goto(thread_ref, wait_until="domcontentloaded")
@@ -1744,6 +1754,52 @@ class PlaywrightPageDriver(PageDriver):
 _TARGET_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,128}$")
 # Ids opened by THIS process; never treated as stale even if still registered.
 _LIVE_TARGET_IDS: set = set()
+
+
+def _origin_of(url: str):
+    """Return (scheme, host, port) for an absolute URL, or None if unparseable."""
+    from urllib.parse import urlsplit
+
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return None
+    if not parts.scheme or not parts.hostname:
+        return None
+    try:
+        port = parts.port
+    except ValueError:  # a non-numeric :port is unparseable, not a crash
+        return None
+    return parts.scheme.lower(), parts.hostname.lower(), port
+
+
+def _is_same_origin_https(candidate: str, target_url: str) -> bool:
+    """True when ``candidate`` is an https URL on the same origin as ``target_url``.
+
+    Gates navigation of the AUTHENTICATED browser to a payload-supplied URL (a
+    resumed conversation's thread ref). Requiring https and an exact origin
+    match means a thread ref can only point back into the provider the job is
+    already bound to: it cannot be used to reach an attacker origin (SSRF), a
+    loopback or RFC1918 address, or a plaintext http endpoint. Anything else
+    returns False, which makes the thread unresumable - the engine then falls
+    back to a fresh chat, which is always safe.
+    """
+    cand = _origin_of(candidate)
+    base = _origin_of(target_url)
+    if cand is None or base is None:
+        return False
+    cand_scheme, cand_host, cand_port = cand
+    base_scheme, base_host, base_port = base
+    if cand_scheme != "https":
+        return False
+    # Default ports must compare equal: https://host and https://host:443 are one
+    # origin, and providers emit both forms across SPA route changes.
+    if cand_port is None:
+        cand_port = 443
+    if base_port is None:
+        base_port = 443 if base_scheme == "https" else 80
+    return cand_host == base_host and cand_port == base_port
+
 
 
 def _page_registry_path() -> str:

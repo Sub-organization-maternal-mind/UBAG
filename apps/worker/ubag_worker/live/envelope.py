@@ -135,14 +135,21 @@ def normalize_payload(payload: Mapping[str, Any], provider_id: str) -> Normalize
     audio_local_path = _optional_string(
         input_payload.get("audio_local_path") or options.get("audio_local_path")
     )
+    if audio_local_path:
+        # Same exfiltration surface as attachment_local_paths: this path is
+        # handed to set_input_files, so it must be a gateway-materialized file.
+        audio_local_path = _validate_local_attachment_path(
+            audio_local_path, "audio_local_path"
+        )
     # Generalized multi-file attachments. ``attachments`` is the declared manifest
     # (documents/images/audio/video/voice); ``attachment_local_paths`` are the
     # locally-materialized files the gateway resolved those keys to. Text-only
     # jobs leave both empty.
     attachments = _attachments_manifest(input_payload)
-    attachment_local_paths = _string_tuple(
+    attachment_local_paths = _validated_local_path_tuple(
         input_payload.get("attachment_local_paths")
-        or options.get("attachment_local_paths")
+        or options.get("attachment_local_paths"),
+        "attachment_local_paths",
     )
     if attachments and len(attachments) != len(attachment_local_paths):
         raise EnvelopeError(
@@ -422,6 +429,60 @@ def _string_tuple(value: Any) -> tuple:
     if isinstance(value, str) and value.strip():
         return (value.strip(),)
     return ()
+
+
+# The gateway materializes a job's declared attachments into the system temp
+# directory (executor/workerconsumer.go: os.MkdirTemp("", "ubag-attach-*")). The
+# bound enforced below is the temp ROOT, not that subdirectory name: the naming
+# is an implementation detail of the runner, and pinning it would both encode a
+# detail that can change without notice and reject legitimate attachments.
+_MATERIALIZED_ATTACHMENT_DIR_PREFIX = "ubag-attach-"
+
+
+def _validate_local_attachment_path(value: str, field: str) -> str:
+    """Fail closed unless ``value`` resolves inside the system temp directory.
+
+    ``attachment_local_paths`` / ``audio_local_path`` reach
+    ``locator.set_input_files()``, which UPLOADS the file's bytes to a
+    third-party provider. Only the declaration KEY is validated elsewhere - the
+    path itself was accepted verbatim, so a job payload naming any readable file
+    on the host (an SSH key, /etc/passwd, an env file, a mounted service-account
+    token) would have its contents exfiltrated to the model vendor.
+
+    Safety today depends entirely on the Go runner overwriting the field before
+    the envelope is dispatched. This is defence in depth for that: accept only
+    an absolute path that, AFTER symlink resolution, is the system temp
+    directory or something beneath it. realpath() is what makes a symlink
+    planted inside an allowed folder useless - it is resolved before the
+    containment check, so the link's target is what gets tested.
+
+    Anything else raises EnvelopeError, which fails the job rather than
+    uploading the file.
+    """
+    import os
+    import tempfile
+
+    candidate = (value or "").strip()
+    if not candidate:
+        raise EnvelopeError("%s must not be empty" % field)
+    if not os.path.isabs(candidate):
+        raise EnvelopeError("%s must be an absolute path" % field)
+    try:
+        real = os.path.realpath(candidate)
+        temp_root = os.path.realpath(tempfile.gettempdir())
+    except OSError as exc:  # pragma: no cover - realpath rarely raises
+        raise EnvelopeError("%s could not be resolved" % field) from exc
+    if real != temp_root and not real.startswith(temp_root + os.sep):
+        raise EnvelopeError(
+            "%s must resolve inside the gateway's attachment directory (%s)"
+            % (field, _MATERIALIZED_ATTACHMENT_DIR_PREFIX + "* under the system temp dir)")
+        )
+    return candidate
+
+
+def _validated_local_path_tuple(value: Any, field: str) -> tuple:
+    paths = _string_tuple(value)
+    return tuple(_validate_local_attachment_path(p, field) for p in paths)
 
 
 def _clean_scope(value: Any) -> List[str]:

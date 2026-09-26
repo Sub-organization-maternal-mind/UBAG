@@ -45,8 +45,7 @@ class AdapterRegistryTests(unittest.TestCase):
             self.assertFalse(captcha_policy["delegate_to_solver"])
             self.assertTrue(captcha_policy["manual_only"])
 
-            if adapter_id != "mock":
-                self.assertEqual(manifest["status"], "stub")
+            if manifest["status"] == "stub":
                 self.assertTrue(safe_mode["manual_login_required"])
                 self.assertEqual(artifact_policy["screenshots"], "on_failure_only")
                 self.assertEqual(artifact_policy["dom_snapshots"], "drift_baseline_only")
@@ -56,9 +55,11 @@ class AdapterRegistryTests(unittest.TestCase):
                     "manual_user_owned_session_required",
                 )
             else:
+                self.assertEqual(manifest["status"], "mock" if adapter_id == "mock" else "native")
                 self.assertEqual(artifact_policy["screenshots"], "disabled")
                 self.assertEqual(artifact_policy["dom_snapshots"], "disabled")
                 self.assertEqual(artifact_policy["recordings"], "disabled")
+                self.assertEqual(manifest["resource_policy"]["browser"], "not_required")
 
     def test_aliases_resolve_to_canonical_manifests(self):
         index = load_manifest_index()
@@ -73,6 +74,7 @@ class AdapterRegistryTests(unittest.TestCase):
         self.assertEqual(index["duckduckgo"]["id"], "duckai_web")
         self.assertEqual(index["generic_chat"]["id"], "generic_chat")
         self.assertEqual(index["generic_form"]["id"], "generic_form")
+        self.assertEqual(index["agy"]["id"], "antigravity_cli")
 
     def test_mock_target_still_emits_events(self):
         events = events_for_payload(
@@ -94,7 +96,7 @@ class AdapterRegistryTests(unittest.TestCase):
         manifests = load_manifests()
 
         for adapter_id, manifest in manifests.items():
-            if adapter_id == "mock":
+            if manifest["status"] != "stub":
                 continue
             adapter = instantiate_adapter(manifest)
             with self.subTest(adapter=adapter_id):

@@ -21,6 +21,8 @@ import sys
 import unittest
 from pathlib import Path
 
+from attachment_paths import temp_attachment
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "apps" / "worker"))
 
@@ -226,7 +228,7 @@ class NewChatAndConfigTests(unittest.TestCase):
                 "kind": "document",
             }
         ]
-        payload["job"]["input"]["attachment_local_paths"] = ["/tmp/report.txt"]
+        payload["job"]["input"]["attachment_local_paths"] = [temp_attachment("report.txt")]
 
         events = LiveSessionEngine(selectors).run(payload, driver=driver)
 
@@ -235,7 +237,7 @@ class NewChatAndConfigTests(unittest.TestCase):
             for setting in _event(events, "session.configured")["data"]["settings"]
         }
         self.assertEqual(list(by_key), ["deepthink"])
-        self.assertEqual(driver.attached_files, ["/tmp/report.txt"])
+        self.assertEqual(driver.attached_files, [temp_attachment("report.txt")])
 
     def test_config_disabled_skips_picker_but_records_skip(self):
         # Best-effort facade path: _enabled=false skips the picker (a drifted
