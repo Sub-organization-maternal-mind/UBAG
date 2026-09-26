@@ -54,7 +54,7 @@ jobs:
         working-directory: apps/gateway
         env: { GOTOOLCHAIN: local }
         run: go vet ./...
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with: { python-version: "${{ env.PYTHON_VERSION }}" }
       - name: Chaos experiment schema validation
         run: |
@@ -140,7 +140,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with: { python-version: "${{ env.PYTHON_VERSION }}" }
       - name: Install worker (offline/mock test mode)
         run: python -m pip install --upgrade pip && python -m pip install -e "apps/worker[dev]" || python -m pip install -e apps/worker
@@ -172,7 +172,7 @@ jobs:
       - name: Conformance + observability
         run: pnpm test:conformance && pnpm test:observability
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('apps/dashboard/package.json', 'pnpm-lock.yaml') }}
@@ -207,14 +207,14 @@ jobs:
         with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
       - uses: actions/setup-node@v7
         with: { node-version: "${{ env.NODE_VERSION }}" }
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with: { python-version: "${{ env.PYTHON_VERSION }}" }
 
       # Secret scanning. The repo builds its image with `context: .`, so any
       # credential committed to the tree - including one that reached a job
       # payload - would be uploaded to a hosted runner on the next build.
       - name: gitleaks (secret scan)
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env: { GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false" }
 
       # These previously ran with `|| true`, so they could never fail a build
@@ -260,7 +260,7 @@ jobs:
       - name: Build gateway image
         run: docker build -t ubag/gateway:ci-scan -f deploy/small/gateway.Dockerfile .
       - name: Trivy image scan (HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ubag/gateway:ci-scan
           format: table
@@ -269,7 +269,7 @@ jobs:
           exit-code: "1"
 
       - name: IaC scan (Terraform / Compose / Helm)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
           scan-ref: .
@@ -295,7 +295,7 @@ jobs:
       # Blocks a PR that introduces a dependency with a known CVE or an
       # AGPL/copyleft licence. Dependabot version bumps existed, but nothing
       # gated what a PR was allowed to pull in.
-      - uses: actions/dependency-review-action@v4
+      - uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
