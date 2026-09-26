@@ -174,6 +174,7 @@ func TestAntigravityOAuthAccountsAreTenantScoped(t *testing.T) {
 }
 
 func TestAntigravityOAuthAccountLimitAndTenantCount(t *testing.T) {
+	t.Setenv("UBAG_ANTIGRAVITY_ENABLED", "false")
 	store := antigravity.NewStore(t.TempDir())
 	adminA := NewServer(Config{AppSecret: "dev-secret", ActorRole: "admin", TenantID: "tenant_a", AntigravityStore: store}).Handler()
 	adminB := NewServer(Config{AppSecret: "dev-secret", ActorRole: "admin", TenantID: "tenant_b", AntigravityStore: store}).Handler()
@@ -190,10 +191,16 @@ func TestAntigravityOAuthAccountLimitAndTenantCount(t *testing.T) {
 	}
 	config := doJSON(adminB, http.MethodGet, "/v1/antigravity/config", "", headers)
 	var response struct {
-		AccountCount int `json:"account_count"`
+		AccountCount int  `json:"account_count"`
+		OAuthEnabled bool `json:"oauth_enabled"`
 	}
-	if err := json.Unmarshal(config.Body.Bytes(), &response); err != nil || response.AccountCount != 0 {
+	if err := json.Unmarshal(config.Body.Bytes(), &response); err != nil || response.AccountCount != 0 || response.OAuthEnabled {
 		t.Fatalf("tenant B sees another tenant's slot count: status=%d body=%s err=%v", config.Code, config.Body.String(), err)
+	}
+	t.Setenv("UBAG_ANTIGRAVITY_ENABLED", "true")
+	config = doJSON(adminB, http.MethodGet, "/v1/antigravity/config", "", headers)
+	if err := json.Unmarshal(config.Body.Bytes(), &response); err != nil || !response.OAuthEnabled {
+		t.Fatalf("OAuth feature switch not reported: status=%d body=%s err=%v", config.Code, config.Body.String(), err)
 	}
 }
 
