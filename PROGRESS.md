@@ -2,6 +2,202 @@
 
 Last updated: 2026-09-27
 
+## 2026-09-27 — Infrastructure hardening pass: data containment, fail-closed migrations, real gates (6 commits)
+
+A full infrastructure audit of the gateway, worker, deployment and CI surface
+produced six commits. Every change is pinned by a test or a gate; the
+highlights are the defects that were live and silent.
+
+**1. Job payloads were shipping into the Docker build context (`dc4d88f`).**
+`.gitignore` only covered `apps/gateway/spool/`, so the root `spool/`,
+`artifacts/`, `chat-ledger/` and `logs/` were neither ignored nor excluded from
+the image build. Both CI workflows build with `context: .`, so those directories
+— real prompts, provider replies, operator attachments — were uploaded to
+GitHub-hosted runners on every build. In a clinical deployment that is patient
+data. `gateway.Dockerfile` also does `COPY apps/gateway ./`, so
+`apps/gateway/chat-ledger/` entered the image despite being gitignored. Verified
+afterwards: no clinical prompt text and no real secret in any tracked file
+(remaining matches are placeholders). Also added `*~` so a 49 MB
+`ubag-gateway.exe~` backup binary can never be committed.
+
+**2. Migrations silently half-applied (`dc4d88f`).**
+`gateway-entrypoint.sh` logged `WARNING - migration ... failed, continuing`.
+Because psql runs with `ON_ERROR_STOP=1` and `0008_blueprint_schema.sql` aborts
+on `CREATE EXTENSION vector` / `pg_partman` — unavailable on any managed
+Postgres — **none** of its 19 tables were created, and the gateway booted and
+reported ready. Now fail-closed. `0008` is a not-yet-wired Phase 2 schema the
+gateway never reads (`automation_jobs`, `webhook_endpoints`, `prompt_templates`,
+`app_credentials` all have zero Go references), so it is opt-in behind
+`UBAG_ALLOW_OPTIONAL_MIGRATIONS`, wired through all three compose files.
+`tools/check-small-deployment.mjs` gained a structural fail-closed gate, itself
+negative-tested.
+
+**3. `ubag db-migrate` used a different ledger than production (`dc4d88f`).**
+The runner tracked `schema_migrations` keyed by full filename while the
+migration files record `gateway_schema_migrations` under the short version, so a
+database migrated by the entrypoint looked untouched and every migration was
+replayed on top. Now shares the canonical table and key and verifies a real
+sha256. Legacy placeholder checksums (`""`, `manual-v0*`, `sha256:placeholder*`)
+carry no information and stay tolerated, so existing deployments are not broken.
+**Fixing this exposed a second bug:** the runner created the ledger without an
+`applied_at` DEFAULT, so `0001`'s own `CREATE TABLE IF NOT EXISTS` was a no-op
+and its three-column ledger INSERT failed on NOT NULL — migrating a fresh
+database broke on the first file. Verified all 8 shipped `migrations/sqlite`
+files now apply cleanly and are idempotent across three runs.
+
+**4. Webhook delivery could stop, silently and permanently (`079b298`).**
+`DeliveryWorker.Run` returned on the first `RunOnce` error and `serve.Run` only
+logged it, so one blip on `LeaseDue` ended every `job_callback` for the process
+lifetime — no metric, no health signal. Now counts, logs, and retries with capped
+exponential backoff, returning only on context cancellation. Separately, the
+circuit breaker recorded **nothing** for 3xx/4xx, so an endpoint answering 404
+wedged a half-open breaker shut forever (`inflight` never decremented) and
+dead-lettered all delivery to that host. Fixed at both layers: the sender now
+records every terminal outcome, and `resilience.Breaker` gained
+`HalfOpenProbeTimeout`, which re-arms a half-open window whose probe was never
+resolved. Two negative controls keep both fixes from being undone quietly.
+
+**5. No index supported any operational query (`079b298`).**
+Every `gateway_jobs` index led with `tenant_id`, so none could serve a bare
+`WHERE status = ?`. There was no index on `updated_at` at all. The stale-job
+reaper therefore ran **eight unbounded full-table reads every 60 seconds**,
+each selecting all seven JSON columns, and `/v1/metrics` (unauthenticated)
+triggered a `GROUP BY status` scan per scrape. Added
+`idx_gateway_jobs_status_updated` and `idx_gateway_jobs_created` to the embedded
+SQLite schema (re-applied every boot, so existing DBs self-heal) and as
+migration `0013`. Deliberately **not** partial: verified with
+`EXPLAIN QUERY PLAN` that a partial index restricted to non-terminal statuses is
+*not* used for `status = 'queued'`, because neither planner infers that equality
+implies `NOT IN (...)` — the partial form still produced `SCAN gateway_jobs`.
+
+**6. Trace IDs were trusted verbatim (`59df51b`).**
+`traceparent` was accepted if it merely had four dash-parts with a 32-char
+second field, and `X-Request-Id` at all. That value lands on the job row, in
+webhook headers, in the WebSocket handshake and in every structured log line, so
+a caller could inject newlines (forging log entries), ANSI escapes, or the
+spec-invalid all-zero id. `traceparent` is now validated per W3C. `X-Request-Id`
+is deliberately **not** restricted to hex — operators legitimately send
+`req-abc-123` and UUIDs, and an existing test pins that — it is bounded to 64
+bytes and restricted to printable non-space ASCII.
+
+**7. GDPR Art. 17 erasure was gated on `data:export` (`59df51b`).**
+`handlePrivacyRequest` is shared by export and erase and authorized both with
+`data:export`; `data:erase` did not exist in the RBAC table, so a principal
+granted read-only export rights could trigger irreversible erasure. Now its own
+action, admin/superadmin only. The handler also read its body unbounded.
+
+**8. Fixed a pre-existing red test (`59df51b`).**
+The 2026-09-26 provider rebase removed `deepseek_web`'s `mode` setting but
+`openai_facade_test.go` still asserted `deepseek_web|Instant` resolved to
+`settings["mode"]`, so `internal/httpapi` was red at HEAD. The retired ID is now
+asserted to be rejected.
+
+**9. Cross-patient bleed in the warm-reuse gate (`b8cd3a5`).**
+`_visible_now` swallowed any exception while probing and reported "no prior
+turn", so a severed CDP connection was indistinguishable from a clean page:
+`_wait_until_absent` returned True, `prepare_for_next_job` returned True, and
+the next job was submitted into a tab that could still show the previous
+patient's report. The probe is now tri-state (visible / provably-absent /
+could-not-be-queried); reuse is refused on "could not be queried".
+
+**10. 30% of the worker suite never ran (`b8cd3a5`).**
+The runner used `unittest discover`, which only collects `TestCase` subclasses.
+Eight of twenty-five files are pytest-style and contributed **zero** tests —
+measured 188 collected versus 265 under pytest. What was unverified was exactly
+the dangerous part: the warm-daemon reuse gate, the leaked-tab registry,
+graceful shutdown, daemon framing, every latency fix. With pytest absent those
+files did not skip quietly either; they became hard collection errors, because
+`ci.yml` installs the worker with `pip install -e "apps/worker[dev]" ||
+pip install -e apps/worker`, so a dev-extra failure silently downgrades.
+
+Turning the suite on exposed **11 real failures, all stale test fakes**: commit
+`78c794e` moved probes from `wait_for()` to an instant `count()`, but the fakes
+still modelled the old API, so a stub without `count()` made the probe raise
+`AttributeError` which the driver swallowed — those tests had been exercising
+the "unqueryable" path while appearing to test something else. Fakes fixed to
+the real contract (`count()`, `is_visible()`); one test that asserted
+`_present_any` hands a bounded timeout to `wait_for` was rewritten to assert the
+stronger property that now holds. Added `tests/conftest.py` because pytest's
+import mode inserts the test file's own directory into `sys.path`, not the app
+roots, so a single-file invocation failed collection.
+
+**11. Two exfiltration paths in the worker (`f7ead70`).**
+`attachment_local_paths` / `audio_local_path` were accepted verbatim and handed
+to `set_input_files`, which **uploads the bytes to a third-party provider** — the
+declaration key was validated, the path was not, so a payload naming
+`/etc/passwd`, an SSH key or a k8s service-account token would have been
+exfiltrated to the model vendor. The only thing preventing it was the Go runner
+overwriting the field; the Python side had no defence in depth. Both now fail
+closed unless the path is absolute and, **after `os.path.realpath`**, inside the
+system temp directory. Separately, `thread_ref` was navigated in the
+*authenticated* browser and its content read back as the job result, with no
+scheme/host check; it is now restricted to https on the provider's own origin
+(the gateway only ever stores a `page.url`, but that closure was procedural, not
+enforced). 27 new cases cover `/etc/passwd`, SSH keys, cloud metadata
+`169.254.169.254`, symlink escape, and 13 rejected `thread_ref` shapes including
+`chatgpt.com.evil.example` suffix confusion.
+
+**12. CI could not fail on a security problem (`f20ed43`).**
+A grep for codeql, semgrep, gosec, bandit, trivy, grype, gitleaks, trufflehog,
+checkov, tfsec, dependency-review and pnpm audit across all six workflows
+returned nothing. What existed was masked: `govulncheck` and `pip-audit` were
+`|| true` (and pip-audit pointed at `apps/worker/requirements.txt`, which does
+not exist), `helm lint` and `goreleaser check` were `|| echo "not installed"`.
+`security-scan` now runs gitleaks, govulncheck, pip-audit (reading the real
+pyproject), pnpm audit, cargo audit, a Trivy **image** scan of the production
+gateway, and a Trivy IaC scan — all gating. Added a dependency-review job and
+top-level `permissions: contents: read` to the two workflows that had none
+(including the one that builds the prod image and SSH-deploys to the VPS).
+
+**13. Every SLO alert was dead (`f20ed43`).**
+All five rules in the Helm `PrometheusRule` referenced series that do not exist
+(`http_requests_total`, `ubag_jobs_failed_total`, `ubag_jobs_completed_total`),
+and the p99 rule used a `_bucket` series the gateway never writes — HTTP
+duration is published as `_sum`/`_count` only, so `histogram_quantile` had
+nothing to read even with the right name. Two used `status=` where the gateway
+emits `status_class`. And even with correct names none could match: the
+ServiceMonitor set no `jobLabel`, so `job` was `ubag` while the rules filtered
+on `<release>-ubag`. Rewritten against the real emissions, `jobLabel` pinned,
+and `tools/check-alert-metrics.mjs` added to `pnpm check` — it extracts the
+metric names the gateway writes and fails if any alert or dashboard references
+one outside that set. It immediately caught a gap in this very changeset (a
+counter added in `079b298` was referenced by an alert but never exported), now
+emitted as `ubag_webhook_worker_run_errors_total`.
+
+**14. Dead gate removed (`b8cd3a5`).** `tools/check-contracts.mjs` had
+`if (false && …)`, making the SDK-staleness block read as disabled. The real gate
+is the `generate-manifest.mjs --check` call in the same `try`, verified by
+perturbing a generated file. The dead branch was removed rather than enabled — a
+`git status` check would false-positive on any legitimately dirty tree.
+
+Validation: `go build ./...`, `go vet ./...` clean; `gofmt` clean on every file
+touched; `internal/{cli,webhooks,resilience,sqlitestore,authz,middleware,httpapi,
+jobs,serve}` all pass; worker suite **296 passing** (was 188 collected) with the
+repo runner exiting 0 including the mock-worker smoke; ruff clean on all touched
+files; all six workflows parse and now carry a top-level `permissions` block;
+all four static gates pass (contracts, alert-metrics, provider-selectors,
+small-deployment). Negative tests confirm the new gates actually fail.
+
+**Open / not done here.** `docker-compose.vps.yml` and `vps2.yml` have no backup
+service, and the small profile's backup containers sit on an `internal: true`
+network so they cannot reach off-host S3 — production has no working backup.
+`/v1/stream` is still a 2-second heartbeat stub, not a WebSocket server, while
+the profile matrix advertises `WebSocket: true`. `jobs.List` still has no LIMIT.
+`tools/check-weight.mjs` is still unwired and the dashboard bundle sits at 96%
+of budget. `deploy/terraform` has no state backend and `deploy/operator` has no
+`main.go`. Seven workspace TS packages still have zero consumers.
+
+**Note for the next agent:** the `antigravity_sdk` adapter work landed
+concurrently from a parallel session. Its relaxation of the browser-stub
+safe-mode invariant in `apps/worker/tests/test_adapter_registry.py` (asserting
+`status == "stub"` and adding a `native` status) is included in `f7ead70`; it
+is that session's change, not part of the hardening pass. Seven Go files under
+`internal/antigravity`, `internal/executor/workerconsumer.go`,
+`internal/httpapi/{antigravity,openai_facade,server_test}.go`,
+`internal/serve/workerdaemon_test.go` and `internal/topology/store_test.go` are
+currently **gofmt-dirty**, which will fail the CI gofmt gate until that session
+runs `gofmt -w`.
+
 ## 2026-09-27 — Failed-jobs spike + Live Browser lag root-caused; bridge viewer controls; both boxes resourced up; distribution test
 
 Owner symptoms: FAILED 14→26, Live Browser stuck on "Waiting for first frame",
