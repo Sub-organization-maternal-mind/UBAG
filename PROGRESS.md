@@ -1,6 +1,106 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-09-27
+Last updated: 2026-09-28
+
+## 2026-09-28 — Backend/API architecture audit implemented (WS-1…WS-8)
+
+The full "Enterprise Backend and API Architecture Review" (34 verified
+findings: 10 P0, 12 P1, 12 P2; 56-item plan) is implemented across eight
+workstreams, one commit each (23fd299…fb8667b). Scope decisions were made in
+the review session: one changeset, real CI service containers, secure-by
+-default breaking changes, dead code removed (amended — see deletions).
+
+**WS-1 authz/authn (P0 1,2,3 + 22):** POST /v1/jobs/batch now requires
+`job:create` (RBAC+ABAC+MFA) and a caller Idempotency-Key; per-entry keys
+derive deterministically (`<batch key>-<index>`); backpressure is checked
+once per batch and counts only queued+assigned in both batch and single-job
+paths (terminal spool history no longer 429s a healthy gateway). JIT
+elevation validates roles, caps TTL at 24 h and enforces
+approver-priority ≥ grant priority (closes the developer→superadmin chain).
+PATs validate role, forbid never-expiring TTLs to non-superadmin, cap at
+1 year, and gained POST /v1/auth/pat/{id}/revoke. POST /v1/sso/oidc/callback
+now requires authn (GET redirect flow exempt). Cache invalidate moved to
+rate_limit:manage. mfaSessionSet has a 24 h TTL + 10 k cap. gRPC authorize
+mirrors the MFA + ABAC gates. Worker profile-dir options are containment
+validated and headless must be a real bool (gateway-side structural
+allowlist mirrors it).
+
+**WS-2 bounding (P0 10, 6):** all 7 unbounded request bodies go through the
+bounded helpers (413 on oversize); batch no longer silently truncates;
+audit export defaults to 1000 and hard-caps at 10000; every raw err.Error()
+removed from HTTP response bodies (DB/SQLSTATE/filesystem paths); workflow
+create now reserves/completes its idempotency key.
+
+**WS-3 store correctness (P0 4, P2 26):** jobs.ListFilter gained
+Limit/AfterID/Descending with LIMIT pushed into sqlite/postgres/memory; the
+unauthenticated /v1/metrics path no longer loads the tenant table (bounded
+10 k scans everywhere); ascending indexes added (sqlite 0009, postgres
+0014); sortJobs tiebreak; templates/conversations cursors with real
+next_cursor; concurrency limits bounded; Postgres TransitionStatus is a
+real CAS with typed ErrConflict; idempotency gained status/locked_until CAS
+swept by the attachment sweeper; topology upserts by ID; webhook partial
+leased_until indexes (sqlite 0010, postgres 0016).
+
+**WS-4 migrations (P1 15,16,17,31, P2 30):** runner-authoritative checksums
+with `db-migrate --verify` drift detection; entrypoint + compose migrations
+run in a single transaction behind pg_advisory_xact_lock; sqlite chain
+reconciled with the live schema (0011; 0009/0010 renumbered 0012/0013 —
+they index tables only 0011 creates, so fresh-DB application was broken);
+outbox DDL shipped (postgres 0017) and the store now asserts instead of
+CREATE TABLE at runtime; audit WORM REVOKE shipped (0018); Postgres pool
+defaults capped (20/5).
+
+**WS-5 performance (P0 5,7,9,11, P2 24,25,11):** spool retention sweeper
+(TTL 7 d + max 10 000, env-gated); the global attachment-upload mutex is
+now a per-artifact gate guarding only check-and-reserve; /v1/metrics is
+cached 5 s with ETag and a single buffered write; http.Server gained
+ReadTimeout/IdleTimeout/MaxHeaderBytes (WriteTimeout intentionally unset
+for SSE/facade) and UBAG_SHUTDOWN_GRACE_SECONDS (25 s); five memory stores
+bounded at 10 k; renameNoOverwrite is a real os.Link CAS; LeaseNext wakes
+on an enqueue notification (poll fallback kept); job:retry + admin:manage
+rate-limit policies added; the limiter fails CLOSED.
+
+**WS-6 lifecycle** — implemented by the parallel agent in this same tree
+(statusRecorder Flush/Unwrap so SSE streams; graceful drain; daemon Close;
+worker clock; per-route SLO labels). Its edits were uncommitted at the time
+of this entry's writing; verify its commit for the authoritative list.
+
+**WS-7 CI/tests:** postgres:16 + NATS + MinIO service containers in the
+gateway job with the real DSNs — the 20 env-gated integration tests now run
+in CI; postgres round-trip runner wired with --apply-migrations;
+check:provider-selectors + check:alert-metrics + check-weight --strict are
+gating; tools pinned (ruff, redocly, ajv-cli/formats; govulncheck on Go
+1.26.x); tiermigrate test un-quarantined (Skip→Fatalf); dead `live` pytest
+marker removed; Makefile coverage claims corrected to the real 50 % gate.
+New tests: internal/templates (10), cmd/ubag (4), run_chat_reaper (14), grpc
+authz parity, idempotency CAS/sweep, topology upsert, list pagination,
+postgres CAS (DSN-gated). golangci-lint/eslint: NOT added (see deviations).
+
+**WS-8 contract/docs:** all 41 missing operations documented across 29 path
+templates (handler-verified shapes); check-contracts.mjs is bidirectional
+(all 66 routes parsed from routes.go, wildcards mapped, fails closed on
+unmapped); SDK manifests regenerated 52→92 endpoints; the phantom `support`
+role removed from rbac.ts (aligned with authz.go, data:erase added) with a
+failing-closed RBAC cross-check gate; docs corrected; coverage ledger
+recounted (45 REST + 286 scenarios).
+
+**Deletions — amended (reviewed, not blanket-applied):** the TS packages
+were already carved out by the review itself (kept + cross-checked). Four
+more deletion rows were rejected on inspection: /v1/apps, /v1/devices,
+/v1/webhooks, /v1/audit have a real consumer (the dashboard's nav contract
+and pages); the outbox was kept — WS-4 shipped its DDL and it is the
+gateway's path to crash-atomic dispatch; the privacy routes and SSO OIDC
+authorize flow are documented in the spec and consumed/designed-for, kept
+as explicit 501 stubs. NOT yet deleted (blocked on concurrent server.go
+work in this tree): the internal/plugins WASM host (never constructed) and
+its httpapi hooks — tracked as follow-up.
+
+**Deviations:** golangci-lint + eslint not added (no local toolchain to
+verify a gating config; go vet + svelte-check + tsc gate today — follow-up).
+The GEMINI_API_KEY env forwarding is deliberate scoping for the
+antigravity_sdk adapter (tests enforce it), not a leak. Elevation
+ttl_seconds serializes a Go time.Duration (nanoseconds) under its key —
+pre-existing quirk flagged for the JIT owners.
 
 ## 2026-09-27 — Architecture-audit closure items (templates/RBAC/coverage/reaper tests)
 

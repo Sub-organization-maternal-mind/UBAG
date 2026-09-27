@@ -1,6 +1,62 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-09-13
+Last updated: 2026-09-28
+
+## Breaking HTTP contract changes (2026-09-27/28 architecture audit)
+
+The 2026-09-27/28 audit changeset (commits 23fd299…fb8667b, "secure by
+default" per the review's scope decision) changed gateway behavior. OET
+facade callers are UNAFFECTED (no facade route changed); the deltas apply
+to direct gateway API callers:
+
+1. **POST /v1/jobs/batch** — now requires the `job:create` permission (was
+   unauthenticated to any role) and a caller `Idempotency-Key` header (16–128
+   chars, or an `idempotency_key` field on the batch body). Entries without an
+   explicit key derive `<batch key>-<index>`; a batch whose queue-depth check
+   fails is rejected whole (429) before any entry is created. Backpressure now
+   counts only queued+assigned jobs (terminal spool history excluded).
+2. **MFA gate widened** — when MFA is enabled on the gateway, these actions
+   require a completed `POST /v1/mfa/verify` for EVERY principal type
+   (previously only SSO sessions): `secret:rotate`, `data:erase`,
+   `auth:pat:issue`, `role:manage`, `region:manage`, `data:export`,
+   `rate_limit:manage`. App-secret callers verify once (the marker is keyed
+   on the caller's token, in-memory, 24 h TTL). With MFA disabled, no change.
+3. **POST /v1/admin/elevation** — unknown roles are 400; `ttl_seconds` >
+   86400 is 400. **POST /v1/admin/elevation/{id}/approve** — 403 unless the
+   approver's role priority ≥ the grant's role priority.
+4. **POST /v1/auth/pat** — unknown roles 400; negative (never-expiring)
+   `ttl_seconds` is 403/400 for non-superadmin callers; > 1 year is 400. New
+   route **POST /v1/auth/pat/{id}/revoke** (204; tenant-scoped 404).
+5. **POST /v1/sso/oidc/callback** now requires authentication (the browser
+   GET redirect flow stays exempt) — parity with SAML ACS.
+6. **POST /v1/cache/invalidate** — now requires `rate_limit:manage` (was
+   `job:read`, i.e. any viewer could purge the cache).
+7. **Over-size bodies** on /v1/jobs/batch, /v1/cache/invalidate,
+   /v1/auth/pat, /v1/templates/{id}/render, /v1/antigravity/* mutations now
+   return 413 UBAG-VALIDATION-BODY-TOO-LARGE-001 (previously unbounded or a
+   confusing 400). POST /v1/audit/export: limit defaults to 1000, > 10000 is
+   400. Several 4xx/5xx error bodies no longer contain raw err.Error() text
+   (stable messages; status classes unchanged).
+8. **Worker option validation** — job options `user_data_dir` /
+   `profile_dir` / `profile_path` must be non-absolute, traversal-free paths
+   inside the worker profile root; `headless` must be a real boolean.
+   Violations are 400 UBAG-VALIDATION-JOB-PAYLOAD-SAFETY-001 at create time.
+9. **Rate limiting** — admin routes now share an `admin:manage` bucket
+   (previously the generic unmatched-POST bucket), `job:retry` has its own
+   policy, and limiter backend errors fail CLOSED (503
+   UBAG-RATE-LIMITER-UNAVAILABLE-001) instead of open.
+10. **GET /v1/metrics** is still unauthenticated by design but its payload
+    is cached 5 s (ETag/304) and job-count scans are bounded at 10 000.
+
+Operational deltas for deployments: migrations now run in a single
+transaction behind an advisory lock (entrypoint + compose + Go runner);
+postgres pool defaults capped at 20/5 connections; spool retention defaults
+to 7-day TTL / 10 000 files (UBAG_SPOOL_RETENTION_TTL_SECONDS /
+UBAG_SPOOL_RETENTION_MAX, 0 disables); shutdown grace
+UBAG_SHUTDOWN_GRACE_SECONDS (25 s). New Postgres migrations 0014–0018 and
+SQLite 0009–0013 apply on next boot; the outbox table (0017) is provisioned
+for the (still optional) durable-dispatch path. CI now runs the 20
+env-gated integration tests against real postgres:16/NATS/MinIO containers.
 
 ## Both production boxes on exactly `cf8de88` (2026-09-13, live-verified)
 
