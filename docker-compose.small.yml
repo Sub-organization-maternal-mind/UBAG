@@ -274,10 +274,17 @@ services:
       - sh
       - -ec
       - |
+        # One transaction for the whole run, guarded by the same
+        # ubag-migrations advisory lock the gateway entrypoint and
+        # `ubag db-migrate` take, so concurrent migration paths serialize
+        # instead of interleaving DDL. ON_ERROR_STOP=1 rolls the run back on
+        # the first error instead of committing a half-applied schema.
+        set --
         for migration in /migrations/*.sql; do
-          echo "Applying $${migration}"
-          psql -v ON_ERROR_STOP=1 -h postgres -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -f "$${migration}"
+          echo "Staging $${migration}"
+          set -- "$$@" -f "$${migration}"
         done
+        psql -v ON_ERROR_STOP=1 --single-transaction -h postgres -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}" -c "SELECT pg_advisory_xact_lock(hashtext('ubag-migrations'))" "$$@"
     volumes:
       - ./migrations/postgres:/migrations:ro
     networks:

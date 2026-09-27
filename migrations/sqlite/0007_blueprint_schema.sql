@@ -365,5 +365,7 @@ CREATE INDEX IF NOT EXISTS idx_outbox_events_unpublished
 -- ---------------------------------------------------------------------------
 -- Record this migration
 -- ---------------------------------------------------------------------------
-INSERT OR IGNORE INTO edge_schema_migrations (version, name, applied_at)
-VALUES ('0007', 'blueprint_schema', strftime('%Y-%m-%dT%H:%M:%SZ','now'));
+-- checksum is NOT NULL in edge_schema_migrations (0001) with no default, so
+-- omitting it silently dropped this row; always record it.
+INSERT OR IGNORE INTO edge_schema_migrations (version, name, checksum, applied_at)
+VALUES ('0007', 'blueprint_schema', 'manual-v0', strftime('%Y-%m-%dT%H:%M:%SZ','now'));

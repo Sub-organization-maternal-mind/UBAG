@@ -26,6 +26,16 @@
 # It is therefore SKIPPED unless UBAG_ALLOW_OPTIONAL_MIGRATIONS=1, and when
 # it IS enabled it is fail-closed like every other migration. To adopt those
 # tables, install the extensions and flip the flag deliberately.
+#
+# TRANSACTIONAL + LOCKED. The whole run is a single psql invocation with
+# --single-transaction: every mandatory migration commits together or not at
+# all, so a failure can no longer leave a half-applied schema behind (psql
+# prefixes errors with the failing file's path, so the culprit stays visible).
+# The transaction opens with pg_advisory_xact_lock(hashtext('ubag-migrations')),
+# so two gateways booting concurrently (Render scale-up, rolling deploys) or a
+# concurrent `ubag db-migrate` (which takes the same lock per file) serialize
+# instead of interleaving DDL. The lock is transaction-scoped: it is released
+# at COMMIT/ROLLBACK with no unlock step and no leak if the process dies.
 set -eu
 
 # Extension-dependent migrations, skipped unless explicitly enabled.
@@ -33,9 +43,12 @@ OPTIONAL_MIGRATIONS="0008_blueprint_schema.sql"
 
 if [ -n "${UBAG_POSTGRES_DSN:-}" ]; then
   allow_optional="${UBAG_ALLOW_OPTIONAL_MIGRATIONS:-0}"
+
+  # Build the psql argument list (one -f <file> pair per mandatory migration,
+  # in filename order).
   applied=0
   skipped=0
-
+  set --
   for f in /app/migrations/postgres/*.sql; do
     name=$(basename "$f")
 
@@ -53,16 +66,23 @@ if [ -n "${UBAG_POSTGRES_DSN:-}" ]; then
       continue
     fi
 
-    echo "gateway-entrypoint: applying $name" >&2
-    # ON_ERROR_STOP=1 makes psql exit non-zero on the first error instead of
-    # carrying on and reporting success for a partially applied file.
-    if ! psql "$UBAG_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f "$f"; then
-      echo "gateway-entrypoint: FATAL - migration $name failed; refusing to start with a partially applied schema." >&2
+    echo "gateway-entrypoint: staging $name" >&2
+    set -- "$@" -f "$f"
+    applied=$((applied + 1))
+  done
+
+  if [ "$applied" -gt 0 ]; then
+    echo "gateway-entrypoint: applying $applied migration(s) in one transaction under the ubag-migrations advisory lock" >&2
+    # ON_ERROR_STOP=1 makes psql exit non-zero on the first error; the
+    # --single-transaction wrapper then rolls the whole run back instead of
+    # committing a partially applied schema.
+    if ! psql "$UBAG_POSTGRES_DSN" --single-transaction -v ON_ERROR_STOP=1 \
+        -c "SELECT pg_advisory_xact_lock(hashtext('ubag-migrations'))" "$@"; then
+      echo "gateway-entrypoint: FATAL - a migration failed; refusing to start with a partially applied schema." >&2
       echo "gateway-entrypoint: fix the migration (or the database) and restart. To skip optional migrations see the header of this script." >&2
       exit 1
     fi
-    applied=$((applied + 1))
-  done
+  fi
 
   echo "gateway-entrypoint: migrations complete (applied=$applied skipped=$skipped)" >&2
 fi

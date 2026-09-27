@@ -29,7 +29,7 @@ Commands:
   backup           [--out <dir|s3://...>]
   restore          --from <dir|s3://...>
   migrate          --to <tier> [--dry-run] [--from <tier>]
-  db-migrate       [--store sqlite|postgres]
+  db-migrate       [--store sqlite|postgres] [--verify]
 `
 
 // Dispatch is the main entry point for the CLI.  args should be os.Args[1:].

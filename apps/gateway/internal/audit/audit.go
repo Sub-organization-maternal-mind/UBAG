@@ -62,7 +62,8 @@ type Filter struct {
 // WORM contract:
 //  1. This interface intentionally exposes NO Update or Delete methods.
 //     Every record is write-once; mutations are detected by VerifyChain.
-//  2. DB-level enforcement: REVOKE UPDATE, DELETE ON gateway_audit_records FROM ubag_app;
+//  2. DB-level enforcement: REVOKE UPDATE, DELETE ON gateway_audit_log FROM the
+//     application role, shipped in migrations/postgres/0018_audit_worm_revoke.sql.
 //     Any implementation that omits this grant revocation is a SECURITY DEFECT.
 //  3. Any implementation that adds an Update or Delete method, or that mutates
 //     persisted rows via a side channel, violates WORM semantics and constitutes

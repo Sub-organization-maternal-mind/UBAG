@@ -2,6 +2,75 @@
 
 Last updated: 2026-09-27
 
+## 2026-09-27 — Gateway migration integrity (audit workstream 4)
+
+Seven audit items on the migration/store seam, all verified with targeted
+tests (`go test ./internal/cli/ ./internal/sqlitestore/ ./internal/outbox/
+./internal/audit/ ./internal/serve/` plus alerts/session/topology/webhooks/
+backup; `gofmt -l .`, `go build ./...`, `go vet ./...` clean). NOT committed.
+
+1. **Real migration checksums.** `ubag db-migrate` (internal/cli/backup.go) is
+now authoritative for the ledger checksum: its insert upserts
+(`ON CONFLICT (version) DO UPDATE SET checksum/name`) over the placeholder
+row each migration file self-writes (a file cannot embed its own sha256 —
+circular), so drift detection can actually fire on a fresh apply. New
+`ubag db-migrate --verify` mode backfills real sha256s over legacy
+placeholders (`""`, `manual-v0*`, `sha256:placeholder*`), adopts pre-unification
+`schema_migrations` rows into the canonical ledger, reports missing files as
+informational (the entrypoint legitimately skips optional 0008), and fails
+closed on real checksum drift. Shipped-migrations test asserts every
+`migrations/sqlite` file lands in the ledger with its true file sha256.
+2. **Transactional entrypoint.** `deploy/small/gateway-entrypoint.sh` now runs
+all mandatory migrations in ONE psql invocation with `--single-transaction`
+opened by `pg_advisory_xact_lock(hashtext('ubag-migrations'))` — concurrent
+gateway boots / `ubag db-migrate` serialize, and a failure rolls the whole run
+back instead of committing a half-applied schema. Same pattern applied to
+docker-compose.small.yml's opt-in `postgres-migrate` service, and the Go
+runner takes the same per-file transaction-scoped lock (same key) so the
+paths serialize with each other.
+3. **migrations/sqlite reconciled with the live schema.** New
+`0011_gateway_core_tables.sql` creates the 8 gateway tables the chain never
+had (gateway_jobs/-events/-worker_event_keys/-id_seq, idempotency_records,
+webhook_deliveries/-attempts, artifact_metadata; copied verbatim from
+internal/sqlitestore/schema.sql). The uncommitted index-only migrations
+0009/0010 were renumbered to 0012/0013 — they index gateway_jobs /
+gateway_webhook_deliveries and made the chain fail on a fresh DB at 0009
+before a core-tables migration could exist (the renumber uses version keys no
+sqlite DB ever recorded; already-migrated DBs just replay them as no-ops).
+0007/0008's `edge_schema_migrations` rows are no longer silently dropped
+(checksum is NOT NULL with no default). Parity test:
+internal/sqlitestore/migrations_parity_test.go runs the full chain on a fresh
+DB and asserts every schema.sql table exists; deliberate extras (edge_*,
+webhook_deliveries legacy pair, 0007 blueprint tables, audit/sessions/tenants)
+documented. NOTE: the audit asked to drop the dead `webhook_deliveries`
+creation from 0003 "if nothing reads it" — packages/edge-store/test/
+run-conformance.mjs reads AND executes 0003 and asserts those tables (and a
+10-table count), so the drop was deliberately skipped as documented extras.
+4. **outbox DDL.** `migrations/postgres/0017_gateway_outbox_events.sql` ships
+the gateway_outbox_events DDL; internal/outbox/postgres.go Ready() now
+asserts via storekit.RequirePostgresObject instead of CREATE TABLE IF NOT
+EXISTS at runtime.
+5. **Audit WORM.** `migrations/postgres/0018_audit_worm_revoke.sql` revokes
+UPDATE/DELETE on gateway_audit_log from a `ubag_app` role IF it exists (DO
+block — no app role is provisioned anywhere in the chain and the DSN user is
+normally the table owner, which Postgres cannot revoke from; documented in
+the migration). Comment in internal/audit/audit.go now names the real table.
+6. **sqlitestore FK safety.** migrateJobsScheduledSupport rebuild now runs on a
+pinned connection with PRAGMA legacy_alter_table=ON + foreign_keys=OFF
+(both restored, even on failure): modern SQLite's RENAME rewrites child
+REFERENCES clauses onto gateway_jobs_migrate_backup, which the final DROP
+orphans. Regression test proves foreign_key_check is non-empty without the
+pragmas and empty with them, and that children resolve against the recreated
+table.
+7. **Postgres pool caps.** serve.go defaults MaxOpenConns=20 / MaxIdleConns=5
+when UBAG_DATABASE_MAX_OPEN_CONNS / UBAG_DATABASE_MAX_IDLE_CONNS are unset
+(0 = unlimited was the old default); env overrides kept.
+
+New files: migrations/postgres/0017_gateway_outbox_events.sql,
+0018_audit_worm_revoke.sql, migrations/sqlite/0011_gateway_core_tables.sql,
+internal/cli/migrate_verify_test.go,
+internal/sqlitestore/migrations_parity_test.go, migrate_fk_test.go.
+
 ## 2026-09-27 — Dashboard ultra-fluid polish pass (all 21 routes)
 
 A full UI/UX/responsiveness/polish sweep across the dashboard, built on top of

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -17,6 +18,24 @@ import (
 // extracted from the embedded schema at runtime — never a second copy — and
 // the whole migration runs in one transaction, so a crash rolls back to the
 // untouched old table and the next boot retries cleanly.
+//
+// The rebuild runs on one pinned connection with
+// PRAGMA legacy_alter_table = ON and PRAGMA foreign_keys = OFF (both restored
+// afterwards, even on failure):
+//   - modern SQLite's ALTER TABLE RENAME rewrites the REFERENCES clauses of
+//     every child table (gateway_job_events, gateway_job_worker_event_keys)
+//     to point at gateway_jobs_migrate_backup; the DROP TABLE at the end of
+//     the rebuild would then orphan those foreign keys. legacy_alter_table=ON
+//     restores the pre-3.25 rename semantics: a pure rename that leaves
+//     children pointing at the "gateway_jobs" name, which the recreated table
+//     fills.
+//   - foreign_keys=OFF is the documented SQLite table-rebuild procedure
+//     (sqlite.org/lang_altertable.html, procedure 12): it keeps FK enforcement
+//     from tripping over the intermediate rename/drop states.
+//
+// Pinning the connection matters: PRAGMA legacy_alter_table and foreign_keys
+// are per-connection, so the pragma dance and the transaction must share one
+// connection regardless of the pool size around db.
 func migrateJobsScheduledSupport(ctx context.Context, db *sql.DB) error {
 	tableSQL, err := tableDefinition(ctx, db, "gateway_jobs")
 	if err != nil {
@@ -36,7 +55,30 @@ func migrateJobsScheduledSupport(ctx context.Context, db *sql.DB) error {
 	}
 	columnList := strings.Join(oldColumns, ", ")
 
-	tx, err := db.BeginTx(ctx, nil)
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("sqlitestore: acquire connection for jobs migration: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	prevLegacyAlterTable := connPragma(ctx, conn, "legacy_alter_table")
+	prevForeignKeys := connPragma(ctx, conn, "foreign_keys")
+	if _, err := conn.ExecContext(ctx, `PRAGMA legacy_alter_table = ON`); err != nil {
+		return fmt.Errorf("sqlitestore: set legacy_alter_table: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return fmt.Errorf("sqlitestore: set foreign_keys off: %w", err)
+	}
+	defer func() {
+		// Restore unconditionally (success, failure and panic) with a live
+		// context: a cancelled migration context must not leak the pragmas
+		// into the pooled connection.
+		restoreCtx := context.Background()
+		_, _ = conn.ExecContext(restoreCtx, `PRAGMA legacy_alter_table = `+strconv.Itoa(prevLegacyAlterTable))
+		_, _ = conn.ExecContext(restoreCtx, `PRAGMA foreign_keys = `+strconv.Itoa(prevForeignKeys))
+	}()
+
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("sqlitestore: begin jobs migration: %w", err)
 	}
@@ -70,6 +112,16 @@ func migrateJobsScheduledSupport(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("sqlitestore: commit gateway_jobs migration: %w", err)
 	}
 	return nil
+}
+
+// connPragma reads an integer PRAGMA value from a specific connection.
+// Errors are swallowed and reported as 0: the value is only used to restore
+// the previous state, and a missing pragma restores to OFF, which is the
+// SQLite default for both pragmas used here.
+func connPragma(ctx context.Context, conn *sql.Conn, name string) int {
+	var value int
+	_ = conn.QueryRowContext(ctx, "PRAGMA "+name).Scan(&value)
+	return value
 }
 
 func tableDefinition(ctx context.Context, db *sql.DB, table string) (string, error) {

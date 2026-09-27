@@ -1004,12 +1004,25 @@ func idempotencyTTLFromEnv() time.Duration {
 	return time.Duration(value) * time.Hour
 }
 
+// Default Postgres pool caps applied when the UBAG_DATABASE_* env vars are
+// unset. MaxOpenConns=0 means unlimited, so without these a burst of
+// concurrent requests can open an unbounded number of Postgres connections and
+// exhaust the server's max_connections. The env vars remain the override.
+const (
+	defaultPostgresMaxOpenConns = 20
+	defaultPostgresMaxIdleConns = 5
+)
+
 func configureDBPoolFromEnv(db *sql.DB) {
 	if value := positiveIntEnv("UBAG_DATABASE_MAX_OPEN_CONNS"); value > 0 {
 		db.SetMaxOpenConns(value)
+	} else {
+		db.SetMaxOpenConns(defaultPostgresMaxOpenConns)
 	}
 	if value := positiveIntEnv("UBAG_DATABASE_MAX_IDLE_CONNS"); value > 0 {
 		db.SetMaxIdleConns(value)
+	} else {
+		db.SetMaxIdleConns(defaultPostgresMaxIdleConns)
 	}
 	if value := positiveIntEnv("UBAG_DATABASE_CONN_MAX_LIFETIME_SECONDS"); value > 0 {
 		db.SetConnMaxLifetime(time.Duration(value) * time.Second)

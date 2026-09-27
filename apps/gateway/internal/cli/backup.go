@@ -134,6 +134,7 @@ func cmdMigrate(ctx context.Context, args []string) (string, error) {
 
 	storeFlag := fs.String("store", defaultStore, "Store type: sqlite or postgres")
 	dsnFlag := fs.String("dsn", "", "Connection string (defaults to $UBAG_POSTGRES_DSN or $UBAG_GATEWAY_STORE)")
+	verifyFlag := fs.Bool("verify", false, "verify the checksums of already-applied migrations without applying anything; placeholder ledger rows are backfilled with real file checksums")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return backupUsage(), nil
@@ -169,16 +170,23 @@ func cmdMigrate(ctx context.Context, args []string) (string, error) {
 
 	switch *storeFlag {
 	case "sqlite":
-		return runSQLiteMigrations(ctx, dsn, migrationsDir)
+		if *verifyFlag {
+			return runSQLiteMigrations(ctx, dsn, migrationsDir, true)
+		}
+		return runSQLiteMigrations(ctx, dsn, migrationsDir, false)
 	case "postgres":
-		return runPostgresMigrations(ctx, dsn, migrationsDir)
+		if *verifyFlag {
+			return runPostgresMigrations(ctx, dsn, migrationsDir, true)
+		}
+		return runPostgresMigrations(ctx, dsn, migrationsDir, false)
 	default:
 		return "", fmt.Errorf("migrate: unknown store %q (want sqlite or postgres)", *storeFlag)
 	}
 }
 
-// runSQLiteMigrations applies pending SQL migration files to a SQLite database.
-func runSQLiteMigrations(ctx context.Context, dbPath, migrationsDir string) (string, error) {
+// runSQLiteMigrations opens a SQLite database and applies (or verifies) the
+// SQL migration files in migrationsDir.
+func runSQLiteMigrations(ctx context.Context, dbPath, migrationsDir string, verify bool) (string, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return "", fmt.Errorf("migrate: open sqlite %q: %w", dbPath, err)
@@ -186,17 +194,24 @@ func runSQLiteMigrations(ctx context.Context, dbPath, migrationsDir string) (str
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 
+	if verify {
+		return verifyMigrations(ctx, db, migrationsDir, "?")
+	}
 	return applyMigrations(ctx, db, migrationsDir, "?")
 }
 
-// runPostgresMigrations applies pending SQL migration files to a Postgres database.
-func runPostgresMigrations(ctx context.Context, dsn, migrationsDir string) (string, error) {
+// runPostgresMigrations opens a Postgres database and applies (or verifies)
+// the SQL migration files in migrationsDir.
+func runPostgresMigrations(ctx context.Context, dsn, migrationsDir string, verify bool) (string, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return "", fmt.Errorf("migrate: open postgres: %w", err)
 	}
 	defer db.Close()
 
+	if verify {
+		return verifyMigrations(ctx, db, migrationsDir, "$1")
+	}
 	return applyMigrations(ctx, db, migrationsDir, "$1")
 }
 
@@ -256,31 +271,19 @@ func legacyAppliedVersions(ctx context.Context, db *sql.DB) map[string]bool {
 	return applied
 }
 
-// applyMigrations applies every not-yet-applied .sql file in migrationsDir
-// against the canonical gateway_schema_migrations ledger - the same table, the
-// same short version key and the same checksum column that the migration files
-// themselves write. The runner previously used its own "schema_migrations"
-// table keyed by the full filename, so a database migrated by the container
-// entrypoint (psql, the production path) looked untouched to `ubag db-migrate`
-// and every migration was re-applied on top of it.
+// ensureLedgerTable creates the canonical gateway_schema_migrations ledger if
+// it does not exist. It is normally created by migration 0001 itself, but the
+// runner must work on an empty database.
 //
-// placeholder is "?" for SQLite and "$1" for Postgres.
-func applyMigrations(ctx context.Context, db *sql.DB, migrationsDir string, placeholder string) (string, error) {
-	if placeholder != "?" && placeholder != "$1" {
-		return "", fmt.Errorf("migrate: unsupported placeholder %q (must be ? or $1)", placeholder)
-	}
-
-	// Ensure the canonical tracking table exists. It is normally created by
-	// migration 0001 itself, but the runner must work on an empty database.
-	//
-	// The column set and defaults MUST match the table the migration files
-	// create (migrations/postgres/0001_gateway_stores.sql and
-	// internal/sqlitestore/schema.sql). Every shipped migration records itself
-	// with a three-column INSERT that omits applied_at, relying on that
-	// default. If this table were created without the default, 0001's own
-	// CREATE TABLE IF NOT EXISTS would be a no-op and its ledger INSERT would
-	// fail on the NOT NULL constraint - i.e. migrating a fresh database would
-	// break on the very first file.
+// The column set and defaults MUST match the table the migration files create
+// (migrations/postgres/0001_gateway_stores.sql and
+// internal/sqlitestore/schema.sql). Every shipped migration records itself
+// with a three-column INSERT that omits applied_at, relying on that default.
+// If this table were created without the default, 0001's own CREATE TABLE IF
+// NOT EXISTS would be a no-op and its ledger INSERT would fail on the NOT NULL
+// constraint - i.e. migrating a fresh database would break on the very first
+// file.
+func ensureLedgerTable(ctx context.Context, db *sql.DB, placeholder string) error {
 	appliedAtDefault := "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
 	if placeholder == "$1" {
 		appliedAtDefault = "now()"
@@ -291,7 +294,48 @@ func applyMigrations(ctx context.Context, db *sql.DB, migrationsDir string, plac
 		checksum   TEXT NOT NULL DEFAULT '',
 		applied_at TEXT NOT NULL DEFAULT (`+appliedAtDefault+`)
 	)`); err != nil {
-		return "", fmt.Errorf("migrate: create gateway_schema_migrations: %w", err)
+		return fmt.Errorf("migrate: create gateway_schema_migrations: %w", err)
+	}
+	return nil
+}
+
+// fileChecksum reads a migration file and returns its sha256 hex digest. The
+// runner is the sole source of ledger checksums: a file cannot contain its own
+// sha256 (circular), so the INSERTs inside the shipped migration files only
+// ever carry placeholders and this computed value is what lands in the ledger.
+func fileChecksum(path string) (string, error) {
+	sqlBytes, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(sqlBytes)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+// applyMigrations applies every not-yet-applied .sql file in migrationsDir
+// against the canonical gateway_schema_migrations ledger - the same table, the
+// same short version key and the same checksum column that the migration files
+// themselves write. The runner previously used its own "schema_migrations"
+// table keyed by the full filename, so a database migrated by the container
+// entrypoint (psql, the production path) looked untouched to `ubag db-migrate`
+// and every migration was re-applied on top of it.
+//
+// The runner's ledger row is AUTHORITATIVE for the checksum. The migration
+// files write their own placeholder rows first (a file cannot embed its own
+// sha256 - circular - so those INSERTs carry "manual-v0*"/"" placeholders),
+// and the runner's insert runs after them in the same transaction, overwriting
+// the placeholder with the real sha256 of the file bytes. With a plain
+// ON CONFLICT DO NOTHING the file's placeholder would win and drift detection
+// could never fire.
+//
+// placeholder is "?" for SQLite and "$1" for Postgres.
+func applyMigrations(ctx context.Context, db *sql.DB, migrationsDir string, placeholder string) (string, error) {
+	if placeholder != "?" && placeholder != "$1" {
+		return "", fmt.Errorf("migrate: unsupported placeholder %q (must be ? or $1)", placeholder)
+	}
+
+	if err := ensureLedgerTable(ctx, db, placeholder); err != nil {
+		return "", err
 	}
 
 	legacy := legacyAppliedVersions(ctx, db)
@@ -332,7 +376,6 @@ func applyMigrations(ctx context.Context, db *sql.DB, migrationsDir string, plac
 		}
 		sum := sha256.Sum256(sqlBytes)
 		checksum := hex.EncodeToString(sum[:])
-
 		// Check if already applied, and whether the file changed since.
 		var recordedName, recordedSum string
 		checkSQL := "SELECT name, checksum FROM gateway_schema_migrations WHERE version = " + placeholder
@@ -368,20 +411,36 @@ func applyMigrations(ctx context.Context, db *sql.DB, migrationsDir string, plac
 		if txErr != nil {
 			return "", fmt.Errorf("migrate: begin tx for %q: %w", filename, txErr)
 		}
+		// Serialize against the container entrypoint (deploy/small/
+		// gateway-entrypoint.sh takes the same transaction-scoped lock around
+		// its whole psql run), so a concurrent gateway boot or db-migrate
+		// cannot interleave DDL. Released when this transaction ends; SQLite
+		// is single-writer and needs no lock.
+		if placeholder == "$1" {
+			if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext('ubag-migrations'))"); err != nil {
+				_ = tx.Rollback()
+				return "", fmt.Errorf("migrate: advisory lock for %q: %w", filename, err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, string(sqlBytes)); err != nil {
 			_ = tx.Rollback()
 			return "", fmt.Errorf("migrate: apply %q: %w", filename, err)
 		}
 
-		// Record the migration. The migration files write their own ledger row,
-		// so this must not conflict with it.
+		// Record the migration. The migration files write their own ledger row
+		// (with a placeholder checksum - see fileChecksum), so this upsert
+		// overwrites it: the runner's real sha256 of the file bytes is
+		// authoritative, otherwise drift detection can never fire. applied_at
+		// is left as recorded by whichever row came first.
 		var insertSQL string
 		if placeholder == "$1" {
 			insertSQL = "INSERT INTO gateway_schema_migrations (version, name, checksum, applied_at) " +
-				"VALUES ($1, $2, $3, $4) ON CONFLICT (version) DO NOTHING"
+				"VALUES ($1, $2, $3, $4) ON CONFLICT (version) DO UPDATE " +
+				"SET checksum = EXCLUDED.checksum, name = EXCLUDED.name"
 		} else {
 			insertSQL = "INSERT INTO gateway_schema_migrations (version, name, checksum, applied_at) " +
-				"VALUES (?, ?, ?, ?) ON CONFLICT (version) DO NOTHING"
+				"VALUES (?, ?, ?, ?) ON CONFLICT (version) DO UPDATE " +
+				"SET checksum = EXCLUDED.checksum, name = EXCLUDED.name"
 		}
 		appliedAt := time.Now().UTC().Format(time.RFC3339)
 		name := strings.TrimPrefix(longKey, version+"_")
@@ -402,11 +461,129 @@ func applyMigrations(ctx context.Context, db *sql.DB, migrationsDir string, plac
 	return strings.Join(lines, "\n"), nil
 }
 
+// verifyMigrations implements the "migrate --verify" mode: it applies nothing
+// and instead reconciles the ledger's checksums against the files on disk.
+//
+//   - a real, matching checksum is reported as ok;
+//   - a legacy placeholder ("", "manual-v0*", "sha256:placeholder*" - written
+//     by the migration files' own INSERTs or by pre-unification ledgers) is
+//     BACKFILLED with the real sha256 of the file, so drift detection becomes
+//     active for that migration on every later run;
+//   - a version recorded only by the pre-unification "schema_migrations" table
+//     is adopted into the canonical ledger with the real checksum;
+//   - a real checksum that does not match the file is drift: the command fails
+//     closed listing every drifted file;
+//   - a file with no ledger row is reported as missing but is NOT an error -
+//     the container entrypoint legitimately skips optional migrations
+//     (UBAG_ALLOW_OPTIONAL_MIGRATIONS).
+func verifyMigrations(ctx context.Context, db *sql.DB, migrationsDir string, placeholder string) (string, error) {
+	if placeholder != "?" && placeholder != "$1" {
+		return "", fmt.Errorf("migrate: unsupported placeholder %q (must be ? or $1)", placeholder)
+	}
+
+	if err := ensureLedgerTable(ctx, db, placeholder); err != nil {
+		return "", err
+	}
+	legacy := legacyAppliedVersions(ctx, db)
+
+	entries, err := os.ReadDir(migrationsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Sprintf("migrate: verify: no migrations directory at %s", migrationsDir), nil
+		}
+		return "", fmt.Errorf("migrate: verify: read migrations dir %q: %w", migrationsDir, err)
+	}
+
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".sql") {
+			files = append(files, e.Name())
+		}
+	}
+	sort.Strings(files)
+	if len(files) == 0 {
+		return "migrate: verify: no migration files found", nil
+	}
+
+	var lines []string
+	var drift []string
+	ok, backfilled, missing := 0, 0, 0
+	// ph returns the parameter placeholder for the i-th (0-based) argument,
+	// matching the dialect's convention ("?" for SQLite, "$n" for Postgres).
+	ph := func(i int) string {
+		if placeholder == "$1" {
+			return fmt.Sprintf("$%d", i+1)
+		}
+		return "?"
+	}
+	for _, filename := range files {
+		version := migrationVersion(filename)
+		longKey := strings.TrimSuffix(filename, ".sql")
+
+		checksum, err := fileChecksum(filepath.Join(migrationsDir, filename))
+		if err != nil {
+			return "", fmt.Errorf("migrate: verify: read %q: %w", filename, err)
+		}
+
+		var recordedSum string
+		scanErr := db.QueryRowContext(ctx,
+			"SELECT checksum FROM gateway_schema_migrations WHERE version = "+placeholder, version,
+		).Scan(&recordedSum)
+		if scanErr != nil && scanErr != sql.ErrNoRows {
+			return "", fmt.Errorf("migrate: verify: check version %q: %w", version, scanErr)
+		}
+
+		name := strings.TrimPrefix(longKey, version+"_")
+		if name == "" {
+			name = longKey
+		}
+
+		switch {
+		case scanErr == sql.ErrNoRows && (legacy[version] || legacy[longKey]):
+			// Applied by the pre-unification runner only. Adopt it into the
+			// canonical ledger with the real checksum.
+			insertSQL := "INSERT INTO gateway_schema_migrations (version, name, checksum) " +
+				"VALUES (" + ph(0) + ", " + ph(1) + ", " + ph(2) + ") " +
+				"ON CONFLICT (version) DO NOTHING"
+			if _, err := db.ExecContext(ctx, insertSQL, version, name, checksum); err != nil {
+				return "", fmt.Errorf("migrate: verify: adopt %q: %w", filename, err)
+			}
+			lines = append(lines, "adopted "+version+" (legacy runner row; recorded with real checksum)")
+			backfilled++
+		case scanErr == sql.ErrNoRows:
+			lines = append(lines, "missing "+version+" (not applied)")
+			missing++
+		case isLegacyPlaceholderChecksum(recordedSum):
+			updateSQL := "UPDATE gateway_schema_migrations SET checksum = " + ph(0) +
+				" WHERE version = " + ph(1)
+			if _, err := db.ExecContext(ctx, updateSQL, checksum, version); err != nil {
+				return "", fmt.Errorf("migrate: verify: backfill %q: %w", filename, err)
+			}
+			lines = append(lines, "backfilled "+version+" (placeholder replaced with real checksum)")
+			backfilled++
+		case recordedSum == checksum:
+			lines = append(lines, "ok "+version)
+			ok++
+		default:
+			drift = append(drift, fmt.Sprintf(
+				"  %s was applied with checksum %s but the file on disk hashes to %s - "+
+					"an already-applied migration was edited; add a new migration file instead",
+				filename, recordedSum, checksum))
+		}
+	}
+
+	if len(drift) > 0 {
+		return "", fmt.Errorf("migrate: verify: checksum drift detected:\n%s", strings.Join(drift, "\n"))
+	}
+	return fmt.Sprintf("migrate: verify: %d files checked (ok=%d backfilled=%d missing=%d)\n%s",
+		len(files), ok, backfilled, missing, strings.Join(lines, "\n")), nil
+}
+
 // backupUsage returns the usage string for backup/restore/migrate commands.
 func backupUsage() string {
 	return strings.TrimSpace(`
 Usage: ubag backup  --out <dir|s3://...>
        ubag restore --from <dir|s3://...>
-       ubag migrate [--store sqlite|postgres]
+       ubag migrate [--store sqlite|postgres] [--verify]
 `) + "\n"
 }

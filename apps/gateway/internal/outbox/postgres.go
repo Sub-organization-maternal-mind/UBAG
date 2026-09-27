@@ -5,15 +5,16 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 )
 
-const postgresCreateOutboxTable = `
-CREATE TABLE IF NOT EXISTS gateway_outbox_events (
-	id           TEXT PRIMARY KEY,
-	topic        TEXT NOT NULL,
-	payload      BYTEA NOT NULL,
-	created_at   TIMESTAMPTZ NOT NULL
-)`
+// gatewayOutboxEventsTable is created by the migration chain
+// (migrations/postgres/0017_gateway_outbox_events.sql). The store asserts its
+// existence instead of creating it at runtime, like every other Postgres
+// store: Ready() failing closed at boot is louder and safer than silently
+// self-provisioning a table the migration ledger does not know about.
+const gatewayOutboxEventsTable = "gateway_outbox_events"
 
 type PostgresStore struct {
 	db  *sql.DB
@@ -31,8 +32,8 @@ func (p *PostgresStore) Ready(ctx context.Context) error {
 	if err := p.db.PingContext(ctx); err != nil {
 		return fmt.Errorf("outbox: %w", err)
 	}
-	if _, err := p.db.ExecContext(ctx, postgresCreateOutboxTable); err != nil {
-		return fmt.Errorf("outbox: create table: %w", err)
+	if err := storekit.RequirePostgresObject(ctx, p.db, gatewayOutboxEventsTable); err != nil {
+		return fmt.Errorf("outbox: %w", err)
 	}
 	return nil
 }
