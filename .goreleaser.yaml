@@ -62,6 +62,7 @@ nfpms:
   - id: ubag
     package_name: ubag
     vendor: UBAG
+    maintainer: UBAG <ops@ubag.invalid>
     homepage: https://github.com/ubag/ubag
     description: UBAG — Universal Bridge / Agent Gateway
     license: MIT

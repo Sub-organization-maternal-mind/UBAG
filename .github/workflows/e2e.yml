@@ -18,6 +18,11 @@ jobs:
   e2e:
     name: Live E2E (adapter drift + automation path)
     runs-on: ubuntu-latest
+    # The schedule needs a reachable staging gateway; until one is configured
+    # (set the LIVE_E2E_ENABLED repo variable to 'true' and provide the
+    # secrets this workflow reads), the daily cron only fails at job setup.
+    # workflow_dispatch stays always available for manual runs.
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.LIVE_E2E_ENABLED == 'true' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

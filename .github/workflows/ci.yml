@@ -190,6 +190,14 @@ jobs:
         working-directory: apps/dashboard
         run: npx playwright install chromium --with-deps || npx playwright install chromium
       - name: CLI, dashboard, docs
+        # The dashboard e2e webServer must be serve-dashboard.mjs (same-origin
+        # /v1 proxy), not vite preview: under vite preview the SPA fallback
+        # answers /v1/* and the Playwright endpoint mocks race the page's own
+        # first fetch, which left the Antigravity tests stuck on their loading
+        # state. UBAG_PLAYWRIGHT_PREVIEW_PORT switches playwright.config.ts to
+        # serve-dashboard with a dead gateway URL — the same deterministic
+        # setup used locally.
+        env: { UBAG_PLAYWRIGHT_PREVIEW_PORT: "5899" }
         run: pnpm test:cli && pnpm test:dashboard && pnpm test:docs
       - name: Upload Playwright evidence
         if: failure()
@@ -230,7 +238,9 @@ jobs:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - uses: actions/setup-go@v7
-        with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
+        # GO_VERSION, not the go.mod pin: govulncheck@latest needs go >= 1.26
+        # and GOTOOLCHAIN=local forbids the upgrade.
+        with: { go-version: "${{ env.GO_VERSION }}", cache-dependency-path: apps/gateway/go.sum }
       - uses: actions/setup-node@v7
         with: { node-version: "${{ env.NODE_VERSION }}" }
       - uses: actions/setup-python@v6
@@ -250,6 +260,8 @@ jobs:
       # and the scan was advisory decoration only.
       - name: govulncheck
         working-directory: apps/gateway
+        # GO_VERSION (1.26.x) not go.mod: latest govulncheck requires go >= 1.26
+        # to build, and GOTOOLCHAIN=local forbids the auto-upgrade.
         env: { GOTOOLCHAIN: local }
         run: |
           go run golang.org/x/vuln/cmd/govulncheck@latest ./...
