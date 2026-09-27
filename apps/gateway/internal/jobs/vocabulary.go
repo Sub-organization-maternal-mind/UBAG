@@ -66,19 +66,35 @@ func knownWorkerEventType(eventType string) bool {
 	return ok
 }
 
+// failureEventTypesTable is the failure-event vocabulary, built once at
+// package init from workerEventStatus instead of re-enumerating the statuses
+// (and re-allocating the map on every IsFailureEventType call).
+var failureEventTypesTable = buildFailureEventTypes()
+
+// buildFailureEventTypes derives the failure-event set from workerEventStatus:
+// an event type is a failure event when its canonical status is one of the
+// failure terminals (failed-retryable, failed-terminal, dead-letter, timed
+// out). Canceled is deliberately excluded.
+func buildFailureEventTypes() map[string]struct{} {
+	set := make(map[string]struct{})
+	for eventType := range workerEventTypes {
+		status, ok := workerEventStatus(eventType, false)
+		if !ok {
+			continue
+		}
+		switch status {
+		case StatusFailedRetryable, StatusFailedTerminal, StatusDeadLetter, StatusTimedOut:
+			set[eventType] = struct{}{}
+		}
+	}
+	return set
+}
+
 // failureEventTypes are the worker event types that represent job failure for
 // signal reconstruction and error classification — derived from the
 // workerEventStatus mapping, never re-enumerated at call sites.
 func failureEventTypes() map[string]struct{} {
-	return map[string]struct{}{
-		"failed":           {},
-		"failed_retryable": {},
-		"failed_terminal":  {},
-		"dead_letter":      {},
-		"timed_out":        {},
-		"timeout":          {},
-		"blocked":          {},
-	}
+	return failureEventTypesTable
 }
 
 // IsFailureEventType reports whether a worker event type represents job

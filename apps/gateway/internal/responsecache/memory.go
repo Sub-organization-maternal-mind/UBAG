@@ -7,15 +7,22 @@ import (
 	"time"
 )
 
+// defaultMemoryMaxEntries bounds the memory store. Keys are request-content
+// hashes, so an unbounded map lets distinct request bodies grow it forever.
+const defaultMemoryMaxEntries = 10000
+
 // MemoryStore is an in-memory Store backed by a mutex-guarded map. Expired
-// entries are evicted lazily on access. Hit and miss counters are tracked per
-// scope. It is safe for concurrent use.
+// entries are evicted lazily on access, and the store is bounded at
+// defaultMemoryMaxEntries (oldest-CreatedAt evicted first) so high-cardinality
+// request keys cannot grow it without limit. Hit and miss counters are tracked
+// per scope. It is safe for concurrent use.
 type MemoryStore struct {
-	mu     sync.Mutex
-	now    func() time.Time
-	items  map[scopeKey]Entry
-	hits   map[scope]int
-	misses map[scope]int
+	mu         sync.Mutex
+	now        func() time.Time
+	maxEntries int
+	items      map[scopeKey]Entry
+	hits       map[scope]int
+	misses     map[scope]int
 }
 
 type scope struct {
@@ -32,11 +39,22 @@ type scopeKey struct {
 // NewMemoryStore returns an empty in-memory store using time.Now as its clock.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		now:    time.Now,
-		items:  make(map[scopeKey]Entry),
-		hits:   make(map[scope]int),
-		misses: make(map[scope]int),
+		now:        time.Now,
+		maxEntries: defaultMemoryMaxEntries,
+		items:      make(map[scopeKey]Entry),
+		hits:       make(map[scope]int),
+		misses:     make(map[scope]int),
 	}
+}
+
+// WithMaxEntries overrides the entry bound. A value <= 0 disables the bound.
+// It returns the receiver for chaining and is primarily intended for
+// deterministic tests.
+func (s *MemoryStore) WithMaxEntries(max int) *MemoryStore {
+	s.mu.Lock()
+	s.maxEntries = max
+	s.mu.Unlock()
+	return s
 }
 
 // WithClock overrides the clock used for lazy expiry checks. It returns the
@@ -78,7 +96,52 @@ func (s *MemoryStore) Set(ctx context.Context, entry Entry) error {
 	stored.CreatedAt = stored.CreatedAt.UTC()
 	stored.ExpiresAt = stored.ExpiresAt.UTC()
 	s.items[scopeKey{tenantID: entry.TenantID, appID: entry.AppID, key: entry.Key}] = stored
+	s.evictLocked()
 	return nil
+}
+
+// evictLocked bounds the map at maxEntries. Expired entries are dropped
+// first, then the oldest-CreatedAt entries are evicted (map key as the
+// deterministic tie-breaker). Caller must hold s.mu.
+func (s *MemoryStore) evictLocked() {
+	if s.maxEntries <= 0 || len(s.items) <= s.maxEntries {
+		return
+	}
+	for id, entry := range s.items {
+		if len(s.items) <= s.maxEntries {
+			return
+		}
+		if s.isExpired(entry) {
+			delete(s.items, id)
+		}
+	}
+	for len(s.items) > s.maxEntries {
+		var (
+			oldestID scopeKey
+			oldestAt time.Time
+			found    bool
+		)
+		for id, entry := range s.items {
+			if !found || entry.CreatedAt.Before(oldestAt) ||
+				(entry.CreatedAt.Equal(oldestAt) && scopeKeyLess(id, oldestID)) {
+				oldestID, oldestAt, found = id, entry.CreatedAt, true
+			}
+		}
+		if !found {
+			return
+		}
+		delete(s.items, oldestID)
+	}
+}
+
+func scopeKeyLess(a, b scopeKey) bool {
+	if a.tenantID != b.tenantID {
+		return a.tenantID < b.tenantID
+	}
+	if a.appID != b.appID {
+		return a.appID < b.appID
+	}
+	return a.key < b.key
 }
 
 func (s *MemoryStore) Delete(ctx context.Context, tenantID string, appID string, key string) error {

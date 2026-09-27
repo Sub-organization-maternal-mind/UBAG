@@ -320,8 +320,6 @@ func (s *Server) dispatchHeldJob(ctx context.Context, job jobstore.Job) error {
 // safe. `job` is the job as loaded before this PUT stored its artifact; the CAS,
 // not the stale status, is authoritative.
 func (s *Server) maybeDispatchAfterArtifact(ctx context.Context, job jobstore.Job) error {
-	s.attachmentMutationMu.Lock()
-	defer s.attachmentMutationMu.Unlock()
 	return s.maybeDispatchAfterArtifactLocked(ctx, job)
 }
 
@@ -366,6 +364,90 @@ func (s *Server) maybeDispatchAfterArtifactLocked(ctx context.Context, job jobst
 		return err
 	}
 	return nil
+}
+
+// artifactUploadGate replaces the former one-global-mutex attachment
+// serialization. It provides:
+//
+//  1. A keyed per-artifact mutex (jobID + key) for the check-and-reserve
+//     critical section — status re-check plus in-flight reservation — which is
+//     held for microseconds and released BEFORE the request body is read and
+//     before the object-store PUT. The former global mutex was held via defer
+//     across the 32MiB body read and the MinIO/S3 PUT, capping uploads at one
+//     per process.
+//  2. An in-flight marker per artifact so a second upload for the SAME
+//     artifact (e.g. two PUTs with different Idempotency-Key headers) is
+//     rejected with 409 instead of racing the first request's store PUT. The
+//     idempotency reservation alone cannot provide this: it is keyed on the
+//     caller-supplied Idempotency-Key header, not the artifact.
+//
+// The dispatch decision itself needs no lock: maybeDispatchAfterArtifactLocked
+// gates on the TransitionStatus CAS, so exactly one concurrent completer wins.
+type artifactUploadGate struct {
+	mu       sync.Mutex
+	locks    map[string]*keyedLock
+	inflight map[string]struct{}
+}
+
+type keyedLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func artifactGateID(jobID, key string) string {
+	return jobID + "\x00" + key
+}
+
+// lockArtifact returns an unlock func for the per-artifact mutex. Locks are
+// created lazily and deleted again on last unlock so the map cannot grow
+// without bound.
+func (g *artifactUploadGate) lockArtifact(jobID, key string) (unlock func()) {
+	id := artifactGateID(jobID, key)
+	g.mu.Lock()
+	if g.locks == nil {
+		g.locks = map[string]*keyedLock{}
+	}
+	entry, ok := g.locks[id]
+	if !ok {
+		entry = &keyedLock{}
+		g.locks[id] = entry
+	}
+	// Reference-count before blocking on the lock so the entry cannot be
+	// deleted from under a concurrent waiter.
+	entry.refs++
+	g.mu.Unlock()
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		g.mu.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(g.locks, id)
+		}
+		g.mu.Unlock()
+	}
+}
+
+// beginUploadLocked marks the artifact as having an upload in flight. It must
+// be called while holding the per-artifact lock (see lockArtifact) so the
+// check-and-set is atomic. The returned release func removes the marker; it
+// is idempotent.
+// ok=false means another upload for the same artifact is already reading its
+// body or writing to the object store.
+func (g *artifactUploadGate) beginUploadLocked(jobID, key string) (release func(), ok bool) {
+	id := artifactGateID(jobID, key)
+	if g.inflight == nil {
+		g.inflight = map[string]struct{}{}
+	}
+	if _, busy := g.inflight[id]; busy {
+		return func() {}, false
+	}
+	g.inflight[id] = struct{}{}
+	return sync.OnceFunc(func() {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		delete(g.inflight, id)
+	}), true
 }
 
 // stagedAttachment is one multipart file part streamed to a temp file, awaiting
@@ -653,7 +735,10 @@ func canonicalMultipartAttachmentsHash(staged []stagedAttachment) string {
 // sweepStuckAttachmentJobs fails jobs that have sat in the held StatusCreated
 // state past attachmentUploadTTL without all their attachments arriving. It uses
 // the same CAS as the completion hook, so it can never race a job into a double
-// state: whichever of {last PUT, sweeper} wins the CAS decides.
+// state: whichever of {last PUT, sweeper} wins the CAS decides. No mutex is
+// held here: the TransitionStatus CAS is the single authority (the former
+// global attachmentMutationMu only delayed this loop behind in-flight 32MiB
+// uploads without adding correctness).
 func (s *Server) sweepStuckAttachmentJobs(ctx context.Context) {
 	held, err := s.jobs.List(ctx, jobstore.ListFilter{Status: string(jobstore.StatusCreated), Limit: jobstore.UnboundedScanLimit})
 	if err != nil {
@@ -664,10 +749,8 @@ func (s *Server) sweepStuckAttachmentJobs(ctx context.Context) {
 		if job.CreatedAt.After(cutoff) {
 			continue
 		}
-		s.attachmentMutationMu.Lock()
 		_, changed, err := s.jobs.TransitionStatus(ctx, job.ID, jobstore.StatusCreated, jobstore.StatusFailedTerminal)
 		if err != nil || !changed {
-			s.attachmentMutationMu.Unlock()
 			continue
 		}
 		s.releaseConcurrencyTokenForJob(job.ID)
@@ -678,7 +761,6 @@ func (s *Server) sweepStuckAttachmentJobs(ctx context.Context) {
 				_ = s.artifactSt.DeleteArtifact(ctx, job.ID, rec.Key)
 			}
 		}
-		s.attachmentMutationMu.Unlock()
 		slog.Warn("failed attachment job past upload TTL", "job_id", job.ID)
 	}
 }

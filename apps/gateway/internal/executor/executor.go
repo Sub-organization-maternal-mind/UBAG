@@ -79,6 +79,13 @@ type Stats struct {
 	QueueName        string
 	DepthByState     map[string]int
 	OldestAgeByState map[string]time.Duration
+	// LiveDepth counts only non-terminal work (queued+assigned): envelopes a
+	// worker can still lease. TotalDepth is the full DepthByState sum
+	// including terminal states, which a spool keeps until its retention
+	// sweeper deletes them — the raw sum overstates the live queue once any
+	// job has finished. DepthByState is unchanged for compatibility.
+	LiveDepth  int
+	TotalDepth int
 }
 
 type Dispatcher interface {

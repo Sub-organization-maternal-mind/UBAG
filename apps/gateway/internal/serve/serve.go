@@ -251,6 +251,26 @@ func Run(ctx context.Context) error {
 			}
 		}()
 	}
+
+	// Spool retention sweeper: done/failed/cancelled file-spool envelopes are
+	// never read again, so their growth is bounded here (env-configurable TTL
+	// + max-count; both disabled turns the sweeper into a no-op).
+	if spool, ok := rawDispatcher.(*executor.FileSpoolDispatcher); ok {
+		retention, err := spoolRetentionFromEnv()
+		if err != nil {
+			return fmt.Errorf("invalid spool retention configuration: %w", err)
+		}
+		if retention.RetentionEnabled() {
+			go func() {
+				if err := spool.RunRetentionSweeper(ctx, retention); err != nil && err != context.Canceled {
+					slog.Error("spool retention sweeper stopped", "error", err)
+				}
+			}()
+			slog.Info("spool retention sweeper enabled",
+				"ttl_seconds", int(retention.TTL.Seconds()),
+				"max_entries", retention.MaxCount)
+		}
+	}
 	if webhookWorkerEnabled() {
 		worker, err := newWebhookWorkerFromEnv(webhookStore, webhookPolicy, breakerRegistry)
 		if err != nil {
@@ -306,6 +326,15 @@ func Run(ctx context.Context) error {
 		Addr:              addr,
 		Handler:           gatewayHandler,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+		// WriteTimeout is intentionally unset: the SSE stream
+		// (/v1/sse/jobs/{id}) and the OpenAI facade long-poll
+		// (UBAG_FACADE_MAX_WAIT_MS, default 240s) legitimately hold responses
+		// open far beyond any sane WriteTimeout. A global WriteTimeout would
+		// kill both mid-stream; splitting them onto their own listener is the
+		// follow-up that unlocks a write deadline for everything else.
 	}
 
 	serverErr := make(chan error, 1)
@@ -349,7 +378,11 @@ func Run(ctx context.Context) error {
 	if grpcListener != nil {
 		grpcServer.GracefulStop()
 	}
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// The grace period must comfortably exceed the facade long-poll budget
+	// (UBAG_FACADE_MAX_WAIT_MS, default 240s) so an in-flight long-poll gets a
+	// terminal answer instead of a connection reset on every deploy. It is
+	// env-configurable so an operator can shorten it for fast restarts.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGraceFromEnv())
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("gateway shutdown failed: %w", err)
@@ -385,6 +418,63 @@ func getenv(key, fallback string) string {
 	}
 
 	return fallback
+}
+
+// defaultShutdownGrace is the http.Server.Shutdown budget. The previous 10s
+// value was shorter than the 240s facade long-poll, so every deploy reset
+// in-flight long-polls; 25s still bounds restart time while letting the
+// common (fast-terminal) long-polls drain.
+const defaultShutdownGrace = 25 * time.Second
+
+// shutdownGraceFromEnv reads UBAG_SHUTDOWN_GRACE_SECONDS. Invalid or
+// non-positive values fall back to the default (an operator typo must not
+// produce an unbounded or zero shutdown budget).
+func shutdownGraceFromEnv() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("UBAG_SHUTDOWN_GRACE_SECONDS"))
+	if raw == "" {
+		return defaultShutdownGrace
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return defaultShutdownGrace
+	}
+	return time.Duration(value) * time.Second
+}
+
+// spoolRetentionFromEnv reads the terminal-state spool retention bounds.
+// UBAG_SPOOL_RETENTION_TTL_SECONDS (default 7 days) deletes terminal spool
+// envelopes older than the TTL; UBAG_SPOOL_RETENTION_MAX (default 10000)
+// caps how many terminal envelopes are kept, oldest evicted first. 0 or a
+// negative value disables that individual bound; disabling both disables the
+// sweeper entirely.
+func spoolRetentionFromEnv() (executor.SpoolRetentionConfig, error) {
+	retention := executor.SpoolRetentionConfig{
+		TTL:      executor.DefaultSpoolRetentionTTL,
+		MaxCount: executor.DefaultSpoolRetentionMax,
+	}
+	if raw := strings.TrimSpace(os.Getenv("UBAG_SPOOL_RETENTION_TTL_SECONDS")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			return retention, fmt.Errorf("UBAG_SPOOL_RETENTION_TTL_SECONDS must be an integer number of seconds")
+		}
+		if value <= 0 {
+			retention.TTL = 0
+		} else {
+			retention.TTL = time.Duration(value) * time.Second
+		}
+	}
+	if raw := strings.TrimSpace(os.Getenv("UBAG_SPOOL_RETENTION_MAX")); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			return retention, fmt.Errorf("UBAG_SPOOL_RETENTION_MAX must be an integer")
+		}
+		if value <= 0 {
+			retention.MaxCount = 0
+		} else {
+			retention.MaxCount = value
+		}
+	}
+	return retention, nil
 }
 
 func newDispatcherFromEnv() (executor.Dispatcher, error) {

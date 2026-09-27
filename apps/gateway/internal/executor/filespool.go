@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +16,23 @@ import (
 )
 
 const maxSpoolEnvelopeBytes = 256 * 1024
+
+// Default terminal-state spool retention bounds. done/failed/cancelled
+// envelopes are NEVER read again (a terminal job is never re-enqueued: the
+// job store, not the spool, is authoritative), so unbounded retention only
+// grows the spool directory and slows every Stats() ReadDir. The bounds are
+// env-overridable at the wiring layer (serve.go).
+const (
+	// DefaultSpoolRetentionTTL is the default terminal-envelope retention
+	// window (7 days).
+	DefaultSpoolRetentionTTL = 7 * 24 * time.Hour
+	// DefaultSpoolRetentionMax caps how many terminal envelopes are kept;
+	// the oldest are evicted first.
+	DefaultSpoolRetentionMax = 10000
+	// defaultSpoolRetentionInterval is the sweep cadence when the TTL is
+	// disabled (max-count-only retention).
+	defaultSpoolRetentionInterval = time.Hour
+)
 
 type FileSpoolDispatcher struct {
 	root      string
@@ -25,6 +44,39 @@ type FileSpoolDispatcher struct {
 	// so a transient error self-heals on the next call.
 	readyMu sync.Mutex
 	readyOK bool
+	// enqueueNotifyCh wakes the lease loop the moment an envelope lands in
+	// pending/. Cap 1 with a non-blocking send: a wakeup is a hint, never a
+	// delivery guarantee, and the polling ticker remains the correctness
+	// fallback (an unobserved token is simply overwritten by the next send).
+	enqueueNotifyCh chan struct{}
+	// Terminal-state retention bounds (see SpoolRetentionConfig). Guarded by
+	// retentionMu; SweepRetention reads them, SetRetention writes them.
+	retentionMu  sync.Mutex
+	retentionTTL time.Duration
+	retentionMax int
+}
+
+// SetRetention configures the terminal-state retention bounds. Call it before
+// starting RunRetentionSweeper (which stores the config it is given).
+func (d *FileSpoolDispatcher) SetRetention(cfg SpoolRetentionConfig) {
+	if d == nil {
+		return
+	}
+	d.retentionMu.Lock()
+	d.retentionTTL = cfg.TTL
+	d.retentionMax = cfg.MaxCount
+	d.retentionMu.Unlock()
+}
+
+func (d *FileSpoolDispatcher) retentionBounds() (time.Duration, int) {
+	d.retentionMu.Lock()
+	defer d.retentionMu.Unlock()
+	return d.retentionTTL, d.retentionMax
+}
+
+func (d *FileSpoolDispatcher) retentionActive() bool {
+	ttl, max := d.retentionBounds()
+	return ttl > 0 || max > 0
 }
 
 type FileSpoolLease struct {
@@ -38,10 +90,33 @@ type FileSpoolLease struct {
 
 func NewFileSpoolDispatcher(root string) *FileSpoolDispatcher {
 	return &FileSpoolDispatcher{
-		root:      root,
-		queueName: "jobs",
-		now:       time.Now,
+		root:            root,
+		queueName:       "jobs",
+		now:             time.Now,
+		enqueueNotifyCh: make(chan struct{}, 1),
 	}
+}
+
+// notifyEnqueue drops a wake token for the lease loop without ever blocking
+// the enqueue path.
+func (d *FileSpoolDispatcher) notifyEnqueue() {
+	if d.enqueueNotifyCh == nil {
+		return
+	}
+	select {
+	case d.enqueueNotifyCh <- struct{}{}:
+	default:
+	}
+}
+
+// EnqueueNotify returns the channel the lease loop can select on to pick up
+// freshly enqueued envelopes immediately. Nil-safe (nil channel blocks
+// forever, which degrades to the polling fallback).
+func (d *FileSpoolDispatcher) EnqueueNotify() <-chan struct{} {
+	if d == nil {
+		return nil
+	}
+	return d.enqueueNotifyCh
 }
 
 func (d *FileSpoolDispatcher) Ready(context.Context) error {
@@ -117,6 +192,7 @@ func (d *FileSpoolDispatcher) EnqueueJob(ctx context.Context, job jobstore.Job) 
 		_ = os.Remove(tmpName)
 		return Receipt{}, err
 	}
+	d.notifyEnqueue()
 
 	return d.receipt(job.ID), nil
 }
@@ -169,6 +245,15 @@ func (d *FileSpoolDispatcher) Stats(ctx context.Context) (Stats, error) {
 			stats.OldestAgeByState[state] = d.now().UTC().Sub(oldest.UTC())
 		}
 	}
+	// LiveDepth counts only work a worker could still pick up; TotalDepth is
+	// the full DepthByState sum including terminal spool states (done/failed/
+	// cancelled keep their envelopes until the retention sweeper deletes them,
+	// so the raw sum overstates the live queue forever). DepthByState is kept
+	// as-is for compatibility — consumers sum queued+assigned themselves.
+	for _, count := range stats.DepthByState {
+		stats.TotalDepth += count
+	}
+	stats.LiveDepth = stats.DepthByState["queued"] + stats.DepthByState["assigned"]
 	return stats, nil
 }
 
@@ -272,6 +357,7 @@ func (d *FileSpoolDispatcher) RetryLease(_ context.Context, lease FileSpoolLease
 		}
 		return err
 	}
+	d.notifyEnqueue()
 	return nil
 }
 
@@ -326,7 +412,142 @@ func (d *FileSpoolDispatcher) RecoverOrphanLeases() (int, error) {
 		}
 		recovered++
 	}
+	if recovered > 0 {
+		d.notifyEnqueue()
+	}
 	return recovered, nil
+}
+
+// SpoolRetentionConfig bounds terminal-state (done/failed/cancelled) spool
+// growth. TTL deletes envelopes older than the retention window; MaxCount
+// caps how many terminal envelopes are kept, oldest evicted first. A zero or
+// negative TTL or MaxCount disables that bound; disabling BOTH disables the
+// sweeper entirely.
+type SpoolRetentionConfig struct {
+	TTL      time.Duration
+	MaxCount int
+	// Interval is the sweep cadence. When unset (<=0) it defaults to
+	// TTL/4 clamped to [1m, 1h] (or defaultSpoolRetentionInterval when only
+	// the max-count bound is active).
+	Interval time.Duration
+}
+
+// RetentionEnabled reports whether any retention bound is active.
+func (c SpoolRetentionConfig) RetentionEnabled() bool {
+	return c.TTL > 0 || c.MaxCount > 0
+}
+
+// RunRetentionSweeper deletes terminal-state spool envelopes on a ticker
+// until ctx is done, honoring the configured TTL and max-count bounds. It is
+// a no-op when both bounds are disabled. Errors from individual deletions are
+// logged and skipped so one stuck file cannot stall the sweep; the returned
+// error is only the context cancellation.
+func (d *FileSpoolDispatcher) RunRetentionSweeper(ctx context.Context, cfg SpoolRetentionConfig) error {
+	if d == nil || d.root == "" || !cfg.RetentionEnabled() {
+		return nil
+	}
+	d.SetRetention(cfg)
+	interval := cfg.Interval
+	if interval <= 0 {
+		interval = defaultSpoolRetentionInterval
+		if cfg.TTL > 0 {
+			interval = cfg.TTL / 4
+			if interval > defaultSpoolRetentionInterval {
+				interval = defaultSpoolRetentionInterval
+			}
+		}
+		if interval < time.Minute {
+			interval = time.Minute
+		}
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			removed, err := d.SweepRetention(d.now())
+			if err != nil {
+				slog.Warn("spool retention sweep failed", "error", err)
+				continue
+			}
+			if removed > 0 {
+				slog.Info("swept terminal-state spool envelopes", "removed", removed)
+			}
+		}
+	}
+}
+
+// SweepRetention performs one retention pass: terminal-state envelopes
+// (done/failed/cancelled) older than the TTL, or the oldest beyond the
+// max-count cap, are deleted oldest-first. Age is the envelope file's
+// modification time — renames between state dirs preserve it, so it is the
+// envelope's age in the spool (consistent with OldestAgeByState in Stats).
+// Returns the number of deleted files.
+func (d *FileSpoolDispatcher) SweepRetention(now time.Time) (int, error) {
+	if d == nil || d.root == "" {
+		return 0, fmt.Errorf("file spool directory is not configured")
+	}
+	if !d.retentionActive() {
+		return 0, nil
+	}
+	ttl, maxCount := d.retentionBounds()
+	type spoolEntry struct {
+		path     string
+		modified time.Time
+	}
+	var entries []spoolEntry
+	for _, dir := range []string{d.doneDir(), d.failedDir(), d.cancelledDir()} {
+		dirEntries, err := os.ReadDir(dir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return 0, err
+		}
+		for _, entry := range dirEntries {
+			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+				continue
+			}
+			info, err := entry.Info()
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue // raced a concurrent move/delete
+				}
+				return 0, err
+			}
+			entries = append(entries, spoolEntry{
+				path:     filepath.Join(dir, entry.Name()),
+				modified: info.ModTime(),
+			})
+		}
+	}
+	if len(entries) == 0 {
+		return 0, nil
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].modified.Equal(entries[j].modified) {
+			return entries[i].path < entries[j].path
+		}
+		return entries[i].modified.Before(entries[j].modified)
+	})
+	removed := 0
+	for index, entry := range entries {
+		// entries are sorted oldest-first, so both conditions hold for a
+		// prefix: once neither holds, nothing further can qualify.
+		overTTL := ttl > 0 && now.Sub(entry.modified) > ttl
+		overMax := maxCount > 0 && len(entries)-index > maxCount
+		if !overTTL && !overMax {
+			break
+		}
+		if err := os.Remove(entry.path); err != nil && !os.IsNotExist(err) {
+			slog.Warn("spool retention delete failed", "path", entry.path, "error", err)
+			continue
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 func (d *FileSpoolDispatcher) pendingDir() string {
@@ -485,12 +706,28 @@ func (d *FileSpoolDispatcher) findJobPath(jobID string, dir string) (string, boo
 	return matches[0], true
 }
 
+// renameNoOverwrite moves source to destination, refusing to clobber an
+// existing destination (a duplicate is dropped: source removed, nil returned).
+//
+// os.Rename silently overwrites on POSIX, so the old Stat-then-Rename pair was
+// a TOCTOU race: two concurrent movers could both pass the Stat and the second
+// rename would overwrite the first. os.Link is the real CAS: it fails with
+// EEXIST when the destination exists, atomically, on the same filesystem.
+// os.Link is unsupported on some filesystems/platforms, so a Link error other
+// than EEXIST falls back to the legacy rename behavior (pre-check + IsExist
+// handling keeps that window minimal and its outcome identical).
 func renameNoOverwrite(source string, destination string) error {
 	if _, err := os.Stat(destination); err == nil {
 		_ = os.Remove(source)
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err
+	}
+	if err := os.Link(source, destination); err == nil {
+		return os.Remove(source)
+	} else if os.IsExist(err) {
+		_ = os.Remove(source)
+		return nil
 	}
 	if err := os.Rename(source, destination); err != nil {
 		if os.IsExist(err) {

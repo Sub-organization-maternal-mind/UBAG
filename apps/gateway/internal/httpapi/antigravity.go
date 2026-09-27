@@ -417,10 +417,23 @@ func (s *Server) listAntigravityAccounts(w http.ResponseWriter, r *http.Request)
 	tenantID, _ := requestScope(r)
 	accounts := s.antigravityAccountStore().ListAccounts(tenantID)
 
+	// Resolve the socket directory once per request and prefilter with a
+	// single ReadDir: the previous per-account os.Getenv + blind Lstat issued
+	// a syscall per account even when no worker socket directory existed at
+	// all. One Lstat per listed account remains (distinct socket paths are
+	// irreducible), and the account list itself is bounded (3 OAuth slots).
+	socketDir := os.Getenv("UBAG_ANTIGRAVITY_SOCKET_DIR")
+	socketDirReady := false
+	if socketDir != "" {
+		if _, err := os.ReadDir(socketDir); err == nil {
+			socketDirReady = true
+		}
+	}
+
 	resp := make([]map[string]any, 0, len(accounts))
 	for _, a := range accounts {
 		workerSocketPresent := false
-		if socketDir := os.Getenv("UBAG_ANTIGRAVITY_SOCKET_DIR"); socketDir != "" && filepath.Base(a.ID) == a.ID && a.ID != "." {
+		if socketDirReady && filepath.Base(a.ID) == a.ID && a.ID != "." {
 			if info, err := os.Lstat(antigravity.AccountSocketPath(socketDir, a.ID)); err == nil && info.Mode()&os.ModeSocket != 0 {
 				workerSocketPresent = true
 			}

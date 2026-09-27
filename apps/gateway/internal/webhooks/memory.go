@@ -10,9 +10,15 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 )
 
+// defaultMemoryMaxEntries bounds the in-memory delivery log. Deliveries are
+// never deleted once stored (even terminal ones), so an unbounded map grows
+// with every job callback forever.
+const defaultMemoryMaxEntries = 10000
+
 type MemoryStore struct {
 	mu         sync.Mutex
 	now        func() time.Time
+	maxEntries int
 	deliveries map[string]Delivery
 	dedupe     map[string]string
 	order      []string
@@ -21,6 +27,7 @@ type MemoryStore struct {
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		now:        time.Now,
+		maxEntries: defaultMemoryMaxEntries,
 		deliveries: map[string]Delivery{},
 		dedupe:     map[string]string{},
 	}
@@ -68,7 +75,47 @@ func (m *MemoryStore) Enqueue(_ context.Context, request EnqueueRequest) (Delive
 	m.deliveries[delivery.ID] = delivery
 	m.dedupe[key] = delivery.ID
 	m.order = append(m.order, delivery.ID)
+	m.evictLocked()
 	return delivery, true, nil
+}
+
+// evictLocked bounds the in-memory delivery log at maxEntries by evicting the
+// oldest-inserted TERMINAL deliveries (delivered / dead-lettered) first.
+// Pending, retry-scheduled and leased deliveries are never evicted: dropping
+// one would silently lose a callback. The store may therefore exceed the
+// bound temporarily while every entry is still in flight — bounded in
+// practice because deliveries complete or dead-letter on their own schedule.
+// Caller must hold m.mu.
+func (m *MemoryStore) evictLocked() {
+	if m.maxEntries <= 0 || len(m.deliveries) <= m.maxEntries {
+		return
+	}
+	for len(m.deliveries) > m.maxEntries {
+		oldestID := ""
+		for _, id := range m.order {
+			if delivery, ok := m.deliveries[id]; ok && TerminalDeliveryStatus(delivery.Status) {
+				oldestID = id
+				break
+			}
+		}
+		if oldestID == "" {
+			return // nothing terminal to evict; stay over the bound
+		}
+		delivery := m.deliveries[oldestID]
+		for index, id := range m.order {
+			if id == oldestID {
+				m.order = append(m.order[:index], m.order[index+1:]...)
+				break
+			}
+		}
+		if delivery.DedupeKey != "" {
+			key := dedupeScope(delivery.TenantID, delivery.AppID, delivery.DedupeKey)
+			if m.dedupe[key] == oldestID {
+				delete(m.dedupe, key)
+			}
+		}
+		delete(m.deliveries, oldestID)
+	}
 }
 
 func (m *MemoryStore) Get(_ context.Context, tenantID string, appID string, deliveryID string) (Delivery, bool, error) {

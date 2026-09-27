@@ -1,6 +1,9 @@
 package resilience
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 // Kind categorises the dependency type for the circuit breaker.
 type Kind string
@@ -25,26 +28,38 @@ type BreakerSnapshot struct {
 	State  State
 }
 
+// defaultMaxBreakers bounds the registry. Targets are caller-supplied strings
+// (webhook URLs, adapter names), so an unbounded map lets unvalidated targets
+// grow it forever.
+const defaultMaxBreakers = 10000
+
 // registryEntry stores the metadata and breaker for a single (kind, target) pair.
 type registryEntry struct {
-	kind   Kind
-	target string
-	b      *Breaker
+	kind      Kind
+	target    string
+	b         *Breaker
+	createdAt time.Time
 }
 
 // Registry is a concurrency-safe, lazy-initialising store of *Breaker instances
-// keyed by (kind, target).
+// keyed by (kind, target). It is bounded at defaultMaxBreakers — the
+// oldest-created breaker is evicted first — so unvalidated target strings
+// cannot grow it without limit. An evicted breaker that is used again is
+// simply re-created closed.
 type Registry struct {
-	mu      sync.Mutex
-	cfg     Config
-	entries map[string]registryEntry // key: kind + "\x00" + target
+	mu         sync.Mutex
+	cfg        Config
+	entries    map[string]registryEntry // key: kind + "\x00" + target
+	order      []string                 // insertion order, oldest first
+	maxEntries int
 }
 
 // NewRegistry creates a Registry that uses cfg for every breaker it creates.
 func NewRegistry(cfg Config) *Registry {
 	return &Registry{
-		cfg:     cfg,
-		entries: make(map[string]registryEntry),
+		cfg:        cfg,
+		entries:    make(map[string]registryEntry),
+		maxEntries: defaultMaxBreakers,
 	}
 }
 
@@ -64,9 +79,22 @@ func (r *Registry) Get(kind Kind, target string) *Breaker {
 	if e, ok := r.entries[k]; ok {
 		return e.b
 	}
-	b := New(r.cfg)
-	r.entries[k] = registryEntry{kind: kind, target: target, b: b}
-	return b
+	// Evict the oldest-created breaker when at the bound. A breaker that is
+	// still in use and gets re-created restarts closed — acceptable at this
+	// bound size, and strictly better than unbounded growth.
+	if r.maxEntries > 0 && len(r.entries) >= r.maxEntries {
+		for len(r.order) > 0 {
+			oldest := r.order[0]
+			r.order = r.order[1:]
+			if _, stillThere := r.entries[oldest]; stillThere {
+				delete(r.entries, oldest)
+				break
+			}
+		}
+	}
+	r.entries[k] = registryEntry{kind: kind, target: target, b: New(r.cfg), createdAt: time.Now()}
+	r.order = append(r.order, k)
+	return r.entries[k].b
 }
 
 // Snapshot returns a point-in-time view of every breaker currently in the

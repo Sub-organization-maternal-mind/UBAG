@@ -31,6 +31,12 @@ var (
 // the Consume call returns ok=false, preventing replay of stale states.
 const defaultStateTTL = 10 * time.Minute
 
+// defaultMaxStateEntries bounds the in-memory state store. State values are
+// random per login attempt and only removed when consumed, so an attacker (or
+// an IdP misconfiguration) that starts flows without completing them would
+// otherwise grow the map forever.
+const defaultMaxStateEntries = 10000
+
 // stateEntry is the value held in MemoryStateStore for a pending request.
 type stateEntry struct {
 	nonce     string
@@ -46,12 +52,14 @@ type StateStore interface {
 	Consume(state string) (nonce string, ok bool)
 }
 
-// MemoryStateStore is an in-memory StateStore with TTL-based expiry.
-// It is safe for concurrent use.
+// MemoryStateStore is an in-memory StateStore with TTL-based expiry and a
+// bounded entry count (defaultMaxStateEntries; the oldest-created entries are
+// evicted first). It is safe for concurrent use.
 type MemoryStateStore struct {
-	mu      sync.Mutex
-	entries map[string]stateEntry
-	ttl     time.Duration
+	mu         sync.Mutex
+	entries    map[string]stateEntry
+	ttl        time.Duration
+	maxEntries int
 }
 
 // NewMemoryStateStore creates a MemoryStateStore that expires entries after ttl.
@@ -61,9 +69,20 @@ func NewMemoryStateStore(ttl time.Duration) *MemoryStateStore {
 		ttl = defaultStateTTL
 	}
 	return &MemoryStateStore{
-		entries: make(map[string]stateEntry),
-		ttl:     ttl,
+		entries:    make(map[string]stateEntry),
+		ttl:        ttl,
+		maxEntries: defaultMaxStateEntries,
 	}
+}
+
+// WithMaxEntries overrides the entry bound. A value <= 0 disables the bound.
+// It returns the receiver for chaining and is primarily intended for
+// deterministic tests.
+func (s *MemoryStateStore) WithMaxEntries(max int) *MemoryStateStore {
+	s.mu.Lock()
+	s.maxEntries = max
+	s.mu.Unlock()
+	return s
 }
 
 // Set stores state→nonce. An existing entry for the same state is overwritten.
@@ -74,7 +93,42 @@ func (s *MemoryStateStore) Set(state, nonce string) error {
 		nonce:     nonce,
 		createdAt: time.Now().UTC(),
 	}
+	s.evictLocked()
 	return nil
+}
+
+// evictLocked bounds the map at maxEntries. Expired entries are dropped
+// first, then the oldest-created entries are evicted (state value as the
+// deterministic tie-breaker). Caller must hold s.mu.
+func (s *MemoryStateStore) evictLocked() {
+	if s.maxEntries <= 0 || len(s.entries) <= s.maxEntries {
+		return
+	}
+	for state, entry := range s.entries {
+		if len(s.entries) <= s.maxEntries {
+			return
+		}
+		if time.Since(entry.createdAt) > s.ttl {
+			delete(s.entries, state)
+		}
+	}
+	for len(s.entries) > s.maxEntries {
+		var (
+			oldestState string
+			oldestAt    time.Time
+			found       bool
+		)
+		for state, entry := range s.entries {
+			if !found || entry.createdAt.Before(oldestAt) ||
+				(entry.createdAt.Equal(oldestAt) && state < oldestState) {
+				oldestState, oldestAt, found = state, entry.createdAt, true
+			}
+		}
+		if !found {
+			return
+		}
+		delete(s.entries, oldestState)
+	}
 }
 
 // Consume atomically retrieves and removes the nonce for state.

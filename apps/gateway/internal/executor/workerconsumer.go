@@ -156,6 +156,14 @@ type TerminalJobNotifier interface {
 	EnqueueTerminalJob(ctx context.Context, job jobstore.Job) error
 }
 
+// changeNotifier is the optional WorkerQueue capability that surfaces a wake
+// channel fed by the enqueue path. The lease loop selects on it so a job is
+// picked up within moments of enqueue instead of after the next poll tick;
+// the polling ticker stays as the correctness fallback.
+type changeNotifier interface {
+	EnqueueNotify() <-chan struct{}
+}
+
 type WorkerMetricsRecorder interface {
 	ObserveQueueWait(duration time.Duration)
 	ObserveWorkerRun(target, outcome string, duration time.Duration)
@@ -284,11 +292,24 @@ func (c *WorkerConsumer) runSerial(ctx context.Context) error {
 			continue
 		}
 		timer := time.NewTimer(pollInterval)
+		// Wake immediately when the queue signals a fresh enqueue instead of
+		// waiting out the full poll interval. The ticker remains the
+		// correctness fallback: the notification is a hint (cap-1, lossy), so
+		// an empty wakeup just re-polls and waits again. A nil channel (queue
+		// without the capability) blocks forever, degrading to pure polling.
+		var wake <-chan struct{}
+		if queue, err := c.workerQueue(); err == nil {
+			if notifier, ok := queue.(changeNotifier); ok {
+				wake = notifier.EnqueueNotify()
+			}
+		}
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return ctx.Err()
 		case <-timer.C:
+		case <-wake:
+			timer.Stop()
 		}
 	}
 }
@@ -1417,6 +1438,12 @@ func (q fileSpoolWorkerQueue) LeaseNext(ctx context.Context) (WorkerLease, bool,
 		return nil, ok, err
 	}
 	return fileSpoolWorkerLease{spool: q.spool, lease: lease}, true, nil
+}
+
+// EnqueueNotify surfaces the spool dispatcher's enqueue wake channel so the
+// lease loop can select on it (changeNotifier).
+func (q fileSpoolWorkerQueue) EnqueueNotify() <-chan struct{} {
+	return q.spool.EnqueueNotify()
 }
 
 type fileSpoolWorkerLease struct {

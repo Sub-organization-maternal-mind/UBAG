@@ -29,15 +29,20 @@ func NewPolicyResolver(defaultPolicy Policy, overrides map[string]Policy) *Polic
 // DefaultPolicyResolver returns a resolver pre-seeded with sensible gateway
 // defaults. job:create is the most expensive action and is limited tightly;
 // reads are allowed more generously. Callers may override any of these from
-// configuration via NewPolicyResolver.
+// configuration via NewPolicyResolver. admin:manage covers the privileged
+// admin/credential routes (PAT issuance, role/region management, data erasure)
+// so they get their own tighter bucket instead of sharing the unmatched-POST
+// default with ordinary traffic.
 func DefaultPolicyResolver() *PolicyResolver {
 	return NewPolicyResolver(
 		Policy{Limit: 600, Window: time.Minute},
 		map[string]Policy{
-			"job:create": {Limit: 120, Window: time.Minute, Burst: 30},
-			"job:read":   {Limit: 600, Window: time.Minute},
-			"job:list":   {Limit: 300, Window: time.Minute},
-			"job:cancel": {Limit: 120, Window: time.Minute},
+			"job:create":   {Limit: 120, Window: time.Minute, Burst: 30},
+			"job:read":     {Limit: 600, Window: time.Minute},
+			"job:list":     {Limit: 300, Window: time.Minute},
+			"job:cancel":   {Limit: 120, Window: time.Minute},
+			"job:retry":    {Limit: 120, Window: time.Minute, Burst: 30},
+			"admin:manage": {Limit: 120, Window: time.Minute, Burst: 30},
 		},
 	)
 }

@@ -85,21 +85,40 @@ type storedEntry struct {
 	tenantID string
 }
 
+// defaultMemoryMaxEntries bounds the memory store. Entries are keyed on the
+// SHA-256 of the (key, input) tuple, so an unbounded map lets distinct inputs
+// grow it forever.
+const defaultMemoryMaxEntries = 10000
+
 // MemoryStore is an in-memory semantic cache using exact SHA-256 matching.
 // Vector similarity is not implemented here; a future pgvector backend will
-// satisfy that tier.
+// satisfy that tier. The store is bounded at defaultMemoryMaxEntries —
+// oldest-CreatedAt entries are evicted first — so high-cardinality inputs
+// cannot grow it without limit.
 type MemoryStore struct {
-	mu      sync.RWMutex
-	entries map[string]storedEntry // keyed by exactKey
-	now     func() time.Time
+	mu         sync.RWMutex
+	entries    map[string]storedEntry // keyed by exactKey
+	now        func() time.Time
+	maxEntries int
 }
 
 // NewMemoryStore returns an empty store.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		entries: make(map[string]storedEntry),
-		now:     time.Now,
+		entries:    make(map[string]storedEntry),
+		now:        time.Now,
+		maxEntries: defaultMemoryMaxEntries,
 	}
+}
+
+// WithMaxEntries overrides the entry bound. A value <= 0 disables the bound.
+// It returns the receiver for chaining and is primarily intended for
+// deterministic tests.
+func (m *MemoryStore) WithMaxEntries(max int) *MemoryStore {
+	m.mu.Lock()
+	m.maxEntries = max
+	m.mu.Unlock()
+	return m
 }
 
 func (m *MemoryStore) Get(_ context.Context, key CacheKey, input []byte) (Entry, bool, error) {
@@ -134,8 +153,43 @@ func (m *MemoryStore) Put(_ context.Context, key CacheKey, input []byte, entry E
 		exactKey: exactKey,
 		tenantID: key.TenantID,
 	}
+	m.evictLocked()
 	m.mu.Unlock()
 	return nil
+}
+
+// evictLocked bounds the map at maxEntries. Expired entries are dropped
+// first, then the oldest-CreatedAt entries are evicted (exact key as the
+// deterministic tie-breaker). Caller must hold m.mu (write lock).
+func (m *MemoryStore) evictLocked() {
+	if m.maxEntries <= 0 || len(m.entries) <= m.maxEntries {
+		return
+	}
+	for id, stored := range m.entries {
+		if len(m.entries) <= m.maxEntries {
+			return
+		}
+		if !stored.entry.ExpiresAt.IsZero() && m.now().After(stored.entry.ExpiresAt) {
+			delete(m.entries, id)
+		}
+	}
+	for len(m.entries) > m.maxEntries {
+		var (
+			oldestID string
+			oldestAt time.Time
+			found    bool
+		)
+		for id, stored := range m.entries {
+			if !found || stored.entry.CreatedAt.Before(oldestAt) ||
+				(stored.entry.CreatedAt.Equal(oldestAt) && id < oldestID) {
+				oldestID, oldestAt, found = id, stored.entry.CreatedAt, true
+			}
+		}
+		if !found {
+			return
+		}
+		delete(m.entries, oldestID)
+	}
 }
 
 func (m *MemoryStore) InvalidateByTag(_ context.Context, tenantID, tag string) (int, error) {

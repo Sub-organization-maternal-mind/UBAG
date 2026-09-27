@@ -329,7 +329,21 @@ type Server struct {
 	attachmentDispatchFailures atomic.Int64 // ubag_attachment_dispatch_failures_total
 	attachmentOutcomes         labeledCounter
 	multipartOutcomes          labeledCounter
-	attachmentMutationMu       sync.Mutex
+	// artifactGate serializes the per-artifact check-and-reserve critical
+	// section (see artifactUploadGate). Replaces the former single global
+	// attachmentMutationMu, which was held across 32MiB body reads and
+	// object-store PUTs and capped uploads at one per process.
+	artifactGate artifactUploadGate
+
+	// /v1/metrics scrape cache. The scrape is unauthenticated yet expensive
+	// (two full gateway_jobs aggregates, an executor Stats with one ReadDir
+	// per spool state dir, a full webhooks aggregate, ~60 formatted writes),
+	// so concurrent/prometheus scrapes are served a single-flight body with a
+	// short TTL and an ETag for 304 reuse.
+	metricsCacheMu      sync.Mutex
+	metricsCacheBody    []byte
+	metricsCacheETag    string
+	metricsCacheBuiltAt time.Time
 
 	metrics *metricState
 	mux     chi.Router
@@ -739,35 +753,96 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// metricsCacheTTL bounds how long a rendered /v1/metrics body is reused. The
+// scrape is unauthenticated and aggregates job/queue/webhook state on every
+// call; 5s keeps the series fresh for alerting while collapsing concurrent
+// scrapes onto a single render.
+const metricsCacheTTL = 5 * time.Second
+
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeMethodNotAllowed(w, r, http.MethodGet)
 		return
 	}
 
-	stateCounts, totalJobs, err := s.jobMetricCounts(r.Context())
+	body, etag, err := s.renderMetrics(r.Context())
 	if err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to collect gateway metrics"))
 		return
 	}
-	queueStats, err := s.executor.Stats(r.Context())
-	if err != nil {
-		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to collect executor metrics"))
+	if etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.Header().Set("ETag", etag)
+		w.WriteHeader(http.StatusNotModified)
 		return
+	}
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	w.Header().Set("ETag", etag)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+}
+
+// renderMetrics returns the cached metrics body + ETag when fresh, otherwise
+// re-renders it. The cache mutex is held across the render, which is the
+// single-flight: concurrent scrapes during a rebuild wait for the one render
+// instead of each running the full aggregate themselves.
+func (s *Server) renderMetrics(ctx context.Context) ([]byte, string, error) {
+	s.metricsCacheMu.Lock()
+	defer s.metricsCacheMu.Unlock()
+	if s.metricsCacheBody != nil && time.Since(s.metricsCacheBuiltAt) < metricsCacheTTL {
+		return s.metricsCacheBody, s.metricsCacheETag, nil
+	}
+	buffer := &bytes.Buffer{}
+	if err := s.writeMetricsBody(ctx, buffer); err != nil {
+		return nil, "", err
+	}
+	body := buffer.Bytes()
+	etag := `"` + hashBytes(body) + `"`
+	s.metricsCacheBody = body
+	s.metricsCacheETag = etag
+	s.metricsCacheBuiltAt = time.Now()
+	return body, etag, nil
+}
+
+// etagMatches reports whether an If-None-Match header matches the response
+// entity tag (RFC 9110 §8.8.3.2): "*" matches any; a list matches when any
+// candidate equals the etag, ignoring a weak-validator prefix.
+func etagMatches(header, etag string) bool {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return false
+	}
+	if header == "*" {
+		return true
+	}
+	for _, candidate := range strings.Split(header, ",") {
+		candidate = strings.TrimSpace(candidate)
+		candidate = strings.TrimPrefix(candidate, "W/")
+		if candidate == etag {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) writeMetricsBody(ctx context.Context, w io.Writer) error {
+	stateCounts, totalJobs, err := s.jobMetricCounts(ctx)
+	if err != nil {
+		return err
+	}
+	queueStats, err := s.executor.Stats(ctx)
+	if err != nil {
+		return err
 	}
 	if queueStats.QueueName == "" {
 		queueStats.QueueName = "jobs"
 	}
-	webhookStats, err := s.webhooks.Stats(r.Context())
+	webhookStats, err := s.webhooks.Stats(ctx)
 	if err != nil {
-		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to collect webhook metrics"))
-		return
+		return err
 	}
 	runtimeMetrics := s.runtimeMetricsSnapshot()
 
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	w.WriteHeader(http.StatusOK)
-	_, _ = fmt.Fprintf(w, "ubag_gateway_info{version=\"%s\",api_version=\"%s\",commit=\"%s\"} 1\n", promLabel(s.version), promLabel(s.apiVersion), promLabel(s.buildCommit))
+	fmt.Fprintf(w, "ubag_gateway_info{version=\"%s\",api_version=\"%s\",commit=\"%s\"} 1\n", promLabel(s.version), promLabel(s.apiVersion), promLabel(s.buildCommit))
 	_, _ = fmt.Fprint(w, "ubag_gateway_ready{service=\"ubag-gateway\",check=\"jobs\"} 1\n")
 	_, _ = fmt.Fprint(w, "ubag_gateway_ready{service=\"ubag-gateway\",check=\"idempotency\"} 1\n")
 	_, _ = fmt.Fprint(w, "ubag_gateway_ready{service=\"ubag-gateway\",check=\"queue\"} 1\n")
@@ -850,7 +925,7 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		labels := strings.SplitN(item.key, "|", 2)
 		_, _ = fmt.Fprintf(w, "ubag_attachments_total{kind=\"%s\",outcome=\"%s\"} %d\n", promLabel(labels[0]), promLabel(labels[1]), item.count)
 	}
-	_, _ = fmt.Fprintf(w, "ubag_jobs_awaiting_attachments %d\n", s.awaitingAttachmentJobCount(r.Context()))
+	_, _ = fmt.Fprintf(w, "ubag_jobs_awaiting_attachments %d\n", s.awaitingAttachmentJobCount(ctx))
 	for _, item := range s.multipartOutcomes.snapshotWithDefaults([]string{"accepted", "rejected"}) {
 		_, _ = fmt.Fprintf(w, "ubag_multipart_jobs_total{outcome=\"%s\"} %d\n", promLabel(item.key), item.count)
 	}
@@ -911,6 +986,12 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			aggregate,
 		)
 	}
+	// Live-vs-total queue depth: the file spool keeps terminal envelopes until
+	// its retention sweeper deletes them, so ubag_queue_depth alone overstates
+	// the live queue. LiveDepth counts queued+assigned only.
+	_, _ = fmt.Fprintf(w, "ubag_queue_depth_live{queue=\"%s\"} %d\n", promLabel(queueStats.QueueName), queueStats.LiveDepth)
+	_, _ = fmt.Fprintf(w, "ubag_queue_depth_total{queue=\"%s\"} %d\n", promLabel(queueStats.QueueName), queueStats.TotalDepth)
+	return nil
 }
 
 func (s *Server) jobMetricCounts(ctx context.Context) (map[string]int, int, error) {
@@ -4376,17 +4457,22 @@ func (s *Server) putJobArtifact(w http.ResponseWriter, r *http.Request, jobID, k
 		s.writeError(w, r, http.StatusBadRequest, validationError(attachments.ErrorCode(err), "declared attachments in job.input are invalid"))
 		return
 	}
+	// Check-and-reserve critical section: the per-artifact lock is held ONLY
+	// for the attachment-status re-check and the in-flight reservation, then
+	// released BEFORE the (up to 32MiB) body read and the object-store PUT.
+	// The former global attachmentMutationMu was held across all of it via
+	// defer, serializing every upload on the process.
 	var matched *attachments.Attachment
 	immutableAfterDispatch := false
+	unlock := s.artifactGate.lockArtifact(job.ID, key)
 	if len(declared) > 0 {
-		s.attachmentMutationMu.Lock()
-		defer s.attachmentMutationMu.Unlock()
-		if latest, found, loadErr := s.jobs.Get(r.Context(), job.ID); loadErr != nil || !found {
+		latest, found, loadErr := s.jobs.Get(r.Context(), job.ID)
+		if loadErr != nil || !found {
+			unlock()
 			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to refresh attachment job"))
 			return
-		} else {
-			job = latest
 		}
+		job = latest
 		for i := range declared {
 			if declared[i].Key == key {
 				matched = &declared[i]
@@ -4397,10 +4483,22 @@ func (s *Server) putJobArtifact(w http.ResponseWriter, r *http.Request, jobID, k
 			immutableAfterDispatch = true
 		}
 		if matched == nil && job.Status == jobstore.StatusCreated {
+			unlock()
 			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-MULTIPART-PART-UNKNOWN-001", "artifact key is not declared by this held attachment job"))
 			return
 		}
 	}
+	// Reserve the artifact against a concurrent duplicate upload: two PUTs
+	// with different Idempotency-Key headers for the same artifact would
+	// otherwise both reach the store PUT and race. Releases on every return
+	// path below (including replay and error responses).
+	releaseUpload, busy := s.artifactGate.beginUploadLocked(job.ID, key)
+	unlock()
+	if !busy {
+		s.writeError(w, r, http.StatusConflict, validationError("UBAG-VALIDATION-ARTIFACT-UPLOAD-IN-PROGRESS-001", "another upload for this artifact is already in progress"))
+		return
+	}
+	defer releaseUpload()
 	uploadCap := int64(maxArtifactBodyBytes)
 	contentType := safeArtifactContentType(r.Header.Get("Content-Type"))
 	attachmentKind := ""
@@ -4569,17 +4667,24 @@ func (s *Server) deleteJobArtifact(w http.ResponseWriter, r *http.Request, jobID
 			if att.Key != key {
 				continue
 			}
-			s.attachmentMutationMu.Lock()
-			defer s.attachmentMutationMu.Unlock()
+			// Check-only critical section: the per-artifact lock guards the
+			// status re-check (declared attachments are immutable once the
+			// job dispatched) and is released before the idempotency
+			// reservation and the artifact deletion. The former global
+			// attachmentMutationMu was held via defer across all of it.
+			unlock := s.artifactGate.lockArtifact(job.ID, key)
 			latest, found, loadErr := s.jobs.Get(r.Context(), job.ID)
 			if loadErr != nil || !found {
+				unlock()
 				s.writeError(w, r, http.StatusInternalServerError, internalError("failed to refresh attachment job"))
 				return
 			}
 			if latest.Status != jobstore.StatusCreated {
+				unlock()
 				s.writeError(w, r, http.StatusConflict, validationError("UBAG-VALIDATION-ATTACHMENT-IMMUTABLE-001", "declared attachment bytes cannot change after dispatch"))
 				return
 			}
+			unlock()
 			break
 		}
 	}

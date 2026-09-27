@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -95,8 +96,23 @@ func (s *Server) withRateLimit(next http.Handler) http.Handler {
 			decision, err = s.rateLimiter.Allow(r.Context(), key, 1)
 		}
 		if err != nil {
-			// Fail open: a limiter backend error must not take down the API.
-			next.ServeHTTP(w, r)
+			// Fail CLOSED: an unavailable limiter backend (wedged SQLite/
+			// Postgres, store outage) must not silently become an unmetered
+			// bypass — the limiter is the only brake on per-tenant request
+			// floods, and failing open while the store is down removes it
+			// exactly when the gateway is least able to absorb a flood.
+			// 503 + Retry-After lets well-behaved clients back off.
+			slog.Error("rate limiter backend error; failing closed",
+				"error", err, "action", action, "tenant_id", principal.TenantID)
+			retryMS := 1000
+			w.Header().Set("Retry-After", "1")
+			s.writeError(w, r, http.StatusServiceUnavailable, apiError{
+				Code:         "UBAG-RATE-LIMITER-UNAVAILABLE-001",
+				Category:     "rate",
+				Message:      "rate limiter is temporarily unavailable",
+				Retryable:    true,
+				RetryAfterMS: &retryMS,
+			})
 			return
 		}
 
@@ -137,6 +153,35 @@ func (s *Server) withRateLimit(next http.Handler) http.Handler {
 	})
 }
 
+// adminRoutePrefixes are the privileged admin/credential route prefixes
+// (matching the actions these handlers enforce: auth:pat:issue, role:manage,
+// region:manage, data:erase, data:export, secret:rotate, rate_limit:manage).
+// Writes to them get the dedicated "admin:manage" bucket instead of sharing
+// the unmatched-POST default with ordinary traffic, so credential issuance
+// and role changes get their own tighter ceiling.
+var adminRoutePrefixes = []string{
+	"/v1/auth/pat",               // auth:pat:issue + revoke
+	"/v1/admin/",                 // region:manage, JIT elevation approve
+	"/v1/privacy/",               // data:export, data:erase
+	"/v1/antigravity/",           // role:manage (provider account management)
+	"/v1/sso/config",             // role:manage
+	"/v1/scim/v2/",               // role:manage
+	"/v1/siem/config",            // role:manage
+	"/v1/webhooks/secret:rotate", // secret:rotate
+	"/v1/cache/invalidate",       // rate_limit:manage
+}
+
+// isAdminRoute reports whether the concrete request path is a privileged
+// admin or credential route.
+func isAdminRoute(path string) bool {
+	for _, prefix := range adminRoutePrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // rateLimitAction maps an HTTP method + path onto a stable action string that
 // the PolicyResolver understands. Unknown routes fall back to the resolver's
 // default policy via a synthesized action label.
@@ -153,6 +198,10 @@ func rateLimitAction(method, path string) string {
 		return "job:list"
 	case method == http.MethodGet:
 		return "job:read"
+	// Non-read requests to privileged admin routes get their own bucket
+	// (GETs stay on the generous job:read bucket, unchanged).
+	case method != http.MethodGet && isAdminRoute(path):
+		return "admin:manage"
 	default:
 		return metricMethod(method) + " " + p
 	}

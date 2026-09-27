@@ -2,6 +2,102 @@
 
 Last updated: 2026-09-27
 
+## 2026-09-27 — Gateway throughput/retention hardening (audit workstream 5)
+
+Nine audit items on the executor/httpapi hot paths, all verified with targeted
+tests (`go test ./internal/executor/... ./internal/httpapi/ ./internal/ratelimit/...
+./internal/payloadpolicy/... ./internal/serve/ ./internal/responsecache/
+./internal/semanticcache/ ./internal/resilience/ ./internal/sso/ ./internal/webhooks/
+./internal/jobs/ ./internal/grpcapi/ ./internal/antigravity/` — plus new focused
+tests; `gofmt -l .`, `go build ./...`, `go vet ./...` clean). NOT committed.
+
+1. **Spool retention sweeper.** `FileSpoolDispatcher` gained
+   `SetRetention`/`RunRetentionSweeper`/`SweepRetention` (filespool.go):
+   terminal-state (done/failed/cancelled) envelopes older than a TTL or beyond
+   a max-count are deleted oldest-first (mtime age; renames preserve it, same
+   clock as `OldestAgeByState`). Wired in serve.go next to the reaper —
+   `UBAG_SPOOL_RETENTION_TTL_SECONDS` (default 604800=7d) and
+   `UBAG_SPOOL_RETENTION_MAX` (default 10000); `<=0` disables that bound,
+   disabling both disables the sweeper (logged at boot when enabled). New tests
+   cover TTL, max-count eviction across dirs, disabled no-op, and that pending
+   envelopes are never swept. `executor.Stats` now also carries `LiveDepth`
+   (queued+assigned) and `TotalDepth` (full DepthByState sum) — DepthByState is
+   unchanged for compatibility; metrics gained
+   `ubag_queue_depth_live`/`ubag_queue_depth_total` gauges.
+2. **attachmentMutationMu → per-artifact gate.** The single global mutex (held
+   via defer across the 32MiB body read AND the MinIO/S3 PUT — 1 upload per
+   process) is gone. New `artifactUploadGate` (attachments_gate.go): a
+   refcounted keyed per-artifact mutex (`artifactGateID` = jobID+key) guards
+   ONLY the check-and-reserve critical section — declared-attachment status
+   re-check + an in-flight marker (`beginUploadLocked`) — and is released
+   before the body read and the store PUT. The in-flight marker rejects a
+   second concurrent upload for the SAME artifact with 409
+   `UBAG-VALIDATION-ARTIFACT-UPLOAD-IN-PROGRESS-001` (the idempotency record is
+   keyed on the caller's Idempotency-Key header and cannot do this). delete
+   path: per-artifact lock only around the status re-check. Sweeper path: no
+   lock at all — the `TransitionStatus` CAS is the single authority (comment
+   documents this). `maybeDispatchAfterArtifact` now relies on the CAS
+   (concurrent final PUTs cannot double-dispatch).
+3. **/v1/metrics cost.** `handleMetrics` now serves a single-flight cached body
+   (5s TTL) with a sha256 ETag + `If-None-Match`/304 support; the ~60
+   `fmt.Fprintf` calls render into one `bytes.Buffer` and the body goes out as
+   a single Write. This bounds the 2 job aggregates + 5 spool ReadDirs +
+   webhooks aggregate to at most one run per 5s across ALL scrapers; the
+   job-count fallback scan stays bounded at `UnboundedScanLimit` (10k, WS-3).
+4. **http.Server timeouts + shutdown grace.** serve.go: `ReadTimeout: 30s`,
+   `IdleTimeout: 120s`, `MaxHeaderBytes: 1MB` added; `WriteTimeout` is
+   intentionally unset with a comment (SSE stream + 240s facade long-poll
+   legitimately exceed it; splitting onto their own listener is the documented
+   follow-up). Shutdown grace is now env-configurable:
+   `UBAG_SHUTDOWN_GRACE_SECONDS` (default 25s, invalid/non-positive → default)
+   — was a hardcoded 10s that reset in-flight 240s facade long-polls on deploy.
+5. **Bounded memory stores.** `defaultMemoryMaxEntries` (10000) + oldest-evicted
+   (expired-first) eviction on: responsecache `MemoryStore.Set` (CreatedAt,
+   scope-key tie-break), semanticcache `MemoryStore.Put`, resilience `Registry`
+   (insertion-order slice, evicted breaker re-creates closed), sso
+   `MemoryStateStore.Set` (authcode state; abandoned flows bounded), webhooks
+   `MemoryStore.Enqueue` (evicts oldest TERMINAL deliveries only — pending/
+   leased/retrying are never dropped; may sit over the bound while all entries
+   are in flight). APIs unchanged; `WithMaxEntries` test hooks added where
+   useful. Bounded-eviction tests added in each package.
+6. **renameNoOverwrite real CAS.** os.Link (fails EEXIST atomically on the
+   same filesystem) replaces the Stat-then-Rename TOCTOU; on EEXIST the
+   duplicate mover drops its source (identical semantics to before). Any other
+   Link error (unsupported FS/platform) falls back to the legacy rename path.
+   New CAS regression test proves the losing mover cannot clobber the winner's
+   bytes.
+7. **LeaseNext wakeup.** `FileSpoolDispatcher` carries a cap-1 `enqueueNotifyCh`
+   fed by EnqueueJob/RetryLease/RecoverOrphanLeases (non-blocking send);
+   `EnqueueNotify()` is surfaced through `fileSpoolWorkerQueue` via a new
+   optional `changeNotifier` interface, and the worker lease loop (`runSerial`)
+   selects on it alongside the poll ticker — ticker stays as the correctness
+   fallback, nil channel degrades to pure polling. Existing LeaseNext tests
+   unchanged and passing.
+8. **N+1 / hot-path removals.** (a) deriveJobSignals: ALREADY a single bounded
+   query (RecentEvents tail via RecentEventLister, WS-3) — nothing to collapse;
+   skipped as already-done. (b) artifact PUT path: no redundant ListArtifacts
+   exists (only the dispatch-hook and sweeper calls, both required) — verified,
+   no change. (c) facade poll `jobs.Get` in waitFacadeJob: feeds a real branch
+   (terminal-status check + the returned job is the handler's result; events
+   are not status-mapped here) — kept per the audit's own escape clause. (d)
+   antigravity account listing: env lookup hoisted out of the loop + one
+   ReadDir prefilter so no per-account Lstat when no socket dir exists;
+   per-account Lstat remains (≤3 OAuth slots, distinct paths are irreducible).
+   (e) payloadpolicy NormalizeKey: 3 regexes precompiled at package init. (f)
+   jobs failureEventTypes: map is now built once at init by DERIVING from
+   workerEventStatus (failure terminals = failed_retryable/failed_terminal/
+   dead_letter/timed_out) — set is identical to the old literal.
+9. **Rate limit split + fail-closed.** `job:retry` added to DefaultPolicyResolver
+   (job:create shape: 120/min, burst 30 — the mapping existed, the policy
+   didn't, so retries silently rode the 600/min default). New `admin:manage`
+   policy (120/min, burst 30) + `adminRoutePrefixes` (/v1/auth/pat, /v1/admin/,
+   /v1/privacy/, /v1/antigravity/, /v1/sso/config, /v1/scim/v2/, /v1/siem/
+   config, /v1/webhooks/secret:rotate, /v1/cache/invalidate): non-GET requests
+   to these now get their own bucket instead of sharing the unmatched-POST
+   default (GETs stay on job:read, unchanged). Limiter backend errors now FAIL
+   CLOSED: 503 `UBAG-RATE-LIMITER-UNAVAILABLE-001` + Retry-After 1s + slog
+   error line (was: fail open — an outage silently unmetered every request).
+
 ## 2026-09-27 — Gateway migration integrity (audit workstream 4)
 
 Seven audit items on the migration/store seam, all verified with targeted

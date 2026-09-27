@@ -39,6 +39,12 @@ var (
 	bearerValuePattern     = regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{12,}`)
 	privateKeyValuePattern = regexp.MustCompile(`(?is)-----BEGIN [A-Z ]*PRIVATE KEY-----`)
 	captchaSolverPattern   = regexp.MustCompile(`(?i)\b(solve|bypass|delegate|outsource)\b.{0,40}\bcaptcha\b|\bcaptcha\b.{0,40}\b(solver|solving|bypass)\b`)
+	// NormalizeKey's patterns, precompiled at package init: the function runs
+	// for every key of every map in every validated payload, and
+	// regexp.MustCompile re-parses the expression on each call.
+	camelCaseBoundaryPattern = regexp.MustCompile(`([a-z0-9])([A-Z])`)
+	normalizeKeySepPattern   = regexp.MustCompile(`[^A-Za-z0-9]+`)
+	normalizeKeyTrimPattern  = regexp.MustCompile(`_+`)
 )
 
 type Violation struct {
@@ -91,9 +97,9 @@ func validateValue(value any, path string) error {
 }
 
 func NormalizeKey(value string) string {
-	value = regexp.MustCompile(`([a-z0-9])([A-Z])`).ReplaceAllString(strings.TrimSpace(value), `${1}_${2}`)
-	value = regexp.MustCompile(`[^A-Za-z0-9]+`).ReplaceAllString(value, "_")
-	value = regexp.MustCompile(`_+`).ReplaceAllString(value, "_")
+	value = camelCaseBoundaryPattern.ReplaceAllString(strings.TrimSpace(value), `${1}_${2}`)
+	value = normalizeKeySepPattern.ReplaceAllString(value, "_")
+	value = normalizeKeyTrimPattern.ReplaceAllString(value, "_")
 	return strings.ToLower(strings.Trim(value, "_"))
 }
 
