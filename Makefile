@@ -29,7 +29,7 @@ help:
 	@echo "  make tf-validate  - validate all Terraform modules in deploy/terraform/"
 	@echo "  make nginx-validate - validate nginx-dashboard config"
 	@echo "  make migrate-tier - run ubag migrate (TO=<tier> [FROM=<tier>] [DRY_RUN=--dry-run])"
-	@echo "  make cover        - go test with coverage report and 80% gate"
+	@echo "  make cover        - go test with coverage report and 50% gate"
 	@echo "  make e2e          - run Playwright end-to-end tests (tests/e2e/)"
 	@echo "  make load         - run load test suite (tests/load/run-load.mjs)"
 
@@ -58,7 +58,7 @@ cover:
 	cd $(GATEWAY_DIR) && go tool cover -func=coverage.out | tee /tmp/coverage-summary.txt | tail -1
 	@TOTAL=$$(grep '^total:' /tmp/coverage-summary.txt | awk '{print $$3}' | tr -d '%'); \
 	echo "Total coverage: $${TOTAL}%"; \
-	awk -v cov="$${TOTAL}" 'BEGIN { if (cov+0 < 50) { print "Coverage " cov "% is below 50% gate (target: 80%)"; exit 1 } else { print "Gate passed: " cov "% >= 50% (target: 80%)" } }'
+	awk -v cov="$${TOTAL}" 'BEGIN { if (cov+0 < 50) { print "Coverage " cov "% is below the 50% gate (ADR-0014 long-term target: 80%)"; exit 1 } else { print "Gate passed: " cov "% >= 50% (ADR-0014 long-term target: 80%)" } }'
 
 gateway-vet:
 	cd $(GATEWAY_DIR) && go vet ./...
@@ -85,7 +85,7 @@ load:
 
 # ─── test-all: full local validation umbrella (blueprint §32) ─────────────────
 # Runs all gated CI signals locally:
-#   make cover       → go test ./... + 80% coverage gate
+#   make cover       → go test ./... + 50% coverage gate
 #   pnpm test:v0:local → unit + conformance (250+) + observability + SDK + cli +
 #                       dashboard (vitest + playwright) + docs
 # Separate gated jobs (not in test-all):
@@ -96,7 +96,7 @@ load:
 test-all: cover
 	pnpm test:v0:local
 	@echo "──────────────────────────────────────────"
-	@echo "test-all: unit + coverage gate (≥80%) + conformance + observability"
+	@echo "test-all: unit + coverage gate (≥50%) + conformance + observability"
 	@echo "          + integration (make itest separately)"
 	@echo "          + visual regression (cd apps/dashboard && npx playwright test)"
 	@echo "Chaos, load, and E2E are separate gated jobs (make chaos-smoke / make load / UBAG_E2E=1 make e2e)"

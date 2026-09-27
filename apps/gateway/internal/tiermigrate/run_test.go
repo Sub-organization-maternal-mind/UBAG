@@ -55,8 +55,10 @@ func TestRun_FailsFastOnError(t *testing.T) {
 	}
 
 	// Verify the plan actually has a StepMigrateDB as the first step.
+	// Hard failure, not Skip: this test was silently quarantined for weeks
+	// when the assumption drifted — a skipped test proves nothing.
 	if len(plan.Steps) == 0 || plan.Steps[0].Kind != tiermigrate.StepMigrateDB {
-		t.Skip("edge→small plan does not start with StepMigrateDB; test assumption changed")
+		t.Fatalf("edge→small plan does not start with StepMigrateDB; test assumption changed (%d steps)", len(plan.Steps))
 	}
 
 	var buf bytes.Buffer

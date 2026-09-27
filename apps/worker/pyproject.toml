@@ -18,9 +18,6 @@ ubag-worker = "ubag_worker.cli:main"
 antigravity-sdk = [
     "google-antigravity==0.1.17",
 ]
-live = [
-    "playwright>=1.49",
-]
 dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",
@@ -30,7 +27,6 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "live: requires a real browser (playwright) — skipped in CI unless UBAG_LIVE_TESTS=1",
 ]
 addopts = "-v --tb=short"
 

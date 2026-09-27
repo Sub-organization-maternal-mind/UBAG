@@ -100,6 +100,12 @@ jobs:
         run: node tools/check-gitops.mjs
       - name: Validate installers
         run: node tools/check-installers.mjs
+      # Gates the provider-refresh skill depends on — previously invoked by
+      # nothing in CI (the audit found both unwired).
+      - name: Provider selector + alert-metric gates
+        run: pnpm check:provider-selectors && pnpm check:alert-metrics
+      - name: Weight budgets (gating)
+        run: node tools/check-weight.mjs --strict
       - name: Multi-region validator
         run: node tools/check-multiregion.mjs
 
@@ -119,14 +125,70 @@ jobs:
   gateway:
     name: Gateway (Go)
     runs-on: ubuntu-latest
+    # Real service containers: 17 Postgres + 2 NATS + 1 MinIO tests in the
+    # tree skip silently without these, leaving every persistent store
+    # production uses untested. The DSNs below match the env names those
+    # tests read (UBAG_TEST_POSTGRES_DSN / UBAG_TEST_NATS_URL /
+    # UBAG_TEST_MINIO_ENDPOINT).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ubag
+          POSTGRES_PASSWORD: ubag-test
+          POSTGRES_DB: ubag_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ubag"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      nats:
+        image: nats:2.10-alpine
+        ports: ['4222:4222']
+        options: >-
+          --health-cmd "nats-server --help >/dev/null"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: ubag
+          MINIO_ROOT_PASSWORD: ubag-test-secret
+        ports: ['9000:9000']
+        options: >-
+          --health-cmd "mc ready local || exit 1"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
       - name: go test ./...
         working-directory: apps/gateway
-        env: { GOTOOLCHAIN: local }
+        env:
+          GOTOOLCHAIN: local
+          UBAG_TEST_POSTGRES_DSN: postgres://ubag:ubag-test@localhost:5432/ubag_test?sslmode=disable
+          UBAG_TEST_NATS_URL: nats://localhost:4222
+          UBAG_TEST_MINIO_ENDPOINT: localhost:9000
+          UBAG_TEST_MINIO_ACCESS_KEY: ubag
+          UBAG_TEST_MINIO_SECRET_KEY: ubag-test-secret
         run: go test -race -coverprofile=coverage.out ./...
+      - name: Create MinIO test bucket
+        run: |
+          docker run --rm --network host --entrypoint sh minio/mc -c "
+            mc alias set local http://127.0.0.1:9000 ubag ubag-test-secret &&
+            mb --ignore local/ubag-artifacts-test"
+      - name: Postgres round-trip tests (migrations applied)
+        working-directory: apps/gateway
+        env:
+          GOTOOLCHAIN: local
+          UBAG_TEST_POSTGRES_DSN: postgres://ubag:ubag-test@localhost:5432/ubag_test?sslmode=disable
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
+          cd ../.. && node tools/run-postgres-roundtrip-tests.mjs --apply-migrations
       - name: Coverage summary + gate
         working-directory: apps/gateway
         run: |
@@ -154,7 +216,7 @@ jobs:
       - name: Install worker (offline/mock test mode)
         run: python -m pip install --upgrade pip && python -m pip install -e "apps/worker[dev]" || python -m pip install -e apps/worker
       - name: ruff
-        run: python -m pip install ruff && ruff check apps/worker adapters
+        run: python -m pip install "ruff==0.8.4" && ruff check apps/worker adapters
       - name: pytest (UBAG_ADAPTER_OFFLINE=1)
         env: { UBAG_ADAPTER_OFFLINE: "1" }
         run: node tools/run-python-worker-tests.mjs
