@@ -208,6 +208,166 @@ export const UBAG_ENDPOINTS = {
   "DELETE /v1/antigravity/accounts/{id}/login": {
     "method": "DELETE",
     "path": "/v1/antigravity/accounts/{id}/login"
+  },
+  "POST /v1/jobs/batch": {
+    "method": "POST",
+    "path": "/v1/jobs/batch"
+  },
+  "GET /v1/templates/{template_id}": {
+    "method": "GET",
+    "path": "/v1/templates/{template_id}"
+  },
+  "POST /v1/templates/{template_id}/render": {
+    "method": "POST",
+    "path": "/v1/templates/{template_id}/render"
+  },
+  "POST /v1/workflows/{definition_id}/runs": {
+    "method": "POST",
+    "path": "/v1/workflows/{definition_id}/runs"
+  },
+  "GET /v1/workflows/runs/{run_id}": {
+    "method": "GET",
+    "path": "/v1/workflows/runs/{run_id}"
+  },
+  "POST /v1/cache/invalidate": {
+    "method": "POST",
+    "path": "/v1/cache/invalidate"
+  },
+  "GET /v1/rate-limits": {
+    "method": "GET",
+    "path": "/v1/rate-limits"
+  },
+  "GET /v1/siem/config": {
+    "method": "GET",
+    "path": "/v1/siem/config"
+  },
+  "PUT /v1/siem/config": {
+    "method": "PUT",
+    "path": "/v1/siem/config"
+  },
+  "GET /v1/scim/v2/Users": {
+    "method": "GET",
+    "path": "/v1/scim/v2/Users"
+  },
+  "POST /v1/scim/v2/Users": {
+    "method": "POST",
+    "path": "/v1/scim/v2/Users"
+  },
+  "GET /v1/scim/v2/Users/{id}": {
+    "method": "GET",
+    "path": "/v1/scim/v2/Users/{id}"
+  },
+  "PUT /v1/scim/v2/Users/{id}": {
+    "method": "PUT",
+    "path": "/v1/scim/v2/Users/{id}"
+  },
+  "PATCH /v1/scim/v2/Users/{id}": {
+    "method": "PATCH",
+    "path": "/v1/scim/v2/Users/{id}"
+  },
+  "DELETE /v1/scim/v2/Users/{id}": {
+    "method": "DELETE",
+    "path": "/v1/scim/v2/Users/{id}"
+  },
+  "GET /v1/scim/v2/Groups": {
+    "method": "GET",
+    "path": "/v1/scim/v2/Groups"
+  },
+  "POST /v1/scim/v2/Groups": {
+    "method": "POST",
+    "path": "/v1/scim/v2/Groups"
+  },
+  "GET /v1/scim/v2/Groups/{id}": {
+    "method": "GET",
+    "path": "/v1/scim/v2/Groups/{id}"
+  },
+  "PUT /v1/scim/v2/Groups/{id}": {
+    "method": "PUT",
+    "path": "/v1/scim/v2/Groups/{id}"
+  },
+  "PATCH /v1/scim/v2/Groups/{id}": {
+    "method": "PATCH",
+    "path": "/v1/scim/v2/Groups/{id}"
+  },
+  "DELETE /v1/scim/v2/Groups/{id}": {
+    "method": "DELETE",
+    "path": "/v1/scim/v2/Groups/{id}"
+  },
+  "POST /v1/auth/pat": {
+    "method": "POST",
+    "path": "/v1/auth/pat"
+  },
+  "POST /v1/auth/pat/{id}/revoke": {
+    "method": "POST",
+    "path": "/v1/auth/pat/{id}/revoke"
+  },
+  "POST /v1/privacy/export": {
+    "method": "POST",
+    "path": "/v1/privacy/export"
+  },
+  "POST /v1/privacy/erase": {
+    "method": "POST",
+    "path": "/v1/privacy/erase"
+  },
+  "GET /v1/sso/oidc/authorize": {
+    "method": "GET",
+    "path": "/v1/sso/oidc/authorize"
+  },
+  "POST /v1/admin/regions/{region}/state": {
+    "method": "POST",
+    "path": "/v1/admin/regions/{region}/state"
+  },
+  "POST /v1/mfa/enroll": {
+    "method": "POST",
+    "path": "/v1/mfa/enroll"
+  },
+  "POST /v1/mfa/verify": {
+    "method": "POST",
+    "path": "/v1/mfa/verify"
+  },
+  "POST /v1/admin/elevation": {
+    "method": "POST",
+    "path": "/v1/admin/elevation"
+  },
+  "POST /v1/admin/elevation/{id}/approve": {
+    "method": "POST",
+    "path": "/v1/admin/elevation/{id}/approve"
+  },
+  "PUT /v1/antigravity/accounts/{id}": {
+    "method": "PUT",
+    "path": "/v1/antigravity/accounts/{id}"
+  },
+  "DELETE /v1/antigravity/accounts/{id}": {
+    "method": "DELETE",
+    "path": "/v1/antigravity/accounts/{id}"
+  },
+  "GET /v1/antigravity/config": {
+    "method": "GET",
+    "path": "/v1/antigravity/config"
+  },
+  "PUT /v1/antigravity/config": {
+    "method": "PUT",
+    "path": "/v1/antigravity/config"
+  },
+  "POST /v1/antigravity/test": {
+    "method": "POST",
+    "path": "/v1/antigravity/test"
+  },
+  "GET /v1/quotas/antigravity": {
+    "method": "GET",
+    "path": "/v1/quotas/antigravity"
+  },
+  "POST /v1/quotas/antigravity": {
+    "method": "POST",
+    "path": "/v1/quotas/antigravity"
+  },
+  "POST /v1/quotas/antigravity/refresh": {
+    "method": "POST",
+    "path": "/v1/quotas/antigravity/refresh"
+  },
+  "GET /v1/quotas/antigravity/{account}": {
+    "method": "GET",
+    "path": "/v1/quotas/antigravity/{account}"
   }
 } as const;
 export const UBAG_ERROR_CODES = {

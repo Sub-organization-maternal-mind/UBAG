@@ -119,6 +119,84 @@ if (openApi) {
   }
 }
 
+// ─── Reverse parity: gateway route table → OpenAPI spec ─────────────────────
+// routes.go is the one declaration of the gateway's HTTP surface, so every
+// concrete pattern it registers must exist in openapi.yaml. A new gateway
+// route without a contract entry fails this gate.
+//
+// chi wildcards ("/v1/jobs/*") are not real paths — they resolve onto a fixed
+// set of concrete sub-paths handled by a subtree dispatcher. Each wildcard is
+// mapped explicitly to the canonical OpenAPI path templates it serves. An
+// unmapped wildcard fails closed instead of being silently skipped (a wrong
+// generic guess here would hide real contract gaps).
+const gatewayWildcardToOpenApiPaths = {
+  '/v1/jobs/*': [
+    '/v1/jobs/{job_id}',
+    '/v1/jobs/{job_id}/events',
+    '/v1/jobs/{job_id}/artifacts',
+    '/v1/jobs/{job_id}/artifacts/{key}',
+    '/v1/jobs/{job_id}/cancel',
+    '/v1/jobs/{job_id}/retry'
+  ],
+  '/v1/workflows/*': [
+    '/v1/workflows/{definition_id}/runs',
+    '/v1/workflows/runs/{run_id}'
+  ],
+  '/v1/templates/*': [
+    '/v1/templates/{template_id}',
+    '/v1/templates/{template_id}/render'
+  ],
+  '/v1/scim/v2/Users/*': ['/v1/scim/v2/Users/{id}'],
+  '/v1/scim/v2/Groups/*': ['/v1/scim/v2/Groups/{id}'],
+  '/v1/alerts/*': [
+    '/v1/alerts/{alert_id}/acknowledge',
+    '/v1/alerts/{alert_id}/resolve'
+  ],
+  '/v1/sse/jobs/*': ['/v1/sse/jobs/{job_id}']
+};
+
+// The YAML key for a path may be quoted (e.g. "/v1/webhooks/secret:rotate" —
+// a literal colon is legal in an OpenAPI path template but some writers quote
+// the key), so accept both the bare and quoted forms.
+function openApiHasKey(text, path) {
+  return text.includes(`  ${path}:`) || text.includes(`  "${path}":`);
+}
+
+const routesGoSource = requireFile('apps/gateway/internal/httpapi/routes.go');
+if (routesGoSource) {
+  // Route table rows look like: {"/v1/health", s.handleHealth},
+  const gatewayRoutePatterns = [];
+  for (const match of routesGoSource.matchAll(/\{\s*"(\/v1\/[^"]*)"\s*,/g)) {
+    gatewayRoutePatterns.push(match[1]);
+  }
+  if (gatewayRoutePatterns.length === 0) {
+    failures.push('routes.go parsed but no route patterns found — check the routeDecl table format');
+  }
+
+  if (openApi) {
+    for (const pattern of gatewayRoutePatterns) {
+      if (pattern.endsWith('/*')) {
+        const mapped = gatewayWildcardToOpenApiPaths[pattern];
+        if (!mapped) {
+          failures.push(
+            `Gateway wildcard route ${pattern} is not mapped to OpenAPI path templates in tools/check-contracts.mjs (gatewayWildcardToOpenApiPaths)`
+          );
+          continue;
+        }
+        for (const openApiPath of mapped) {
+          if (!openApiHasKey(openApi, openApiPath)) {
+            failures.push(`OpenAPI missing gateway route ${openApiPath} (served by routes.go wildcard ${pattern})`);
+          }
+        }
+        continue;
+      }
+      if (!openApiHasKey(openApi, pattern)) {
+        failures.push(`OpenAPI missing gateway route ${pattern} (registered in routes.go)`);
+      }
+    }
+  }
+}
+
 const gatewayServer = requireFile('apps/gateway/internal/httpapi/server.go');
 // Route declarations live in routes.go (the route table); parity is checked
 // across the package's httpapi files.

@@ -49,6 +49,20 @@ tags:
     description: Enterprise single sign-on (OIDC/SAML) configuration, callbacks, and session logout.
   - name: Antigravity
     description: Human-operated OAuth CLI sessions in isolated account workers.
+  - name: Auth
+    description: Personal access token (PAT) issuance and revocation.
+  - name: MFA
+    description: TOTP multi-factor enrollment and session verification.
+  - name: Admin
+    description: Region kill-switch control and just-in-time elevation grants.
+  - name: Privacy
+    description: Subject data export and erasure (GDPR Art. 15/17) requests.
+  - name: SIEM
+    description: SIEM sink configuration for audit export forwarding.
+  - name: SCIM
+    description: RFC 7644 user and group provisioning.
+  - name: Rate Limits
+    description: Configured per-action rate-limit policies.
 security:
   - bearerAuth: []
 paths:
@@ -1952,6 +1966,1572 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /v1/jobs/batch:
+    post:
+      tags: [Jobs]
+      operationId: createJobBatch
+      summary: Create up to 100 jobs in one request.
+      description: |-
+        Accepts up to 100 job submissions in one HTTP round-trip and returns an
+        outcome per entry. Individual failures do not abort the batch: each
+        entry carries its own accepted/rejected status and error. Requires a
+        batch-level Idempotency-Key (header) or idempotency_key body field;
+        entries without an explicit key derive theirs deterministically from
+        the batch key so a retried batch stays idempotent per entry. Answers
+        202 when every entry was accepted and 207 (multi-status) otherwise.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchCreateJobRequest"
+      responses:
+        "202":
+          description: Every batch entry was accepted.
+          headers:
+            Ubag-Api-Version-Used:
+              $ref: "#/components/headers/UbagApiVersionUsed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchCreateJobResponse"
+        "207":
+          description: Multi-status; at least one batch entry was rejected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchCreateJobResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          description: Batch body exceeds the gateway request body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Queue backpressure; the whole batch was rejected up front.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/templates/{template_id}:
+    get:
+      tags: [Templates]
+      operationId: getTemplate
+      summary: Get a template by ID.
+      description: Returns a tenant- or app-scoped template definition. Requires the job:read action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: template_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Template found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateGetResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/templates/{template_id}/render:
+    post:
+      tags: [Templates]
+      operationId: renderTemplate
+      summary: Render a template with the supplied variables.
+      description: |-
+        Renders the template body against the supplied vars map. The body is
+        optional; an absent vars map renders with empty variables. Requires
+        the job:read action. Answers 501 when the configured template store
+        does not support rendering.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: template_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TemplateRenderRequest"
+      responses:
+        "200":
+          description: Rendered template text.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TemplateRenderResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          description: Render body exceeds the gateway request body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/workflows/{definition_id}/runs:
+    post:
+      tags: [Workflows]
+      operationId: createWorkflowRun
+      summary: Create and start a run of a workflow definition.
+      description: |-
+        Creates a run for an existing workflow definition and immediately
+        advances it: each first-wave step becomes a regular gateway job
+        dispatched through the executor. Requires the job:create action and an
+        Idempotency-Key. The Location header points at the run resource.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - name: definition_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkflowRunCreateRequest"
+      responses:
+        "202":
+          description: Workflow run created and advancing.
+          headers:
+            Location:
+              description: URL of the workflow run.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowRun"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/workflows/runs/{run_id}:
+    get:
+      tags: [Workflows]
+      operationId: getWorkflowRun
+      summary: Get a workflow run by ID.
+      description: |-
+        Returns the run state, its per-step states, and the job ID backing
+        each step. Requires the job:read action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Workflow run found.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkflowRun"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/cache/invalidate:
+    post:
+      tags: [Cache]
+      operationId: invalidateCacheByTag
+      summary: Invalidate semantic cache entries by tag.
+      description: |-
+        Removes every semantic cache entry bearing the given tag for the
+        caller's tenant. Cache purges are shared across the tenant, so this
+        requires the rate_limit:manage action (MFA-gated when MFA is enabled).
+        When no semantic cache is configured the gateway answers 200 with
+        removed=0.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CacheInvalidateRequest"
+      responses:
+        "200":
+          description: Invalidation processed; removed counts the dropped entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CacheInvalidateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          description: Body exceeds the gateway request body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/rate-limits:
+    get:
+      tags: [Rate Limits]
+      operationId: listRateLimitPolicies
+      summary: List the configured rate-limit policies.
+      description: |-
+        Returns the per-action limit/window/burst policies and whether
+        enforcement is currently enabled. Requires the rate_limit:manage
+        action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "200":
+          description: Rate-limit policies returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RateLimitStatusResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+  /v1/siem/config:
+    get:
+      tags: [SIEM]
+      operationId: getSIEMConfig
+      summary: List configured SIEM sinks (secret-free).
+      description: |-
+        Returns the SIEM sink configurations registered for the tenant. Sink
+        credential material is only ever returned as a secret reference.
+        Requires the role:manage action (MFA-gated when MFA is enabled).
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "200":
+          description: SIEM sinks returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SIEMConfigResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    put:
+      tags: [SIEM]
+      operationId: putSIEMConfig
+      summary: Create or replace a SIEM sink configuration.
+      description: |-
+        Upserts one SIEM sink (kind file, http, or syslog). Only secret
+        references are accepted; plaintext credentials are rejected by payload
+        policy. Requires the role:manage action (MFA-gated when MFA is
+        enabled).
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SIEMSinkRequest"
+      responses:
+        "200":
+          description: SIEM sink stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SIEMConfigResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          description: Body exceeds the gateway request body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/scim/v2/Users:
+    get:
+      tags: [SCIM]
+      operationId: listSCIMUsers
+      summary: List SCIM users.
+      description: |-
+        RFC 7644 user listing with startIndex/count paging and a single-attr
+        eq filter. Responses use application/scim+json and SCIM error shapes.
+        Clients do not send Idempotency-Key; the gateway waives it for SCIM.
+        Requires the role:manage action.
+      parameters:
+        - name: startIndex
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: count
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: filter
+          in: query
+          required: false
+          description: SCIM filter expression; only a single eq comparison is implemented.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SCIM list response.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    post:
+      tags: [SCIM]
+      operationId: createSCIMUser
+      summary: Create a SCIM user.
+      description: Creates a SCIM user from an RFC 7643 core User resource. The password attribute is accepted on write only and is never returned. Requires the role:manage action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/SCIMUser"
+      responses:
+        "201":
+          description: SCIM user created.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMUser"
+        "400":
+          description: Invalid SCIM syntax or unmet prerequisite.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/scim/v2/Users/{id}:
+    get:
+      tags: [SCIM]
+      operationId: getSCIMUser
+      summary: Get a SCIM user by ID.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SCIM user returned.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: User not found (SCIM error shape).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    put:
+      tags: [SCIM]
+      operationId: replaceSCIMUser
+      summary: Replace a SCIM user.
+      description: Replaces the stored user with the supplied RFC 7643 core User resource. Requires the role:manage action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/SCIMUser"
+      responses:
+        "200":
+          description: SCIM user replaced.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMUser"
+        "400":
+          description: Invalid SCIM syntax or unmet prerequisite.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: User not found (SCIM error shape).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    patch:
+      tags: [SCIM]
+      operationId: patchSCIMUser
+      summary: Patch a SCIM user.
+      description: Applies an RFC 7644 section 3.5.2 patch request (op/path/value operations) to the user. Requires the role:manage action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/SCIMPatchRequest"
+      responses:
+        "200":
+          description: SCIM user patched.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMUser"
+        "400":
+          description: Invalid SCIM syntax or unmet prerequisite.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: User not found (SCIM error shape).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    delete:
+      tags: [SCIM]
+      operationId: deleteSCIMUser
+      summary: Delete a SCIM user.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: SCIM user deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: User not found (SCIM error shape).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/scim/v2/Groups:
+    get:
+      tags: [SCIM]
+      operationId: listSCIMGroups
+      summary: List SCIM groups.
+      description: RFC 7644 group listing with startIndex/count paging and a single-attr eq filter. Requires the role:manage action.
+      parameters:
+        - name: startIndex
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: count
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+        - name: filter
+          in: query
+          required: false
+          description: SCIM filter expression; only a single eq comparison is implemented.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SCIM list response.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMListResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    post:
+      tags: [SCIM]
+      operationId: createSCIMGroup
+      summary: Create a SCIM group.
+      description: Creates a SCIM group from an RFC 7643 core Group resource. Requires the role:manage action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/SCIMGroup"
+      responses:
+        "201":
+          description: SCIM group created.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMGroup"
+        "400":
+          description: Invalid SCIM syntax or unmet prerequisite.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/scim/v2/Groups/{id}:
+    get:
+      tags: [SCIM]
+      operationId: getSCIMGroup
+      summary: Get a SCIM group by ID.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SCIM group returned.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMGroup"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Group not found (SCIM error shape).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    put:
+      tags: [SCIM]
+      operationId: replaceSCIMGroup
+      summary: Replace a SCIM group.
+      description: Replaces the stored group with the supplied RFC 7643 core Group resource. Requires the role:manage action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/SCIMGroup"
+      responses:
+        "200":
+          description: SCIM group replaced.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMGroup"
+        "400":
+          description: Invalid SCIM syntax or unmet prerequisite.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Group not found (SCIM error shape).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    patch:
+      tags: [SCIM]
+      operationId: patchSCIMGroup
+      summary: Patch a SCIM group.
+      description: Applies an RFC 7644 section 3.5.2 patch request to the group. Requires the role:manage action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/SCIMPatchRequest"
+      responses:
+        "200":
+          description: SCIM group patched.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMGroup"
+        "400":
+          description: Invalid SCIM syntax or unmet prerequisite.
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Group not found (SCIM error shape).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    delete:
+      tags: [SCIM]
+      operationId: deleteSCIMGroup
+      summary: Delete a SCIM group.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: SCIM group deleted.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Group not found (SCIM error shape).
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/auth/pat:
+    post:
+      tags: [Auth]
+      operationId: issuePAT
+      summary: Issue a personal access token.
+      description: |-
+        Mints a PAT that inherits the caller's tenant/app scope unless a
+        superadmin overrides tenant_id/app_id/role in the body. An explicit
+        ttl_seconds is capped at one year (31536000); a negative ttl_seconds
+        (never-expiring) requires superadmin. Requires the auth:pat:issue
+        action (MFA-gated when MFA is enabled). Answers 501 when PAT issuance
+        is not enabled.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PATIssueRequest"
+      responses:
+        "201":
+          description: PAT issued. The token value is shown once at issuance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PATIssueResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          description: Body exceeds the gateway request body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/auth/pat/{id}/revoke:
+    post:
+      tags: [Auth]
+      operationId: revokePAT
+      summary: Revoke a personal access token.
+      description: |-
+        Retires an issued PAT. Unknown IDs and tokens belonging to another
+        tenant are indistinguishable 404s. Requires the auth:pat:issue action
+        (MFA-gated when MFA is enabled).
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: PAT revoked.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/privacy/export:
+    post:
+      tags: [Privacy]
+      operationId: requestPrivacyExport
+      summary: Create a subject data export request.
+      description: |-
+        Records a subject data export request for the supplied subject_ref and
+        returns a receipt. Requires the data:export action (MFA-gated when MFA
+        is enabled). Answers 501 when privacy request handling is not enabled.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrivacySubjectRequest"
+      responses:
+        "202":
+          description: Privacy request recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyRequestReceipt"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/privacy/erase:
+    post:
+      tags: [Privacy]
+      operationId: requestPrivacyErase
+      summary: Create a subject data erasure request.
+      description: |-
+        Records a GDPR Art. 17 style erasure request for the supplied
+        subject_ref and returns a receipt. Erasure is gated on its own
+        data:erase action (not data:export) because it is destructive and
+        irreversible. Answers 501 when privacy request handling is not
+        enabled.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrivacySubjectRequest"
+      responses:
+        "202":
+          description: Privacy request recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PrivacyRequestReceipt"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/webhooks/secret:rotate:
+    post:
+      tags: [Webhooks]
+      operationId: rotateWebhookSecret
+      summary: Rotate a webhook signing secret.
+      description: |-
+        Records a rotation of the signing secret for a webhook destination.
+        Only opaque secret references are accepted (new_secret_ref); plaintext
+        secrets are rejected by payload policy. An optional overlap_seconds
+        window keeps the previous secret valid. Idempotent with
+        Idempotency-Key; a replay returns the stored rotation. Requires the
+        secret:rotate action (MFA-gated when MFA is enabled). Answers 501 when
+        webhook secret rotation is not configured.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookSecretRotateRequest"
+      responses:
+        "200":
+          description: Secret rotated (or idempotent replay of a prior rotation).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookSecretRotateResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: Idempotency key conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: Body exceeds the gateway request body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/sso/oidc/authorize:
+    get:
+      tags: [SSO]
+      operationId: ssoOIDCAuthorize
+      summary: Start the OIDC authorization-code flow.
+      description: |-
+        Browser redirect entry point for the OIDC authorization-code flow.
+        Generates a random state+nonce pair (state is stored with a 10 minute
+        TTL) and redirects the browser to the configured IdP authorization
+        URL. Unauthenticated by design: the browser does not hold a UBAG
+        credential yet. Answers 400 when the tenant has no OIDC configuration
+        or it lacks an authorization_url, and 501 when the authorization-code
+        flow is not configured.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: redirect_uri
+          in: query
+          required: false
+          description: Optional redirect URI forwarded to the IdP authorization request.
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to the IdP authorization URL.
+          headers:
+            Location:
+              description: IdP authorization URL carrying response_type, client_id, scope, state, nonce, and optional redirect_uri.
+              schema:
+                type: string
+                format: uri
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/admin/regions/{region}/state:
+    post:
+      tags: [Admin]
+      operationId: setRegionState
+      summary: Set the lifecycle state of a region.
+      description: |-
+        Transitions a region between active, draining, and disabled through
+        the kill-switch registry. Invalid states or transitions are rejected
+        with 400. Requires the region:manage action (MFA-gated when MFA is
+        enabled). Answers 501 when the region kill switch is not enabled.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: region
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegionStateRequest"
+      responses:
+        "204":
+          description: Region state updated.
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          description: Body exceeds the gateway request body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/mfa/enroll:
+    post:
+      tags: [MFA]
+      operationId: enrollMFA
+      summary: Enroll the current principal in TOTP MFA.
+      description: |-
+        Enrolls the caller's principal in TOTP-based MFA and returns the
+        base32 secret, an otpauth:// URI for QR scanning, and one-time
+        recovery codes. The secret and recovery codes are shown once and must
+        be stored by the caller. Answers 501 when MFA is not enabled.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                issuer:
+                  type: string
+                  description: Optional issuer label shown in the authenticator app. Defaults to UBAG.
+      responses:
+        "200":
+          description: Enrollment material generated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MFAEnrollResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/mfa/verify:
+    post:
+      tags: [MFA]
+      operationId: verifyMFA
+      summary: Verify a TOTP or recovery code for the current session.
+      description: |-
+        Verifies a TOTP or recovery code for the caller's principal and marks
+        the current session MFA-verified, unlocking MFA-gated privileged
+        actions. Answers 401 for an invalid or expired code and 501 when MFA
+        is not enabled.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MFAVerifyRequest"
+      responses:
+        "200":
+          description: Code accepted; the session is MFA-verified.
+          headers:
+            X-MFA-Verified:
+              description: Set to true on success.
+              schema:
+                type: string
+                const: "true"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MFAVerifyResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/admin/elevation:
+    post:
+      tags: [Admin]
+      operationId: requestElevation
+      summary: Request a just-in-time elevated role grant.
+      description: |-
+        Creates a JIT elevation grant request for the caller's session
+        subject. ttl_seconds is capped at 86400 (24h). The grant stays
+        inactive until a sufficiently senior approver approves it. Bearer
+        secrets and machine API keys cannot request elevation (400) because
+        they carry no subject. Answers 501 when JIT elevation is not enabled.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ElevationRequest"
+      responses:
+        "201":
+          description: Elevation grant created (not yet active).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ElevationGrant"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          description: Body exceeds the gateway request body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/admin/elevation/{id}/approve:
+    post:
+      tags: [Admin]
+      operationId: approveElevation
+      summary: Approve a pending elevation grant.
+      description: |-
+        Approves a pending JIT elevation grant. An approver may never approve
+        a grant whose role outranks the approver's own (403); expired grants
+        are rejected with 409. Requires the role:manage action (MFA-gated when
+        MFA is enabled).
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Elevation grant approved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ElevationGrant"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: Elevation grant has expired and cannot be approved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/antigravity/accounts/{id}:
+    put:
+      tags: [Antigravity]
+      operationId: updateAntigravityAccount
+      summary: Update a tenant-owned OAuth CLI account.
+      description: |-
+        Updates the enabled flag (and label/tier in the request shape) of a
+        tenant-owned Antigravity OAuth account. Requires the role:manage
+        action. Answers 404 when the account does not exist.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^acct_[0-9]+$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AntigravityAccountUpdateRequest"
+      responses:
+        "200":
+          description: Account updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AntigravityAccountMutationResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          description: Body exceeds the gateway request body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags: [Antigravity]
+      operationId: deleteAntigravityAccount
+      summary: Remove a tenant-owned OAuth CLI account.
+      description: |-
+        Removes the account from the tenant. Requires the role:manage action.
+        Answers 404 when the account does not exist.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^acct_[0-9]+$"
+      responses:
+        "200":
+          description: Account removed; removed echoes the account ID.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [removed]
+                properties:
+                  removed:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+  /v1/antigravity/config:
+    get:
+      tags: [Antigravity]
+      operationId: getAntigravityConfig
+      summary: Get the Antigravity CLI account configuration.
+      description: Returns the default model, default effort, concurrency cap, tenant account count, and whether Antigravity OAuth is enabled. Requires the role:manage action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "200":
+          description: Antigravity configuration returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AntigravityConfig"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+    put:
+      tags: [Antigravity]
+      operationId: putAntigravityConfig
+      summary: Update the Antigravity CLI account configuration.
+      description: Upserts the default model, default effort, and concurrency cap. Requires the role:manage action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AntigravityConfigUpdateRequest"
+      responses:
+        "200":
+          description: Antigravity configuration stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AntigravityConfig"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          description: Body exceeds the gateway request body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/antigravity/test:
+    post:
+      tags: [Antigravity]
+      operationId: testAntigravity
+      summary: Run a canary prompt through an Antigravity CLI account.
+      description: |-
+        Creates a chat.prompt canary job on the antigravity_cli target and
+        records it as the account's latest verification job. Idempotent with
+        Idempotency-Key (same semantics as job creation). Requires the
+        role:manage action. Answers 503 when Antigravity OAuth is disabled,
+        404 when the requested account_id does not exist, and 409 when the
+        account is disabled.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AntigravityTestRequest"
+      responses:
+        "202":
+          description: Canary job accepted.
+          headers:
+            Location:
+              description: URL of the canary job.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AntigravityTestAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          description: Account is disabled or idempotency key conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: Body exceeds the gateway request body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Queue backpressure or target concurrency ceiling.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: Antigravity OAuth CLI is disabled.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/quotas/antigravity:
+    get:
+      tags: [Antigravity]
+      operationId: getAntigravityQuota
+      summary: Get Antigravity OAuth quota state.
+      description: |-
+        Stub route: quota collection is not configured on any deployment, so
+        the gateway answers 501 (Not Implemented envelope) while the route and
+        its role:manage gate stay reserved.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    post:
+      tags: [Antigravity]
+      operationId: refreshAntigravityQuota
+      summary: Refresh Antigravity OAuth quota state.
+      description: |-
+        Stub route: quota collection is not configured on any deployment, so
+        the gateway answers 501 (Not Implemented envelope) while the route and
+        its role:manage gate stay reserved.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/quotas/antigravity/refresh:
+    post:
+      tags: [Antigravity]
+      operationId: refreshAntigravityQuotaExplicit
+      summary: Refresh Antigravity OAuth quota state (explicit refresh route).
+      description: |-
+        Stub route served by the same handler as POST /v1/quotas/antigravity.
+        Quota collection is not configured on any deployment, so the gateway
+        answers 501 (Not Implemented envelope) while the route and its
+        role:manage gate stay reserved.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/quotas/antigravity/{account}:
+    get:
+      tags: [Antigravity]
+      operationId: getAntigravityAccountQuota
+      summary: Get quota state for one Antigravity OAuth account.
+      description: |-
+        Stub route: per-account quota collection is not configured on any
+        deployment, so the gateway answers 501 (Not Implemented envelope)
+        while the route and its role:manage gate stay reserved.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: account
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: "^acct_[0-9]+$"
+      responses:
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
 components:
   securitySchemes:
     bearerAuth:
@@ -3432,3 +5012,737 @@ components:
               description: Machine-readable reason (for example streaming_unsupported, model_not_found, wait_timeout, provider_login_required).
             param:
               type: string
+    BatchCreateJobRequest:
+      type: object
+      additionalProperties: false
+      required: [jobs]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        idempotency_key:
+          type: string
+          minLength: 16
+          maxLength: 128
+          pattern: "^[A-Za-z0-9._:-]+$"
+          description: Batch-level key used in the header's absence. The Idempotency-Key header wins when both are present.
+        jobs:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/JobRequest"
+    BatchJobOutcome:
+      type: object
+      additionalProperties: false
+      required: [index, status]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum: [accepted, rejected]
+        job_id:
+          type: string
+        idempotent_replay:
+          type: boolean
+        error:
+          $ref: "#/components/schemas/ErrorResponse"
+    BatchCreateJobResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, results, accepted, rejected, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/BatchJobOutcome"
+        accepted:
+          type: integer
+          minimum: 0
+        rejected:
+          type: integer
+          minimum: 0
+        trace_id:
+          type: string
+          minLength: 1
+    TemplateGetResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, template, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        template:
+          type: object
+          additionalProperties: true
+          description: Template definition as stored by the configured template store.
+        trace_id:
+          type: string
+          minLength: 1
+    TemplateRenderRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        vars:
+          type: object
+          additionalProperties: true
+          description: Template variables. Absent or null renders with empty variables.
+    TemplateRenderResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, template_id, rendered, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        template_id:
+          type: string
+        rendered:
+          type: string
+        trace_id:
+          type: string
+          minLength: 1
+    WorkflowRunCreateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    WorkflowRunStep:
+      type: object
+      additionalProperties: false
+      required: [step_id, state]
+      properties:
+        step_id:
+          type: string
+        state:
+          type: string
+        job_id:
+          type: string
+        error:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+    WorkflowRun:
+      type: object
+      additionalProperties: false
+      required: [api_version, id, definition_id, state, current_step, steps, created_at, updated_at, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        id:
+          type: string
+        definition_id:
+          type: string
+        state:
+          type: string
+        current_step:
+          type: integer
+          minimum: 0
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkflowRunStep"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        trace_id:
+          type: string
+          minLength: 1
+    CacheInvalidateRequest:
+      type: object
+      additionalProperties: false
+      required: [tag]
+      properties:
+        tag:
+          type: string
+          minLength: 1
+    CacheInvalidateResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, removed, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        removed:
+          type: integer
+          minimum: 0
+          description: Number of cache entries dropped. Zero when no semantic cache is configured.
+        trace_id:
+          type: string
+          minLength: 1
+    RateLimitPolicy:
+      type: object
+      additionalProperties: false
+      required: [action, limit, window_seconds]
+      properties:
+        action:
+          type: string
+          description: Gateway RBAC action the policy applies to (for example job:create).
+        limit:
+          type: integer
+          minimum: 0
+        window_seconds:
+          type: integer
+          minimum: 0
+        burst:
+          type: integer
+          minimum: 0
+    RateLimitStatusResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, enabled, policies, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        enabled:
+          type: boolean
+        policies:
+          type: array
+          items:
+            $ref: "#/components/schemas/RateLimitPolicy"
+        trace_id:
+          type: string
+          minLength: 1
+    SIEMSink:
+      type: object
+      additionalProperties: false
+      required: [id, name, kind, enabled, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [file, http, syslog]
+        target:
+          type: string
+        network:
+          type: string
+        secret_ref:
+          type: string
+          description: Opaque secret reference. Plaintext credentials are never returned.
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    SIEMConfigResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, tenant_id, sinks, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        tenant_id:
+          type: string
+        sinks:
+          type: array
+          items:
+            $ref: "#/components/schemas/SIEMSink"
+        trace_id:
+          type: string
+          minLength: 1
+    SIEMSinkRequest:
+      type: object
+      additionalProperties: false
+      required: [name, kind]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        id:
+          type: string
+          description: Existing sink ID to replace. Omit to create a new sink.
+        name:
+          type: string
+          minLength: 1
+        kind:
+          type: string
+          enum: [file, http, syslog]
+        target:
+          type: string
+        network:
+          type: string
+        secret_ref:
+          type: string
+          description: Opaque secret reference. Plaintext credentials are rejected by payload policy.
+        enabled:
+          type: boolean
+    SCIMEmail:
+      type: object
+      additionalProperties: false
+      required: [value]
+      properties:
+        value:
+          type: string
+        type:
+          type: string
+        primary:
+          type: boolean
+        display:
+          type: string
+    SCIMMeta:
+      type: object
+      additionalProperties: false
+      required: [resourceType, created, lastModified, version]
+      properties:
+        resourceType:
+          type: string
+        created:
+          type: string
+        lastModified:
+          type: string
+        version:
+          type: string
+        location:
+          type: string
+    SCIMUser:
+      type: object
+      additionalProperties: false
+      required: [schemas, id, userName, active, meta]
+      description: RFC 7643 core User resource (subset serialized by the gateway). Password is accepted on write only and never returned.
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+        id:
+          type: string
+        externalId:
+          type: string
+        userName:
+          type: string
+        displayName:
+          type: string
+        active:
+          type: boolean
+        emails:
+          type: array
+          items:
+            $ref: "#/components/schemas/SCIMEmail"
+        groups:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              value:
+                type: string
+              "$ref":
+                type: string
+              display:
+                type: string
+              type:
+                type: string
+        password:
+          type: string
+          description: Write-only. Dropped before persistence.
+        meta:
+          $ref: "#/components/schemas/SCIMMeta"
+    SCIMGroup:
+      type: object
+      additionalProperties: false
+      required: [schemas, id, displayName, meta]
+      description: RFC 7643 core Group resource (subset serialized by the gateway).
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+        id:
+          type: string
+        externalId:
+          type: string
+        displayName:
+          type: string
+        members:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              value:
+                type: string
+              "$ref":
+                type: string
+              display:
+                type: string
+              type:
+                type: string
+        meta:
+          $ref: "#/components/schemas/SCIMMeta"
+    SCIMPatchRequest:
+      type: object
+      additionalProperties: false
+      description: RFC 7644 section 3.5.2 patch request. The operations key is the SCIM-protocol capitalised "Operations".
+      required: [Operations]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+        Operations:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [op]
+            properties:
+              op:
+                type: string
+              path:
+                type: string
+              value: {}
+    SCIMListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemas, totalResults, startIndex, itemsPerPage, Resources]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+        totalResults:
+          type: integer
+          minimum: 0
+        startIndex:
+          type: integer
+          minimum: 1
+        itemsPerPage:
+          type: integer
+          minimum: 0
+        Resources:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    SCIMError:
+      type: object
+      additionalProperties: false
+      required: [schemas, status]
+      description: RFC 7644 section 3.12 error shape.
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+        scimType:
+          type: string
+        detail:
+          type: string
+    PATIssueRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        tenant_id:
+          type: string
+          description: Scope override; superadmin only.
+        app_id:
+          type: string
+          description: Scope override; superadmin only.
+        role:
+          type: string
+          description: Must be a known gateway role.
+        ttl_seconds:
+          type: integer
+          description: Lifetime override. 0 uses the server default; negative means never-expiring and requires superadmin; positive values are capped at 31536000 (1 year).
+    PATIssueResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, token, tenant_id, app_id, role, issued_at, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        token:
+          type: string
+          description: PAT identifier shown once at issuance.
+        tenant_id:
+          type: string
+        app_id:
+          type: string
+        role:
+          type: string
+        issued_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: Absent for never-expiring PATs.
+        trace_id:
+          type: string
+          minLength: 1
+    PrivacySubjectRequest:
+      type: object
+      additionalProperties: false
+      required: [subject_ref]
+      properties:
+        subject_ref:
+          type: string
+          minLength: 1
+    PrivacyRequestReceipt:
+      type: object
+      additionalProperties: false
+      required: [api_version, request_id, kind, status, receipt, created_at, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        request_id:
+          type: string
+        kind:
+          type: string
+          description: Privacy request kind (export or erase).
+        status:
+          type: string
+        receipt:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        trace_id:
+          type: string
+          minLength: 1
+    WebhookSecretRotateRequest:
+      type: object
+      additionalProperties: false
+      required: [webhook_id, new_secret_ref]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        webhook_id:
+          type: string
+          minLength: 1
+        new_secret_ref:
+          type: string
+          minLength: 1
+          description: Opaque secret reference for the new signing secret. Plaintext secrets are rejected by payload policy.
+        overlap_seconds:
+          type: integer
+          minimum: 0
+          description: Optional window during which the previous secret stays valid.
+    WebhookSecretRotateResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, status, webhook_id, active_secret_ref, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        status:
+          type: string
+          enum: [rotated]
+        webhook_id:
+          type: string
+        active_secret_ref:
+          type: string
+        previous_secret_ref:
+          type: string
+          description: Present when a prior rotation existed for the webhook.
+        overlap_until:
+          type: string
+          format: date-time
+          description: Present when overlap_seconds was requested.
+        trace_id:
+          type: string
+          minLength: 1
+    RegionStateRequest:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: [active, draining, disabled]
+    MFAEnrollResponse:
+      type: object
+      additionalProperties: false
+      required: [secret, otpauth_uri, recovery_codes]
+      description: Shown once; the caller must persist the secret and recovery codes.
+      properties:
+        secret:
+          type: string
+          description: Base32 TOTP secret.
+        otpauth_uri:
+          type: string
+          description: otpauth:// URI for QR scanning.
+        recovery_codes:
+          type: array
+          items:
+            type: string
+    MFAVerifyRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+          minLength: 1
+          description: TOTP code or one-time recovery code.
+    MFAVerifyResponse:
+      type: object
+      additionalProperties: false
+      required: [verified]
+      properties:
+        verified:
+          type: boolean
+          const: true
+    ElevationRequest:
+      type: object
+      additionalProperties: false
+      required: [role, ttl_seconds]
+      properties:
+        role:
+          type: string
+          description: Elevated role being requested; must be a known gateway role.
+        ttl_seconds:
+          type: integer
+          minimum: 1
+          maximum: 86400
+          description: Requested elevation window in seconds, capped at 24h.
+        reason:
+          type: string
+    ElevationGrant:
+      type: object
+      additionalProperties: false
+      required: [id, actor, tenant_id, app_id, role, reason, ttl_seconds, expires_at, approved, created_at, revoked]
+      properties:
+        id:
+          type: string
+        actor:
+          type: string
+          description: Subject of the requesting principal.
+        tenant_id:
+          type: string
+        app_id:
+          type: string
+        role:
+          type: string
+        reason:
+          type: string
+        ttl_seconds:
+          type: integer
+          format: int64
+          description: Raw Go time.Duration value (nanoseconds) as serialized by the gateway.
+        expires_at:
+          type: string
+          format: date-time
+        approved:
+          type: boolean
+        approved_by:
+          type: string
+        approved_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        revoked:
+          type: boolean
+    AntigravityAccountUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled:
+          type: boolean
+          description: Defaults to true when omitted.
+        label:
+          type: string
+        tier:
+          type: string
+    AntigravityAccountMutationResponse:
+      type: object
+      additionalProperties: false
+      required: [account_id, label, enabled, tier]
+      properties:
+        account_id:
+          type: string
+        label:
+          type: string
+        enabled:
+          type: boolean
+        tier:
+          type: string
+    AntigravityConfig:
+      type: object
+      additionalProperties: false
+      required: [default_model, default_effort, max_concurrent, account_count, oauth_enabled]
+      properties:
+        default_model:
+          type: string
+        default_effort:
+          type: string
+        max_concurrent:
+          type: integer
+        account_count:
+          type: integer
+          minimum: 0
+          description: Number of tenant-owned accounts, computed per request.
+        oauth_enabled:
+          type: boolean
+    AntigravityConfigUpdateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        default_model:
+          type: string
+        default_effort:
+          type: string
+        max_concurrent:
+          type: integer
+    AntigravityTestRequest:
+      type: object
+      additionalProperties: false
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+        model:
+          type: string
+          description: Defaults to the configured default_model.
+        account_id:
+          type: string
+          pattern: "^acct_[0-9]+$"
+          description: Optional account pin. When supplied the canary result updates that account's verification state.
+    AntigravityTestAccepted:
+      type: object
+      additionalProperties: false
+      required: [job_id, status, model, message]
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [accepted]
+        model:
+          type: string
+        message:
+          type: string
