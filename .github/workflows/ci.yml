@@ -157,11 +157,6 @@ jobs:
           MINIO_ROOT_USER: ubag
           MINIO_ROOT_PASSWORD: ubag-test-secret
         ports: ['9000:9000']
-        options: >-
-          --health-cmd "mc ready local || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -178,6 +173,13 @@ jobs:
         run: go test -race -coverprofile=coverage.out ./...
       - name: Create MinIO test bucket
         run: |
+          # The minio image ships no mc/curl, so there is no in-container
+          # health check; poll the readiness endpoint from here instead.
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/live && break
+            sleep 2
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:9000/minio/health/live
           docker run --rm --network host --entrypoint sh quay.io/minio/mc -c "
             mc alias set local http://127.0.0.1:9000 ubag ubag-test-secret &&
             mb --ignore local/ubag-artifacts-test"
@@ -393,6 +395,10 @@ jobs:
           format: table
           severity: HIGH,CRITICAL
           exit-code: "1"
+          # Our own IaC is what this gate judges; dependency trees carry
+          # third-party Dockerfiles (e.g. yaml-language-server) whose
+          # findings are upstream's to fix, not ours.
+          skip-dirs: node_modules,dist,.svelte-kit,vendor
 
       - name: Generate SBOM (syft)
         uses: anchore/sbom-action@v0
