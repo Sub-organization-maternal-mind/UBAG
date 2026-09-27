@@ -56,3 +56,71 @@ func TestTrace_PropagatesXRequestID(t *testing.T) {
 		t.Errorf("expected X-Trace-ID = %q, got %q", rid, rr.Header().Get("X-Trace-ID"))
 	}
 }
+
+// flushingWriter is a ResponseWriter mock that records Flush calls so tests can
+// assert a wrapping recorder forwards flushes to the real writer.
+type flushingWriter struct {
+	header  http.Header
+	flushes int
+}
+
+func (w *flushingWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = http.Header{}
+	}
+	return w.header
+}
+
+func (w *flushingWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+func (w *flushingWriter) WriteHeader(int) {}
+
+func (w *flushingWriter) Flush() { w.flushes++ }
+
+// plainWriter is a ResponseWriter that deliberately does NOT implement
+// http.Flusher, so a wrapping recorder's Flush must be a safe no-op.
+type plainWriter struct {
+	header http.Header
+}
+
+func (w *plainWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = http.Header{}
+	}
+	return w.header
+}
+
+func (w *plainWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+func (w *plainWriter) WriteHeader(int) {}
+
+// The SSE handler's w.(http.Flusher) assertion only succeeds when the recorder
+// chain implements and forwards Flush; a streaming handler wrapped by
+// RequestLog must be able to flush through it.
+func TestStatusRecorderImplementsFlusher(t *testing.T) {
+	if _, ok := any(&statusRecorder{}).(http.Flusher); !ok {
+		t.Fatal("statusRecorder does not implement http.Flusher")
+	}
+}
+
+func TestStatusRecorderFlushForwardsToWriter(t *testing.T) {
+	mock := &flushingWriter{}
+	recorder := &statusRecorder{ResponseWriter: mock, status: http.StatusOK}
+	flusher, ok := any(recorder).(http.Flusher)
+	if !ok {
+		t.Fatal("statusRecorder does not implement http.Flusher")
+	}
+	flusher.Flush()
+	if mock.flushes != 1 {
+		t.Fatalf("flushes = %d, want 1", mock.flushes)
+	}
+}
+
+func TestStatusRecorderFlushWithoutFlusherIsNoop(t *testing.T) {
+	recorder := &statusRecorder{ResponseWriter: &plainWriter{}, status: http.StatusOK}
+	flusher, ok := any(recorder).(http.Flusher)
+	if !ok {
+		t.Fatal("statusRecorder does not implement http.Flusher")
+	}
+	flusher.Flush() // must not panic when the wrapped writer cannot flush
+}

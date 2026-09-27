@@ -227,6 +227,22 @@ func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return hijacker.Hijack()
 }
 
+// Flush implements http.Flusher so streaming handlers (the SSE job stream, the
+// OpenAI facade) can push bytes through this middleware to the client. Without
+// it the handler's w.(http.Flusher) assertion fails and the stream never
+// flushes until the handler returns.
+func (r *statusRecorder) Flush() {
+	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Unwrap exposes the wrapped writer so http.ResponseController can reach the
+// underlying connection (e.g. SetWriteDeadline for bounded SSE writes).
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
 // APIVersionHeader sets the "Ubag-Api-Version-Used" response header to
 // version on every request regardless of handler outcome.
 func APIVersionHeader(version string) func(http.Handler) http.Handler {

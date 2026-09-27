@@ -199,9 +199,12 @@ if (routesGoSource) {
 
 const gatewayServer = requireFile('apps/gateway/internal/httpapi/server.go');
 // Route declarations live in routes.go (the route table); parity is checked
-// across the package's httpapi files.
+// across the package's httpapi files. The Ubag-Trace-Id response header is
+// declared as a constant in the webhooks signing module (withMetrics writes
+// it from there), so that file joins the parity source set too.
 const gatewayRoutes = requireFile('apps/gateway/internal/httpapi/routes.go');
-const gatewayHTTP = [gatewayServer, gatewayRoutes].filter(Boolean).join('\n');
+const gatewayTraceHeader = requireFile('apps/gateway/internal/webhooks/signing.go');
+const gatewayHTTP = [gatewayServer, gatewayRoutes, gatewayTraceHeader].filter(Boolean).join('\n');
 if (gatewayServer) {
   for (const path of requiredOpenApiPaths.filter((path) => !path.includes('{'))) {
     if (!gatewayHTTP.includes(`"${path}"`)) {
@@ -212,8 +215,6 @@ if (gatewayServer) {
     'Ubag-Trace-Id',
     'Ubag-Api-Version-Used',
     'Location',
-    'handleWebSocketUpgrade',
-    'Sec-WebSocket-Accept',
     'constantTimeEqual',
     'authorizeGatewayAction',
     'ListEvents',
@@ -222,7 +223,7 @@ if (gatewayServer) {
     'ubag_jobs_created_total',
     'ubag_jobs_current'
   ]) {
-    if (!gatewayServer.includes(requiredRuntimeTerm)) {
+    if (!gatewayHTTP.includes(requiredRuntimeTerm)) {
       failures.push(`Gateway runtime missing parity term ${requiredRuntimeTerm}`);
     }
   }

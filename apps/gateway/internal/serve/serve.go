@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -237,6 +238,12 @@ func Run(ctx context.Context) error {
 		if closer, ok := consumer.Queue.(interface{ Close() }); ok {
 			defer closer.Close()
 		}
+		// Terminate the warm-browser daemon (and any other closable runner) on
+		// shutdown — previously the daemon process leaked a warm page per
+		// SIGTERM because nothing ever closed the runner.
+		if closer, ok := consumer.Runner.(interface{ Close() }); ok {
+			defer closer.Close()
+		}
 		go func() {
 			if err := consumer.Run(ctx); err != nil && err != context.Canceled {
 				slog.Error("worker consumer stopped", "error", err)
@@ -376,7 +383,15 @@ func Run(ctx context.Context) error {
 	}
 
 	if grpcListener != nil {
+		// GracefulStop waits for in-flight RPCs but has no built-in budget: a
+		// stuck stream would hang shutdown forever. Force Stop() at half the
+		// HTTP grace period.
+		stopOnce := sync.Once{}
+		timer := time.AfterFunc(shutdownGraceFromEnv()/2, func() {
+			stopOnce.Do(func() { grpcServer.Stop() })
+		})
 		grpcServer.GracefulStop()
+		timer.Stop()
 	}
 	// The grace period must comfortably exceed the facade long-poll budget
 	// (UBAG_FACADE_MAX_WAIT_MS, default 240s) so an in-flight long-poll gets a
@@ -1225,6 +1240,16 @@ func (r *targetWorkerRunner) RunWorker(
 		return r.daemon.RunWorker(ctx, envelope)
 	}
 	return r.fallback.RunWorker(ctx, envelope)
+}
+
+// Close terminates the wrapped runners so gateway shutdown does not leak the
+// warm-browser daemon process.
+func (r *targetWorkerRunner) Close() {
+	for _, runner := range []executor.WorkerRunner{r.daemon, r.fallback} {
+		if closer, ok := runner.(interface{ Close() }); ok {
+			closer.Close()
+		}
+	}
 }
 
 // buildWorkerRunner picks the per-job runner (default) or the warm-browser

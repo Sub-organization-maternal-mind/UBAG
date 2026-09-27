@@ -317,8 +317,8 @@ func TestDeclaredPublicSurfaceRoutes(t *testing.T) {
 	}
 
 	stream := doJSON(server, http.MethodGet, "/v1/stream", "", authHeaders(""))
-	if stream.Code != http.StatusUpgradeRequired {
-		t.Fatalf("stream status = %d, want %d; body=%s", stream.Code, http.StatusUpgradeRequired, stream.Body.String())
+	if stream.Code != http.StatusNotImplemented {
+		t.Fatalf("stream status = %d, want %d; body=%s", stream.Code, http.StatusNotImplemented, stream.Body.String())
 	}
 
 	missingAuth := doJSON(server, http.MethodGet, "/v1/templates", "", nil)
@@ -486,7 +486,10 @@ func TestAdapterCatalogExposesAttachmentPolicyForLiveProvidersOnly(t *testing.T)
 	}
 }
 
-func TestWebSocketStreamUpgrade(t *testing.T) {
+// /v1/stream must not advertise WebSocket support: the previous stub completed
+// the upgrade handshake, emitted heartbeats for two seconds, and closed. Even a
+// well-formed WebSocket upgrade request now gets an honest 501.
+func TestStreamRejectsWebSocketUpgradeHonestly(t *testing.T) {
 	testServer := httptest.NewServer(NewServer(Config{AppSecret: "dev-secret"}).Handler())
 	defer testServer.Close()
 
@@ -510,15 +513,19 @@ func TestWebSocketStreamUpgrade(t *testing.T) {
 
 	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
 	if err != nil {
-		t.Fatalf("read upgrade response: %v", err)
+		t.Fatalf("read response: %v", err)
 	}
 	defer response.Body.Close()
 
-	if response.StatusCode != http.StatusSwitchingProtocols {
-		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusSwitchingProtocols)
+	if response.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusNotImplemented)
 	}
-	if response.Header.Get("Sec-WebSocket-Accept") != "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=" {
-		t.Fatalf("unexpected websocket accept header: %q", response.Header.Get("Sec-WebSocket-Accept"))
+	if response.Header.Get("Upgrade") != "" {
+		t.Fatalf("response must not advertise a websocket upgrade, got Upgrade: %q", response.Header.Get("Upgrade"))
+	}
+	body, _ := io.ReadAll(response.Body)
+	if !strings.Contains(string(body), "not implemented") {
+		t.Fatalf("body must state the endpoint is not implemented: %q", string(body))
 	}
 }
 

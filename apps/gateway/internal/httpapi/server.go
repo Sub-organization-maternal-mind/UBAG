@@ -6,10 +6,8 @@ import (
 	"context"
 	"crypto/rand"
 	crypto_rsa "crypto/rsa"
-	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -347,6 +345,11 @@ type Server struct {
 
 	metrics *metricState
 	mux     chi.Router
+
+	// draining is flipped at shutdown BEFORE the listeners close so the
+	// /v1/ready probe fails and a load balancer stops routing new traffic
+	// while in-flight requests drain. See BeginDrain and handleReady.
+	draining atomic.Bool
 }
 
 type metricState struct {
@@ -402,6 +405,22 @@ func (recorder *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	}
 	recorder.status = http.StatusSwitchingProtocols
 	return hijacker.Hijack()
+}
+
+// Flush implements http.Flusher so streaming handlers (the SSE job stream, the
+// OpenAI facade) can push bytes through this middleware to the client. Without
+// it the handler's w.(http.Flusher) assertion fails and the stream never
+// flushes until the handler returns.
+func (recorder *statusRecorder) Flush() {
+	if flusher, ok := recorder.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+// Unwrap exposes the wrapped writer so http.ResponseController can reach the
+// underlying connection (e.g. SetWriteDeadline for bounded SSE writes).
+func (recorder *statusRecorder) Unwrap() http.ResponseWriter {
+	return recorder.ResponseWriter
 }
 
 func NewServer(config Config) *Server {
@@ -619,9 +638,24 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// BeginDrain flips the readiness override: /v1/ready reports 503 so a load
+// balancer stops routing new traffic while in-flight requests finish. The
+// gateway calls it as the FIRST shutdown step, before any listener closes.
+func (s *Server) BeginDrain() {
+	s.draining.Store(true)
+}
+
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeMethodNotAllowed(w, r, http.MethodGet)
+		return
+	}
+
+	// Drain override short-circuits the store probes: during shutdown the
+	// stores are typically still fine, but the LB must see "not ready" the
+	// moment draining starts.
+	if s.draining.Load() {
+		s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-READY-DRAINING-001", "gateway is draining for shutdown", false))
 		return
 	}
 
@@ -1270,85 +1304,18 @@ func (s *Server) replayWebhook(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleStream implements GET /v1/stream. There is no WebSocket server: the
+// previous stub completed the upgrade handshake, emitted heartbeats for two
+// seconds, and closed — advertising a bi-directional stream the gateway does
+// not actually provide. The supported streaming surfaces are the SSE job
+// stream (GET /v1/sse/jobs/{id}) and GET /v1/events; this endpoint reports
+// honestly that it is not implemented instead of faking an upgrade.
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeMethodNotAllowed(w, r, http.MethodGet)
 		return
 	}
-
-	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") && strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade") {
-		s.handleWebSocketUpgrade(w, r)
-		return
-	}
-
-	w.Header().Set("Upgrade", "websocket")
-	s.writeError(w, r, http.StatusUpgradeRequired, validationError("UBAG-VALIDATION-WEBSOCKET-UPGRADE-001", "/v1/stream requires a WebSocket upgrade"))
-}
-
-func (s *Server) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) {
-	key := strings.TrimSpace(r.Header.Get("Sec-WebSocket-Key"))
-	if key == "" {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WEBSOCKET-KEY-001", "Sec-WebSocket-Key is required"))
-		return
-	}
-	decodedKey, err := base64.StdEncoding.DecodeString(key)
-	if err != nil || len(decodedKey) != 16 {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WEBSOCKET-KEY-001", "Sec-WebSocket-Key must be a base64-encoded 16-byte nonce"))
-		return
-	}
-
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		s.writeError(w, r, http.StatusInternalServerError, internalError("response writer cannot upgrade websocket"))
-		return
-	}
-
-	conn, buffer, err := hijacker.Hijack()
-	if err != nil {
-		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to upgrade websocket"))
-		return
-	}
-	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
-
-	accept := websocketAcceptKey(key)
-	_, _ = fmt.Fprintf(buffer, "HTTP/1.1 101 Switching Protocols\r\n")
-	_, _ = fmt.Fprintf(buffer, "Upgrade: websocket\r\n")
-	_, _ = fmt.Fprintf(buffer, "Connection: Upgrade\r\n")
-	_, _ = fmt.Fprintf(buffer, "Sec-WebSocket-Accept: %s\r\n", accept)
-	_, _ = fmt.Fprintf(buffer, "Ubag-Trace-Id: %s\r\n", traceIDFromContext(r.Context()))
-	_, _ = fmt.Fprintf(buffer, "\r\n")
-	_ = buffer.Flush()
-
-	welcome := map[string]any{
-		"api_version": s.apiVersion,
-		"type":        "stream.opened",
-		"trace_id":    traceIDFromContext(r.Context()),
-		"created_at":  time.Now().UTC(),
-	}
-	encoded, _ := json.Marshal(welcome)
-	_, _ = conn.Write(websocketTextFrame(encoded))
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	for sequence := 1; sequence <= 8; sequence++ {
-		select {
-		case <-r.Context().Done():
-			return
-		case now := <-ticker.C:
-			heartbeat := map[string]any{
-				"api_version": s.apiVersion,
-				"type":        "stream.heartbeat",
-				"sequence":    sequence,
-				"trace_id":    traceIDFromContext(r.Context()),
-				"created_at":  now.UTC(),
-			}
-			payload, _ := json.Marshal(heartbeat)
-			if _, err := conn.Write(websocketTextFrame(payload)); err != nil {
-				return
-			}
-		}
-	}
-	_, _ = conn.Write([]byte{0x88, 0x00})
+	s.writeError(w, r, http.StatusNotImplemented, validationError("UBAG-VALIDATION-STREAM-UNSUPPORTED-001", "/v1/stream is not implemented; use GET /v1/sse/jobs/{id} (SSE) or GET /v1/events"))
 }
 
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
@@ -1700,6 +1667,16 @@ func (s *Server) handleJobByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// SSE stream budgets. The per-connection TTL bounds how long one stream can
+// hold a slot (clients reconnect and resume), the heartbeat keeps proxies and
+// clients from declaring an idle stream dead, and the write timeout drops a
+// stalled client instead of letting it block the handler forever.
+const (
+	sseHeartbeatInterval = 15 * time.Second
+	sseConnectionTTL     = 10 * time.Minute
+	sseWriteTimeout      = 10 * time.Second
+)
+
 func (s *Server) handleJobSSE(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeMethodNotAllowed(w, r, http.MethodGet)
@@ -1732,37 +1709,64 @@ func (s *Server) handleJobSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 	flusher, _ := w.(http.Flusher)
+	controller := http.NewResponseController(w)
+	// Bounded write: a stalled client (full TCP buffer, dead peer) must be
+	// dropped, not stall the event loop.
+	writeFrame := func(frame string) bool {
+		_ = controller.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
+		if _, err := fmt.Fprint(w, frame); err != nil {
+			return false
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return true
+	}
+	writeEvent := func(event jobstore.Event) bool {
+		payload, _ := json.Marshal(jobEventToResponse(event, traceIDFromContext(r.Context())))
+		return writeFrame(fmt.Sprintf("id: %s\nevent: job.%s\ndata: %s\n\n", event.ID, event.Type, payload))
+	}
 	s.incrementSSEConnections()
 	defer s.decrementSSEConnections()
 
 	afterSequence := 0
 	for _, event := range events {
-		payload, _ := json.Marshal(jobEventToResponse(event, traceIDFromContext(r.Context())))
-		_, _ = fmt.Fprintf(w, "id: %s\nevent: job.%s\ndata: %s\n\n", event.ID, event.Type, payload)
+		if !writeEvent(event) {
+			return
+		}
 		afterSequence = event.Sequence
-	}
-	if flusher != nil {
-		flusher.Flush()
 	}
 	if strings.EqualFold(r.URL.Query().Get("snapshot"), "true") {
 		return
 	}
 
+	// Per-connection deadline: close after the TTL; SSE clients reconnect and
+	// resume from the last event they saw.
+	expiresAt := time.Now().Add(sseConnectionTTL)
 	for {
-		nextEvents, _, err := s.jobs.WaitEvents(r.Context(), job.ID, afterSequence, 100)
-		if err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return
-			}
+		if time.Now().After(expiresAt) {
+			return
+		}
+		// Bounded wait: WaitEvents returns as soon as events land, and the
+		// window expiry doubles as the heartbeat tick, so an idle stream emits
+		// a ": ping" comment every interval instead of staying silent (silent
+		// connections get killed by proxies and look dead to clients).
+		waitCtx, cancel := context.WithTimeout(r.Context(), sseHeartbeatInterval)
+		nextEvents, _, err := s.jobs.WaitEvents(waitCtx, job.ID, afterSequence, 100)
+		cancel()
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+			// Client went away (Canceled) or the store failed: close the
+			// stream; the client reconnects and resumes.
 			return
 		}
 		for _, event := range nextEvents {
-			payload, _ := json.Marshal(jobEventToResponse(event, traceIDFromContext(r.Context())))
-			_, _ = fmt.Fprintf(w, "id: %s\nevent: job.%s\ndata: %s\n\n", event.ID, event.Type, payload)
+			if !writeEvent(event) {
+				return
+			}
 			afterSequence = event.Sequence
 		}
-		if flusher != nil {
-			flusher.Flush()
+		if len(nextEvents) == 0 && !writeFrame(": ping\n\n") {
+			return
 		}
 	}
 }
@@ -3701,26 +3705,6 @@ func promLabel(value string) string {
 	return value
 }
 
-func websocketAcceptKey(key string) string {
-	const websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-	sum := sha1.Sum([]byte(key + websocketGUID))
-	return base64.StdEncoding.EncodeToString(sum[:])
-}
-
-func websocketTextFrame(payload []byte) []byte {
-	frame := []byte{0x81}
-	length := len(payload)
-	switch {
-	case length < 126:
-		frame = append(frame, byte(length))
-	case length <= 65535:
-		frame = append(frame, 126, byte(length>>8), byte(length))
-	default:
-		frame = append(frame, 127, byte(length>>56), byte(length>>48), byte(length>>40), byte(length>>32), byte(length>>24), byte(length>>16), byte(length>>8), byte(length))
-	}
-	return append(frame, payload...)
-}
-
 func constantTimeEqual(actual, expected string) bool {
 	actualHash := sha256.Sum256([]byte(actual))
 	expectedHash := sha256.Sum256([]byte(expected))
@@ -3848,6 +3832,11 @@ func (s *Server) withMetrics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		recorder := &statusRecorder{ResponseWriter: w}
+		// Every response carries the request's trace id — the OpenAPI spec
+		// documents this header and operators correlate logs with it.
+		if traceID := traceIDFromContext(r.Context()); traceID != "" {
+			recorder.Header().Set(webhooks.TraceIDHeader, traceID)
+		}
 		next.ServeHTTP(recorder, r)
 		status := recorder.status
 		if status == 0 {
@@ -3856,6 +3845,11 @@ func (s *Server) withMetrics(next http.Handler) http.Handler {
 		route := chi.RouteContext(r.Context()).RoutePattern()
 		if route == "" {
 			route = "unmatched"
+		}
+		// Wildcard registrations collapse every job sub-path onto
+		// "/v1/jobs/*"; per-route SLO labels need the canonical pattern.
+		if route == "/v1/jobs/*" {
+			route = routePattern(r.URL.Path)
 		}
 		s.recordMetric(route, metricMethod(r.Method), status, time.Since(start))
 	})

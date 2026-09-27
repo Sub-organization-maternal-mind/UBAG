@@ -9,14 +9,20 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timedelta
+import os
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Mapping
 
 JsonObject = Dict[str, Any]
 
-# Fixed clock so offline/mock runs are byte-for-byte deterministic, matching the
-# mock adapter and adapter_registry manual-session events.
+# Synthetic clock for offline/mock runs (byte-for-byte deterministic, matching
+# the mock adapter and adapter_registry manual-session events). Production
+# workers emit real wall-clock timestamps — a synthetic 2026-01-01 stored
+# verbatim into /v1/concurrency and /v1/concurrency telemetry made those
+# records useless for correlation. Set UBAG_WORKER_EVENT_CLOCK=fixed to opt
+# back into the deterministic clock (tests, offline fixture generation).
 BASE_CLOCK = datetime(2026, 1, 1, 0, 0, 0)
+_REAL_CLOCK = os.environ.get("UBAG_WORKER_EVENT_CLOCK") != "fixed"
 
 # Conversation-affinity telemetry event names. These are projected into the
 # gateway conversations store by WorkerConsumer (intercepted, not appended to
@@ -38,6 +44,10 @@ def canonical_json(value: Any) -> str:
 
 
 def timestamp(sequence: int) -> str:
+    if _REAL_CLOCK:
+        return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace(
+            "+00:00", "Z"
+        )
     return (BASE_CLOCK + timedelta(milliseconds=250 * (sequence - 1))).isoformat(
         timespec="milliseconds"
     ) + "Z"

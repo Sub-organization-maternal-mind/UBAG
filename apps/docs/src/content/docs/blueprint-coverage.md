@@ -13,7 +13,7 @@ Every major blueprint section is represented in the docs site and mapped to impl
 | --- | --- | --- | --- |
 | Product vision and principles | M0 | M0 | Planning baseline. |
 | API gateway and contracts | M0 | v0 | REST, SSE, idempotency, stable errors first. |
-| WebSocket stream | M0 | v0 | `/v1/stream` accepts WebSocket upgrade, validates the WebSocket key, and keeps the stream open with heartbeat frames. |
+| WebSocket stream | M0 | — | Not implemented: `/v1/stream` returns 501 rather than fake a WebSocket upgrade. The supported streaming surfaces are `GET /v1/sse/jobs/{id}` (SSE with heartbeats) and `GET /v1/events`. |
 | gRPC | M0 | v1 | Protobuf service contracts track REST lifecycle operations. |
 | Browser worker and adapter SDK | M0 | v0 | Mock runtime, generic manifests, provider safe-mode stubs, and manual-session events. |
 | AI provider adapters | M0 | v1 | DeepSeek, ChatGPT, Gemini, Mistral, Perplexity, generic chat/form, mock. |

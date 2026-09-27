@@ -15,6 +15,7 @@ provider account concurrently.
 from __future__ import annotations
 
 import os
+import signal
 import sys
 from pathlib import Path
 
@@ -42,7 +43,24 @@ def _orchestrator_if_enabled(worker_id: str = "worker-daemon"):
 
 
 def main() -> int:
-    return serve(sys.stdin, sys.stdout, WarmWorkerDaemon(orchestrator=_orchestrator_if_enabled()))
+    daemon = WarmWorkerDaemon(orchestrator=_orchestrator_if_enabled())
+
+    # SIGTERM/SIGINT previously leaked the warm browser page: nothing closed
+    # the daemon. Close it (pages + driver) and exit cleanly.
+    def _terminate(signum, _frame):
+        try:
+            daemon.close()
+        except Exception:
+            pass
+        raise SystemExit(0)
+
+    for _sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(_sig, _terminate)
+        except (ValueError, OSError):
+            pass
+
+    return serve(sys.stdin, sys.stdout, daemon)
 
 
 if __name__ == "__main__":
