@@ -193,6 +193,10 @@ export const UBAG_ENDPOINTS = {
     "method": "POST",
     "path": "/v1/openai/embeddings"
   },
+  "GET /v1/antigravity/accounts": {
+    "method": "GET",
+    "path": "/v1/antigravity/accounts"
+  },
   "GET /v1/antigravity/accounts/{id}/login": {
     "method": "GET",
     "path": "/v1/antigravity/accounts/{id}/login"

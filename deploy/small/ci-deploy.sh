@@ -118,12 +118,16 @@ deploy_dashboard() {
   [ -f "$staging/index.html" ] || { rm -rf "$staging"; fail "tarball has no index.html; live dist untouched"; }
 
   # Atomic-ish swap: keep the current dist one generation back for instant
-  # rollback, then move staging into place. nginx reads files per-request from
-  # this path, so no container restart is needed.
+  # rollback. The host path swap is not enough on its own — the nginx container
+  # bind-mounts this directory and the mount pins the directory INODE, so it
+  # must be recreated to re-bind to the swapped-in directory. nginx:alpine
+  # starts in about a second.
   rm -rf "$previous_dir"
   if [ -d "$DASHBOARD_DIR" ]; then mv "$DASHBOARD_DIR" "$previous_dir"; fi
   mv "$staging" "$DASHBOARD_DIR"
-  log "dashboard dist replaced ($(du -sh "$DASHBOARD_DIR" | cut -f1), was $(du -sh "$previous_dir" 2>/dev/null | cut -f1 || echo '?'))"
+  log "dashboard dist replaced ($(du -sh "$DASHBOARD_DIR" | cut -f1), was $(du -sh "$previous_dir" 2>/dev/null | cut -f1 || echo '?')); recreating nginx-dashboard to re-bind the mount"
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --no-deps --force-recreate nginx-dashboard >/dev/null
+  sleep 3
 
   # Verify through the same nginx the operator uses. /dashboard/ itself is
   # behind basic auth, so probe the public no-auth service worker instead.

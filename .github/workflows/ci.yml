@@ -287,7 +287,7 @@ jobs:
       - name: Build gateway image
         run: docker build -t ubag/gateway:ci-scan -f deploy/small/gateway.Dockerfile .
       - name: Trivy image scan (HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ubag/gateway:ci-scan
           format: table
@@ -296,7 +296,7 @@ jobs:
           exit-code: "1"
 
       - name: IaC scan (Terraform / Compose / Helm)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: config
           scan-ref: .
