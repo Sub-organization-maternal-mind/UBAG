@@ -145,18 +145,25 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-      nats:
-        image: nats:2.10-alpine
-        ports: ['4222:4222']
-        options: >-
-          --health-cmd "nats-server --help >/dev/null"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
+      - name: Start NATS with JetStream
+        run: |
+          docker run -d --name nats-js -p 4222:4222 nats:2.10-alpine -js
+          for i in $(seq 1 20); do
+            docker exec nats-js nats-server --help >/dev/null 2>&1 && docker logs nats-js 2>&1 | grep -q "Server is ready" && break
+            sleep 1
+          done
+      - name: Apply Postgres migrations
+        env:
+          UBAG_TEST_POSTGRES_DSN: postgres://ubag:ubag-test@localhost:5432/ubag_test?sslmode=disable
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
+          for f in migrations/postgres/*.sql; do
+            psql "$UBAG_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -q -f "$f"
+          done
       - name: go test ./...
         working-directory: apps/gateway
         env:

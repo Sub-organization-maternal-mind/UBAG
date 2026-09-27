@@ -13,11 +13,8 @@
 # postgres:16-alpine base. Tag pinned to match minio-init in docker-compose.small.yml.
 FROM minio/mc:RELEASE.2025-04-16T18-13-26Z AS mc
 
+# trivy:ignore:DS-0002 — root-owned backup volume writes are the tool purpose
 FROM postgres:16-alpine
 COPY --from=mc /usr/bin/mc /usr/local/bin/mc
 RUN mc --version
 
-# trivy:ignore:DS-0002 — the backup runner writes to host-mounted backup
-# directories owned by root and runs under the compose `backup` profile with
-# root-owned volume mounts; dropping privileges would break the writes it
-# exists to perform.

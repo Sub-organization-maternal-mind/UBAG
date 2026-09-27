@@ -18,6 +18,7 @@ ENV UBAG_BASE_PATH=/dashboard
 RUN pnpm install --frozen-lockfile \
  && pnpm --filter @ubag/dashboard build
 
+# trivy:ignore:DS-0002 — official nginx entrypoint needs root for envsubst/htpasswd before dropping to the nginx user
 FROM nginx:1.27-alpine
 
 # nginx:alpine links OpenSSL into nginx itself but doesn't ship the `openssl`
@@ -33,7 +34,3 @@ RUN chmod +x /docker-entrypoint.d/40-generate-htpasswd.sh
 # UBAG_-prefixed vars, so nginx variables like $host/$uri survive untouched.
 ENV NGINX_ENVSUBST_FILTER=UBAG_
 
-# trivy:ignore:DS-0002 — the official nginx entrypoint must start as root to
-# run envsubst and generate .htpasswd before re-execing workers as the nginx
-# user; this is the upstream image's designed lifecycle, not an oversight.
-EXPOSE 80

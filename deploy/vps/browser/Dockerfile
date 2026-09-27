@@ -15,6 +15,7 @@
 # WebSocket) without adding a second apt repo to the Chrome image.
 FROM node:22-bookworm-slim AS node
 
+# trivy:ignore:DS-0002 — headed Chrome + Xvfb require root in this container (CDP attach only; no untrusted input executes here)
 FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 

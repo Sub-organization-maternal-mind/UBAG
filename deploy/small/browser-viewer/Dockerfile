@@ -13,6 +13,7 @@
 #
 # NOTE: Google ships Linux Chrome for amd64/x86_64 only. The browser-viewer host
 # must be x86_64 (the small-profile VPS is).
+# trivy:ignore:DS-0002 — the viewer serves the operator console over a fixed low port and writes to root-owned state paths
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
