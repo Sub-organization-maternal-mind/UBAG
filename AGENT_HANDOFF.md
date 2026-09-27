@@ -2,6 +2,79 @@
 
 Last updated: 2026-09-28
 
+## REMAINING WORK — architecture-audit closeout (read this first, 2026-09-28)
+
+The backend/API audit (34 findings, WS-1…WS-8) is implemented and pushed
+through commit `79c6dee`. The dashboard ultra-fluid polish pass is fully
+landed (3963e75). What is LEFT, in priority order:
+
+1. **Verify CI is green on `79c6dee`.** The last three red gates were fixed
+   in 79c6dee (pgvector/pgvector:pg16 service image for migration 0008's
+   `vector` extension; CI apply-loop skips 0008 exactly like the production
+   entrypoint's OPTIONAL_MIGRATIONS; KSV-041 annotation moved directly above
+   `- secrets` in deploy/operator/config/rbac/clusterrole.yaml) but the run
+   had not finished when the session closed. If red: check Gateway (Go)
+   "Apply Postgres migrations" and Supply-chain "IaC scan" first — those
+   were the two jobs still in play. The IaC annotations format is
+   `# trivy:ignore:DS-0002 — <reason>` placed directly ABOVE the offending
+   line (for KSV-0041: above `- secrets`); trivy-action@v0.36.0 honors them.
+2. **Production deploy verification.** Gateway Image has been deploying
+   every main push (GHCR sha-<commit> tags + deploy-gateway + deploy-dashboard
+   via deploy/small/ci-deploy.sh). Verify prod: `grep UBAG_GATEWAY_IMAGE
+   /opt/docker/ubag/deploy/vps/env.local` on 185.252.233.186 pins
+   sha-<HEAD>, containers healthy, and https://ubag.polytronx.com/dashboard/sw.js
+   returns 200. NOTE: the audit's breaking changes (AGENT_HANDOFF section
+   below) are now LIVE on prod — batch endpoint requires Idempotency-Key
+   (dashboard client already sends one), MFA gate widened, PAT/JIT hardened.
+   The VPS box itself needs NO rebuild — CI builds images; the box only pulls.
+3. **internal/plugins WASM host deletion** (last open deletion item). Kept
+   only because server.go had concurrent uncommitted edits; those are now
+   committed (7e9426b), so it is unblocked: remove internal/plugins/,
+   the `Plugins` field from httpapi Config/Server, the `s.plugins.RunHooks`
+   call sites in createJob/processBatchEntry (or keep the nil-guard hooks —
+   they are no-ops today), and its tests. httpapi.Plugins is never
+   constructed by serve.go.
+4. **eslint + golangci-lint** (review item 50, deliberately deferred): no
+   local toolchain to verify a gating config before CI runs it. Add
+   .golangci.yml (conservative default linters) as a NON-blocking job first,
+   triage findings, then flip to gating. Same for eslint on apps/dashboard
+   (svelte-check + tsc gate today).
+5. **MinIO integration test** — the MinIO service container was removed:
+   quay.io/minio now requires authenticated pulls (docker hub minio/minio
+   latest tags were deleted). TestMinIOArtifactStore stays env-gated/skipped.
+   Fix = pin any reachable public MinIO-compatible image source and restore
+   the service + UBAG_TEST_MINIO_* envs in ci.yml.
+6. **eslint-scale doc ledgers**: IMPLEMENTATION_COVERAGE.md is recounted
+   (45 REST + 286 scenarios); coverage gate stays at 50% with ADR-0014's 80%
+   as documented long-term target — decide whether to raise in steps.
+7. **Dashboard linux baselines**: bot commits them on dashboard-source
+   changes (workflow dashboard-baselines.yml, dispatchable via API or
+   workflow_dispatch); 4 routes (conversations, security, administration,
+   antigravity) still have no chromium-linux baseline by design (see
+   MISSING_LINUX_BASELINES in dashboard.spec.ts) — generate them inside the
+   noble image to close the gap.
+
+Everything else from the review is DONE and verified: WS-1 authz/authn
+(batch gate, JIT/PAT hardening, SSO parity, MFA everywhere, gRPC parity,
+worker option allowlist), WS-2 bounding (7 bodies, audit export cap, zero
+err.Error() leaks, workflow idempotency), WS-3 pagination/CAS/upserts,
+WS-4 migrations (authoritative checksums, transactional+locked, sqlite
+reconciliation 0009–0013, outbox DDL 0017, audit WORM 0018, pool caps),
+WS-5 performance (spool sweeper, per-artifact upload gate, metrics cache,
+server timeouts, bounded memory stores, Link CAS, lease notification,
+rate-limit fail-closed), WS-6 lifecycle (SSE Flush+deadline+heartbeat,
+drain, daemon Close, real worker clock, SLO labels), WS-7 CI (service
+containers, wired gates, pinned tools, new tests for templates/cmd/ubag/
+chat-reaper), WS-8 contract (41 documented ops, bidirectional gate,
+rbac.ts↔authz.go cross-check, doc corrections).
+
+**Deployment pipeline** (from the same session): gateway-image.yml builds
+gateway+dashboard on every main push, deploys pull-based via the
+forced-command key (deploy-gateway sha-<sha> / deploy-dashboard with the
+dist tarball over stdin — ci-deploy.sh swaps apps/dashboard/dist and
+recreates nginx-dashboard to re-bind the inode). e2e-live's daily cron is
+gated behind the LIVE_E2E_ENABLED repo variable (no staging exists).
+
 ## Breaking HTTP contract changes (2026-09-27/28 architecture audit)
 
 The 2026-09-27/28 audit changeset (commits 23fd299…fb8667b, "secure by

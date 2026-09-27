@@ -1,6 +1,8 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-09-28
+Last updated: 2026-09-28 (CI closeout in progress — see AGENT_HANDOFF.md
+"REMAINING WORK" for the live list: verify ci green on 79c6dee, verify prod
+deploy, plugins deletion, eslint/golangci-lint, MinIO test image source.)
 
 ## 2026-09-28 — Backend/API architecture audit implemented (WS-1…WS-8)
 
