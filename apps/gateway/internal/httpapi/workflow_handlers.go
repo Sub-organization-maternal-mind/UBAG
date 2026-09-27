@@ -224,7 +224,8 @@ func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
 		Operation: "create_workflow",
 		Key:       idempotencyKey,
 	}
-	decision, err := s.idempotency.Reserve(r.Context(), scope, hashBytes(raw))
+	requestHash := hashBytes(raw)
+	decision, err := s.idempotency.Reserve(r.Context(), scope, requestHash)
 	if err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to reserve idempotency key"))
 		return
@@ -249,12 +250,12 @@ func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
 		Steps:    steps,
 	})
 	if err != nil {
-		_ = s.idempotency.Release(r.Context(), scope)
+		_ = s.idempotency.Release(r.Context(), scope, requestHash)
 		// Fixed message: store failures must not leak internal error text.
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WORKFLOW-DEFINITION-001", "workflow definition was rejected"))
 		return
 	}
-	if err := s.idempotency.Complete(r.Context(), scope, def.ID, http.StatusCreated); err != nil {
+	if err := s.idempotency.Complete(r.Context(), scope, requestHash, def.ID, http.StatusCreated); err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to complete idempotency record"))
 		return
 	}

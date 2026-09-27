@@ -245,7 +245,26 @@ func (s *SQLiteStore) List(ctx context.Context, filter ListFilter) ([]Job, error
 	addFilter("app_id", filter.AppID)
 	addFilter("status", filter.Status)
 	addFilter("target", filter.Target)
-	query += " ORDER BY created_at ASC, id ASC"
+	// Cursor pagination is resolved store-side with a row-value tuple compare
+	// (same shape as ListAllEvents' AfterEventID) so a list route never has to
+	// load the full table to locate the cursor position.
+	if strings.TrimSpace(filter.AfterID) != "" {
+		operator := ">"
+		if filter.Descending {
+			operator = "<"
+		}
+		args = append(args, filter.AfterID)
+		query += fmt.Sprintf(" AND (created_at, id) %s (SELECT created_at, id FROM gateway_jobs WHERE id = ?)", operator)
+	}
+	if filter.Descending {
+		query += " ORDER BY created_at DESC, id DESC"
+	} else {
+		query += " ORDER BY created_at ASC, id ASC"
+	}
+	if filter.Limit > 0 {
+		args = append(args, filter.Limit)
+		query += " LIMIT ?"
+	}
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

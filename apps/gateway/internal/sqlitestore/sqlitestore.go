@@ -22,8 +22,9 @@ func Schema() string {
 // Apply runs the embedded schema against db. It is safe to call repeatedly
 // because every statement uses IF NOT EXISTS / INSERT OR IGNORE semantics.
 // After the schema, Apply evolves pre-existing tables whose definitions have
-// moved on (currently: gateway_jobs gains the scheduled-job shape); fresh
-// databases already match and skip that step.
+// moved on (currently: gateway_jobs gains the scheduled-job shape and
+// gateway_idempotency_records gains the in-flight lock columns); fresh
+// databases already match and skip those steps.
 func Apply(ctx context.Context, db *sql.DB) error {
 	if db == nil {
 		return fmt.Errorf("sqlitestore: db is nil")
@@ -32,6 +33,9 @@ func Apply(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("sqlitestore: apply schema: %w", err)
 	}
 	if err := migrateJobsScheduledSupport(ctx, db); err != nil {
+		return err
+	}
+	if err := migrateIdempotencyLockColumns(ctx, db); err != nil {
 		return err
 	}
 	return nil

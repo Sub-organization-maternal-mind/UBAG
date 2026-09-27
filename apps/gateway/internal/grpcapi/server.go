@@ -228,15 +228,15 @@ func (s *Server) CreateJob(ctx context.Context, req *ubagv1.CreateJobRequest) (*
 		TraceID:        traceID(),
 	})
 	if err != nil {
-		_ = s.idempotency.Release(ctx, scope)
+		_ = s.idempotency.Release(ctx, scope, requestHash)
 		return nil, status.Error(codes.Internal, "failed to create job")
 	}
 	if _, err := s.executor.EnqueueJob(ctx, job); err != nil {
 		_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
-		_ = s.idempotency.Release(ctx, scope)
+		_ = s.idempotency.Release(ctx, scope, requestHash)
 		return nil, status.Error(codes.Unavailable, "failed to enqueue job for execution")
 	}
-	if err := s.idempotency.Complete(ctx, scope, job.ID, 202); err != nil {
+	if err := s.idempotency.Complete(ctx, scope, requestHash, job.ID, 202); err != nil {
 		return nil, status.Error(codes.Internal, "failed to complete idempotency record")
 	}
 
@@ -280,19 +280,22 @@ func (s *Server) ListJobs(ctx context.Context, req *ubagv1.ListJobsRequest) (*ub
 		return nil, status.Error(codes.InvalidArgument, "limit must be an integer from 1 to 100")
 	}
 
+	// The store applies the sort direction, the exclusive cursor and the limit
+	// (limit+1 so truncation is detectable), so a page request never loads the
+	// tenant's whole job table to render one page.
 	jobs, err := s.jobs.List(ctx, jobstore.ListFilter{
-		TenantID: s.tenantID,
-		AppID:    s.appID,
-		Status:   statusFilter,
-		Target:   target,
+		TenantID:   s.tenantID,
+		AppID:      s.appID,
+		Status:     statusFilter,
+		Target:     target,
+		Descending: sortParam != "created_at",
+		AfterID:    strings.TrimSpace(req.GetCursor()),
+		Limit:      limit + 1,
 	})
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to list jobs")
 	}
 	sortJobs(jobs, sortParam)
-	if cursor := strings.TrimSpace(req.GetCursor()); cursor != "" {
-		jobs = jobsAfterCursor(jobs, cursor)
-	}
 	var nextCursor string
 	if len(jobs) > limit {
 		nextCursor = jobs[limit-1].ID
@@ -333,19 +336,19 @@ func (s *Server) CancelJob(ctx context.Context, req *ubagv1.JobMutationRequest) 
 		reason = "caller_cancelled"
 	}
 	if err := s.executor.CancelJob(ctx, existing, reason); err != nil {
-		_ = s.idempotency.Release(ctx, scope)
+		_ = s.idempotency.Release(ctx, scope, record.RequestHash)
 		return nil, status.Error(codes.Unavailable, "failed to cancel job execution")
 	}
 	job, found, err := s.jobs.UpdateStatus(ctx, existing.ID, jobstore.StatusCanceled)
 	if err != nil {
-		_ = s.idempotency.Release(ctx, scope)
+		_ = s.idempotency.Release(ctx, scope, record.RequestHash)
 		return nil, status.Error(codes.Internal, "failed to cancel job")
 	}
 	if !found {
-		_ = s.idempotency.Release(ctx, scope)
+		_ = s.idempotency.Release(ctx, scope, record.RequestHash)
 		return nil, status.Error(codes.NotFound, "job was not found")
 	}
-	if err := s.idempotency.Complete(ctx, scope, job.ID, 202); err != nil {
+	if err := s.idempotency.Complete(ctx, scope, record.RequestHash, job.ID, 202); err != nil {
 		return nil, status.Error(codes.Internal, "failed to complete idempotency record")
 	}
 	return jobToResponse(job, false), nil
@@ -386,15 +389,15 @@ func (s *Server) RetryJob(ctx context.Context, req *ubagv1.JobMutationRequest) (
 		RetryOf:        original.ID,
 	})
 	if err != nil {
-		_ = s.idempotency.Release(ctx, scope)
+		_ = s.idempotency.Release(ctx, scope, record.RequestHash)
 		return nil, status.Error(codes.Internal, "failed to retry job")
 	}
 	if _, err := s.executor.EnqueueJob(ctx, job); err != nil {
 		_, _, _ = s.jobs.UpdateStatus(ctx, job.ID, jobstore.StatusFailedRetryable)
-		_ = s.idempotency.Release(ctx, scope)
+		_ = s.idempotency.Release(ctx, scope, record.RequestHash)
 		return nil, status.Error(codes.Unavailable, "failed to enqueue retry job for execution")
 	}
-	if err := s.idempotency.Complete(ctx, scope, job.ID, 202); err != nil {
+	if err := s.idempotency.Complete(ctx, scope, record.RequestHash, job.ID, 202); err != nil {
 		return nil, status.Error(codes.Internal, "failed to complete idempotency record")
 	}
 	return jobToResponse(job, false), nil
@@ -742,23 +745,23 @@ func isTerminalEvent(event jobstore.Event) bool {
 	return false
 }
 
+// sortJobs orders jobs by created_at, breaking ties on id in the SAME
+// direction as the sort so the pagination cursor (the last job's id) is
+// deterministic and consistent with the store's ORDER BY created_at, id.
 func sortJobs(jobs []jobstore.Job, sortParam string) {
 	descending := sortParam == "" || sortParam == "-created_at"
 	sort.SliceStable(jobs, func(left, right int) bool {
+		if jobs[left].CreatedAt.Equal(jobs[right].CreatedAt) {
+			if descending {
+				return jobs[left].ID > jobs[right].ID
+			}
+			return jobs[left].ID < jobs[right].ID
+		}
 		if descending {
 			return jobs[left].CreatedAt.After(jobs[right].CreatedAt)
 		}
 		return jobs[left].CreatedAt.Before(jobs[right].CreatedAt)
 	})
-}
-
-func jobsAfterCursor(jobs []jobstore.Job, cursor string) []jobstore.Job {
-	for index, job := range jobs {
-		if job.ID == cursor {
-			return jobs[index+1:]
-		}
-	}
-	return jobs
 }
 
 // allowGatewayAction delegates to the one shared RBAC policy (internal/authz).

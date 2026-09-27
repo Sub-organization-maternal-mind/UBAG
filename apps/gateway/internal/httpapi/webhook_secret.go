@@ -254,7 +254,8 @@ func (s *Server) rotateWebhookSecret(w http.ResponseWriter, r *http.Request) {
 		Operation: "rotate_webhook_secret",
 		Key:       idempotencyKey,
 	}
-	decision, err := s.idempotency.Reserve(r.Context(), scope, hashBytes(raw))
+	requestHash := hashBytes(raw)
+	decision, err := s.idempotency.Reserve(r.Context(), scope, requestHash)
 	if err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to reserve idempotency key"))
 		return
@@ -296,11 +297,11 @@ func (s *Server) rotateWebhookSecret(w http.ResponseWriter, r *http.Request) {
 
 	stored, err := s.webhookSecrets.Rotate(r.Context(), rotation)
 	if err != nil {
-		_ = s.idempotency.Release(r.Context(), scope)
+		_ = s.idempotency.Release(r.Context(), scope, requestHash)
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to persist webhook secret rotation"))
 		return
 	}
-	if err := s.idempotency.Complete(r.Context(), scope, stored.ID, http.StatusOK); err != nil {
+	if err := s.idempotency.Complete(r.Context(), scope, requestHash, stored.ID, http.StatusOK); err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to complete idempotency record"))
 		return
 	}

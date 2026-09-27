@@ -925,7 +925,10 @@ func (s *Server) jobMetricCounts(ctx context.Context) (map[string]int, int, erro
 		}
 		return result, total, nil
 	}
-	jobs, err := s.jobs.List(ctx, jobstore.ListFilter{})
+	// Fallback for stores that do not implement MetricsStore: still bound the
+	// read (this feeds the unauthenticated /v1/metrics scrape) instead of
+	// loading the entire job table.
+	jobs, err := s.jobs.List(ctx, jobstore.ListFilter{Limit: jobstore.UnboundedScanLimit})
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1029,24 +1032,32 @@ func (s *Server) handleTemplates(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID, appID := requestScope(r)
-	items, err := s.templates.List(r.Context(), templates.ListFilter{TenantID: tenantID, AppID: appID})
+	// The store applies the exclusive ID cursor and the limit (limit+1 so
+	// truncation is detectable) instead of materializing the whole catalog.
+	items, err := s.templates.List(r.Context(), templates.ListFilter{
+		TenantID: tenantID,
+		AppID:    appID,
+		AfterID:  strings.TrimSpace(r.URL.Query().Get("cursor")),
+		Limit:    limit + 1,
+	})
 	if err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to list templates"))
 		return
+	}
+	nextCursor := (*string)(nil)
+	if len(items) > limit {
+		cursorValue := items[limit-1].ID
+		nextCursor = &cursorValue
+		items = items[:limit]
 	}
 	data := make([]map[string]any, 0, len(items))
 	for _, item := range items {
 		data = append(data, templateToMap(item))
 	}
-	page := collectionAfterCursor(data, strings.TrimSpace(r.URL.Query().Get("cursor")))
-	nextCursor := collectionNextCursor(page, limit)
-	if len(page) > limit {
-		page = page[:limit]
-	}
 	s.writeJSON(w, http.StatusOK, collectionResponse{
 		APIVersion: s.apiVersion,
 		Kind:       "templates",
-		Data:       page,
+		Data:       data,
 		NextCursor: nextCursor,
 		TraceID:    traceIDFromContext(r.Context()),
 	})
@@ -1136,28 +1147,28 @@ func (s *Server) replayWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.TrimSpace(request.DeliveryID) == "" {
-		_ = s.idempotency.Release(r.Context(), scope)
+		_ = s.idempotency.Release(r.Context(), scope, requestHash)
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WEBHOOK-REPLAY-DELIVERY-001", "delivery_id is required for webhook replay"))
 		return
 	}
 	if strings.TrimSpace(request.Reason) == "" {
-		_ = s.idempotency.Release(r.Context(), scope)
+		_ = s.idempotency.Release(r.Context(), scope, requestHash)
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WEBHOOK-REPLAY-REASON-001", "reason is required for webhook replay"))
 		return
 	}
 	replay, found, err := s.webhooks.Replay(r.Context(), tenantID, appID, request.DeliveryID, idempotencyKey, time.Now().UTC())
 	if err != nil {
-		_ = s.idempotency.Release(r.Context(), scope)
+		_ = s.idempotency.Release(r.Context(), scope, requestHash)
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to enqueue webhook replay"))
 		return
 	}
 	if !found {
-		_ = s.idempotency.Release(r.Context(), scope)
+		_ = s.idempotency.Release(r.Context(), scope, requestHash)
 		s.writeError(w, r, http.StatusNotFound, queueError("UBAG-QUEUE-WEBHOOK-DELIVERY-NOT-FOUND-001", "webhook delivery was not found", false))
 		return
 	}
 	resourceID := replay.ID
-	if err := s.idempotency.Complete(r.Context(), scope, resourceID, http.StatusAccepted); err != nil {
+	if err := s.idempotency.Complete(r.Context(), scope, requestHash, resourceID, http.StatusAccepted); err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to complete idempotency record"))
 		return
 	}
@@ -1838,7 +1849,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	}
 	// The reservation owns every cleanup on the error paths below (one
 	// fail() call replaces the hand-repeated release triplets).
-	reservation := s.newJobReservation(scope, tenantID, request.Job.Target, appID)
+	reservation := s.newJobReservation(scope, requestHash, tenantID, request.Job.Target, appID)
 
 	decision, err := s.idempotency.Reserve(r.Context(), scope, requestHash)
 	if err != nil {
@@ -1923,7 +1934,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 	// unchanged enqueue path below.
 	if awaitingAttachments {
 		if staged := stagedAttachmentsFromContext(r.Context()); len(staged) > 0 {
-			if !s.storeStagedAttachments(w, r, job, staged, scope) {
+			if !s.storeStagedAttachments(w, r, job, staged, scope, requestHash) {
 				return
 			}
 			if err := s.maybeDispatchAfterArtifact(r.Context(), job); err != nil {
@@ -1932,7 +1943,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if err := s.idempotency.Complete(r.Context(), scope, job.ID, http.StatusAccepted); err != nil {
+		if err := s.idempotency.Complete(r.Context(), scope, requestHash, job.ID, http.StatusAccepted); err != nil {
 			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to complete idempotency record"))
 			return
 		}
@@ -1996,7 +2007,7 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.idempotency.Complete(r.Context(), scope, job.ID, http.StatusAccepted); err != nil {
+	if err := s.idempotency.Complete(r.Context(), scope, requestHash, job.ID, http.StatusAccepted); err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to complete idempotency record"))
 		return
 	}
@@ -2032,17 +2043,24 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tenantID, appID := requestScope(r)
-	jobs, err := s.jobs.List(r.Context(), jobstore.ListFilter{TenantID: tenantID, AppID: appID, Status: status, Target: target})
+	// The store applies the sort direction, the exclusive cursor and the limit
+	// (limit+1 so truncation is detectable), so a page request never loads the
+	// tenant's whole job table to render one page.
+	jobs, err := s.jobs.List(r.Context(), jobstore.ListFilter{
+		TenantID:   tenantID,
+		AppID:      appID,
+		Status:     status,
+		Target:     target,
+		Descending: sortParam != "created_at",
+		AfterID:    strings.TrimSpace(query.Get("cursor")),
+		Limit:      limit + 1,
+	})
 	if err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to list jobs"))
 		return
 	}
 
 	sortJobs(jobs, sortParam)
-	cursor := strings.TrimSpace(query.Get("cursor"))
-	if cursor != "" {
-		jobs = jobsAfterCursor(jobs, cursor)
-	}
 	nextCursor := (*string)(nil)
 	if len(jobs) > limit {
 		cursorValue := jobs[limit-1].ID
@@ -2155,19 +2173,19 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, id string) {
 
 	reason := jobcore.FirstNonEmpty(mutation.reason, "caller_cancelled")
 	if err := s.executor.CancelJob(r.Context(), existing, reason); err != nil {
-		_ = s.idempotency.Release(r.Context(), mutation.scope)
+		_ = s.idempotency.Release(r.Context(), mutation.scope, mutation.record.RequestHash)
 		s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-CANCEL-001", "failed to cancel job execution", true))
 		return
 	}
 
 	job, found, err := s.jobs.UpdateStatus(r.Context(), id, jobstore.StatusCanceled)
 	if err != nil {
-		_ = s.idempotency.Release(r.Context(), mutation.scope)
+		_ = s.idempotency.Release(r.Context(), mutation.scope, mutation.record.RequestHash)
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to cancel job"))
 		return
 	}
 	if !found {
-		_ = s.idempotency.Release(r.Context(), mutation.scope)
+		_ = s.idempotency.Release(r.Context(), mutation.scope, mutation.record.RequestHash)
 		s.writeJobNotFound(w, r)
 		return
 	}
@@ -2182,13 +2200,13 @@ func (s *Server) cancelJob(w http.ResponseWriter, r *http.Request, id string) {
 		s.releaseConcurrencyTokenForJob(job.ID)
 		notifier := webhooks.JobOutbox{Store: s.webhooks, URLPolicy: s.webhookURLs}
 		if err := notifier.EnqueueTerminalJob(r.Context(), job); err != nil {
-			_ = s.idempotency.Release(r.Context(), mutation.scope)
+			_ = s.idempotency.Release(r.Context(), mutation.scope, mutation.record.RequestHash)
 			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to enqueue webhook delivery"))
 			return
 		}
 	}
 
-	if err := s.idempotency.Complete(r.Context(), mutation.scope, job.ID, http.StatusAccepted); err != nil {
+	if err := s.idempotency.Complete(r.Context(), mutation.scope, mutation.record.RequestHash, job.ID, http.StatusAccepted); err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to complete idempotency record"))
 		return
 	}
@@ -2229,13 +2247,13 @@ func (s *Server) retryJob(w http.ResponseWriter, r *http.Request, id string) {
 		RetryOf:        original.ID,
 	})
 	if err != nil {
-		_ = s.idempotency.Release(r.Context(), mutation.scope)
+		_ = s.idempotency.Release(r.Context(), mutation.scope, mutation.record.RequestHash)
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to retry job"))
 		return
 	}
 	if _, err := s.executor.EnqueueJob(r.Context(), job); err != nil {
 		_, _, _ = s.jobs.UpdateStatus(r.Context(), job.ID, jobstore.StatusFailedRetryable)
-		_ = s.idempotency.Release(r.Context(), mutation.scope)
+		_ = s.idempotency.Release(r.Context(), mutation.scope, mutation.record.RequestHash)
 		var breakerErr *resilience.BreakerOpenError
 		if errors.As(err, &breakerErr) {
 			retryAfterSecs := int(math.Ceil(breakerErr.RetryAfter.Seconds()))
@@ -2252,7 +2270,7 @@ func (s *Server) retryJob(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	if err := s.idempotency.Complete(r.Context(), mutation.scope, job.ID, http.StatusAccepted); err != nil {
+	if err := s.idempotency.Complete(r.Context(), mutation.scope, mutation.record.RequestHash, job.ID, http.StatusAccepted); err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to complete idempotency record"))
 		return
 	}
@@ -3153,23 +3171,23 @@ func replayHTTPStatus(record idempotency.Record, fallback int) int {
 	return fallback
 }
 
+// sortJobs orders jobs by created_at, breaking ties on id in the SAME
+// direction as the sort so the pagination cursor (the last job's id) is
+// deterministic and consistent with the store's ORDER BY created_at, id.
 func sortJobs(jobs []jobstore.Job, sortParam string) {
 	descending := sortParam == "" || sortParam == "-created_at"
 	sort.SliceStable(jobs, func(left, right int) bool {
+		if jobs[left].CreatedAt.Equal(jobs[right].CreatedAt) {
+			if descending {
+				return jobs[left].ID > jobs[right].ID
+			}
+			return jobs[left].ID < jobs[right].ID
+		}
 		if descending {
 			return jobs[left].CreatedAt.After(jobs[right].CreatedAt)
 		}
 		return jobs[left].CreatedAt.Before(jobs[right].CreatedAt)
 	})
-}
-
-func jobsAfterCursor(jobs []jobstore.Job, cursor string) []jobstore.Job {
-	for index, job := range jobs {
-		if job.ID == cursor {
-			return jobs[index+1:]
-		}
-	}
-	return jobs
 }
 
 func collectionAfterCursor(items []map[string]any, cursor string) []map[string]any {
@@ -4435,7 +4453,7 @@ func (s *Server) putJobArtifact(w http.ResponseWriter, r *http.Request, jobID, k
 		return
 	}
 	if immutableAfterDispatch {
-		_ = s.idempotency.Release(r.Context(), mutation.scope)
+		_ = s.idempotency.Release(r.Context(), mutation.scope, mutation.record.RequestHash)
 		s.writeError(w, r, http.StatusConflict, validationError("UBAG-VALIDATION-ATTACHMENT-IMMUTABLE-001", "declared attachment bytes cannot change after dispatch"))
 		return
 	}
@@ -4444,15 +4462,15 @@ func (s *Server) putJobArtifact(w http.ResponseWriter, r *http.Request, jobID, k
 	rec, err := s.artifactSt.PutArtifact(r.Context(), job.ID, key, contentType, bytes.NewReader(payload), sizeBytes)
 	if err != nil {
 		if artifacts.IsInvalid(err) {
-			_ = s.idempotency.Release(r.Context(), mutation.scope)
+			_ = s.idempotency.Release(r.Context(), mutation.scope, mutation.record.RequestHash)
 			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-ARTIFACT-KEY-001", "artifact key must be a single non-empty path segment"))
 			return
 		}
-		_ = s.idempotency.Release(r.Context(), mutation.scope)
+		_ = s.idempotency.Release(r.Context(), mutation.scope, mutation.record.RequestHash)
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to store artifact"))
 		return
 	}
-	if err := s.idempotency.Complete(r.Context(), mutation.scope, artifactResourceID(job.ID, key), http.StatusCreated); err != nil {
+	if err := s.idempotency.Complete(r.Context(), mutation.scope, mutation.record.RequestHash, artifactResourceID(job.ID, key), http.StatusCreated); err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to complete idempotency record"))
 		return
 	}
@@ -4577,15 +4595,15 @@ func (s *Server) deleteJobArtifact(w http.ResponseWriter, r *http.Request, jobID
 
 	if err := s.artifactSt.DeleteArtifact(r.Context(), job.ID, key); err != nil {
 		if artifacts.IsNotFound(err) {
-			_ = s.idempotency.Release(r.Context(), mutation.scope)
+			_ = s.idempotency.Release(r.Context(), mutation.scope, mutation.record.RequestHash)
 			s.writeNotFound(w, r)
 			return
 		}
-		_ = s.idempotency.Release(r.Context(), mutation.scope)
+		_ = s.idempotency.Release(r.Context(), mutation.scope, mutation.record.RequestHash)
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to delete artifact"))
 		return
 	}
-	if err := s.idempotency.Complete(r.Context(), mutation.scope, artifactResourceID(job.ID, key), http.StatusNoContent); err != nil {
+	if err := s.idempotency.Complete(r.Context(), mutation.scope, mutation.record.RequestHash, artifactResourceID(job.ID, key), http.StatusNoContent); err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to complete idempotency record"))
 		return
 	}

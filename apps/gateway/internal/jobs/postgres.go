@@ -159,8 +159,31 @@ func (p *PostgresStore) TransitionStatus(ctx context.Context, id string, from St
 	sequence++
 	job.Status = to
 	job.UpdatedAt = now
-	if _, err := tx.ExecContext(ctx, `UPDATE gateway_jobs SET status = $1, event_sequence = $2, updated_at = $3 WHERE id = $4`, string(job.Status), sequence, job.UpdatedAt, job.ID); err != nil {
+	// Compare-and-set: the WHERE re-checks the status so a concurrent winner
+	// (FOR UPDATE serializes the read, but the guard also defends against
+	// read-committed surprises and makes the lost update impossible) can never
+	// have a stale caller overwrite a status that already moved on — including
+	// a terminal one. RowsAffected is the authoritative win/lose signal.
+	result, err := tx.ExecContext(ctx, `UPDATE gateway_jobs SET status = $1, event_sequence = $2, updated_at = $3 WHERE id = $4 AND status = $5`, string(job.Status), sequence, job.UpdatedAt, job.ID, string(from))
+	if err != nil {
 		return Job{}, false, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return Job{}, false, err
+	}
+	if affected == 0 {
+		if err := tx.Commit(); err != nil {
+			return Job{}, false, err
+		}
+		current, found, err := p.Get(ctx, id)
+		if err != nil {
+			return Job{}, false, err
+		}
+		if !found {
+			return Job{}, false, nil
+		}
+		return current, false, fmt.Errorf("%w: job %s is no longer %s", ErrConflict, id, from)
 	}
 	if err := insertEvent(ctx, tx, job, sequence, string(to), map[string]any{
 		"status": string(to),
@@ -207,7 +230,26 @@ func (p *PostgresStore) List(ctx context.Context, filter ListFilter) ([]Job, err
 	addFilter("app_id", filter.AppID)
 	addFilter("status", filter.Status)
 	addFilter("target", filter.Target)
-	query += " ORDER BY created_at ASC, id ASC"
+	// Cursor pagination is resolved store-side with a row-value tuple compare
+	// (same shape as ListAllEvents' AfterEventID) so a list route never has to
+	// load the full table to locate the cursor position.
+	if strings.TrimSpace(filter.AfterID) != "" {
+		operator := ">"
+		if filter.Descending {
+			operator = "<"
+		}
+		args = append(args, filter.AfterID)
+		query += fmt.Sprintf(" AND (created_at, id) %s (SELECT created_at, id FROM gateway_jobs WHERE id = $%d)", operator, len(args))
+	}
+	if filter.Descending {
+		query += " ORDER BY created_at DESC, id DESC"
+	} else {
+		query += " ORDER BY created_at ASC, id ASC"
+	}
+	if filter.Limit > 0 {
+		args = append(args, filter.Limit)
+		query += fmt.Sprintf(" LIMIT $%d", len(args))
+	}
 
 	rows, err := p.db.QueryContext(ctx, query, args...)
 	if err != nil {

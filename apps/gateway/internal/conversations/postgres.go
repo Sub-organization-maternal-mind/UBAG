@@ -155,9 +155,17 @@ func (s *PostgresStore) List(ctx context.Context, filter Filter) ([]Conversation
 		idx++
 	}
 	query += ` ORDER BY last_used_at DESC NULLS LAST`
+	// Postgres permits OFFSET without LIMIT, so each clause is emitted only
+	// when actually requested (a negative LIMIT would error here).
 	if filter.Limit > 0 {
 		query += fmt.Sprintf(` LIMIT $%d`, idx)
 		args = append(args, filter.Limit)
+		idx++
+	}
+	if filter.Offset > 0 {
+		query += fmt.Sprintf(` OFFSET $%d`, idx)
+		args = append(args, filter.Offset)
+		idx++
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

@@ -131,9 +131,10 @@ func TestApplyFreshDatabaseHasScheduledShape(t *testing.T) {
 // the extractor must find the table and every job index in the embedded schema,
 // or fail closed (never migrate with a half-parsed definition).
 //
-// The count is 6: three tenant-scoped indexes, the retry_of partial index, and
-// the two operational-scan indexes added for the stale-job reaper and the
-// metrics counters. Bumping it is intentional - a dropped or renamed index must
+// The count is 8: three tenant-scoped indexes, the retry_of partial index, the
+// two operational-scan indexes added for the stale-job reaper and the metrics
+// counters, and the two ascending created_at indexes the jobs list pagination
+// orders by. Bumping it is intentional - a dropped or renamed index must
 // fail here rather than silently leaving the reaper doing full scans.
 func TestExtractJobsDDLGuardsFormatDrift(t *testing.T) {
 	create, indexes, err := extractJobsDDL()
@@ -143,7 +144,7 @@ func TestExtractJobsDDLGuardsFormatDrift(t *testing.T) {
 	if !strings.Contains(strings.ToUpper(create), "NOT_BEFORE") {
 		t.Fatal("extracted table definition lacks not_before")
 	}
-	const wantIndexes = 6
+	const wantIndexes = 8
 	if len(indexes) != wantIndexes {
 		t.Fatalf("expected %d gateway_jobs indexes, got %d", wantIndexes, len(indexes))
 	}
@@ -155,6 +156,8 @@ func TestExtractJobsDDLGuardsFormatDrift(t *testing.T) {
 		"idx_gateway_jobs_retry_of",
 		"idx_gateway_jobs_status_updated",
 		"idx_gateway_jobs_created",
+		"idx_gateway_jobs_tenant_app_created_asc",
+		"idx_gateway_jobs_created_asc",
 	} {
 		if !strings.Contains(joined, required) {
 			t.Errorf("extracted indexes missing %s", required)

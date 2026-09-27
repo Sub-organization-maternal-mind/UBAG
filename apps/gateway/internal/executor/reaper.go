@@ -78,7 +78,7 @@ func (rp *StaleJobReaper) SweepOnce(ctx context.Context) (int, error) {
 		if jobstore.TerminalStatus(status) {
 			continue
 		}
-		jobs, err := rp.Jobs.List(ctx, jobstore.ListFilter{Status: string(status)})
+		jobs, err := rp.Jobs.List(ctx, jobstore.ListFilter{Status: string(status), Limit: jobstore.UnboundedScanLimit})
 		if err != nil {
 			return reaped, err
 		}

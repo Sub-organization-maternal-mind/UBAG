@@ -2,8 +2,16 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"time"
 )
+
+// ErrConflict reports that a compare-and-set transition lost the race: the job
+// was no longer in the expected `from` status when the guarded UPDATE ran, so
+// the caller's change was not applied. The returned Job is the store's current
+// state. A lost race is a normal, retriable outcome — callers treat it as "not
+// changed", never as a store failure.
+var ErrConflict = errors.New("job status transition conflict")
 
 type Status string
 
@@ -98,11 +106,30 @@ type Job struct {
 	UpdatedAt      time.Time
 }
 
+// UnboundedScanLimit is the explicit large limit for callers that legitimately
+// need every matching job (background reapers, attachment-gate sweeps, metrics
+// fallbacks). List callers must never rely on filter.Limit == 0 ("no limit"):
+// an unauthenticated /v1/metrics scrape or a forgotten cap would otherwise load
+// the entire job table into memory.
+const UnboundedScanLimit = 10000
+
+// ListFilter constrains a List query. Results are ordered by (created_at, id)
+// ascending, or descending when Descending is set; the id tiebreak keeps
+// pagination deterministic over jobs sharing a created_at.
 type ListFilter struct {
 	TenantID string
 	AppID    string
 	Status   string
 	Target   string
+	// Descending flips the ordering to (created_at DESC, id DESC).
+	Descending bool
+	// AfterID, when set, returns only jobs strictly AFTER the named job in the
+	// active ordering (exclusive cursor). The cursor job itself may be absent
+	// (deleted); the tuple comparison is resolved from its persisted position.
+	AfterID string
+	// Limit caps the number of jobs returned. 0 means no limit — production
+	// callers must always set an explicit cap (see UnboundedScanLimit).
+	Limit int
 }
 
 type EventListFilter struct {
@@ -124,7 +151,10 @@ type Store interface {
 	// this call performed the transition — exactly one concurrent caller wins.
 	// It is the exactly-once primitive behind the attachment dispatch gate and
 	// its TTL sweeper; unlike UpdateStatus it never advances a job whose status
-	// has already moved on.
+	// has already moved on. A loser reports changed=false; the Postgres store
+	// additionally wraps that outcome in ErrConflict (callers must treat
+	// errors.Is(err, ErrConflict) as the normal lost-race case, not a store
+	// failure).
 	TransitionStatus(ctx context.Context, id string, from Status, to Status) (Job, bool, error)
 	ApplyWorkerEvent(ctx context.Context, event WorkerEvent) (Job, bool, error)
 	Ready(ctx context.Context) error

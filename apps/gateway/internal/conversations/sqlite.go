@@ -171,9 +171,18 @@ func (s *SQLiteStore) List(ctx context.Context, filter Filter) ([]Conversation, 
 		args = append(args, filter.Target)
 	}
 	query += ` ORDER BY last_used_at DESC`
-	if filter.Limit > 0 {
+	if filter.Limit > 0 || filter.Offset > 0 {
+		// SQLite requires a LIMIT clause when OFFSET is used; -1 means unbounded.
+		limit := filter.Limit
+		if limit <= 0 {
+			limit = -1
+		}
 		query += ` LIMIT ?`
-		args = append(args, filter.Limit)
+		args = append(args, limit)
+		if filter.Offset > 0 {
+			query += ` OFFSET ?`
+			args = append(args, filter.Offset)
+		}
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {

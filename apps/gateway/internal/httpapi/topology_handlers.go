@@ -182,8 +182,17 @@ func (s *Server) handleConcurrency(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeGatewayAction(w, r, "concurrency:read") {
 		return
 	}
+	// parseLimit bounding keeps the response size contractual with the other
+	// collection routes even though the registry view is small in practice.
+	limit, ok := s.parseLimit(w, r, r.URL.Query().Get("limit"), 100)
+	if !ok {
+		return
+	}
 	tenantID, _ := requestScope(r)
 	views := s.concurrency.List(tenantID)
+	if len(views) > limit {
+		views = views[:limit]
+	}
 	data := make([]map[string]any, 0, len(views))
 	for _, view := range views {
 		data = append(data, concurrencyToResponse(view))

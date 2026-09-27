@@ -316,3 +316,65 @@ func TestConcurrencyRegistryNilSafe(t *testing.T) {
 		t.Fatalf("expected empty list from nil registry")
 	}
 }
+
+// TestMemoryStoreTopologyReportUpsert pins the browser.topology_reported
+// ingestion contract: workers re-report their full topology snapshot on every
+// heartbeat, so re-adding an entity with the same ID must REPLACE the prior
+// entry in place — not append a duplicate (which both duplicated rows in every
+// list and grew the store without bound).
+func TestMemoryStoreTopologyReportUpsert(t *testing.T) {
+	store := NewMemoryStore()
+	ctx := context.Background()
+
+	// Simulate two consecutive reports for the same instance/context/tab.
+	now := time.Now().UTC()
+	store.AddInstance(BrowserInstance{InstanceID: "inst-a", WorkerID: "w1", TenantID: "tenant-1", Engine: "chromium", State: "ready", ContextCount: 1, TabCount: 1, CreatedAt: now})
+	store.AddContext(ProviderContext{ContextID: "ctx-a", InstanceID: "inst-a", TenantID: "tenant-1", TargetID: "chatgpt_web", IdentityRef: "id-1", LoginState: "logged_out", MaxTabs: 2, CreatedAt: now})
+	store.AddTab(BrowserTab{TabID: "tab-a", ContextID: "ctx-a", State: "ready", JobsCompleted: 0, CreatedAt: now})
+
+	later := now.Add(time.Minute)
+	store.AddInstance(BrowserInstance{InstanceID: "inst-a", WorkerID: "w1", TenantID: "tenant-1", Engine: "chromium", State: "busy", ContextCount: 1, TabCount: 3, CreatedAt: later})
+	store.AddContext(ProviderContext{ContextID: "ctx-a", InstanceID: "inst-a", TenantID: "tenant-1", TargetID: "chatgpt_web", IdentityRef: "id-1", LoginState: "authenticated", MaxTabs: 2, CreatedAt: later})
+	store.AddTab(BrowserTab{TabID: "tab-a", ContextID: "ctx-a", State: "busy", CurrentJobID: "job_1", JobsCompleted: 1, CreatedAt: later})
+
+	instances, err := store.ListInstances(ctx, InstanceFilter{TenantID: "tenant-1"})
+	if err != nil {
+		t.Fatalf("list instances: %v", err)
+	}
+	if len(instances) != 1 {
+		t.Fatalf("expected 1 instance after re-report, got %d", len(instances))
+	}
+	if instances[0].State != "busy" || instances[0].TabCount != 3 {
+		t.Fatalf("expected replaced instance (busy, 3 tabs), got %+v", instances[0])
+	}
+
+	contexts, err := store.ListContexts(ctx, ContextFilter{TenantID: "tenant-1"})
+	if err != nil {
+		t.Fatalf("list contexts: %v", err)
+	}
+	if len(contexts) != 1 {
+		t.Fatalf("expected 1 context after re-report, got %d", len(contexts))
+	}
+	if contexts[0].LoginState != "authenticated" {
+		t.Fatalf("expected replaced context login_state, got %+v", contexts[0])
+	}
+
+	tabs, err := store.ListTabs(ctx, TabFilter{TenantID: "tenant-1"})
+	if err != nil {
+		t.Fatalf("list tabs: %v", err)
+	}
+	if len(tabs) != 1 {
+		t.Fatalf("expected 1 tab after re-report, got %d", len(tabs))
+	}
+	if tabs[0].State != "busy" || tabs[0].JobsCompleted != 1 {
+		t.Fatalf("expected replaced tab (busy, 1 completed), got %+v", tabs[0])
+	}
+
+	summary, err := store.Summary(ctx, "tenant-1")
+	if err != nil {
+		t.Fatalf("summary: %v", err)
+	}
+	if summary.TotalInstances != 1 || summary.TotalContexts != 1 || summary.TotalTabs != 1 {
+		t.Fatalf("summary counts not deduplicated: %+v", summary)
+	}
+}

@@ -265,7 +265,7 @@ SET status = ?,
 	last_error_message = nullif(?, ''),
 	delivered_at = coalesce(?, delivered_at),
 	updated_at = ?
-WHERE id = ? AND lease_id = ?`,
+WHERE id = ? AND lease_id = ? AND status = 'leased'`,
 		string(status), attempt, formatNullableSQLiteTime(nextAttemptAt), result.StatusCode, result.ErrorClass, sanitizeErrorMessage(result.ErrorMessage), deliveredAt, formatSQLiteTime(now), deliveryID, leaseID)
 	if err != nil {
 		return err

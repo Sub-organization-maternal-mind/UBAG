@@ -222,7 +222,7 @@ SET status = $1,
 	last_error_message = nullif($6, ''),
 	delivered_at = coalesce($7, delivered_at),
 	updated_at = $8
-WHERE id = $9 AND lease_id = $10`,
+WHERE id = $9 AND lease_id = $10 AND status = 'leased'`,
 		string(status), attempt, nullableTime(nextAttemptAt), result.StatusCode, result.ErrorClass, sanitizeErrorMessage(result.ErrorMessage), deliveredAt, now, deliveryID, leaseID)
 	if err != nil {
 		return err

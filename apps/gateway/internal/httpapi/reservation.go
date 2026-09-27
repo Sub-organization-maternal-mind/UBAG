@@ -13,8 +13,12 @@ import (
 // the release order (idempotency scope + token + failed status) — a missed
 // release was a leak class (the cleanup comments in createJob predate this).
 type jobReservation struct {
-	server           *Server
-	scope            idempotency.Scope
+	server *Server
+	scope  idempotency.Scope
+	// requestHash is the payload hash this reservation was created with; it
+	// makes Release a compare-and-set so a stale release cannot drop a record
+	// a different payload has taken over.
+	requestHash      string
 	jobID            string
 	tenantID         string
 	target           string
@@ -24,8 +28,8 @@ type jobReservation struct {
 }
 
 // newJobReservation tracks an idempotency scope before the job exists.
-func (s *Server) newJobReservation(scope idempotency.Scope, tenantID, target, appID string) *jobReservation {
-	return &jobReservation{server: s, scope: scope, tenantID: tenantID, target: target, appID: appID}
+func (s *Server) newJobReservation(scope idempotency.Scope, requestHash string, tenantID, target, appID string) *jobReservation {
+	return &jobReservation{server: s, scope: scope, requestHash: requestHash, tenantID: tenantID, target: target, appID: appID}
 }
 
 // attachJob records the job ID and that a concurrency token was acquired
@@ -39,7 +43,7 @@ func (res *jobReservation) attachJob(jobID string) {
 // release frees the idempotency scope and the pre-job concurrency token.
 // Used when the job was never created.
 func (res *jobReservation) release(ctx context.Context) {
-	_ = res.server.idempotency.Release(ctx, res.scope)
+	_ = res.server.idempotency.Release(ctx, res.scope, res.requestHash)
 	if res.tokenAcquired && !res.tokenMarkedToJob {
 		res.server.releaseConcurrencyToken(res.tenantID, res.target, res.appID)
 	}
@@ -55,5 +59,5 @@ func (res *jobReservation) fail(ctx context.Context) {
 	} else if res.tokenAcquired {
 		res.server.releaseConcurrencyToken(res.tenantID, res.target, res.appID)
 	}
-	_ = res.server.idempotency.Release(ctx, res.scope)
+	_ = res.server.idempotency.Release(ctx, res.scope, res.requestHash)
 }

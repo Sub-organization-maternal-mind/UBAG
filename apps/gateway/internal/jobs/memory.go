@@ -165,6 +165,32 @@ func (m *MemoryStore) List(_ context.Context, filter ListFilter) ([]Job, error) 
 		jobs = append(jobs, job)
 	}
 
+	// Mirror the SQL stores: deterministic (created_at, id) ordering so the
+	// cursor and limit semantics behave identically across backends. Stable
+	// sort preserves insertion order for jobs sharing a created_at.
+	sort.SliceStable(jobs, func(left, right int) bool {
+		if jobs[left].CreatedAt.Equal(jobs[right].CreatedAt) {
+			return jobs[left].ID < jobs[right].ID
+		}
+		return jobs[left].CreatedAt.Before(jobs[right].CreatedAt)
+	})
+	if filter.Descending {
+		for i, j := 0, len(jobs)-1; i < j; i, j = i+1, j-1 {
+			jobs[i], jobs[j] = jobs[j], jobs[i]
+		}
+	}
+	if strings.TrimSpace(filter.AfterID) != "" {
+		for index, job := range jobs {
+			if job.ID == filter.AfterID {
+				jobs = jobs[index+1:]
+				break
+			}
+		}
+	}
+	if filter.Limit > 0 && len(jobs) > filter.Limit {
+		jobs = jobs[:filter.Limit]
+	}
+
 	return jobs, nil
 }
 

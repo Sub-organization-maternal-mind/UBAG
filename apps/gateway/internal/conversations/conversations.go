@@ -53,12 +53,17 @@ type Conversation struct {
 	LastJobID         string    `json:"last_job_id,omitempty"`
 }
 
-// Filter constrains a List query.
+// Filter constrains a List query. Results are ordered by LastUsedAt
+// descending; Offset skips that many matching records after the ordering, which
+// is the cheap pagination primitive for this collection (the ordering has no
+// unique tiebreak column, so an offset cursor is more honest than a key
+// cursor).
 type Filter struct {
 	TenantID string
 	AppID    string // optional; empty means any app
 	Target   string // optional; empty means any target
 	Limit    int    // 0 means no limit
+	Offset   int    // records to skip after ordering; 0 means none
 }
 
 // Store persists conversation bindings and exposes resolve/bind lifecycle.
@@ -238,6 +243,12 @@ func (m *MemoryStore) List(_ context.Context, filter Filter) ([]Conversation, er
 		out = append(out, existing)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].LastUsedAt.After(out[j].LastUsedAt) })
+	if filter.Offset > 0 {
+		if filter.Offset >= len(out) {
+			return []Conversation{}, nil
+		}
+		out = out[filter.Offset:]
+	}
 	if filter.Limit > 0 && len(out) > filter.Limit {
 		out = out[:filter.Limit]
 	}

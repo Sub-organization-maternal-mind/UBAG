@@ -180,3 +180,41 @@ func splitStatements(schema string) []string {
 	}
 	return statements
 }
+
+// migrateIdempotencyLockColumns evolves pre-existing gateway_idempotency_records
+// tables to the in-flight lock shape (status + locked_until columns). Fresh
+// databases already match via the embedded schema and skip this entirely.
+//
+// Unlike the jobs migration this is a plain additive change, so ALTER TABLE ...
+// ADD COLUMN is sufficient and preserves every row: legacy rows keep NULL in
+// both columns, which the idempotency stores read as the legacy
+// reserve-until-TTL behavior (never as an in-flight lock).
+func migrateIdempotencyLockColumns(ctx context.Context, db *sql.DB) error {
+	columns, err := tableColumns(ctx, db, "gateway_idempotency_records")
+	if err != nil {
+		return fmt.Errorf("sqlitestore: inspect gateway_idempotency_records: %w", err)
+	}
+	if len(columns) == 0 {
+		// Table absent: the embedded schema above created every current table,
+		// so a missing table means the database is not a gateway database.
+		return nil
+	}
+	present := make(map[string]bool, len(columns))
+	for _, column := range columns {
+		present[strings.Trim(column, `"`)] = true
+	}
+	additions := map[string]string{
+		"status":       `ALTER TABLE gateway_idempotency_records ADD COLUMN status TEXT`,
+		"locked_until": `ALTER TABLE gateway_idempotency_records ADD COLUMN locked_until TEXT`,
+	}
+	// Deterministic order regardless of map iteration.
+	for _, column := range []string{"status", "locked_until"} {
+		if present[column] {
+			continue
+		}
+		if _, err := db.ExecContext(ctx, additions[column]); err != nil {
+			return fmt.Errorf("sqlitestore: add gateway_idempotency_records.%s: %w", column, err)
+		}
+	}
+	return nil
+}

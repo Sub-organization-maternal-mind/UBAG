@@ -302,7 +302,7 @@ func (s *Server) handleAntigravityTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scope := idempotencyScope(prepared)
-	reservation := s.newJobReservation(scope, prepared.tenantID, prepared.request.Job.Target, prepared.appID)
+	reservation := s.newJobReservation(scope, requestHash, prepared.tenantID, prepared.request.Job.Target, prepared.appID)
 
 	decision, err := s.idempotency.Reserve(r.Context(), scope, requestHash)
 	if err != nil {
@@ -384,7 +384,7 @@ func (s *Server) handleAntigravityTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.idempotency.Complete(r.Context(), scope, job.ID, http.StatusAccepted); err != nil {
+	if err := s.idempotency.Complete(r.Context(), scope, requestHash, job.ID, http.StatusAccepted); err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to complete idempotency record"))
 		return
 	}

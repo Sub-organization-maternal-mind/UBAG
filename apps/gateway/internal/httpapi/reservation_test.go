@@ -36,7 +36,7 @@ func TestReservationFailMarksJobAndReleasesScope(t *testing.T) {
 	}
 
 	scope := idempotency.Scope{TenantID: "t", AppID: "a", Operation: "create_job", Key: "test-key-1"}
-	res := srv.newJobReservation(scope, "t", "mock", "a")
+	res := srv.newJobReservation(scope, "hash-abc", "t", "mock", "a")
 	srv.markConcurrencyAcquired(job.ID, "t", "mock", "a")
 	res.attachJob(job.ID)
 	res.fail(ctx)
@@ -76,7 +76,7 @@ func TestReservationReleaseBeforeCreate(t *testing.T) {
 	})
 
 	scope := idempotency.Scope{TenantID: "t", AppID: "a", Operation: "create_job", Key: "test-key-2"}
-	res := srv.newJobReservation(scope, "t", "mock", "a")
+	res := srv.newJobReservation(scope, "hash-abc", "t", "mock", "a")
 	res.tokenAcquired = true
 	res.release(ctx)
 

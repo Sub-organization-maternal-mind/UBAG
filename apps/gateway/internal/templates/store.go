@@ -31,9 +31,16 @@ type Template struct {
 	UpdatedAt       time.Time
 }
 
+// ListFilter constrains a List query. Results are ordered by ID ascending, so
+// AfterID is the natural exclusive cursor and Limit bounds the page size.
 type ListFilter struct {
 	TenantID string
 	AppID    string
+	// AfterID, when set, returns only templates strictly after the named ID in
+	// ID order. An unknown AfterID is ignored (full visibility window).
+	AfterID string
+	// Limit caps the number of templates returned. 0 means no limit.
+	Limit int
 }
 
 type Store interface {
@@ -103,6 +110,19 @@ func (s *MemoryStore) List(_ context.Context, filter ListFilter) ([]Template, er
 		}
 	}
 	sortTemplates(result)
+	// Cursor is the last template ID of the previous page; the store is ordered
+	// by ID, so slicing after it is exact.
+	if strings.TrimSpace(filter.AfterID) != "" {
+		for index, item := range result {
+			if item.ID == filter.AfterID {
+				result = result[index+1:]
+				break
+			}
+		}
+	}
+	if filter.Limit > 0 && len(result) > filter.Limit {
+		result = result[:filter.Limit]
+	}
 	return result, nil
 }
 

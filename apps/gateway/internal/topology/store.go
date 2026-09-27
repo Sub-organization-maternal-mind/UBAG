@@ -173,22 +173,40 @@ func NewMemoryStore() *MemoryStore {
 
 func (m *MemoryStore) Ready(context.Context) error { return nil }
 
-// AddInstance appends a browser instance.
+// AddInstance upserts a browser instance by ID. The workerconsumer feeds every
+// browser.topology_reported snapshot through here, and workers re-report their
+// topology on every heartbeat — append would duplicate each entity per report
+// (and grow the store without bound), so an existing entry with the same ID is
+// replaced in place, keeping the original insertion position for stable
+// ordering.
 func (m *MemoryStore) AddInstance(instance BrowserInstance) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for i := range m.instances {
+		if m.instances[i].InstanceID == instance.InstanceID {
+			m.instances[i] = instance
+			return
+		}
+	}
 	m.instances = append(m.instances, instance)
 }
 
-// AddContext appends a provider context.
+// AddContext upserts a provider context by ID (see AddInstance).
 func (m *MemoryStore) AddContext(context ProviderContext) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for i := range m.contexts {
+		if m.contexts[i].ContextID == context.ContextID {
+			m.contexts[i] = context
+			return
+		}
+	}
 	m.contexts = append(m.contexts, context)
 }
 
-// AddTab appends a tab. Its tenant is resolved from its parent context so tab
-// queries stay tenant-scoped; tabs whose context is unknown are dropped.
+// AddTab upserts a tab by ID (see AddInstance). Its tenant is resolved from its
+// parent context so tab queries stay tenant-scoped; tabs whose context is
+// unknown are dropped.
 func (m *MemoryStore) AddTab(tab BrowserTab) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -197,6 +215,12 @@ func (m *MemoryStore) AddTab(tab BrowserTab) {
 		if ctx.ContextID == tab.ContextID {
 			tenantID = ctx.TenantID
 			break
+		}
+	}
+	for i := range m.tabs {
+		if m.tabs[i].tab.TabID == tab.TabID {
+			m.tabs[i] = memoryTab{tab: tab, tenantID: tenantID}
+			return
 		}
 	}
 	m.tabs = append(m.tabs, memoryTab{tab: tab, tenantID: tenantID})

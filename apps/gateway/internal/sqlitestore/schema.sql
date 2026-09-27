@@ -102,6 +102,18 @@ CREATE INDEX IF NOT EXISTS idx_gateway_jobs_status_updated
 CREATE INDEX IF NOT EXISTS idx_gateway_jobs_created
   ON gateway_jobs (created_at DESC, id);
 
+-- Ascending mirrors of the two created_at indexes above. Every jobs list query
+-- orders by created_at ASC, id ASC (or DESC, id DESC for the descending sort),
+-- and neither planner can walk (created_at DESC, id) forward with the id
+-- tiebreak intact: the backward scan yields id DESC among equal created_at,
+-- which breaks cursor determinism. These two indexes serve the ASC direction
+-- exactly (and the DESC direction via a backward scan with matching id order).
+CREATE INDEX IF NOT EXISTS idx_gateway_jobs_tenant_app_created_asc
+  ON gateway_jobs (tenant_id, app_id, created_at ASC, id ASC);
+
+CREATE INDEX IF NOT EXISTS idx_gateway_jobs_created_asc
+  ON gateway_jobs (created_at ASC, id ASC);
+
 CREATE TABLE IF NOT EXISTS gateway_job_events (
   id TEXT PRIMARY KEY,
   job_id TEXT NOT NULL REFERENCES gateway_jobs(id) ON DELETE CASCADE,
@@ -133,6 +145,12 @@ CREATE TABLE IF NOT EXISTS gateway_idempotency_records (
   operation TEXT NOT NULL,
   idempotency_key TEXT NOT NULL,
   request_hash TEXT NOT NULL,
+  -- in_flight | completed. NULL marks a row written before the column
+  -- existed; those rows keep the legacy reserve-until-TTL behavior.
+  status TEXT,
+  -- Bounds the in-flight lock: once it passes, a new Reserve may take the
+  -- key over (crashed-gateway recovery). NULL means no deadline.
+  locked_until TEXT,
   resource_id TEXT,
   http_status INTEGER,
   created_at TEXT NOT NULL,
@@ -179,8 +197,23 @@ CREATE TABLE IF NOT EXISTS gateway_webhook_deliveries (
   UNIQUE (tenant_id, app_id, dedupe_key)
 );
 
+-- Partial, matching idx_gateway_webhook_deliveries_due in
+-- migrations/postgres/0003_webhook_outbox.sql: only the three leaseable
+-- statuses are ever scanned for due deliveries, so delivered/dead-lettered
+-- rows (the overwhelming majority of a long-lived outbox) stay out of the
+-- index entirely.
 CREATE INDEX IF NOT EXISTS idx_gateway_webhook_deliveries_due
-  ON gateway_webhook_deliveries (status, next_attempt_at, created_at, id);
+  ON gateway_webhook_deliveries (status, next_attempt_at, created_at, id)
+  WHERE status IN ('pending', 'retry_scheduled', 'leased');
+
+-- Serves the expired-lease recovery predicate in the webhook worker's lease
+-- query (status = 'leased' AND leased_until <= ?): without it every sweep
+-- scans the leased rows. Mirrors the partial job index convention; a
+-- dedicated migration (migrations/sqlite/0010) repairs pre-existing databases
+-- whose non-partial due index was already created under the old definition.
+CREATE INDEX IF NOT EXISTS idx_gateway_webhook_deliveries_leased_until
+  ON gateway_webhook_deliveries (leased_until)
+  WHERE leased_until IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_gateway_webhook_deliveries_tenant_app
   ON gateway_webhook_deliveries (tenant_id, app_id, created_at DESC, id);

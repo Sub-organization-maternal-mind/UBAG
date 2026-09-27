@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1703,4 +1704,83 @@ func TestOptionsWithProviderConfig(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestListJobsCursorPaginationBothDirections pins the store-side cursor
+// contract of GET /v1/jobs: the store resolves the exclusive job-ID cursor and
+// the limit, pages walk newest-first by default (descending) and oldest-first
+// with sort=created_at (ascending), and equal created_at never produces a
+// duplicated or skipped job across page boundaries (the id tiebreak).
+func TestListJobsCursorPaginationBothDirections(t *testing.T) {
+	server := NewServer(Config{AppSecret: "dev-secret"}).Handler()
+
+	const total = 5
+	for i := range total {
+		body := `{"api_version":"2026-05-22","idempotency_key":"idem_cursor_000` + strconv.Itoa(i) + `","client":{"app_id":"test","app_version":"0.0.0","sdk":{"name":"test","version":"0.0.0"}},"job":{"target":"mock","command_type":"submit","input":{}}}`
+		if response := doJSON(server, http.MethodPost, "/v1/jobs", body, authHeaders("idem_cursor_000"+strconv.Itoa(i))); response.Code != http.StatusAccepted {
+			t.Fatalf("create %d status = %d; body=%s", i, response.Code, response.Body.String())
+		}
+	}
+
+	listIDs := func(t *testing.T, path string) (ids []string, next *string) {
+		t.Helper()
+		response := doJSON(server, http.MethodGet, path, "", authHeaders(""))
+		if response.Code != http.StatusOK {
+			t.Fatalf("list status = %d; body=%s", response.Code, response.Body.String())
+		}
+		var payload listJobsResponse
+		if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("decode list response: %v", err)
+		}
+		for _, job := range payload.Jobs {
+			ids = append(ids, job.JobID)
+		}
+		return ids, payload.NextCursor
+	}
+
+	// Descending (default): page 1 newest two, page 2 continues older.
+	page1, next := listIDs(t, "/v1/jobs?limit=2")
+	if len(page1) != 2 || next == nil {
+		t.Fatalf("descending page 1 = %v next=%v", page1, next)
+	}
+	if page1[0] != "job_000000000005" || page1[1] != "job_000000000004" {
+		t.Fatalf("descending page 1 order = %v, want newest first", page1)
+	}
+	page2, next := listIDs(t, "/v1/jobs?limit=2&cursor="+url.QueryEscape(*next))
+	if len(page2) != 2 || next == nil {
+		t.Fatalf("descending page 2 = %v next=%v", page2, next)
+	}
+	if page2[0] != "job_000000000003" || page2[1] != "job_000000000002" {
+		t.Fatalf("descending page 2 order = %v", page2)
+	}
+	page3, next := listIDs(t, "/v1/jobs?limit=2&cursor="+url.QueryEscape(*next))
+	if len(page3) != 1 || next != nil {
+		t.Fatalf("descending page 3 = %v next=%v, want single final page", page3, next)
+	}
+	if page3[0] != "job_000000000001" {
+		t.Fatalf("descending page 3 = %v, want job_000000000001", page3)
+	}
+
+	// Ascending: page 1 oldest two, page 2 continues newer.
+	asc1, next := listIDs(t, "/v1/jobs?limit=2&sort=created_at")
+	if len(asc1) != 2 || next == nil {
+		t.Fatalf("ascending page 1 = %v next=%v", asc1, next)
+	}
+	if asc1[0] != "job_000000000001" || asc1[1] != "job_000000000002" {
+		t.Fatalf("ascending page 1 order = %v, want oldest first", asc1)
+	}
+	asc2, next := listIDs(t, "/v1/jobs?limit=2&sort=created_at&cursor="+url.QueryEscape(*next))
+	if len(asc2) != 2 || next == nil {
+		t.Fatalf("ascending page 2 = %v next=%v", asc2, next)
+	}
+	if asc2[0] != "job_000000000003" || asc2[1] != "job_000000000004" {
+		t.Fatalf("ascending page 2 order = %v", asc2)
+	}
+	asc3, next := listIDs(t, "/v1/jobs?limit=2&sort=created_at&cursor="+url.QueryEscape(*next))
+	if len(asc3) != 1 || next != nil {
+		t.Fatalf("ascending page 3 = %v next=%v, want single final page", asc3, next)
+	}
+	if asc3[0] != "job_000000000005" {
+		t.Fatalf("ascending page 3 = %v, want job_000000000005", asc3)
+	}
 }

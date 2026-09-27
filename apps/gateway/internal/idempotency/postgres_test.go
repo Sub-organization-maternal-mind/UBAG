@@ -38,7 +38,7 @@ func TestPostgresStoreContract(t *testing.T) {
 		t.Fatalf("first decision = %s, want %s", first.Kind, DecisionReserved)
 	}
 
-	if err := store.Complete(context.Background(), scope, "job_pg_contract", 202); err != nil {
+	if err := store.Complete(context.Background(), scope, "hash-one", "job_pg_contract", 202); err != nil {
 		t.Fatalf("Complete returned error: %v", err)
 	}
 	replay, err := store.Reserve(context.Background(), scope, "hash-one")
@@ -57,7 +57,7 @@ func TestPostgresStoreContract(t *testing.T) {
 		t.Fatalf("conflict decision = %s, want %s", conflict.Kind, DecisionConflict)
 	}
 
-	if err := store.Release(context.Background(), scope); err != nil {
+	if err := store.Release(context.Background(), scope, "hash-one"); err != nil {
 		t.Fatalf("Release returned error: %v", err)
 	}
 	second, err := store.Reserve(context.Background(), scope, "hash-two")

@@ -3,6 +3,7 @@ package idempotency
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"time"
@@ -37,17 +38,18 @@ func (p *PostgresStore) Reserve(ctx context.Context, scope Scope, requestHash st
 
 	now := p.now().UTC()
 	expiresAt := now.Add(p.ttl)
+	lockedUntil := now.Add(defaultInFlightLock)
 	result, err := tx.ExecContext(ctx, `
 INSERT INTO gateway_idempotency_records (
-	tenant_id, app_id, operation, idempotency_key, request_hash, created_at, updated_at, expires_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+	tenant_id, app_id, operation, idempotency_key, request_hash, status, locked_until, created_at, updated_at, expires_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT DO NOTHING`,
-		scope.TenantID, scope.AppID, scope.Operation, scope.Key, requestHash, now, now, expiresAt)
+		scope.TenantID, scope.AppID, scope.Operation, scope.Key, requestHash, string(RecordInFlight), lockedUntil, now, now, expiresAt)
 	if err != nil {
 		return Decision{}, err
 	}
 	if inserted, _ := result.RowsAffected(); inserted == 1 {
-		record := Record{Scope: scope, RequestHash: requestHash, CreatedAt: now, UpdatedAt: now, ExpiresAt: expiresAt}
+		record := Record{Scope: scope, RequestHash: requestHash, Status: RecordInFlight, LockedUntil: lockedUntil, CreatedAt: now, UpdatedAt: now, ExpiresAt: expiresAt}
 		if err := tx.Commit(); err != nil {
 			return Decision{}, err
 		}
@@ -58,20 +60,24 @@ ON CONFLICT DO NOTHING`,
 	if err != nil {
 		return Decision{}, err
 	}
-	if !found || !record.ExpiresAt.After(now) {
-		record = Record{Scope: scope, RequestHash: requestHash, CreatedAt: now, UpdatedAt: now, ExpiresAt: expiresAt}
+	// Take the key over when the previous reservation expired, or when it is
+	// an in-flight lock whose deadline has passed (the reserving process died).
+	if !found || !record.ExpiresAt.After(now) || staleInFlight(record, now) {
+		record = Record{Scope: scope, RequestHash: requestHash, Status: RecordInFlight, LockedUntil: lockedUntil, CreatedAt: now, UpdatedAt: now, ExpiresAt: expiresAt}
 		_, err := tx.ExecContext(ctx, `
 INSERT INTO gateway_idempotency_records (
-	tenant_id, app_id, operation, idempotency_key, request_hash, resource_id, http_status, created_at, updated_at, expires_at
-) VALUES ($1, $2, $3, $4, $5, NULL, NULL, $6, $7, $8)
+	tenant_id, app_id, operation, idempotency_key, request_hash, status, locked_until, resource_id, http_status, created_at, updated_at, expires_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NULL, $8, $9, $10)
 ON CONFLICT (tenant_id, app_id, operation, idempotency_key) DO UPDATE SET
 	request_hash = EXCLUDED.request_hash,
+	status = EXCLUDED.status,
+	locked_until = EXCLUDED.locked_until,
 	resource_id = NULL,
 	http_status = NULL,
 	created_at = EXCLUDED.created_at,
 	updated_at = EXCLUDED.updated_at,
 	expires_at = EXCLUDED.expires_at`,
-			scope.TenantID, scope.AppID, scope.Operation, scope.Key, requestHash, now, now, expiresAt)
+			scope.TenantID, scope.AppID, scope.Operation, scope.Key, requestHash, string(RecordInFlight), lockedUntil, now, now, expiresAt)
 		if err != nil {
 			return Decision{}, err
 		}
@@ -91,27 +97,44 @@ ON CONFLICT (tenant_id, app_id, operation, idempotency_key) DO UPDATE SET
 	return Decision{Kind: kind, Record: record}, nil
 }
 
-func (p *PostgresStore) Complete(ctx context.Context, scope Scope, resourceID string, httpStatus int) error {
+func (p *PostgresStore) Complete(ctx context.Context, scope Scope, requestHash string, resourceID string, httpStatus int) error {
 	if p == nil || p.db == nil {
 		return fmt.Errorf("postgres idempotency store is not configured")
 	}
+	// Compare-and-set on the payload hash so a stale completion cannot be
+	// attributed to a record a different payload now owns.
 	_, err := p.db.ExecContext(ctx, `
 UPDATE gateway_idempotency_records
-SET resource_id = $1, http_status = $2, updated_at = $3
-WHERE tenant_id = $4 AND app_id = $5 AND operation = $6 AND idempotency_key = $7`,
-		resourceID, httpStatus, p.now().UTC(), scope.TenantID, scope.AppID, scope.Operation, scope.Key)
+SET resource_id = $1, http_status = $2, status = $3, locked_until = NULL, updated_at = $4
+WHERE tenant_id = $5 AND app_id = $6 AND operation = $7 AND idempotency_key = $8 AND request_hash = $9`,
+		resourceID, httpStatus, string(RecordCompleted), p.now().UTC(), scope.TenantID, scope.AppID, scope.Operation, scope.Key, requestHash)
 	return err
 }
 
-func (p *PostgresStore) Release(ctx context.Context, scope Scope) error {
+func (p *PostgresStore) Release(ctx context.Context, scope Scope, requestHash string) error {
 	if p == nil || p.db == nil {
 		return fmt.Errorf("postgres idempotency store is not configured")
 	}
 	_, err := p.db.ExecContext(ctx, `
 DELETE FROM gateway_idempotency_records
-WHERE tenant_id = $1 AND app_id = $2 AND operation = $3 AND idempotency_key = $4`,
-		scope.TenantID, scope.AppID, scope.Operation, scope.Key)
+WHERE tenant_id = $1 AND app_id = $2 AND operation = $3 AND idempotency_key = $4 AND request_hash = $5`,
+		scope.TenantID, scope.AppID, scope.Operation, scope.Key, requestHash)
 	return err
+}
+
+// Sweep deletes every record whose TTL has expired and returns how many rows
+// were removed. The idx_gateway_idempotency_expires index serves this scan.
+func (p *PostgresStore) Sweep(ctx context.Context) (int64, error) {
+	if p == nil || p.db == nil {
+		return 0, fmt.Errorf("postgres idempotency store is not configured")
+	}
+	result, err := p.db.ExecContext(ctx, `
+DELETE FROM gateway_idempotency_records
+WHERE expires_at <= $1`, p.now().UTC())
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func (p *PostgresStore) Ready(ctx context.Context) error {
@@ -129,13 +152,15 @@ func (p *PostgresStore) loadForUpdate(ctx context.Context, tx *sql.Tx, scope Sco
 	record.Scope = scope
 	var resourceID sql.NullString
 	var httpStatus sql.NullInt64
+	var status sql.NullString
+	var lockedUntil sql.NullTime
 	err := tx.QueryRowContext(ctx, `
-SELECT request_hash, resource_id, http_status, created_at, updated_at, expires_at
+SELECT request_hash, resource_id, http_status, status, locked_until, created_at, updated_at, expires_at
 FROM gateway_idempotency_records
 WHERE tenant_id = $1 AND app_id = $2 AND operation = $3 AND idempotency_key = $4
 FOR UPDATE`, scope.TenantID, scope.AppID, scope.Operation, scope.Key).
-		Scan(&record.RequestHash, &resourceID, &httpStatus, &record.CreatedAt, &record.UpdatedAt, &record.ExpiresAt)
-	if err == sql.ErrNoRows {
+		Scan(&record.RequestHash, &resourceID, &httpStatus, &status, &lockedUntil, &record.CreatedAt, &record.UpdatedAt, &record.ExpiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
 		return Record{}, false, nil
 	}
 	if err != nil {
@@ -146,6 +171,14 @@ FOR UPDATE`, scope.TenantID, scope.AppID, scope.Operation, scope.Key).
 	}
 	if httpStatus.Valid {
 		record.HTTPStatus = int(httpStatus.Int64)
+	}
+	// Legacy rows predate the status/locked_until columns; a NULL status is
+	// treated as the legacy "reserve until TTL" behavior, never as in-flight.
+	if status.Valid && status.String != "" {
+		record.Status = RecordStatus(status.String)
+	}
+	if lockedUntil.Valid {
+		record.LockedUntil = lockedUntil.Time.UTC()
 	}
 	return record, true, nil
 }

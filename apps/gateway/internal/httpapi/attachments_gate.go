@@ -266,7 +266,7 @@ func jobDeclaresAttachments(input map[string]any) bool {
 }
 
 func (s *Server) awaitingAttachmentJobCount(ctx context.Context) int {
-	held, err := s.jobs.List(ctx, jobstore.ListFilter{Status: string(jobstore.StatusCreated)})
+	held, err := s.jobs.List(ctx, jobstore.ListFilter{Status: string(jobstore.StatusCreated), Limit: jobstore.UnboundedScanLimit})
 	if err != nil {
 		return 0
 	}
@@ -349,8 +349,11 @@ func (s *Server) maybeDispatchAfterArtifactLocked(ctx context.Context, job jobst
 	}
 
 	updated, changed, err := s.jobs.TransitionStatus(ctx, job.ID, jobstore.StatusCreated, jobstore.StatusQueued)
-	if err != nil || !changed {
+	if err != nil && !errors.Is(err, jobstore.ErrConflict) {
 		resultErr = err
+		return
+	}
+	if !changed {
 		return // lost the race, or already advanced — the winner dispatches
 	}
 	if err := s.dispatchHeldJob(ctx, updated); err != nil {
@@ -399,14 +402,16 @@ func multipartHashFromContext(ctx context.Context) string {
 // artifacts already stored, fail the job terminally, release its token and the
 // idempotency reservation, and write a 5xx. Returns false when it has already
 // responded with an error.
-func (s *Server) storeStagedAttachments(w http.ResponseWriter, r *http.Request, job jobstore.Job, staged []stagedAttachment, scope idempotency.Scope) bool {
+// requestHash threads the payload hash of the reserving request into the
+// rollback so its Release stays a compare-and-set on request_hash.
+func (s *Server) storeStagedAttachments(w http.ResponseWriter, r *http.Request, job jobstore.Job, staged []stagedAttachment, scope idempotency.Scope, requestHash string) bool {
 	stored := make([]string, 0, len(staged))
 	rollback := func() {
 		for _, key := range stored {
 			_ = s.artifactSt.DeleteArtifact(r.Context(), job.ID, key)
 		}
 		_, _, _ = s.jobs.TransitionStatus(r.Context(), job.ID, jobstore.StatusCreated, jobstore.StatusFailedTerminal)
-		_ = s.idempotency.Release(r.Context(), scope)
+		_ = s.idempotency.Release(r.Context(), scope, requestHash)
 		s.releaseConcurrencyTokenForJob(job.ID)
 		s.multipartRollbacks.Add(1)
 	}
@@ -650,7 +655,7 @@ func canonicalMultipartAttachmentsHash(staged []stagedAttachment) string {
 // the same CAS as the completion hook, so it can never race a job into a double
 // state: whichever of {last PUT, sweeper} wins the CAS decides.
 func (s *Server) sweepStuckAttachmentJobs(ctx context.Context) {
-	held, err := s.jobs.List(ctx, jobstore.ListFilter{Status: string(jobstore.StatusCreated)})
+	held, err := s.jobs.List(ctx, jobstore.ListFilter{Status: string(jobstore.StatusCreated), Limit: jobstore.UnboundedScanLimit})
 	if err != nil {
 		return
 	}
@@ -687,7 +692,7 @@ func (s *Server) recoverQueuedAttachmentOutbox(ctx context.Context) {
 	if s.outbox == nil {
 		return
 	}
-	queued, err := s.jobs.List(ctx, jobstore.ListFilter{Status: string(jobstore.StatusQueued)})
+	queued, err := s.jobs.List(ctx, jobstore.ListFilter{Status: string(jobstore.StatusQueued), Limit: jobstore.UnboundedScanLimit})
 	if err != nil {
 		slog.Error("list queued attachment jobs for outbox recovery", "error", err)
 		return
@@ -704,9 +709,13 @@ func (s *Server) recoverQueuedAttachmentOutbox(ctx context.Context) {
 }
 
 // RunAttachmentSweeper runs sweepStuckAttachmentJobs on a ticker until ctx is
-// done. Wire it in serve.go alongside the other background loops.
+// done. Wire it in serve.go alongside the other background loops. The same
+// tick also sweeps expired idempotency records (the gateway's only periodic
+// janitor): without it, gateway_idempotency_records rows would live forever
+// despite the expires_at index that exists to serve this sweep.
 func (s *Server) RunAttachmentSweeper(ctx context.Context) {
 	s.recoverQueuedAttachmentOutbox(ctx)
+	s.sweepIdempotencyRecords(ctx)
 	ticker := time.NewTicker(attachmentUploadTTL / 2)
 	defer ticker.Stop()
 	for {
@@ -716,6 +725,24 @@ func (s *Server) RunAttachmentSweeper(ctx context.Context) {
 		case <-ticker.C:
 			s.sweepStuckAttachmentJobs(ctx)
 			s.recoverQueuedAttachmentOutbox(ctx)
+			s.sweepIdempotencyRecords(ctx)
 		}
+	}
+}
+
+// sweepIdempotencyRecords deletes idempotency records whose TTL has expired.
+// Best-effort and nil-safe: a store error is logged and never tears down the
+// sweeper loop.
+func (s *Server) sweepIdempotencyRecords(ctx context.Context) {
+	if s.idempotency == nil {
+		return
+	}
+	removed, err := s.idempotency.Sweep(ctx)
+	if err != nil {
+		slog.Warn("idempotency sweep failed", "error", err)
+		return
+	}
+	if removed > 0 {
+		slog.Info("swept expired idempotency records", "removed", removed)
 	}
 }

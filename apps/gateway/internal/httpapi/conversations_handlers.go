@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/ubag/ubag/apps/gateway/internal/conversations"
 )
@@ -39,12 +41,24 @@ func (s *Server) handleConversations(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	offset := 0
+	if raw := strings.TrimSpace(query.Get("cursor")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-LIMIT-001", "cursor must be a non-negative integer"))
+			return
+		}
+		offset = parsed
+	}
 
 	tenantID, appID := requestScope(r)
+	// Fetch one extra record so truncation at the limit is detectable and a
+	// real next_cursor can be emitted instead of a hardcoded null.
 	records, err := s.conversations.List(r.Context(), conversations.Filter{
 		TenantID: tenantID,
 		AppID:    appID,
-		Limit:    limit,
+		Limit:    limit + 1,
+		Offset:   offset,
 	})
 	if err != nil {
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to list conversations"))
@@ -54,9 +68,19 @@ func (s *Server) handleConversations(w http.ResponseWriter, r *http.Request) {
 		records = []conversations.Conversation{}
 	}
 
+	// The list is ordered by last_used_at descending with no unique tiebreak
+	// column, so the cursor is a plain record offset — cheap and stable enough
+	// for this observability surface.
+	nextCursor := (*string)(nil)
+	if len(records) > limit {
+		cursorValue := strconv.Itoa(offset + limit)
+		nextCursor = &cursorValue
+		records = records[:limit]
+	}
+
 	s.writeJSON(w, http.StatusOK, conversationListResponse{
 		APIVersion:    s.apiVersion,
 		Conversations: records,
-		NextCursor:    nil,
+		NextCursor:    nextCursor,
 	})
 }
