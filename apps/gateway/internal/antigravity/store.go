@@ -25,17 +25,27 @@ func AccountSocketPath(directory, accountID string) string {
 	return filepath.Join(directory, accountID, accountID+".sock")
 }
 
+func OAuthEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_ANTIGRAVITY_ENABLED"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 var ErrAccountLimit = errors.New("tenant already has 3 OAuth account slots")
 
 type Account struct {
-	ID            string     `json:"account_id"`
-	TenantID      string     `json:"tenant_id"`
-	Label         string     `json:"label"`
-	Enabled       bool       `json:"enabled"`
-	Tier          string     `json:"tier"`
-	LastUsed      time.Time  `json:"last_used"`
-	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
+	ID                string     `json:"account_id"`
+	TenantID          string     `json:"tenant_id"`
+	Label             string     `json:"label"`
+	Enabled           bool       `json:"enabled"`
+	Tier              string     `json:"tier"`
+	VerificationJobID string     `json:"verification_job_id,omitempty"`
+	LastUsed          time.Time  `json:"last_used"`
+	CooldownUntil     *time.Time `json:"cooldown_until,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
 }
 
 type Config struct {
@@ -288,6 +298,23 @@ func (s *Store) UpdateAccount(tenantID, id string, enabled bool) (*Account, erro
 		return nil, err
 	}
 	return account, nil
+}
+
+func (s *Store) SetVerificationJob(tenantID, id, jobID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	account, ok := s.accounts[id]
+	if !ok || tenantID == "" || account.TenantID != tenantID {
+		return fmt.Errorf("account %s not found", id)
+	}
+	previous := account.VerificationJobID
+	account.VerificationJobID = jobID
+	if err := s.saveToDisk(); err != nil {
+		account.VerificationJobID = previous
+		return err
+	}
+	return nil
 }
 
 func (s *Store) GetConfig() Config {

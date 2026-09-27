@@ -1206,12 +1206,16 @@ func TestProcessWorkerRunnerRunsPythonWorkerFromGatewayEnvelope(t *testing.T) {
 }
 
 func TestProcessWorkerRunnerRejectsCLIWithoutIsolatedAccountSocket(t *testing.T) {
+	t.Setenv("UBAG_ANTIGRAVITY_ENABLED", "true")
 	store := antigravity.NewStore(t.TempDir())
-	if _, err := store.AddAccount("tenant_a", "Primary", "pro"); err != nil {
+	account, err := store.AddAccount("tenant_a", "Primary", "pro")
+	if err != nil {
 		t.Fatalf("add OAuth slot: %v", err)
 	}
+	jobs := jobstore.NewMemoryStore()
+	completeAntigravityCanary(t, store, jobs, account)
 	t.Setenv("UBAG_ANTIGRAVITY_SOCKET_DIR", t.TempDir())
-	_, err := (ProcessWorkerRunner{Python: "python", Script: "missing", AntigravityStore: store}).RunWorker(
+	_, err = (ProcessWorkerRunner{Python: "python", Script: "missing", AntigravityStore: store, Jobs: jobs}).RunWorker(
 		context.Background(), DispatchEnvelope{TenantID: "tenant_a", Job: DispatchJob{Target: "antigravity_cli"}},
 	)
 	if err == nil || !strings.Contains(err.Error(), "isolated account socket") {
@@ -1219,12 +1223,51 @@ func TestProcessWorkerRunnerRejectsCLIWithoutIsolatedAccountSocket(t *testing.T)
 	}
 }
 
+func TestProcessWorkerRunnerRejectsCLIWhenOAuthIsDisabled(t *testing.T) {
+	t.Setenv("UBAG_ANTIGRAVITY_ENABLED", "false")
+	store := antigravity.NewStore(t.TempDir())
+	account, err := store.AddAccount("tenant_a", "Primary", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := jobstore.NewMemoryStore()
+	completeAntigravityCanary(t, store, jobs, account)
+	t.Setenv("UBAG_ANTIGRAVITY_SOCKET_DIR", t.TempDir())
+	_, err = (ProcessWorkerRunner{Python: "python", Script: "missing", AntigravityStore: store, Jobs: jobs}).RunWorker(
+		context.Background(), DispatchEnvelope{TenantID: "tenant_a", Job: DispatchJob{Target: "antigravity_cli"}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("disabled OAuth should block even a previously verified account: %v", err)
+	}
+}
+
+func completeAntigravityCanary(t *testing.T, store *antigravity.Store, jobs jobstore.Store, account *antigravity.Account) jobstore.Job {
+	t.Helper()
+	job, err := jobs.Create(context.Background(), jobstore.CreateRequest{
+		TenantID: account.TenantID, AppID: "tenant-app", Client: map[string]any{"app_id": "antigravity-test"},
+		Target: "antigravity_cli", Options: map[string]any{"antigravity_account_id": account.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetVerificationJob(account.TenantID, account.ID, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := jobs.UpdateStatus(context.Background(), job.ID, jobstore.StatusCompleted); err != nil || !found {
+		t.Fatalf("complete canary: found=%v err=%v", found, err)
+	}
+	return job
+}
+
 func TestAntigravityCLITriesNextAccountOnlyAfterUpfrontQuotaError(t *testing.T) {
 	store := antigravity.NewStore(t.TempDir())
 	first, _ := store.AddAccount("tenant_a", "First", "pro")
 	second, _ := store.AddAccount("tenant_a", "Second", "pro")
+	jobs := jobstore.NewMemoryStore()
+	completeAntigravityCanary(t, store, jobs, first)
+	completeAntigravityCanary(t, store, jobs, second)
 	attempts := []string{}
-	events, err := runIsolatedCLIAttempts(store, "tenant_a", "", func(account antigravity.Account) (string, bool) {
+	events, err := runIsolatedCLIAttempts(context.Background(), store, jobs, DispatchEnvelope{TenantID: "tenant_a"}, func(account antigravity.Account) (string, bool) {
 		return account.ID + ".sock", true
 	}, func(socket string) ([]jobstore.WorkerEvent, error) {
 		attempts = append(attempts, socket)
@@ -1247,6 +1290,107 @@ func TestAntigravityCLITriesNextAccountOnlyAfterUpfrontQuotaError(t *testing.T) 
 	}
 }
 
+func TestAntigravityCLIRejectsUnverifiedAutomaticRouting(t *testing.T) {
+	store := antigravity.NewStore(t.TempDir())
+	if _, err := store.AddAccount("tenant_a", "Unverified", "pro"); err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	_, err := runIsolatedCLIAttempts(context.Background(), store, jobstore.NewMemoryStore(), DispatchEnvelope{TenantID: "tenant_a"}, func(account antigravity.Account) (string, bool) {
+		return account.ID + ".sock", true
+	}, func(string) ([]jobstore.WorkerEvent, error) {
+		attempts++
+		return []jobstore.WorkerEvent{{Type: "completed"}}, nil
+	})
+	if attempts != 0 || err == nil {
+		t.Fatalf("unverified account was used automatically: attempts=%d err=%v", attempts, err)
+	}
+}
+
+func TestAntigravityCLIPendingCanaryOnlyAuthorizesItsOwnJob(t *testing.T) {
+	store := antigravity.NewStore(t.TempDir())
+	account, err := store.AddAccount("tenant_a", "Pending", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobs := jobstore.NewMemoryStore()
+	canary, err := jobs.Create(context.Background(), jobstore.CreateRequest{
+		TenantID: account.TenantID, AppID: "tenant-app", Client: map[string]any{"app_id": "antigravity-test"},
+		Target: "antigravity_cli", Options: map[string]any{"antigravity_account_id": account.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetVerificationJob(account.TenantID, account.ID, canary.ID); err != nil {
+		t.Fatal(err)
+	}
+	tryJob := func(envelope DispatchEnvelope) int {
+		t.Helper()
+		attempts := 0
+		_, _ = runIsolatedCLIAttempts(context.Background(), store, jobs, envelope, func(account antigravity.Account) (string, bool) {
+			return account.ID + ".sock", true
+		}, func(string) ([]jobstore.WorkerEvent, error) {
+			attempts++
+			return []jobstore.WorkerEvent{{Type: "completed"}}, nil
+		})
+		return attempts
+	}
+	ordinary := DispatchEnvelope{
+		TenantID: account.TenantID, JobID: "job_ordinary", AppID: "other-app",
+		Job: DispatchJob{Target: "antigravity_cli", Options: map[string]any{"antigravity_account_id": account.ID}},
+	}
+	if attempts := tryJob(ordinary); attempts != 0 {
+		t.Fatalf("ordinary pinned job used pending account %d times", attempts)
+	}
+	if attempts := tryJob(EnvelopeFromJob(canary)); attempts != 1 {
+		t.Fatalf("pinned canary used its own pending account %d times", attempts)
+	}
+	wrongApp := EnvelopeFromJob(canary)
+	wrongApp.AppID = "other-app"
+	if attempts := tryJob(wrongApp); attempts != 0 {
+		t.Fatalf("mismatched canary envelope used pending account %d times", attempts)
+	}
+	if _, found, err := jobs.UpdateStatus(context.Background(), canary.ID, jobstore.StatusFailedTerminal); err != nil || !found {
+		t.Fatalf("fail canary: found=%v err=%v", found, err)
+	}
+	if attempts := tryJob(ordinary); attempts != 0 {
+		t.Fatalf("ordinary job used failed account %d times", attempts)
+	}
+	if attempts := tryJob(EnvelopeFromJob(canary)); attempts != 0 {
+		t.Fatalf("terminal canary reran %d times", attempts)
+	}
+}
+
+func TestAntigravityCLIRejectsMismatchedVerificationJobs(t *testing.T) {
+	for _, check := range []struct {
+		name, tenantID, clientID, accountID string
+		status                              jobstore.Status
+	}{
+		{"foreign tenant", "tenant_b", "antigravity-test", "acct_1", jobstore.StatusCompleted},
+		{"other account", "tenant_a", "antigravity-test", "acct_2", jobstore.StatusCompleted},
+		{"other client", "tenant_a", "other-app", "acct_1", jobstore.StatusCompleted},
+		{"completed with warnings", "tenant_a", "antigravity-test", "acct_1", jobstore.StatusCompletedWithWarnings},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			jobs := jobstore.NewMemoryStore()
+			canary, err := jobs.Create(context.Background(), jobstore.CreateRequest{
+				TenantID: check.tenantID, AppID: "tenant-app", Client: map[string]any{"app_id": check.clientID},
+				Target: "antigravity_cli", Options: map[string]any{"antigravity_account_id": check.accountID},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, found, err := jobs.UpdateStatus(context.Background(), canary.ID, check.status); err != nil || !found {
+				t.Fatalf("set canary status: found=%v err=%v", found, err)
+			}
+			account := antigravity.Account{ID: "acct_1", TenantID: "tenant_a", VerificationJobID: canary.ID}
+			if accountVerifiedForJob(context.Background(), jobs, DispatchEnvelope{TenantID: "tenant_a", JobID: "job_other"}, account) {
+				t.Fatal("mismatched canary authorized ordinary account use")
+			}
+		})
+	}
+}
+
 func TestAntigravityCLINeverReplaysAfterPartialOrAmbiguousFailure(t *testing.T) {
 	for _, failure := range []struct {
 		name   string
@@ -1265,8 +1409,12 @@ func TestAntigravityCLINeverReplaysAfterPartialOrAmbiguousFailure(t *testing.T) 
 			if _, err := store.AddAccount("tenant_a", "Second", "pro"); err != nil {
 				t.Fatal(err)
 			}
+			jobs := jobstore.NewMemoryStore()
+			for _, account := range store.ListAccounts("tenant_a") {
+				completeAntigravityCanary(t, store, jobs, &account)
+			}
 			attempts := 0
-			_, _ = runIsolatedCLIAttempts(store, "tenant_a", "", func(account antigravity.Account) (string, bool) {
+			_, _ = runIsolatedCLIAttempts(context.Background(), store, jobs, DispatchEnvelope{TenantID: "tenant_a"}, func(account antigravity.Account) (string, bool) {
 				return account.ID + ".sock", true
 			}, func(string) ([]jobstore.WorkerEvent, error) {
 				attempts++
@@ -1283,8 +1431,20 @@ func TestAntigravityPinnedCanaryNeverUsesAnotherAccount(t *testing.T) {
 	store := antigravity.NewStore(t.TempDir())
 	first, _ := store.AddAccount("tenant_a", "First", "pro")
 	second, _ := store.AddAccount("tenant_a", "Second", "pro")
+	jobs := jobstore.NewMemoryStore()
+	completeAntigravityCanary(t, store, jobs, first)
+	canary, err := jobs.Create(context.Background(), jobstore.CreateRequest{
+		TenantID: "tenant_a", AppID: "tenant-app", Client: map[string]any{"app_id": "antigravity-test"},
+		Target: "antigravity_cli", Options: map[string]any{"antigravity_account_id": second.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetVerificationJob("tenant_a", second.ID, canary.ID); err != nil {
+		t.Fatal(err)
+	}
 	attempts := []string{}
-	_, _ = runIsolatedCLIAttempts(store, "tenant_a", second.ID, func(account antigravity.Account) (string, bool) {
+	_, _ = runIsolatedCLIAttempts(context.Background(), store, jobs, EnvelopeFromJob(canary), func(account antigravity.Account) (string, bool) {
 		return account.ID + ".sock", true
 	}, func(socket string) ([]jobstore.WorkerEvent, error) {
 		attempts = append(attempts, socket)

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import sys
 import unittest
@@ -9,6 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "adapters" / "antigravity_cli"))
 
+from ubag_antigravity_cli_adapter import account_server  # noqa: E402
 from ubag_antigravity_cli_adapter.account_server import handle_connection  # noqa: E402
 from ubag_antigravity_cli_adapter.adapter import AntigravityCLIAdapter  # noqa: E402
 from ubag_antigravity_cli_adapter.process import (  # noqa: E402
@@ -94,6 +96,146 @@ class AgySocketClientTests(unittest.IsolatedAsyncioTestCase):
 
 
 class AgyAccountServerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_login_session_only_exposes_a_first_party_authorization_url(self):
+        session_type = getattr(account_server, "AgyLoginSession", None)
+        self.assertIsNotNone(session_type)
+        login = session_type("agy-test")
+        login.record_output(b"Open https://example.invalid/steal?state=synthetic\n")
+        self.assertNotIn("authorization_url", login.snapshot())
+
+        login.record_output(b"Open https://accounts.google.com/o/oauth2/auth?state=synthetic\n")
+        snapshot = login.snapshot()
+        self.assertEqual(snapshot["state"], "awaiting_code")
+        self.assertEqual(
+            snapshot["authorization_url"],
+            "https://accounts.google.com/o/oauth2/auth?state=synthetic",
+        )
+
+    async def test_login_snapshot_does_not_forward_cli_output_or_codes(self):
+        login = account_server.AgyLoginSession("agy-test")
+        login.record_output(b"Google code: synthetic-private-code\n")
+        login.record_output(b"Open https://accounts.google.com/o/oauth2/auth?state=synthetic\n")
+        snapshot = login.snapshot()
+
+        self.assertEqual(snapshot["state"], "awaiting_code")
+        self.assertEqual(snapshot["authorization_url"], "https://accounts.google.com/o/oauth2/auth?state=synthetic")
+        self.assertNotIn("output", snapshot)
+        self.assertNotIn("cursor", snapshot)
+        self.assertNotIn("synthetic-private-code", str(snapshot))
+
+    async def test_login_stops_buffering_cli_output_after_authorization_url(self):
+        login = account_server.AgyLoginSession("agy-test")
+        login.record_output(b"Open https://accounts.google.com/o/oauth2/auth?state=synthetic\n")
+        login.record_output(b"CLI echo: synthetic-private-code\n")
+
+        self.assertEqual(login._output, "")
+
+    async def test_closed_cli_clears_stale_authorization_url(self):
+        login = account_server.AgyLoginSession("agy-test")
+        login.record_output(b"Open https://accounts.google.com/o/oauth2/auth?state=synthetic\n")
+        process = SimpleNamespace(returncode=0)
+        login._process = process
+
+        await login._watch(process)
+
+        self.assertEqual(login.snapshot()["state"], "closed")
+        self.assertNotIn("authorization_url", login.snapshot())
+
+    async def test_login_only_accepts_a_one_time_alphanumeric_code(self):
+        login = account_server.AgyLoginSession("agy-test")
+        login._process = SimpleNamespace(returncode=None)
+        login._master_fd = 123
+        login._state = "awaiting_code"
+        login._authorization_url = "https://accounts.google.com/o/oauth2/auth?state=synthetic"
+
+        with patch("ubag_antigravity_cli_adapter.login_session.os.write", return_value=len(b"synthetic-code\r")) as write:
+            for code in ("/logout", "synthetic-code\n", "secret with spaces"):
+                with self.subTest(code=code), self.assertRaises(ValueError):
+                    await login.send_input(code)
+            write.assert_not_called()
+
+            response = await login.send_input("synthetic-code")
+            write.assert_called_once_with(123, b"synthetic-code\r")
+            self.assertEqual(response["state"], "verifying")
+            self.assertNotIn("authorization_url", response)
+            with self.assertRaises(RuntimeError):
+                await login.send_input("synthetic-code")
+
+    async def test_login_start_returns_the_isolated_cli_authorization_url(self):
+        reader = asyncio.StreamReader()
+        reader.feed_data(b'{"operation":"login_start"}\n')
+        reader.feed_eof()
+        writer = SimpleNamespace(write=Mock(), drain=AsyncMock(), close=Mock(), wait_closed=AsyncMock())
+
+        login = SimpleNamespace(start=AsyncMock(return_value={
+            "state": "awaiting_code",
+            "authorization_url": "https://accounts.google.com/o/oauth2/auth?state=synthetic",
+        }))
+        with patch("ubag_antigravity_cli_adapter.account_server._login_session", login, create=True):
+            await handle_connection(reader, writer)
+
+        login.start.assert_awaited_once()
+        response = b"".join(call.args[0] for call in writer.write.call_args_list)
+        self.assertIn(b'"state": "awaiting_code"', response)
+        self.assertIn(b'https://accounts.google.com/o/oauth2/auth', response)
+        self.assertNotIn(b'access_token', response)
+
+    async def test_login_input_goes_only_to_the_active_cli_session(self):
+        reader = asyncio.StreamReader()
+        reader.feed_data(b'{"operation":"login_input","input":"synthetic-code"}\n')
+        reader.feed_eof()
+        writer = SimpleNamespace(write=Mock(), drain=AsyncMock(), close=Mock(), wait_closed=AsyncMock())
+
+        login = SimpleNamespace(send_input=AsyncMock(return_value={"state": "verifying"}))
+        with patch("ubag_antigravity_cli_adapter.account_server._login_session", login, create=True):
+            await handle_connection(reader, writer)
+
+        login.send_input.assert_awaited_once_with("synthetic-code")
+        output = b"".join(call.args[0] for call in writer.write.call_args_list)
+        self.assertIn(b'"state": "verifying"', output)
+        self.assertNotIn(b"synthetic-code", output)
+
+    async def test_login_input_rejects_non_code_characters_at_socket(self):
+        for value in ("/logout", "code\nnext", "x" * 129):
+            with self.subTest(value=value):
+                reader = asyncio.StreamReader()
+                reader.feed_data((json.dumps({"operation": "login_input", "input": value}) + "\n").encode())
+                reader.feed_eof()
+                writer = SimpleNamespace(write=Mock(), drain=AsyncMock(), close=Mock(), wait_closed=AsyncMock())
+                login = SimpleNamespace(send_input=AsyncMock())
+                with patch("ubag_antigravity_cli_adapter.account_server._login_session", login):
+                    await handle_connection(reader, writer)
+                login.send_input.assert_not_awaited()
+                self.assertEqual(writer.write.call_args.args[0], b'{"event":"error","code":"CLI_FAILURE"}\n')
+
+    async def test_login_poll_returns_only_public_state(self):
+        reader = asyncio.StreamReader()
+        reader.feed_data(b'{"operation":"login_poll"}\n')
+        reader.feed_eof()
+        writer = SimpleNamespace(write=Mock(), drain=AsyncMock(), close=Mock(), wait_closed=AsyncMock())
+
+        login = SimpleNamespace(poll=AsyncMock(return_value={
+            "state": "awaiting_code", "authorization_url": "https://accounts.google.com/o/oauth2/auth?state=synthetic",
+        }))
+        with patch("ubag_antigravity_cli_adapter.account_server._login_session", login, create=True):
+            await handle_connection(reader, writer)
+
+        login.poll.assert_awaited_once_with()
+        self.assertNotIn(b'"cursor"', writer.write.call_args.args[0])
+
+    async def test_login_stop_closes_the_isolated_cli_session(self):
+        reader = asyncio.StreamReader()
+        reader.feed_data(b'{"operation":"login_stop"}\n')
+        reader.feed_eof()
+        writer = SimpleNamespace(write=Mock(), drain=AsyncMock(), close=Mock(), wait_closed=AsyncMock())
+
+        login = SimpleNamespace(stop=AsyncMock(return_value={"state": "stopped"}))
+        with patch("ubag_antigravity_cli_adapter.account_server._login_session", login, create=True):
+            await handle_connection(reader, writer)
+
+        login.stop.assert_awaited_once()
+        self.assertIn(b'"state": "stopped"', writer.write.call_args.args[0])
+
     async def test_account_worker_forwards_result_without_credential_fields(self):
         reader = asyncio.StreamReader()
         reader.feed_data(b'{"prompt":"hello","model":"gemini-3.8-flash","effort":"high"}\n')

@@ -101,30 +101,40 @@ provisioned with an account-specific socket and isolated home.
   docker compose -f docker-compose.vps.yml --env-file deploy/vps/env.local --profile antigravity-oauth up -d --build
   ```
 
-3. In your own SSH terminal, open **each configured worker separately** (change
-  the number for slots 2 and 3):
+3. For each provisioned slot, select **Sign in** on that account in the
+  authenticated dashboard. Open the first-party Google authorization link
+  yourself, then enter only its one-time code in the dashboard's authorization
+  code field. The gateway relays the code to that account's worker without
+  persisting or echoing it; never enter a password, session token, or keyring
+  contents there. If the CLI needs a Linux Secret Service unlock or does not
+  display a supported authorization link, stop dashboard sign-in and handle
+  the prompt in your own SSH terminal. For manual CLI troubleshooting, open
+  only the matching worker (change the slot number for slots 2 and 3):
 
   ```sh
   docker compose -f docker-compose.vps.yml --env-file deploy/vps/env.local exec --user agy agy-slot-1 agy
   ```
 
-  Follow the [official remote SSH OAuth instructions](https://antigravity.google/docs/cli/install/):
-  open the printed authorization URL yourself in your browser and enter the
-  resulting code **directly in your terminal**. Do not paste codes, passwords,
-  session tokens, or keyring files into the dashboard or logs. If a Linux
-  Secret Service unlock prompt appears, handle it in your terminal. Exit the
-  TUI when sign-in is complete; keep the account worker running.
-4. In the dashboard, refresh account status. A socket marked present **only
-  confirms a socket file exists**, not a valid login. Run a per-account canary
-  and inspect its job outcome under Jobs; `202 accepted` alone is not success.
-  If a slot is not reachable, check its worker and the slot ID mapping; do not
-  fall back to another account for a pinned canary.
+  Follow the [official remote SSH OAuth instructions](https://antigravity.google/docs/cli/install/)
+  in that terminal; do not put CLI output or secrets in the dashboard or logs.
+  Exit the TUI after manual sign-in and keep the account worker running.
+4. In the dashboard, select **Verify with test job** for each account and wait
+  until its pinned job completes. Only **Canary passed** marks the account
+  verified and eligible for ordinary account-backed jobs. A socket marked
+  present, a submitted code, and `202 accepted` are not login verification.
+  A pending or failed canary cannot route ordinary jobs; the pending canary
+  itself may use only its own account. If a slot is unreachable, check its
+  worker and slot ID mapping; a pinned canary never falls back to another
+  account. Disabling `UBAG_ANTIGRAVITY_ENABLED` blocks sign-in and CLI jobs,
+  even if the worker socket and old verification record remain.
 
-**Before enabling for real jobs:** verify the official CLI's authenticated
-JSONL output and quota-error shape, Linux Secret Service persistence after a
-worker restart, socket permissions with Docker on the VPS, and all three
-canary outcomes. Quota percentages and reset times remain unavailable; only
-an observed upfront structured quota rejection sets a temporary cooldown.
+**Before enabling for real jobs:** verify the official CLI's remote OAuth
+prompt and authenticated JSONL output, quota-error shape, Linux Secret Service
+persistence after a worker restart, socket permissions with Docker on the VPS,
+and a completed canary for every provisioned slot. These checks have not been
+run on Linux for the dashboard sign-in flow. Quota percentages and reset times
+remain unavailable; only an observed upfront structured quota rejection sets
+a temporary cooldown.
 Removing account metadata does not delete its worker home or log out its
 human-owned CLI session; deprovision the worker separately.
 

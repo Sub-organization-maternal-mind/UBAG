@@ -10,7 +10,10 @@ import stat
 from pathlib import Path
 from typing import Any
 
+from .login_session import AgyLoginSession
 from .process import AgyProcessManager, CLIConfig
+
+_login_session: AgyLoginSession | None = None
 
 
 def _public_event(event: dict[str, Any]) -> dict[str, Any] | None:
@@ -47,6 +50,26 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
         if len(line) > 1024 * 1024:
             raise ValueError("request is too large")
         request = json.loads(line)
+        if isinstance(request, dict) and isinstance(request.get("operation"), str):
+            if _login_session is None:
+                raise RuntimeError("login is not available")
+            operation = request["operation"]
+            if operation == "login_start" and set(request) == {"operation"}:
+                response = await _login_session.start()
+            elif operation == "login_poll" and set(request) == {"operation"}:
+                response = await _login_session.poll()
+            elif operation == "login_input" and set(request) == {"operation", "input"}:
+                user_input = request["input"]
+                if not isinstance(user_input, str) or not re.fullmatch(r"[A-Za-z0-9-]{1,128}", user_input):
+                    raise ValueError("invalid login input")
+                response = await _login_session.send_input(user_input)
+            elif operation == "login_stop" and set(request) == {"operation"}:
+                response = await _login_session.stop()
+            else:
+                raise ValueError("invalid login operation")
+            writer.write((json.dumps(response) + "\n").encode("utf-8"))
+            await writer.drain()
+            return
         if not isinstance(request, dict) or set(request) - {"prompt", "model", "effort", "conversation_id"}:
             raise ValueError("invalid request")
         prompt = request.get("prompt")
@@ -59,6 +82,8 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
         conversation_id = request.get("conversation_id")
         if conversation_id is not None and not isinstance(conversation_id, str):
             raise ValueError("invalid conversation")
+        if _login_session is not None and _login_session.active:
+            raise RuntimeError("CLI login is in progress")
         manager = AgyProcessManager(CLIConfig(
             agy_binary=os.environ.get("AGY_BINARY", "agy"), model=model, effort=effort, sandbox=True,
         ))
@@ -80,6 +105,7 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
 
 
 async def serve() -> None:
+    global _login_session
     account_id = os.environ.get("UBAG_ANTIGRAVITY_ACCOUNT_ID", "")
     socket_dir = os.environ.get("UBAG_ANTIGRAVITY_SOCKET_DIR", "")
     if not re.fullmatch(r"acct_[0-9]+", account_id) or not socket_dir:
@@ -96,8 +122,12 @@ async def serve() -> None:
         pass
     server = await asyncio.start_unix_server(handle_connection, path=str(path), limit=1024 * 1024)
     os.chmod(path, 0o660)
-    async with server:
-        await server.serve_forever()
+    _login_session = AgyLoginSession(os.environ.get("AGY_BINARY", "agy"))
+    try:
+        async with server:
+            await server.serve_forever()
+    finally:
+        await _login_session.stop()
 
 
 if __name__ == "__main__":

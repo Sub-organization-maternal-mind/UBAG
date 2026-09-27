@@ -43,11 +43,12 @@ func TestWorkerDaemonEnabledOnlyByExplicitTruthyValue(t *testing.T) {
 func TestBuildWorkerRunnerUsesPerJobSpawnByDefault(t *testing.T) {
 	t.Setenv("UBAG_WORKER_DAEMON", "")
 
-	runner, err := buildWorkerRunner("python", "/scripts/run_live_worker.py", 0, nil)
+	jobs := jobstore.NewMemoryStore()
+	runner, err := buildWorkerRunner("python", "/scripts/run_live_worker.py", 0, nil, jobs)
 	if err != nil {
 		t.Fatalf("buildWorkerRunner: %v", err)
 	}
-	if _, ok := runner.(executor.ProcessWorkerRunner); !ok {
+	if process, ok := runner.(executor.ProcessWorkerRunner); !ok || process.Jobs != jobs {
 		t.Fatalf("expected ProcessWorkerRunner, got %T", runner)
 	}
 }
@@ -62,7 +63,8 @@ func TestBuildWorkerRunnerUsesDaemonWhenEnabled(t *testing.T) {
 	t.Setenv("UBAG_WORKER_DAEMON", "1")
 	t.Setenv("UBAG_WORKER_DAEMON_SCRIPT", script)
 
-	runner, err := buildWorkerRunner("python", "/scripts/run_live_worker.py", 0, nil)
+	jobs := jobstore.NewMemoryStore()
+	runner, err := buildWorkerRunner("python", "/scripts/run_live_worker.py", 0, nil, jobs)
 	if err != nil {
 		t.Fatalf("buildWorkerRunner: %v", err)
 	}
@@ -77,7 +79,7 @@ func TestBuildWorkerRunnerUsesDaemonWhenEnabled(t *testing.T) {
 	if daemon.Script != script {
 		t.Fatalf("daemon script = %q, want %q", daemon.Script, script)
 	}
-	if _, ok := routed.fallback.(executor.ProcessWorkerRunner); !ok {
+	if fallback, ok := routed.fallback.(executor.ProcessWorkerRunner); !ok || fallback.Jobs != jobs {
 		t.Fatalf("expected fallback branch to be ProcessWorkerRunner, got %T", routed.fallback)
 	}
 }
@@ -134,7 +136,7 @@ func TestBuildWorkerRunnerRefusesAMissingDaemonScript(t *testing.T) {
 	t.Setenv("UBAG_WORKER_DAEMON", "1")
 	t.Setenv("UBAG_WORKER_DAEMON_SCRIPT", filepath.Join(t.TempDir(), "absent.py"))
 
-	if _, err := buildWorkerRunner("python", "/scripts/run_live_worker.py", 0, nil); err == nil {
+	if _, err := buildWorkerRunner("python", "/scripts/run_live_worker.py", 0, nil, nil); err == nil {
 		t.Fatal("expected startup to refuse a daemon whose script does not exist")
 	}
 }
@@ -147,7 +149,7 @@ func TestBuildWorkerRunnerRefusesTheDaemonWithoutItsOwnScript(t *testing.T) {
 	t.Setenv("UBAG_WORKER_DAEMON", "1")
 	t.Setenv("UBAG_WORKER_DAEMON_SCRIPT", "")
 
-	_, err := buildWorkerRunner("python", "/scripts/run_live_worker.py", 0, nil)
+	_, err := buildWorkerRunner("python", "/scripts/run_live_worker.py", 0, nil, nil)
 	if err == nil {
 		t.Fatal("expected startup to refuse a daemon with no daemon script")
 	}

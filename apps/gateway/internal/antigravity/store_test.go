@@ -170,3 +170,35 @@ func TestFailedAccountWriteDoesNotPublishSlot(t *testing.T) {
 		t.Fatalf("failed write consumed slot id: account=%#v error=%v", account, err)
 	}
 }
+
+func TestVerificationJobIsTenantScopedDurableAndAtomic(t *testing.T) {
+	dataDir := t.TempDir()
+	store := NewStore(dataDir)
+	account, err := store.AddAccount("tenant_a", "Primary", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetVerificationJob("tenant_b", account.ID, "job_foreign"); err == nil {
+		t.Fatal("other tenant replaced account verification")
+	}
+	if err := store.SetVerificationJob("tenant_a", account.ID, "job_first"); err != nil {
+		t.Fatal(err)
+	}
+	if got := NewStore(dataDir).ListAccounts("tenant_a"); len(got) != 1 || got[0].VerificationJobID != "job_first" {
+		t.Fatalf("verification job did not persist: %#v", got)
+	}
+	store.dataDir = filepath.Join(t.TempDir(), "missing")
+	if err := store.SetVerificationJob("tenant_a", account.ID, "job_unwritten"); err == nil {
+		t.Fatal("expected verification write to fail")
+	}
+	if got := store.ListAccounts("tenant_a"); len(got) != 1 || got[0].VerificationJobID != "job_first" {
+		t.Fatalf("failed write changed in-memory verification: %#v", got)
+	}
+	store.dataDir = dataDir
+	if err := store.SetVerificationJob("tenant_a", account.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := NewStore(dataDir).ListAccounts("tenant_a"); len(got) != 1 || got[0].VerificationJobID != "" {
+		t.Fatalf("new sign-in did not clear durable verification: %#v", got)
+	}
+}

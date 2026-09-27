@@ -130,3 +130,4 @@ apps/gateway/_gw_run.py
 # silently diverges (this one did) and nothing type-checks it.
 apps/*/_wip/
 _wip/
+.playwright-mcp/

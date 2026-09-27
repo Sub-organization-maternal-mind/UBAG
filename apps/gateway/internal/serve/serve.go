@@ -1129,6 +1129,7 @@ func buildWorkerRunner(
 	script string,
 	maxRuntime time.Duration,
 	artifactStore artifacts.ArtifactStore,
+	jobs jobstore.Store,
 ) (executor.WorkerRunner, error) {
 	if !workerDaemonEnabled() {
 		return executor.ProcessWorkerRunner{
@@ -1136,6 +1137,7 @@ func buildWorkerRunner(
 			Script:     script,
 			MaxRuntime: maxRuntime,
 			Artifacts:  artifactStore,
+			Jobs:       jobs,
 		}, nil
 	}
 
@@ -1166,6 +1168,7 @@ func buildWorkerRunner(
 			Script:     script,
 			MaxRuntime: maxRuntime,
 			Artifacts:  artifactStore,
+			Jobs:       jobs,
 		},
 	}, nil
 }
@@ -1237,7 +1240,7 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 	// the SAME rows /v1/browser/contexts reads — no longer masked by the
 	// deploy-time seed.
 	loginStateWriter, _ := topologyStore.(topology.LoginStateWriter)
-	runner, err := buildWorkerRunner(python, script, maxRuntime, artifactStore)
+	runner, err := buildWorkerRunner(python, script, maxRuntime, artifactStore, jobs)
 	if err != nil {
 		return nil, err
 	}

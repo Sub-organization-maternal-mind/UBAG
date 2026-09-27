@@ -67,6 +67,9 @@ var UbagEndpoints = map[string]ManifestEndpoint{
 	"GET /v1/openai/models": {Method: "GET", Path: "/v1/openai/models"},
 	"POST /v1/openai/audio/transcriptions": {Method: "POST", Path: "/v1/openai/audio/transcriptions"},
 	"POST /v1/openai/embeddings": {Method: "POST", Path: "/v1/openai/embeddings"},
+	"GET /v1/antigravity/accounts/{id}/login": {Method: "GET", Path: "/v1/antigravity/accounts/{id}/login"},
+	"POST /v1/antigravity/accounts/{id}/login": {Method: "POST", Path: "/v1/antigravity/accounts/{id}/login"},
+	"DELETE /v1/antigravity/accounts/{id}/login": {Method: "DELETE", Path: "/v1/antigravity/accounts/{id}/login"},
 }
 
 var UbagErrorCodes = map[string]ManifestErrorCode{

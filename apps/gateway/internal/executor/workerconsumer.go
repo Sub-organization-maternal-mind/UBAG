@@ -174,6 +174,7 @@ type ProcessWorkerRunner struct {
 	Script           string
 	MaxRuntime       time.Duration
 	AntigravityStore *antigravity.Store
+	Jobs             jobstore.Store
 	// Artifacts lets the runner materialize a job's declared attachments to local
 	// temp files (attachment_local_paths, plus audio_local_path for the single
 	// audio alias) for the worker to attach. Optional; when nil, materialization
@@ -1179,6 +1180,9 @@ func extForContentType(contentType string) string {
 }
 
 func (r ProcessWorkerRunner) RunWorker(ctx context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+	if envelope.Job.Target == "antigravity_cli" && !antigravity.OAuthEnabled() {
+		return nil, fmt.Errorf("Antigravity OAuth is disabled")
+	}
 	python := strings.TrimSpace(r.Python)
 	if python == "" {
 		python = "python"
@@ -1250,8 +1254,7 @@ func (r ProcessWorkerRunner) RunWorker(ctx context.Context, envelope DispatchEnv
 	if socketDir == "" {
 		return nil, fmt.Errorf("isolated account socket directory is not configured")
 	}
-	requestedAccount, _ := envelope.Job.Options["antigravity_account_id"].(string)
-	return runIsolatedCLIAttempts(store, envelope.TenantID, requestedAccount, func(account antigravity.Account) (string, bool) {
+	return runIsolatedCLIAttempts(runCtx, store, r.Jobs, envelope, func(account antigravity.Account) (string, bool) {
 		if filepath.Base(account.ID) != account.ID || account.ID == "." {
 			return "", false
 		}
@@ -1262,13 +1265,17 @@ func (r ProcessWorkerRunner) RunWorker(ctx context.Context, envelope DispatchEnv
 }
 
 func runIsolatedCLIAttempts(
-	store *antigravity.Store, tenantID, requestedAccount string,
+	ctx context.Context, store *antigravity.Store, jobs jobstore.Store, envelope DispatchEnvelope,
 	accountSocket func(antigravity.Account) (string, bool),
 	run func(string) ([]jobstore.WorkerEvent, error),
 ) ([]jobstore.WorkerEvent, error) {
+	requestedAccount, _ := envelope.Job.Options["antigravity_account_id"].(string)
 	var quotaEvents []jobstore.WorkerEvent
-	for _, account := range store.EligibleAccounts(tenantID, time.Now()) {
+	for _, account := range store.EligibleAccounts(envelope.TenantID, time.Now()) {
 		if requestedAccount != "" && account.ID != requestedAccount {
+			continue
+		}
+		if !accountVerifiedForJob(ctx, jobs, envelope, account) {
 			continue
 		}
 		socket, ready := accountSocket(account)
@@ -1280,7 +1287,7 @@ func runIsolatedCLIAttempts(
 			return nil, err
 		}
 		if upfrontQuotaError(events) {
-			if err := store.MarkAccountExhausted(tenantID, account.ID, antigravity.DefaultCooldownSec); err != nil {
+			if err := store.MarkAccountExhausted(envelope.TenantID, account.ID, antigravity.DefaultCooldownSec); err != nil {
 				return events, nil
 			}
 			quotaEvents = events
@@ -1289,7 +1296,7 @@ func runIsolatedCLIAttempts(
 			}
 			continue
 		}
-		if err := store.MarkAccountUsed(tenantID, account.ID); err != nil {
+		if err := store.MarkAccountUsed(envelope.TenantID, account.ID); err != nil {
 			slog.Error("failed to persist Antigravity account last-used time", "error", err)
 		}
 		return events, nil
@@ -1298,6 +1305,24 @@ func runIsolatedCLIAttempts(
 		return quotaEvents, nil
 	}
 	return nil, fmt.Errorf("no isolated account socket available for tenant")
+}
+
+func accountVerifiedForJob(ctx context.Context, jobs jobstore.Store, envelope DispatchEnvelope, account antigravity.Account) bool {
+	if jobs == nil || account.VerificationJobID == "" {
+		return false
+	}
+	canary, found, err := jobs.Get(ctx, account.VerificationJobID)
+	if err != nil || !found || canary.ID != account.VerificationJobID || canary.TenantID != envelope.TenantID ||
+		canary.Client["app_id"] != "antigravity-test" ||
+		canary.Target != "antigravity_cli" || canary.Options["antigravity_account_id"] != account.ID {
+		return false
+	}
+	if canary.ID == envelope.JobID {
+		return envelope.AppID == canary.AppID && envelope.Client["app_id"] == canary.Client["app_id"] &&
+			envelope.Job.Target == "antigravity_cli" &&
+			envelope.Job.Options["antigravity_account_id"] == account.ID && !jobstore.TerminalStatus(canary.Status)
+	}
+	return canary.Status == jobstore.StatusCompleted
 }
 
 func upfrontQuotaError(events []jobstore.WorkerEvent) bool {

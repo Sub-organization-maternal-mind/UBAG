@@ -192,6 +192,18 @@ export const UBAG_ENDPOINTS = {
   "POST /v1/openai/embeddings": {
     "method": "POST",
     "path": "/v1/openai/embeddings"
+  },
+  "GET /v1/antigravity/accounts/{id}/login": {
+    "method": "GET",
+    "path": "/v1/antigravity/accounts/{id}/login"
+  },
+  "POST /v1/antigravity/accounts/{id}/login": {
+    "method": "POST",
+    "path": "/v1/antigravity/accounts/{id}/login"
+  },
+  "DELETE /v1/antigravity/accounts/{id}/login": {
+    "method": "DELETE",
+    "path": "/v1/antigravity/accounts/{id}/login"
   }
 } as const;
 export const UBAG_ERROR_CODES = {
