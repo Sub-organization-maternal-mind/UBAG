@@ -21,6 +21,14 @@ func RoleAllows(role string, action string) bool {
 	return permitted
 }
 
+// IsValidRole reports whether role is a role in the gateway role table.
+// Input validators (elevation requests, PAT issuance) use this so a role
+// string can never enter a grant or a token outside the enforced vocabulary.
+func IsValidRole(role string) bool {
+	_, ok := roleActions[role]
+	return ok
+}
+
 // Actions returns the sorted action list a role may perform (introspection
 // for tests and tooling).
 func Actions(role string) []string {

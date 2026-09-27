@@ -745,6 +745,62 @@ func TestCreateJobRejectsUnsafePayloadBeforeStorageAndEnqueue(t *testing.T) {
 	}
 }
 
+func TestCreateJobRejectsUnsafeProfilePathOptions(t *testing.T) {
+	store := jobstore.NewMemoryStore()
+	dispatcher := &recordingExecutor{}
+	server := NewServer(Config{AppSecret: "dev-secret", Jobs: store, Executor: dispatcher}).Handler()
+	tests := []struct {
+		name   string
+		option string
+	}{
+		{
+			name:   "absolute posix user_data_dir",
+			option: `"user_data_dir":"/home/operator/.chromium"`,
+		},
+		{
+			name:   "windows drive profile_path",
+			option: `"profile_path":"C:\\Users\\operator\\profile"`,
+		},
+		{
+			name:   "unc profile_dir",
+			option: `"profile_dir":"\\\\server\\share\\profile"`,
+		},
+		{
+			name:   "parent traversal user_data_dir",
+			option: `"user_data_dir":"var/profiles/../../etc"`,
+		},
+		{
+			name:   "non-string profile_dir",
+			option: `"profile_dir":42`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := `{"api_version":"2026-05-22","idempotency_key":"idem_options_0001","client":{"app_id":"test","app_version":"0.0.0","sdk":{"name":"test","version":"0.0.0"}},"job":{"target":"mock","command_type":"submit","input":{"prompt":"hello"},"options":{` + tt.option + `}}}`
+			response := doJSON(server, http.MethodPost, "/v1/jobs", body, authHeaders(""))
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusBadRequest, response.Body.String())
+			}
+			var errorPayload errorEnvelope
+			if err := json.Unmarshal(response.Body.Bytes(), &errorPayload); err != nil {
+				t.Fatalf("decode error response: %v", err)
+			}
+			if errorPayload.Error.Code != "UBAG-VALIDATION-JOB-PAYLOAD-SAFETY-001" {
+				t.Fatalf("error code = %q", errorPayload.Error.Code)
+			}
+		})
+	}
+
+	// A relative, traversal-free profile path is accepted; it is the worker's
+	// job to enforce containment in its own state directory.
+	accepted := `{"api_version":"2026-05-22","idempotency_key":"idem_options_0002","client":{"app_id":"test","app_version":"0.0.0","sdk":{"name":"test","version":"0.0.0"}},"job":{"target":"mock","command_type":"submit","input":{"prompt":"hello"},"options":{"user_data_dir":"var/profiles/mock/default"}}}`
+	response := doJSON(server, http.MethodPost, "/v1/jobs", accepted, authHeaders(""))
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("relative profile path: status = %d, want %d; body=%s", response.Code, http.StatusAccepted, response.Body.String())
+	}
+}
+
 func TestCreateJobPersistsExecutablePayload(t *testing.T) {
 	server := NewServer(Config{AppSecret: "dev-secret"}).Handler()
 	body := `{"api_version":"2026-05-22","idempotency_key":"idem_payload_0001","client":{"app_id":"client_app","app_version":"1.2.3","device_id":"device_1","sdk":{"name":"test-sdk","version":"9.9.9"}},"job":{"target":"mock_target","command_type":"echo","conversation_id":"conv_1","template_id":"mock.echo.v1","input":{"prompt":"hello"},"options":{"temperature":0},"callbacks":{"webhook_id":"wh_1"},"context":{"account_binding_id":"acct_1"}}}`

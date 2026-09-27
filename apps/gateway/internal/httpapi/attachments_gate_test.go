@@ -331,7 +331,10 @@ func TestBatchAttachmentEntryUsesHeldDispatchGate(t *testing.T) {
 		{"idempotency_key":"idem_batch_text_00001","client":{"app_id":"test","app_version":"0.0.0","sdk":{"name":"test","version":"0.0.0"}},"job":{"target":"mock","command_type":"chat.prompt","input":{"prompt":"hello"}}},
 		{"idempotency_key":"idem_batch_attach_001","client":{"app_id":"test","app_version":"0.0.0","sdk":{"name":"test","version":"0.0.0"}},"job":{"target":"chatgpt_web","command_type":"chat.prompt","input":{"prompt":"summarize","attachments":[{"key":"report.pdf","content_type":"application/pdf","kind":"document"}]}}}
 	]}`
-	resp := doJSON(server, http.MethodPost, "/v1/jobs/batch", body, authHeaders(""))
+	// Batch creation requires a batch-level idempotency key (header or
+	// body idempotency_key); per-entry keys stay authoritative for the
+	// individual submissions.
+	resp := doJSON(server, http.MethodPost, "/v1/jobs/batch", body, authHeaders("idem_batch_gate_0001"))
 	if resp.Code != http.StatusAccepted {
 		t.Fatalf("batch status = %d, want 202; body=%s", resp.Code, resp.Body.String())
 	}

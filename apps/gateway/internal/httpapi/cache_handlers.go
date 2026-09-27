@@ -28,7 +28,10 @@ func (s *Server) handleCacheInvalidate(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, http.StatusOK, cacheInvalidateResponse{APIVersion: s.apiVersion, TraceID: traceIDFromContext(r.Context())})
 		return
 	}
-	if !s.authorizeGatewayAction(w, r, "job:read") {
+	// rate_limit:manage, not job:read — invalidation is a purge of provider
+	// responses shared by the whole tenant, so a viewer must not be able to
+	// flush it (parity with purgeCache below).
+	if !s.authorizeGatewayAction(w, r, "rate_limit:manage") {
 		return
 	}
 	var req cacheInvalidateRequest

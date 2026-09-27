@@ -13,9 +13,11 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
+	"github.com/ubag/ubag/apps/gateway/internal/abac"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	"github.com/ubag/ubag/apps/gateway/internal/mfa"
 	ubagv1 "github.com/ubag/ubag/packages/proto/gen/go/ubag/v1"
 )
 
@@ -110,6 +112,63 @@ func TestCreateJobRequiresIdempotencyKey(t *testing.T) {
 	req := validCreateRequest("")
 	if _, err := client.CreateJob(ctx, req); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("missing idempotency key: got code %v, want InvalidArgument (err=%v)", status.Code(err), err)
+	}
+}
+
+// TestAuthorizeMFAAndABACParity mirrors the httpapi.authorizeGatewayAction
+// gates onto the gRPC authorization path: after RBAC passes, an ABAC deny
+// rejects the action, and the privileged actions are denied whenever MFA is
+// enabled (the gRPC transport carries no MFA session marker).
+func TestAuthorizeMFAAndABACParity(t *testing.T) {
+	denyAll, err := abac.NewEnforcer(abac.PolicyBundle{Rules: []abac.Rule{
+		{Name: "deny-all", Condition: `principal["role"] == "nobody"`},
+	}})
+	if err != nil {
+		t.Fatalf("abac.NewEnforcer: %v", err)
+	}
+
+	newServer := func(abacEnforcer *abac.Enforcer, mfaSvc *mfa.Service) *Server {
+		return NewServer(Config{
+			APIVersion: testAPIVersion,
+			AppSecret:  testSecret,
+			TenantID:   testTenantID,
+			AppID:      testAppID,
+			ActorRole:  "admin",
+			ABAC:       abacEnforcer,
+			MFA:        mfaSvc,
+		})
+	}
+
+	// authorize() reads incoming metadata directly (no wire round-trip like
+	// the bufconn tests), so the credential must be incoming metadata.
+	ctx := metadata.NewIncomingContext(
+		context.Background(),
+		metadata.Pairs("authorization", "Bearer "+testSecret),
+	)
+
+	// Baseline: RBAC alone (no ABAC, MFA disabled) allows a job action.
+	if err := newServer(nil, nil).authorize(ctx, "job:create"); err != nil {
+		t.Fatalf("baseline authorize job:create: %v", err)
+	}
+
+	// ABAC deny -> PermissionDenied even though RBAC allows.
+	if err := newServer(denyAll, nil).authorize(ctx, "job:create"); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("abac-denied action: got code %v, want PermissionDenied (err=%v)", status.Code(err), err)
+	}
+
+	// MFA enabled + privileged action -> PermissionDenied over gRPC.
+	if err := newServer(nil, &mfa.Service{}).authorize(ctx, "role:manage"); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("mfa-gated action: got code %v, want PermissionDenied (err=%v)", status.Code(err), err)
+	}
+
+	// MFA enabled + non-privileged action is unaffected.
+	if err := newServer(nil, &mfa.Service{}).authorize(ctx, "job:create"); err != nil {
+		t.Fatalf("mfa-enabled non-privileged action: %v", err)
+	}
+
+	// Unauthenticated context is still rejected first.
+	if err := newServer(nil, nil).authorize(context.Background(), "job:create"); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("unauthenticated authorize: got code %v, want Unauthenticated", status.Code(err))
 	}
 }
 

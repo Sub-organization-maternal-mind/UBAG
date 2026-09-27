@@ -16,6 +16,15 @@ var rolePriority = map[string]int{
 	"superadmin": 5,
 }
 
+// ApproverMayGrant reports whether approverRole carries sufficient priority
+// to approve a grant for grantRole. The approval seam consults the same
+// priority table the elevation lookup uses: an approver may never approve a
+// grant whose role outranks the approver's own (e.g. an admin cannot approve
+// a superadmin elevation). Unknown roles rank 0.
+func ApproverMayGrant(approverRole, grantRole string) bool {
+	return rolePriority[approverRole] >= rolePriority[grantRole]
+}
+
 // ElevatedRole returns the highest role available to actor+tenantID given
 // active grants. If no active grant grants a higher role than currentRole,
 // currentRole is returned unchanged.

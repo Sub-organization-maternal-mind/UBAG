@@ -200,12 +200,15 @@ class EngineHappyPathTests(unittest.TestCase):
     def test_profile_label_never_leaks_full_path(self):
         engine = LiveSessionEngine(get_provider_selectors("deepseek_web"))
         events = engine.run(
-            _payload("deepseek_web", user_data_dir="/home/user/secret/profiles/main"),
+            _payload(
+                "deepseek_web",
+                user_data_dir="var/profiles/deepseek_web/secret_profile_main",
+            ),
             driver=MockPageDriver(),
         )
         opening = next(e for e in events if e["type"] == "session.opening")
-        self.assertEqual(opening["data"]["profile"], "main")
-        self.assertNotIn("/home/user", str(opening["data"]))
+        self.assertEqual(opening["data"]["profile"], "secret_profile_main")
+        self.assertNotIn("var/profiles", str(opening["data"]))
 
 
 class ManualLoginFlowTests(unittest.TestCase):

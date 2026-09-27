@@ -74,6 +74,16 @@ class _FakeEngine:
 
 
 @pytest.fixture(autouse=True)
+def _profile_root_env(monkeypatch):
+    # The envelope validates that an explicit profile path stays inside the
+    # worker's own profile root. These tests exercise daemon reuse/isolation,
+    # not path validation, so point UBAG_PROFILE_DIR at the fixtures' "/profiles"
+    # root (production behaves the same way: the gateway forwards UBAG_PROFILE_DIR).
+    monkeypatch.setenv("UBAG_PROFILE_DIR", "/profiles")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_fake_engine():
     _FakeEngine.seen_drivers = []
     _FakeEngine.attachment_state_before_run = []

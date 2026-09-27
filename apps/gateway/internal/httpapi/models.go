@@ -267,8 +267,13 @@ type jobEventsResponse struct {
 
 // batchCreateJobRequest carries up to 100 job submissions in one request (§10, §19.2).
 type batchCreateJobRequest struct {
-	APIVersion string             `json:"api_version"`
-	Jobs       []createJobRequest `json:"jobs"`
+	APIVersion string `json:"api_version"`
+	// IdempotencyKey is the batch-level key; it may also arrive via the
+	// Idempotency-Key header (header wins). Entries without an explicit key
+	// derive theirs deterministically from this one, so a retried batch is
+	// idempotent per entry instead of minting throwaway keys.
+	IdempotencyKey string             `json:"idempotency_key,omitempty"`
+	Jobs           []createJobRequest `json:"jobs"`
 }
 
 // batchCreateJobResponse lists the accepted/rejected outcomes per submission.

@@ -1282,6 +1282,13 @@ func (s *Server) handleBatchJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Batch submission creates jobs, so it carries the same RBAC/ABAC/MFA gate
+	// as the single-job create — without this a viewer role could mint 100
+	// jobs per request.
+	if !s.authorizeGatewayAction(w, r, "job:create") {
+		return
+	}
+
 	const maxBatchSize = 100
 	body, err := io.ReadAll(io.LimitReader(r.Body, s.maxBody))
 	if err != nil {
@@ -1304,6 +1311,40 @@ func (s *Server) handleBatchJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A batch requires a caller-supplied idempotency key: a fabricated
+	// throwaway per entry makes replay-dedup impossible and lets a client
+	// double-submit silently. Entry keys fall back to "<batch key>-<index>"
+	// so a retried batch stays idempotent per entry.
+	batchKey := strings.TrimSpace(r.Header.Get(headerIdempotencyKey))
+	if batchKey == "" {
+		batchKey = strings.TrimSpace(batchReq.IdempotencyKey)
+	}
+	if batchKey == "" {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-IDEMPOTENCY-KEY-MISSING-001", "Idempotency-Key is required for batch job creation"))
+		return
+	}
+	if !isIdempotencyKey(batchKey) {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-IDEMPOTENCY-KEY-001", "Idempotency-Key must be 16-128 characters and contain only letters, numbers, dot, underscore, colon, or dash"))
+		return
+	}
+
+	// §14 backpressure: reject the whole batch up front when the live queue is
+	// too deep. Terminal states (done/failed/cancelled) are history, not
+	// queue depth — counting them 429s a healthy gateway forever once the
+	// spool accumulates history. Checked once for the batch, before the entry
+	// loop, so the per-entry check cannot be outrun by submission order.
+	if s.maxQueueDepth > 0 {
+		if stats, err := s.executor.Stats(r.Context()); err == nil {
+			pending := stats.DepthByState[string(jobstore.StatusQueued)] + stats.DepthByState[string(jobstore.StatusAssigned)]
+			if pending >= s.maxQueueDepth {
+				e := queueError("UBAG-QUEUE-BACKPRESSURE-002", "queue is too deep; retry later", true)
+				e.RetryAfterMS = ptrInt(30 * 1000)
+				s.writeError(w, r, http.StatusTooManyRequests, e)
+				return
+			}
+		}
+	}
+
 	traceID := traceIDFromContext(r.Context())
 	principal, ok := principalFromContext(r.Context())
 	if !ok {
@@ -1322,7 +1363,7 @@ func (s *Server) handleBatchJobs(w http.ResponseWriter, r *http.Request) {
 	accepted, rejected := 0, 0
 
 	for i, req := range batchReq.Jobs {
-		outcome, httpStatus := s.processBatchEntry(r.Context(), i, apiVersion, tenantID, appID, traceID, req)
+		outcome, httpStatus := s.processBatchEntry(r.Context(), i, batchKey, apiVersion, tenantID, appID, traceID, req)
 		results = append(results, outcome)
 		if httpStatus == http.StatusAccepted || httpStatus == http.StatusOK {
 			accepted++
@@ -1351,7 +1392,7 @@ func (s *Server) handleBatchJobs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) processBatchEntry(
 	ctx context.Context,
 	index int,
-	apiVersion, tenantID, appID, traceID string,
+	batchKey, apiVersion, tenantID, appID, traceID string,
 	req createJobRequest,
 ) (batchJobOutcome, int) {
 	// Basic validation mirrors createJob Ã¢â‚¬â€ inline here to avoid the full HTTP
@@ -1418,25 +1459,19 @@ func (s *Server) processBatchEntry(
 		}
 	}
 
-	// Auto-generate idempotency key if absent.
+	// Idempotency: an explicit per-entry key wins (same validation as
+	// createJob); otherwise derive one deterministically from the batch key so
+	// a retried batch deduplicates instead of minting throwaway keys.
 	idempKey := strings.TrimSpace(req.IdempotencyKey)
 	if idempKey == "" {
-		idempKey = generatedTraceID() // unique per entry
-	}
-
-	// Ã‚Â§14 backpressure: reject this entry when the queue is too deep.
-	if s.maxQueueDepth > 0 {
-		if stats, err := s.executor.Stats(ctx); err == nil {
-			pending := 0
-			for _, v := range stats.DepthByState {
-				pending += v
-			}
-			if pending >= s.maxQueueDepth {
-				e := queueError("UBAG-QUEUE-BACKPRESSURE-002", "queue is too deep; retry later", true)
-				e.RetryAfterMS = ptrInt(30 * 1000)
-				return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusTooManyRequests
-			}
+		base := batchKey
+		if len(base) > 120 {
+			base = base[:120]
 		}
+		idempKey = fmt.Sprintf("%s-%03d", base, index)
+	} else if !isIdempotencyKey(idempKey) {
+		e := validationError("UBAG-VALIDATION-IDEMPOTENCY-KEY-001", "entry Idempotency-Key must be 16-128 characters and contain only letters, numbers, dot, underscore, colon, or dash")
+		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
 	}
 
 	// Ã‚Â§14 concurrency ceiling: acquire a token before creating the job.
@@ -1812,14 +1847,14 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ã‚Â§14 backpressure: reject new jobs when the queue is too deep.
+	// §14 backpressure: reject new jobs when the live queue is too deep.
+	// Terminal states (done/failed/cancelled) are history, not queue depth —
+	// summing the whole DepthByState map 429s a healthy gateway forever once
+	// the spool accumulates history.
 	if s.maxQueueDepth > 0 {
 		stats, err := s.executor.Stats(r.Context())
 		if err == nil {
-			pending := 0
-			for _, v := range stats.DepthByState {
-				pending += v
-			}
+			pending := stats.DepthByState[string(jobstore.StatusQueued)] + stats.DepthByState[string(jobstore.StatusAssigned)]
 			if pending >= s.maxQueueDepth {
 				const retryAfterSecs = 30
 				reservation.release(r.Context())
@@ -2993,7 +3028,48 @@ func normalizeJSONValue(value any) any {
 }
 
 func validateExecutableJobPayload(request createJobRequest) error {
-	return jobcore.ValidatePayload(jobcoreClient(request.Client), jobcoreSpec(request.Job))
+	if err := jobcore.ValidatePayload(jobcoreClient(request.Client), jobcoreSpec(request.Job)); err != nil {
+		return err
+	}
+	return validateJobOptionProfilePaths(request.Job.Options)
+}
+
+// browserProfileOptionKeys name job options that the worker resolves into a
+// Chromium persistent-context directory. The gateway cannot know the worker's
+// filesystem, so the gateway-side allowlist is structural only: the value must
+// be a relative path with no parent-directory traversal. The worker enforces
+// the authoritative containment check (its own profile root) at dispatch time.
+var browserProfileOptionKeys = [...]string{"user_data_dir", "profile_dir", "profile_path"}
+
+func validateJobOptionProfilePaths(options map[string]any) error {
+	for _, key := range browserProfileOptionKeys {
+		raw, ok := options[key]
+		if !ok || raw == nil {
+			continue
+		}
+		value, isString := raw.(string)
+		if !isString {
+			return fmt.Errorf("job.options.%s must be a string", key)
+		}
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return fmt.Errorf("job.options.%s must not be empty", key)
+		}
+		// Absolute anywhere: POSIX leading "/", Windows drive ("C:\", "C:/"),
+		// UNC ("\\server"), or a rooted Windows path ("\Users"). The worker
+		// only accepts profile locations inside its own state directory, so
+		// absolute paths from the API surface are always a mismatch.
+		if strings.HasPrefix(trimmed, "/") || strings.HasPrefix(trimmed, "\\") ||
+			filepath.IsAbs(trimmed) || (len(trimmed) >= 2 && trimmed[1] == ':') {
+			return fmt.Errorf("job.options.%s must be a relative path", key)
+		}
+		for _, segment := range strings.FieldsFunc(trimmed, func(r rune) bool { return r == '/' || r == '\\' }) {
+			if segment == ".." {
+				return fmt.Errorf("job.options.%s must not contain '..'", key)
+			}
+		}
+	}
+	return nil
 }
 
 func queueMetricStates(stats executor.Stats) []string {
@@ -3168,11 +3244,16 @@ func (s *Server) authorizeGatewayAction(w http.ResponseWriter, r *http.Request, 
 		return false
 	}
 
-	// MFA gate: certain sensitive actions require a verified MFA session.
-	// Only enforced when MFA is enabled (s.mfaSvc != nil) AND the request is
-	// authenticated via an SSO session (static API keys are exempt).
-	if s.mfaSvc != nil && principal.SessionBased {
-		if action == "role:manage" || action == "data:export" || action == "region:manage" {
+	// MFA gate: privileged (write/admin) actions require a verified MFA
+	// session from EVERY principal type — an app secret, a PAT or an SSO
+	// session cookie can all be exfiltrated; only the second factor proves
+	// the operator is present. Any principal can satisfy this by completing
+	// POST /v1/mfa/verify once (the marker is keyed on the caller's token).
+	// Only enforced when MFA is enabled (s.mfaSvc != nil).
+	if s.mfaSvc != nil {
+		switch action {
+		case "secret:rotate", "data:erase", "auth:pat:issue", "role:manage",
+			"region:manage", "data:export", "rate_limit:manage":
 			if !principal.MFAVerified {
 				s.emitAuthorizationAudit(r, principal, action, "deny-mfa-required")
 				s.writeError(w, r, http.StatusForbidden, authzError("UBAG-AUTHZ-MFA-REQUIRED-001", "this action requires MFA verification"))
@@ -3585,25 +3666,70 @@ type authenticatedPrincipal struct {
 
 // mfaSessionSet is a concurrency-safe in-memory set of session IDs that have
 // been verified via MFA (POST /v1/mfa/verify).
+//
+// Entries are not permanent: each carries a TTL (mfaSessionTTL) so a stale
+// marker cannot outlive the session it vouches for, and the set is capped at
+// mfaSessionMaxEntries so a long-running gateway cannot grow without bound.
+// Expired entries are evicted lazily on Contains/Add; over-cap inserts evict
+// the oldest entry (FIFO by insertion).
 type mfaSessionSet struct {
-	mu  sync.Mutex
-	set map[string]struct{}
+	mu      sync.Mutex
+	entries map[string]time.Time // sessionID -> expiry
+	order   []string             // insertion order, for oldest eviction
 }
+
+const (
+	mfaSessionTTL        = 24 * time.Hour
+	mfaSessionMaxEntries = 10000
+)
 
 func (s *mfaSessionSet) Add(sessionID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.set == nil {
-		s.set = make(map[string]struct{})
+	now := time.Now()
+	if s.entries == nil {
+		s.entries = make(map[string]time.Time)
 	}
-	s.set[sessionID] = struct{}{}
+	if _, exists := s.entries[sessionID]; !exists {
+		s.order = append(s.order, sessionID)
+	}
+	s.entries[sessionID] = now.Add(mfaSessionTTL)
+	s.evictLocked(now)
+}
+
+// evictLocked drops expired entries and, if the set is still over its cap,
+// evicts entries oldest-first. Caller must hold s.mu.
+func (s *mfaSessionSet) evictLocked(now time.Time) {
+	kept := s.order[:0]
+	for _, id := range s.order {
+		exp, ok := s.entries[id]
+		if !ok || now.After(exp) {
+			delete(s.entries, id)
+			continue
+		}
+		kept = append(kept, id)
+	}
+	s.order = kept
+	for len(s.entries) > mfaSessionMaxEntries && len(s.order) > 0 {
+		oldest := s.order[0]
+		s.order = s.order[1:]
+		delete(s.entries, oldest)
+	}
 }
 
 func (s *mfaSessionSet) Contains(sessionID string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.set[sessionID]
-	return ok
+	exp, ok := s.entries[sessionID]
+	if !ok {
+		return false
+	}
+	if time.Now().After(exp) {
+		// Lazy eviction: the marker has outlived its TTL.
+		delete(s.entries, sessionID)
+		return false
+	}
+	return true
 }
 
 func (s *Server) withMetrics(next http.Handler) http.Handler {
@@ -3936,7 +4062,7 @@ func (s *Server) withDevCORS(next http.Handler) http.Handler {
 
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !requiresAuth(r.URL.Path) {
+		if !requiresAuth(r.URL.Path, r.Method) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -4089,15 +4215,20 @@ func sessionTokenFromRequest(r *http.Request) string {
 	return ""
 }
 
-func requiresAuth(path string) bool {
+func requiresAuth(path, method string) bool {
 	switch path {
 	case "/v1/health", "/v1/ready", "/v1/version", "/v1/metrics":
 		return false
-	// The authorization-code flow endpoints are browser-facing (no bearer token).
-	// The IdP redirects the user's browser to /authorize and then to /callback,
-	// so these two paths must be reachable without a pre-existing credential.
-	case "/v1/sso/oidc/authorize", "/v1/sso/oidc/callback":
+	// The authorization-code flow endpoints are browser-facing (no bearer
+	// token). The IdP redirects the user's browser to /authorize and then to
+	// /callback, so these must be reachable without a pre-existing credential.
+	case "/v1/sso/oidc/authorize":
 		return false
+	case "/v1/sso/oidc/callback":
+		// Method-aware: only the browser GET redirect from the IdP stays
+		// exempt. The direct POST id_token verification path requires
+		// authentication, matching /v1/sso/saml/acs (authn parity).
+		return method == http.MethodPost
 	default:
 		return strings.HasPrefix(path, "/v1/")
 	}
@@ -4603,6 +4734,10 @@ type elevationRequest struct {
 	Reason     string `json:"reason"`
 }
 
+// maxJITElevationTTLSeconds caps a requested elevation window at 24h: a JIT
+// grant is meant to cover an incident, not become a standing promotion.
+const maxJITElevationTTLSeconds = 86400
+
 // handleRequestElevation implements POST /v1/admin/elevation.
 // RBAC: job:create (any authenticated user may request elevation).
 // Body: {"role": "admin", "ttl_seconds": 3600, "reason": "incident response"}
@@ -4629,8 +4764,16 @@ func (s *Server) handleRequestElevation(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-JITADMIN-ROLE-001", "role is required"))
 		return
 	}
+	if !authz.IsValidRole(body.Role) {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-JITADMIN-ROLE-001", "role is not a known gateway role"))
+		return
+	}
 	if body.TTLSeconds <= 0 {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-JITADMIN-TTL-001", "ttl_seconds must be a positive integer"))
+		return
+	}
+	if body.TTLSeconds > maxJITElevationTTLSeconds {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-JITADMIN-TTL-001", "ttl_seconds must not exceed 86400 (24h)"))
 		return
 	}
 
@@ -4706,6 +4849,42 @@ func (s *Server) handleApproveElevation(w http.ResponseWriter, r *http.Request) 
 	}
 	tenantID, appID := requestScope(r)
 	now := time.Now()
+
+	// Priority gate: an approver may never approve a grant whose role outranks
+	// the approver's own (jitadmin.rolePriority — the same table ElevatedRole
+	// consults). Without this, an admin elevated to admin via one grant could
+	// approve a superadmin grant for anyone. The grant is fetched first so the
+	// check sees the requested role before any state is mutated; Approve
+	// re-validates revocation/expiry so the Get/Approve race stays safe.
+	pending, err := s.jitAdmin.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, jitadmin.ErrGrantNotFound) {
+			s.writeError(w, r, http.StatusNotFound, validationError("UBAG-JITADMIN-NOT-FOUND-001", "elevation grant not found"))
+			return
+		}
+		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to load elevation grant"))
+		return
+	}
+	if !jitadmin.ApproverMayGrant(principal.Role, pending.Role) {
+		_, _ = s.audit.Append(r.Context(), audit.Record{
+			TenantID:   tenantID,
+			AppID:      appID,
+			Actor:      approver,
+			Action:     "jitadmin:approve",
+			Resource:   "/v1/admin/elevation/" + id + "/approve",
+			Outcome:    "denied",
+			OccurredAt: now,
+			Attributes: map[string]any{
+				"grant_id":      pending.ID,
+				"grant_role":    pending.Role,
+				"approver":      approver,
+				"approver_role": principal.Role,
+				"reason":        "approver priority below requested role",
+			},
+		})
+		s.writeError(w, r, http.StatusForbidden, authzError("UBAG-JITADMIN-PRIORITY-001", "approver role is not senior enough to approve this elevation"))
+		return
+	}
 
 	grant, err := s.jitAdmin.Approve(r.Context(), id, approver, now)
 	if err != nil {

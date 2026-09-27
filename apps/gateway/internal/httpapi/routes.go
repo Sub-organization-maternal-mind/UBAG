@@ -93,6 +93,7 @@ func (s *Server) simpleRoutes() []routeDecl {
 		{"/v1/jobs/*", s.handleJobByID},
 		{"/v1/sse/jobs/*", s.handleJobSSE},
 		{"/v1/auth/pat", s.handleIssuePAT},
+		{"/v1/auth/pat/{id}/revoke", s.handleRevokePAT},
 		{"/v1/privacy/export", s.handlePrivacyExport},
 		{"/v1/privacy/erase", s.handlePrivacyErase},
 		{"/v1/admin/regions/{region}/state", s.handleSetRegionState},

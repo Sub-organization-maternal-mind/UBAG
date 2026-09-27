@@ -105,7 +105,10 @@ def normalize_payload(payload: Mapping[str, Any], provider_id: str) -> Normalize
     session_id = _safe_session_id(context.get("session_id"), job_id, target)
 
     user_data_dir = _resolve_user_data_dir(options, context, target)
-    headless = bool(options.get("headless", False))
+    headless_raw = options.get("headless", False)
+    if not isinstance(headless_raw, bool):
+        raise EnvelopeError("options.headless must be a boolean")
+    headless = headless_raw
 
     account_binding_id = _clean_text(context.get("account_binding_id"), "unbound")
     tenant_id = _string_or_default(
@@ -263,18 +266,59 @@ def _conversation_binding(payload: Mapping[str, Any]) -> tuple:
     return key, thread_ref, on_missing
 
 
+def _profile_root() -> str:
+    """The worker's own browser-profile state directory.
+
+    UBAG_PROFILE_DIR is the operator-configured root (the gateway forwards it
+    to every worker subprocess); ``var/profiles`` is the built-in default.
+    """
+    return os.environ.get("UBAG_PROFILE_DIR", "").strip() or os.path.join(
+        "var", "profiles"
+    )
+
+
+def _validate_profile_dir_value(value: str, key: str) -> str:
+    """Constrain an explicitly requested profile directory to worker state.
+
+    ``user_data_dir`` / ``profile_dir`` / ``profile_path`` are handed to
+    Chromium as the persistent-context directory, so a hostile ``job:create``
+    caller must not be able to aim the browser at an arbitrary filesystem
+    location (its cookies, its SSH agent socket, ...). The gateway already
+    rejects absolute paths and traversal structurally; this is the worker's
+    authoritative containment check against its own profile root.
+    """
+    parts = [part for part in re.split(r"[/\\]+", value) if part not in ("", ".")]
+    if ".." in parts:
+        raise EnvelopeError("%s must not contain '..'" % key)
+    if value.startswith(("/", "\\")) or os.path.isabs(value) or (
+        len(value) >= 2 and value[1] == ":"
+    ):
+        root_abs = os.path.abspath(_profile_root())
+        candidate_abs = os.path.abspath(value)
+        try:
+            inside = os.path.commonpath([root_abs, candidate_abs]) == root_abs
+        except ValueError:
+            # Different drives (Windows): never inside the profile root.
+            inside = False
+        if not inside:
+            raise EnvelopeError(
+                "%s must stay under the worker profile root (%s)" % (key, _profile_root())
+            )
+    return value
+
+
 def _resolve_user_data_dir(
     options: Mapping[str, Any], context: Mapping[str, Any], target: str
 ) -> str:
+    profile_root = _profile_root()
     for source in (options, context):
         for key in ("user_data_dir", "profile_dir", "profile_path"):
             value = source.get(key)
             if isinstance(value, str) and value.strip():
-                return value.strip()
-    env_dir = os.environ.get("UBAG_PROFILE_DIR", "").strip()
-    if env_dir:
-        return os.path.join(env_dir, target)
-    return os.path.join("var", "profiles", target, "default")
+                return _validate_profile_dir_value(value.strip(), key)
+    if os.environ.get("UBAG_PROFILE_DIR", "").strip():
+        return os.path.join(profile_root, target)
+    return os.path.join(profile_root, target, "default")
 
 
 def _safe_session_id(value: Any, job_id: str, target: str) -> str:

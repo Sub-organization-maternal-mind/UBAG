@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -198,10 +197,13 @@ func TestMFAGateBlocksUnverifiedSession(t *testing.T) {
 	}
 }
 
-// TestMFAGateExemptsStaticAPIKey verifies that a static API-key request to a
-// role:manage action is NOT blocked by the MFA gate even when MFA is enabled,
-// because SessionBased=false for static key principals.
-func TestMFAGateExemptsStaticAPIKey(t *testing.T) {
+// TestMFAGateRequiresMFAForStaticAPIKey verifies the MFA gate covers every
+// principal type when MFA is enabled: a static API-key request (AppSecret,
+// SessionBased=false) to a role:manage action is denied with
+// UBAG-AUTHZ-MFA-REQUIRED-001 until it completes POST /v1/mfa/verify. The
+// gate is conditional on MFA being configured: with MFA disabled the same
+// request succeeds on RBAC alone.
+func TestMFAGateRequiresMFAForStaticAPIKey(t *testing.T) {
 	mfaStore := mfa.NewMemoryStore()
 	mfaSvc := &mfa.Service{Store: mfaStore}
 
@@ -215,27 +217,40 @@ func TestMFAGateExemptsStaticAPIKey(t *testing.T) {
 		SCIM:      scim.NewMemoryStore(),
 	}).Handler()
 
-	// admin role has role:manage; static key is exempt from MFA gate.
-	// Use a SCIM list route (role:manage) — expect 200 not 403.
+	// admin role has role:manage, but MFA is enabled and the static key has
+	// no verified MFA session — expect 403 MFA-REQUIRED.
 	resp := doRaw(server, http.MethodGet, "/v1/scim/v2/Users", "", "application/scim+json",
 		map[string]string{
 			"Authorization":    "Bearer dev-secret",
 			"Ubag-Api-Version": DefaultAPIVersion,
 			"Content-Type":     "application/scim+json",
 		})
-
-	// The static API key must NOT be blocked by the MFA gate.
-	if resp.Code == http.StatusForbidden {
-		var payload errorEnvelope
-		_ = json.Unmarshal(resp.Body.Bytes(), &payload)
-		if strings.Contains(payload.Error.Code, "MFA-REQUIRED") {
-			t.Fatalf("static API key must not get MFA-REQUIRED 403; got code=%q body=%s",
-				payload.Error.Code, resp.Body.String())
-		}
-		t.Fatalf("static API key got 403 from MFA gate (role:manage should be exempt); body=%s", resp.Body.String())
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d (MFA required for static key); body=%s",
+			resp.Code, http.StatusForbidden, resp.Body.String())
 	}
-	// Expect 200 (SCIM list returns empty result set).
-	if resp.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d (scim list ok); body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	var payload errorEnvelope
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Error.Code != "UBAG-AUTHZ-MFA-REQUIRED-001" {
+		t.Errorf("error code = %q, want UBAG-AUTHZ-MFA-REQUIRED-001", payload.Error.Code)
+	}
+
+	// With MFA disabled the gate is absent: RBAC alone authorizes the call.
+	serverWithoutMFA := NewServer(Config{
+		AppSecret: "dev-secret",
+		ActorRole: "admin",
+		SCIM:      scim.NewMemoryStore(),
+	}).Handler()
+	respNoMFA := doRaw(serverWithoutMFA, http.MethodGet, "/v1/scim/v2/Users", "", "application/scim+json",
+		map[string]string{
+			"Authorization":    "Bearer dev-secret",
+			"Ubag-Api-Version": DefaultAPIVersion,
+			"Content-Type":     "application/scim+json",
+		})
+	if respNoMFA.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (MFA disabled -> RBAC only); body=%s",
+			respNoMFA.Code, http.StatusOK, respNoMFA.Body.String())
 	}
 }

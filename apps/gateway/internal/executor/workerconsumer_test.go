@@ -1501,6 +1501,7 @@ func TestMinimalWorkerEnvIncludesBrowserRuntimeConfigOnly(t *testing.T) {
 
 func TestWorkerEnvScopesAntigravityCredentials(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "test-only-sdk-key")
+	t.Setenv("GOOGLE_API_KEY", "test-only-google-key")
 	t.Setenv("UBAG_ANTIGRAVITY_MODEL", "gemini-3.8-flash")
 	t.Setenv("UBAG_ANTIGRAVITY_EFFORT", "high")
 	t.Setenv("AGY_BINARY", "agy")
@@ -1517,6 +1518,11 @@ func TestWorkerEnvScopesAntigravityCredentials(t *testing.T) {
 			}
 			if _, ok := values["UBAG_APP_SECRET"]; ok {
 				t.Fatal("gateway secret leaked to worker")
+			}
+			// GOOGLE_API_KEY is on no allowlist and no target-specific key
+			// list: it must never reach any worker subprocess, for any target.
+			if _, ok := values["GOOGLE_API_KEY"]; ok {
+				t.Fatal("GOOGLE_API_KEY leaked to worker subprocess")
 			}
 			if target == "antigravity_sdk" {
 				if values["GEMINI_API_KEY"] != "test-only-sdk-key" || values["UBAG_ANTIGRAVITY_EFFORT"] != "high" {

@@ -278,6 +278,8 @@ func Run(ctx context.Context) error {
 		TenantID:    getenv("UBAG_TENANT_ID", ""),
 		AppID:       getenv("UBAG_APP_ID", ""),
 		ActorRole:   getenv("UBAG_ACTOR_ROLE", ""),
+		MFA:         enterprise.mfaService,
+		ABAC:        enterprise.abacEnforcer,
 		Jobs:        jobs,
 		Idempotency: idempotencyStore,
 		Executor:    dispatcher,

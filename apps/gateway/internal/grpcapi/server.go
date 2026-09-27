@@ -22,11 +22,13 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/ubag/ubag/apps/gateway/internal/abac"
 	"github.com/ubag/ubag/apps/gateway/internal/authz"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
 	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	"github.com/ubag/ubag/apps/gateway/internal/mfa"
 	"github.com/ubag/ubag/apps/gateway/internal/webhooks"
 	ubagv1 "github.com/ubag/ubag/packages/proto/gen/go/ubag/v1"
 )
@@ -47,6 +49,12 @@ type Config struct {
 	AppID      string
 	ActorRole  string
 
+	// MFA and ABAC wire the same policy gates the HTTP transport applies in
+	// authorizeGatewayAction. Both are optional: nil MFA means MFA is not
+	// enabled gateway-wide; nil ABAC means no policy bundle is loaded.
+	MFA  *mfa.Service
+	ABAC *abac.Enforcer
+
 	Jobs        jobstore.Store
 	Idempotency idempotency.Service
 	Executor    executor.Dispatcher
@@ -56,27 +64,31 @@ type Config struct {
 type Server struct {
 	ubagv1.UnimplementedJobServiceServer
 
-	apiVersion  string
-	appSecret   string
-	tenantID    string
-	appID       string
-	actorRole   string
-	jobs        jobstore.Store
-	idempotency idempotency.Service
-	executor    executor.Dispatcher
+	apiVersion   string
+	appSecret    string
+	tenantID     string
+	appID        string
+	actorRole    string
+	mfaSvc       *mfa.Service
+	abacEnforcer *abac.Enforcer
+	jobs         jobstore.Store
+	idempotency  idempotency.Service
+	executor     executor.Dispatcher
 }
 
 // NewServer constructs a JobService gRPC server from the supplied config.
 func NewServer(config Config) *Server {
 	return &Server{
-		apiVersion:  config.APIVersion,
-		appSecret:   config.AppSecret,
-		tenantID:    config.TenantID,
-		appID:       config.AppID,
-		actorRole:   config.ActorRole,
-		jobs:        config.Jobs,
-		idempotency: config.Idempotency,
-		executor:    config.Executor,
+		apiVersion:   config.APIVersion,
+		appSecret:    config.AppSecret,
+		tenantID:     config.TenantID,
+		appID:        config.AppID,
+		actorRole:    config.ActorRole,
+		mfaSvc:       config.MFA,
+		abacEnforcer: config.ABAC,
+		jobs:         config.Jobs,
+		idempotency:  config.Idempotency,
+		executor:     config.Executor,
 	}
 }
 
@@ -580,6 +592,34 @@ func (s *Server) authorize(ctx context.Context, action string) error {
 	}
 	if !allowGatewayAction(s.actorRole, action) {
 		return status.Error(codes.PermissionDenied, "actor role is not allowed to perform this action")
+	}
+
+	// MFA gate, mirroring httpapi.authorizeGatewayAction: when MFA is enabled
+	// gateway-wide, the privileged actions require a verified MFA session. The
+	// gRPC transport authenticates with the static app secret and carries no
+	// MFA session marker (only POST /v1/mfa/verify can mint one, on an HTTP
+	// session token), so over gRPC these actions are denied while MFA is on —
+	// clients must perform them over HTTP with a verified session.
+	if s.mfaSvc != nil {
+		switch action {
+		case "secret:rotate", "data:erase", "auth:pat:issue", "role:manage",
+			"region:manage", "data:export", "rate_limit:manage":
+			return status.Error(codes.PermissionDenied, "this action requires MFA verification")
+		}
+	}
+
+	// ABAC: evaluate the CEL policy bundle after RBAC passes (parity with
+	// httpapi.authorizeGatewayAction). A nil enforcer is permissive.
+	if s.abacEnforcer != nil {
+		abacPrincipal := abac.Principal{
+			TenantID: s.tenantID,
+			AppID:    s.appID,
+			Role:     s.actorRole,
+		}
+		ok, err := s.abacEnforcer.Allow(abacPrincipal, "gateway", action)
+		if err != nil || !ok {
+			return status.Error(codes.PermissionDenied, "request denied by access policy")
+		}
 	}
 	return nil
 }
