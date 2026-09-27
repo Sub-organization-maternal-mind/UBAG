@@ -25,7 +25,8 @@ import { spawnSync } from 'node:child_process';
 const BASELINE_PATH = 'tools/audit-baseline.json';
 const update = process.argv.includes('--update');
 
-const audit = spawnSync('cmd', ['/c', 'pnpm', 'audit', '--json'], {
+const audit = spawnSync('pnpm', ['audit', '--json'], {
+  shell: process.platform === 'win32',
   encoding: 'utf8',
   maxBuffer: 64 * 1024 * 1024
 });

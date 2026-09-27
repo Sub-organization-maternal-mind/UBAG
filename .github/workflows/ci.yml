@@ -152,7 +152,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       minio:
-        image: minio/minio:latest
+        image: quay.io/minio/minio:latest
         env:
           MINIO_ROOT_USER: ubag
           MINIO_ROOT_PASSWORD: ubag-test-secret
@@ -178,7 +178,7 @@ jobs:
         run: go test -race -coverprofile=coverage.out ./...
       - name: Create MinIO test bucket
         run: |
-          docker run --rm --network host --entrypoint sh minio/mc -c "
+          docker run --rm --network host --entrypoint sh quay.io/minio/mc -c "
             mc alias set local http://127.0.0.1:9000 ubag ubag-test-secret &&
             mb --ignore local/ubag-artifacts-test"
       - name: Postgres round-trip tests (migrations applied)
