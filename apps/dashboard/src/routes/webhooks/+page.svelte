@@ -5,6 +5,11 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import SkeletonTable from '$lib/components/SkeletonTable.svelte';
+  import UpdatedAgo from '$lib/components/UpdatedAgo.svelte';
+  import Modal from '$lib/components/Modal.svelte';
+  import { pollWhileVisible } from '$lib/poll';
   import type { Webhook } from '$lib/api/types';
 
   interface Delivery {
@@ -29,6 +34,49 @@
 
   // --- Per-delivery replay state ---
   let replayState = $state<Record<string, { loading: boolean; success: string | null; error: string | null }>>({});
+
+  // Replay reason dialog (replaces window.prompt): reason is audit-logged.
+  let replayDialog = $state<{ webhookId: string; deliveryId: string } | null>(null);
+  let replayReason = $state('');
+
+  function openReplayDialog(webhookId: string, deliveryId: string) {
+    replayDialog = { webhookId, deliveryId };
+    replayReason = 'operator replay from dashboard';
+  }
+
+  function closeReplayDialog() {
+    replayDialog = null;
+  }
+
+  async function doReplay() {
+    if (!replayDialog) return;
+    const { webhookId, deliveryId } = replayDialog;
+    const key = `${webhookId}:${deliveryId}`;
+    const reason = replayReason.trim();
+    if (!reason) {
+      replayState = { ...replayState, [key]: { loading: false, success: null, error: 'A reason is required for the audit record.' } };
+      return;
+    }
+    replayState = { ...replayState, [key]: { loading: true, success: null, error: null } };
+
+    // Contract: POST /v1/webhooks/replay with {delivery_id, reason} (openapi replayWebhookDelivery).
+    const res = await api.post<{ status?: string; delivery_id?: string }>('/v1/webhooks/replay', {
+      delivery_id: deliveryId,
+      webhook_id: webhookId,
+      reason: reason,
+    });
+
+    if (res.error) {
+      replayState = { ...replayState, [key]: { loading: false, success: null, error: `${res.error} (HTTP ${res.status})` } };
+    } else {
+      replayState = { ...replayState, [key]: { loading: false, success: 'Replay accepted', error: null } };
+      // Refresh deliveries for this webhook
+      delete deliveriesMap[webhookId];
+      deliveriesMap = { ...deliveriesMap };
+      await loadDeliveriesSilent(webhookId);
+    }
+    closeReplayDialog();
+  }
 
   // --- Secret rotation state (POST /v1/webhooks/secret:rotate) ---
   let rotateOpenId = $state<string | null>(null);
@@ -76,15 +124,20 @@
     rotateSuccess = `Secret rotated${active ? ` — active ref ${active}` : ''}. Update the receiver before the overlap window ends.`;
   }
 
-  async function load() {
-    loading = true;
-    error = null;
-    denied = false;
+  let lastUpdated = $state<Date | null>(null);
+
+  async function load(silent = false) {
+    if (!silent) {
+      loading = true;
+      error = null;
+      denied = false;
+    }
     const res = await api.get('/v1/webhooks');
-    loading = false;
+    if (!silent) loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
     webhooks = listOf<Webhook>(res);
+    lastUpdated = new Date();
   }
 
   async function loadDeliveries(webhookId: string) {
@@ -111,31 +164,7 @@
   }
 
   async function replay(webhookId: string, deliveryId: string) {
-    const key = `${webhookId}:${deliveryId}`;
-    const reason = window.prompt(`Reason for replaying delivery ${deliveryId} (audit-logged):`, 'operator replay from dashboard');
-    if (reason === null) return; // cancelled
-    if (!reason.trim()) {
-      replayState = { ...replayState, [key]: { loading: false, success: null, error: 'A reason is required for the audit record.' } };
-      return;
-    }
-    replayState = { ...replayState, [key]: { loading: true, success: null, error: null } };
-
-    // Contract: POST /v1/webhooks/replay with {delivery_id, reason} (openapi replayWebhookDelivery).
-    const res = await api.post<{ status?: string; delivery_id?: string }>('/v1/webhooks/replay', {
-      delivery_id: deliveryId,
-      webhook_id: webhookId,
-      reason: reason.trim(),
-    });
-
-    if (res.error) {
-      replayState = { ...replayState, [key]: { loading: false, success: null, error: `${res.error} (HTTP ${res.status})` } };
-    } else {
-      replayState = { ...replayState, [key]: { loading: false, success: 'Replay accepted', error: null } };
-      // Refresh deliveries for this webhook
-      delete deliveriesMap[webhookId];
-      deliveriesMap = { ...deliveriesMap };
-      await loadDeliveriesSilent(webhookId);
-    }
+    openReplayDialog(webhookId, deliveryId);
   }
 
   async function loadDeliveriesSilent(webhookId: string) {
@@ -162,21 +191,23 @@
     return `${events.slice(0, 3).join(', ')} +${events.length - 3}`;
   }
 
-  onMount(() => load());
+  onMount(() => {
+    load();
+    const stopPolling = pollWhileVisible(() => load(true), 45_000);
+    return stopPolling;
+  });
 </script>
 
 <div class="space-y-4">
-  <!-- Header -->
-  <div class="flex items-center justify-between">
-    <div>
-      <h1 class="text-2xl font-display font-bold text-ink">Webhooks</h1>
-      <p class="text-xs text-ink-mute mt-0.5">Registered endpoints and delivery history</p>
-    </div>
-    <button onclick={() => load()} class="text-sm text-accent-deep hover:underline">Refresh</button>
-  </div>
+  <PageHeader title="Webhooks" subtitle="Registered endpoints and delivery history.">
+    {#snippet actions()}
+      <UpdatedAgo at={lastUpdated} />
+      <button onclick={() => load()} class="btn btn-secondary btn-sm">Refresh</button>
+    {/snippet}
+  </PageHeader>
 
   {#if loading}
-    <div class="text-ink-mute text-sm animate-pulse">Loading…</div>
+    <SkeletonTable rows={5} cols={5} />
   {:else if denied}
     <DeniedPanel resource="webhooks" />
   {:else if error}
@@ -184,15 +215,15 @@
   {:else if webhooks.length === 0}
     <EmptyState message="No webhooks registered." hint="Webhooks appear here once created via the gateway API." />
   {:else}
-    <div class="rounded-md border border-rule overflow-x-auto">
+    <div class="table-wrap">
       <table class="w-full text-sm">
-        <thead class="bg-paper-soft border-b border-rule">
+        <thead class="thead">
           <tr>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">ID</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">URL</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Events</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Status</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Actions</th>
+            <th class="th">ID</th>
+            <th class="th">URL</th>
+            <th class="th">Events</th>
+            <th class="th">Status</th>
+            <th class="th">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-rule">
@@ -203,25 +234,19 @@
             {@const dlError = deliveriesError[wh.id]}
 
             <!-- Webhook row -->
-            <tr class="hover:bg-paper-soft transition-colors">
-              <td class="px-4 py-2.5 font-mono text-ink-mute text-xs">{wh.id.slice(0, 8)}…</td>
-              <td class="px-4 py-2.5 text-ink-soft text-xs max-w-[18rem] truncate" title={wh.url}>
+            <tr class="transition-colors hover:bg-paper-soft/70">
+              <td class="td font-mono text-xs text-ink-mute">{wh.id.slice(0, 8)}…</td>
+              <td class="td text-xs max-w-[18rem] truncate" title={wh.url}>
                 {truncate(wh.url, 60)}
               </td>
-              <td class="px-4 py-2.5 text-xs text-ink-soft font-mono">{fmtEvents(wh.events)}</td>
-              <td class="px-4 py-2.5"><StatusBadge status={wh.status ?? 'active'} /></td>
-              <td class="px-4 py-2.5">
+              <td class="td text-xs font-mono">{fmtEvents(wh.events)}</td>
+              <td class="td"><StatusBadge status={wh.status ?? 'active'} /></td>
+              <td class="td">
                 <div class="flex items-center gap-2">
-                  <button
-                    onclick={() => loadDeliveries(wh.id)}
-                    class="px-3 py-1 rounded-md border border-rule bg-paper-soft text-xs font-medium text-ink hover:bg-paper-warm transition-colors"
-                  >
+                  <button onclick={() => loadDeliveries(wh.id)} class="btn btn-secondary btn-sm">
                     {isExpanded ? 'Hide Deliveries' : 'View Deliveries'}
                   </button>
-                  <button
-                    onclick={() => openRotate(wh.id)}
-                    class="px-3 py-1 rounded-md border border-rule bg-paper-soft text-xs font-medium text-ink hover:bg-paper-warm transition-colors"
-                  >
+                  <button onclick={() => openRotate(wh.id)} class="btn btn-secondary btn-sm">
                     Rotate Secret
                   </button>
                 </div>
@@ -231,55 +256,57 @@
             <!-- Deliveries expandable sub-panel -->
             {#if isExpanded}
               <tr>
-                <td colspan="5" class="px-6 py-3 bg-paper-warm border-b border-rule">
-                  {#if dlLoading}
-                    <p class="text-xs text-ink-mute animate-pulse">Loading deliveries…</p>
-                  {:else if dlError}
-                    <p class="text-xs text-danger">Error: {dlError}</p>
-                  {:else if !deliveries || deliveries.length === 0}
-                    <p class="text-xs text-ink-mute italic">No deliveries recorded for this webhook.</p>
-                  {:else}
-                    <table class="w-full text-xs">
-                      <thead>
-                        <tr class="text-ink-mute uppercase tracking-wider font-mono">
-                          <th class="pb-1.5 text-left pr-6">Attempt #</th>
-                          <th class="pb-1.5 text-left pr-6">Status</th>
-                          <th class="pb-1.5 text-left pr-6">Response Code</th>
-                          <th class="pb-1.5 text-left pr-6">Timestamp</th>
-                          <th class="pb-1.5 text-left">Replay</th>
-                        </tr>
-                      </thead>
-                      <tbody class="divide-y divide-rule">
-                        {#each deliveries as d (d.id)}
-                          {@const rkey = `${wh.id}:${d.id}`}
-                          {@const rs = replayState[rkey]}
-                          <tr>
-                            <td class="py-2 pr-6 font-mono text-ink">{d.attempt}</td>
-                            <td class="py-2 pr-6"><StatusBadge status={d.status} /></td>
-                            <td class="py-2 pr-6 font-mono text-ink-mute">{d.response_code ?? '—'}</td>
-                            <td class="py-2 pr-6 text-ink-mute">{fmtDate(d.timestamp)}</td>
-                            <td class="py-2">
-                              <div class="flex items-center gap-2">
-                                <button
-                                  onclick={() => replay(wh.id, d.id)}
-                                  disabled={rs?.loading}
-                                  class="px-2 py-0.5 rounded border border-rule bg-paper text-xs font-medium text-ink hover:bg-paper-soft disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                                >
-                                  {rs?.loading ? 'Replaying…' : 'Replay'}
-                                </button>
-                                {#if rs?.success}
-                                  <span class="text-success">{rs.success}</span>
-                                {/if}
-                                {#if rs?.error}
-                                  <span class="text-danger">{rs.error}</span>
-                                {/if}
-                              </div>
-                            </td>
+                <td colspan="5" class="bg-paper-warm px-4 sm:px-6 py-3 border-b border-rule">
+                  <div class="overflow-x-auto">
+                    {#if dlLoading}
+                      <p class="text-xs text-ink-mute animate-pulse">Loading deliveries…</p>
+                    {:else if dlError}
+                      <p class="text-xs text-danger">Error: {dlError}</p>
+                    {:else if !deliveries || deliveries.length === 0}
+                      <p class="text-xs text-ink-mute italic">No deliveries recorded for this webhook.</p>
+                    {:else}
+                      <table class="w-full text-xs min-w-[34rem]">
+                        <thead>
+                          <tr class="text-ink-mute uppercase tracking-wider font-mono">
+                            <th class="pb-1.5 text-left pr-6">Attempt #</th>
+                            <th class="pb-1.5 text-left pr-6">Status</th>
+                            <th class="pb-1.5 text-left pr-6">Response Code</th>
+                            <th class="pb-1.5 text-left pr-6">Timestamp</th>
+                            <th class="pb-1.5 text-left">Replay</th>
                           </tr>
-                        {/each}
-                      </tbody>
-                    </table>
-                  {/if}
+                        </thead>
+                        <tbody class="divide-y divide-rule">
+                          {#each deliveries as d (d.id)}
+                            {@const rkey = `${wh.id}:${d.id}`}
+                            {@const rs = replayState[rkey]}
+                            <tr>
+                              <td class="py-2 pr-6 font-mono text-ink">{d.attempt}</td>
+                              <td class="py-2 pr-6"><StatusBadge status={d.status} /></td>
+                              <td class="py-2 pr-6 font-mono text-ink-mute">{d.response_code ?? '—'}</td>
+                              <td class="py-2 pr-6 text-ink-mute whitespace-nowrap">{fmtDate(d.timestamp)}</td>
+                              <td class="py-2">
+                                <div class="flex items-center gap-2 flex-wrap">
+                                  <button
+                                    onclick={() => replay(wh.id, d.id)}
+                                    disabled={rs?.loading}
+                                    class="btn btn-secondary btn-sm"
+                                  >
+                                    {rs?.loading ? 'Replaying…' : 'Replay'}
+                                  </button>
+                                  {#if rs?.success}
+                                    <span class="text-success">{rs.success}</span>
+                                  {/if}
+                                  {#if rs?.error}
+                                    <span class="text-danger">{rs.error}</span>
+                                  {/if}
+                                </div>
+                              </td>
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    {/if}
+                  </div>
                 </td>
               </tr>
             {/if}
@@ -290,71 +317,60 @@
   {/if}
 </div>
 
-<!-- Secret rotation dialog -->
-{#if rotateOpenId}
-  {@const rotateId = rotateOpenId}
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" role="presentation" onclick={closeRotate}>
-    <div
-      class="w-full max-w-md rounded-lg border border-rule bg-paper shadow-2xl"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Rotate webhook secret"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => { if (e.key === 'Escape') closeRotate(); }}
-      tabindex="-1"
-    >
-      <div class="px-5 py-4 border-b border-rule bg-paper-soft">
-        <h2 class="text-lg font-display font-semibold text-ink">Rotate Webhook Secret</h2>
-        <p class="text-xs text-ink-mute mt-0.5 font-mono">{rotateId}</p>
-      </div>
-      <div class="p-5 space-y-3">
-        <p class="text-sm text-ink-soft">
-          Secrets are supplied by reference only — the plaintext never leaves your secret store.
-          The previous secret keeps verifying during the overlap window.
-        </p>
-        <label class="block">
-          <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">New secret reference</span>
-          <input
-            type="text"
-            bind:value={rotateRef}
-            placeholder="e.g. vault:ubag/webhooks/acme#signing-key"
-            class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
-          />
-        </label>
-        <label class="block">
-          <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Overlap seconds</span>
-          <input
-            type="number"
-            min="0"
-            bind:value={rotateOverlap}
-            placeholder="3600"
-            class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
-          />
-        </label>
-        {#if rotateError}
-          <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{rotateError}</div>
-        {/if}
-        {#if rotateSuccess}
-          <div class="rounded-md border border-success/30 bg-success-soft px-4 py-3 text-sm text-success" role="status">{rotateSuccess}</div>
-        {/if}
-      </div>
-      <div class="px-5 py-3 border-t border-rule flex justify-end gap-3">
-        <button
-          onclick={closeRotate}
-          class="px-4 py-2 rounded-md border border-rule bg-paper-soft text-ink text-sm font-medium hover:bg-paper-warm transition-colors"
-        >
-          {rotateSuccess ? 'Done' : 'Cancel'}
-        </button>
-        {#if !rotateSuccess}
-          <button
-            onclick={() => doRotate(rotateId)}
-            disabled={rotateLoading}
-            class="px-4 py-2 rounded-md border border-danger/40 bg-danger-soft text-danger text-sm font-medium hover:bg-danger/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            {rotateLoading ? 'Rotating…' : 'Rotate'}
-          </button>
-        {/if}
-      </div>
-    </div>
+<!-- Replay reason dialog -->
+<Modal open={replayDialog !== null} title="Replay Delivery" width="sm" onClose={closeReplayDialog}>
+  <div class="space-y-3">
+    <p class="text-sm text-ink-soft">
+      Replaying delivery <code class="font-mono text-xs">{replayDialog?.deliveryId.slice(0, 12)}…</code>.
+      The reason is recorded in the audit log.
+    </p>
+    <label class="block">
+      <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Reason *</span>
+      <input type="text" bind:value={replayReason} class="input" placeholder="e.g. receiver was down during first attempt" />
+    </label>
   </div>
-{/if}
+  {#snippet footer()}
+    <button onclick={closeReplayDialog} class="btn btn-secondary">Cancel</button>
+    <button onclick={doReplay} class="btn btn-primary">Replay</button>
+  {/snippet}
+</Modal>
+
+<!-- Secret rotation dialog -->
+<Modal
+  open={rotateOpenId !== null}
+  title="Rotate Webhook Secret"
+  width="sm"
+  onClose={closeRotate}
+>
+  <div class="space-y-3">
+    {#if rotateOpenId}
+      <p class="font-mono text-xs text-ink-mute break-all">{rotateOpenId}</p>
+    {/if}
+    <p class="text-sm text-ink-soft">
+      Secrets are supplied by reference only — the plaintext never leaves your secret store.
+      The previous secret keeps verifying during the overlap window.
+    </p>
+    <label class="block">
+      <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">New secret reference</span>
+      <input type="text" bind:value={rotateRef} placeholder="e.g. vault:ubag/webhooks/acme#signing-key" class="input" />
+    </label>
+    <label class="block">
+      <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Overlap seconds</span>
+      <input type="number" min="0" bind:value={rotateOverlap} placeholder="3600" class="input" />
+    </label>
+    {#if rotateError}
+      <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{rotateError}</div>
+    {/if}
+    {#if rotateSuccess}
+      <div class="rounded-md border border-success/30 bg-success-soft px-4 py-3 text-sm text-success" role="status">{rotateSuccess}</div>
+    {/if}
+  </div>
+  {#snippet footer()}
+    <button onclick={closeRotate} class="btn btn-secondary">{rotateSuccess ? 'Done' : 'Cancel'}</button>
+    {#if !rotateSuccess && rotateOpenId}
+      <button onclick={() => { if (rotateOpenId) doRotate(rotateOpenId); }} disabled={rotateLoading} class="btn btn-danger">
+        {rotateLoading ? 'Rotating…' : 'Rotate'}
+      </button>
+    {/if}
+  {/snippet}
+</Modal>

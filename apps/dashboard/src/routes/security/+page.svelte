@@ -1,6 +1,8 @@
 <script lang="ts">
   import { api } from '$lib/api/client';
+  import { base } from '$app/paths';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
 
   // --- PAT issuance (POST /v1/auth/pat, auth:pat:issue = superadmin only) ---
   interface PatIssued {
@@ -104,12 +106,7 @@
 </script>
 
 <div class="space-y-8">
-  <h1 class="text-2xl font-display font-bold text-ink">Security</h1>
-  <p class="text-sm text-ink-soft max-w-2xl">
-    Credentials and session controls: personal access tokens, TOTP verification
-    for the current session, and SSO logout. Token material is shown once —
-    store it before leaving this page.
-  </p>
+  <PageHeader title="Security" subtitle="Credentials and session controls: personal access tokens, TOTP verification for the current session, and SSO logout. Token material is shown once — store it before leaving this page." />
 
   <!-- PAT issuance -->
   <section aria-labelledby="pat-heading">
@@ -122,15 +119,15 @@
       <div class="grid gap-3 sm:grid-cols-2">
         <label class="block">
           <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Tenant override</span>
-          <input type="text" bind:value={patTenant} placeholder="e.g. tenant_radiology" class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40" />
+          <input type="text" bind:value={patTenant} placeholder="e.g. tenant_radiology" class="input" />
         </label>
         <label class="block">
           <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">App override</span>
-          <input type="text" bind:value={patApp} placeholder="e.g. radiology-assist" class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40" />
+          <input type="text" bind:value={patApp} placeholder="e.g. radiology-assist" class="input" />
         </label>
         <label class="block">
           <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Role</span>
-          <select bind:value={patRole} class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-ring/40">
+          <select bind:value={patRole} class="input">
             <option value="service">service</option>
             <option value="developer">developer</option>
             <option value="operator">operator</option>
@@ -139,14 +136,10 @@
         </label>
         <label class="block">
           <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">TTL (seconds, empty = default)</span>
-          <input type="number" min="60" step="60" bind:value={patTtl} placeholder="3600" class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40" />
+          <input type="number" min="60" step="60" bind:value={patTtl} placeholder="3600" class="input" />
         </label>
       </div>
-      <button
-        onclick={() => doIssuePat()}
-        disabled={patLoading}
-        class="px-4 py-2 rounded-md bg-accent text-paper-soft text-sm font-medium hover:bg-accent-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      >
+      <button onclick={() => doIssuePat()} disabled={patLoading} class="btn btn-primary">
         {patLoading ? 'Issuing…' : 'Issue token'}
       </button>
       {#if patError}
@@ -189,21 +182,17 @@
             bind:value={mfaCode}
             placeholder="123456"
             maxlength="8"
-            class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink font-mono placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+            class="input font-mono"
           />
         </label>
-        <button
-          onclick={() => doVerifyMfa()}
-          disabled={mfaLoading}
-          class="px-4 py-2 rounded-md bg-accent text-paper-soft text-sm font-medium hover:bg-accent-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
+        <button onclick={() => doVerifyMfa()} disabled={mfaLoading} class="btn btn-primary">
           {mfaLoading ? 'Verifying…' : 'Verify'}
         </button>
         {#if mfaError}
           <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{mfaError}</div>
         {/if}
         <p class="text-xs text-ink-mute">
-          Enroll from <a href="/users" class="text-accent-deep hover:underline">Users &amp; Roles</a> if this identity has no TOTP secret yet.
+          Enroll from <a href="{base}/users" class="text-accent-deep hover:underline">Users &amp; Roles</a> if this identity has no TOTP secret yet.
         </p>
       {/if}
     </div>
@@ -222,11 +211,7 @@
           Revokes the gateway session minted at SSO callback (OIDC or SAML). App-secret and PAT
           credentials are unaffected.
         </p>
-        <button
-          onclick={() => doSsoLogout()}
-          disabled={logoutLoading}
-          class="px-4 py-2 rounded-md border border-rule bg-paper text-ink text-sm font-medium hover:bg-paper-warm disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
+        <button onclick={() => doSsoLogout()} disabled={logoutLoading} class="btn btn-secondary">
           {logoutLoading ? 'Revoking…' : 'Revoke current session'}
         </button>
         {#if logoutError}

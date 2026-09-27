@@ -5,6 +5,9 @@
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import SkeletonTable from '$lib/components/SkeletonTable.svelte';
+  import Modal from '$lib/components/Modal.svelte';
 
   // SCIM user shape
   interface ScimEmail { value: string; primary?: boolean; }
@@ -58,11 +61,13 @@
     const res = await api.get<ScimUserList>('/v1/scim/users');
     usersLoading = false;
     if (res.denied) { usersDenied = true; return; }
-    // 404 means SCIM is not implemented on this deployment — show a friendly message
-    if (res.status === 404 || (res.error && res.status !== 200)) {
+    // 404/501 mean SCIM is not implemented on this deployment — friendly message.
+    // Any other failure is a real error and gets the retry panel.
+    if (res.status === 404 || res.status === 501) {
       scimUsersUnavailable = true;
       return;
     }
+    if (res.error) { usersError = res.error; return; }
     users = res.data?.Resources ?? [];
   }
 
@@ -74,11 +79,11 @@
     const res = await api.get<ScimGroupList>('/v1/scim/groups');
     groupsLoading = false;
     if (res.denied) { groupsDenied = true; return; }
-    // 404 means SCIM is not implemented on this deployment
-    if (res.status === 404 || (res.error && res.status !== 200)) {
+    if (res.status === 404 || res.status === 501) {
       scimGroupsUnavailable = true;
       return;
     }
+    if (res.error) { groupsError = res.error; return; }
     groups = res.data?.Resources ?? [];
   }
 
@@ -216,7 +221,7 @@
 </script>
 
 <div class="space-y-8">
-  <h1 class="text-2xl font-display font-bold text-ink">Users &amp; Roles</h1>
+  <PageHeader title="Users & Roles" subtitle="SCIM provisioning, RBAC roles, single sign-on and multi-factor enrollment." />
 
   <!-- Users Section -->
   <section aria-labelledby="users-heading">
@@ -231,7 +236,7 @@
     </div>
 
     {#if usersLoading}
-      <div class="text-ink-mute text-sm">Loading users…</div>
+      <SkeletonTable rows={5} cols={5} />
     {:else if usersDenied}
       <DeniedPanel resource="SCIM users" />
     {:else if scimUsersUnavailable}
@@ -244,31 +249,31 @@
     {:else if users.length === 0}
       <EmptyState message="No users found." hint="SCIM provisioning may not be configured." />
     {:else}
-      <div class="rounded-md border border-rule overflow-x-auto">
+      <div class="table-wrap">
         <table class="w-full text-sm">
-          <thead class="bg-paper-soft border-b border-rule">
+          <thead class="thead">
             <tr>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">ID</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Username</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Email</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Active</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Groups</th>
+              <th class="th">ID</th>
+              <th class="th">Username</th>
+              <th class="th">Email</th>
+              <th class="th">Active</th>
+              <th class="th">Groups</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-rule">
             {#each users as user (user.id)}
-              <tr class="hover:bg-paper-soft transition-colors">
-                <td class="px-4 py-2.5 font-mono text-xs text-ink-mute">{user.id}</td>
-                <td class="px-4 py-2.5 text-ink font-medium text-xs">{user.userName}</td>
-                <td class="px-4 py-2.5 text-ink-soft text-xs">{primaryEmail(user)}</td>
-                <td class="px-4 py-2.5">
+              <tr class="transition-colors hover:bg-paper-soft/70">
+                <td class="td font-mono text-xs text-ink-mute max-w-[10rem] truncate" title={user.id}>{user.id}</td>
+                <td class="td text-xs font-medium text-ink">{user.userName}</td>
+                <td class="td text-xs">{primaryEmail(user)}</td>
+                <td class="td">
                   {#if user.active === false}
                     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-danger-soft text-danger">Inactive</span>
                   {:else}
                     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-success-soft text-success">Active</span>
                   {/if}
                 </td>
-                <td class="px-4 py-2.5 text-ink-soft text-xs">{userGroups(user)}</td>
+                <td class="td text-xs">{userGroups(user)}</td>
               </tr>
             {/each}
           </tbody>
@@ -290,7 +295,7 @@
     </div>
 
     {#if groupsLoading}
-      <div class="text-ink-mute text-sm">Loading groups…</div>
+      <SkeletonTable rows={4} cols={3} />
     {:else if groupsDenied}
       <DeniedPanel resource="SCIM groups" />
     {:else if scimGroupsUnavailable}
@@ -303,21 +308,21 @@
     {:else if groups.length === 0}
       <EmptyState message="No groups found." hint="SCIM provisioning may not be configured." />
     {:else}
-      <div class="rounded-md border border-rule overflow-x-auto">
+      <div class="table-wrap">
         <table class="w-full text-sm">
-          <thead class="bg-paper-soft border-b border-rule">
+          <thead class="thead">
             <tr>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">ID</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Display Name</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Member Count</th>
+              <th class="th">ID</th>
+              <th class="th">Display Name</th>
+              <th class="th">Member Count</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-rule">
             {#each groups as group (group.id)}
-              <tr class="hover:bg-paper-soft transition-colors">
-                <td class="px-4 py-2.5 font-mono text-xs text-ink-mute">{group.id}</td>
-                <td class="px-4 py-2.5 text-ink font-medium text-xs">{group.displayName}</td>
-                <td class="px-4 py-2.5 text-ink-soft text-xs">{group.members?.length ?? 0}</td>
+              <tr class="transition-colors hover:bg-paper-soft/70">
+                <td class="td font-mono text-xs text-ink-mute max-w-[10rem] truncate" title={group.id}>{group.id}</td>
+                <td class="td text-xs font-medium text-ink">{group.displayName}</td>
+                <td class="td text-xs">{group.members?.length ?? 0}</td>
               </tr>
             {/each}
           </tbody>
@@ -330,8 +335,8 @@
   <section aria-labelledby="roles-heading">
     <h2 id="roles-heading" class="text-lg font-display font-semibold text-ink mb-3">RBAC Roles</h2>
     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {#each ROLES as role}
-        <div class="rounded-md border border-rule bg-paper-soft p-4">
+      {#each ROLES as role (role.name)}
+        <div class="card">
           <p class="font-mono font-semibold text-accent-deep text-sm">{role.name}</p>
           <p class="text-xs text-ink-soft mt-1">{role.description}</p>
         </div>
@@ -365,21 +370,21 @@
     {:else}
       <div class="grid gap-3 sm:grid-cols-2">
         {#if ssoOidc.length > 0}
-          <div class="rounded-md border border-rule bg-paper-soft p-4">
+          <div class="card">
             <p class="font-mono font-semibold text-accent-deep text-sm">OIDC</p>
             <ul class="mt-2 space-y-1">
               {#each ssoOidc as p, i (i)}
-                <li class="text-xs text-ink-soft font-mono">{ssoLabel(p)}</li>
+                <li class="text-xs text-ink-soft font-mono break-all">{ssoLabel(p)}</li>
               {/each}
             </ul>
           </div>
         {/if}
         {#if ssoSaml.length > 0}
-          <div class="rounded-md border border-rule bg-paper-soft p-4">
+          <div class="card">
             <p class="font-mono font-semibold text-accent-deep text-sm">SAML</p>
             <ul class="mt-2 space-y-1">
               {#each ssoSaml as p, i (i)}
-                <li class="text-xs text-ink-soft font-mono">{ssoLabel(p)}</li>
+                <li class="text-xs text-ink-soft font-mono break-all">{ssoLabel(p)}</li>
               {/each}
             </ul>
           </div>
@@ -438,73 +443,43 @@
 </div>
 
 <!-- Create user dialog -->
-{#if createUserOpen}
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" role="presentation" onclick={() => { createUserOpen = false; }}>
-    <div
-      class="w-full max-w-md rounded-lg border border-rule bg-paper shadow-2xl"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Create user"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => { if (e.key === 'Escape') createUserOpen = false; }}
-      tabindex="-1"
-    >
-      <div class="px-5 py-4 border-b border-rule bg-paper-soft">
-        <h2 class="text-lg font-display font-semibold text-ink">Create User</h2>
-      </div>
-      <div class="p-5 space-y-3">
-        <label class="block">
-          <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Username *</span>
-          <input type="text" bind:value={newUserName} placeholder="e.g. j.operator" class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40" />
-        </label>
-        <label class="block">
-          <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Display name</span>
-          <input type="text" bind:value={newDisplayName} placeholder="e.g. J. Operator" class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40" />
-        </label>
-        <label class="block">
-          <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Email</span>
-          <input type="email" bind:value={newEmail} placeholder="e.g. j.operator@example.com" class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40" />
-        </label>
-        {#if createUserError}
-          <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{createUserError}</div>
-        {/if}
-      </div>
-      <div class="px-5 py-3 border-t border-rule flex justify-end gap-3">
-        <button onclick={() => { createUserOpen = false; }} class="px-4 py-2 rounded-md border border-rule bg-paper-soft text-ink text-sm font-medium hover:bg-paper-warm transition-colors">Cancel</button>
-        <button onclick={() => doCreateUser()} disabled={createUserLoading} class="px-4 py-2 rounded-md bg-accent text-paper-soft text-sm font-medium hover:bg-accent-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors">{createUserLoading ? 'Creating…' : 'Create'}</button>
-      </div>
-    </div>
+<Modal bind:open={createUserOpen} title="Create User" width="sm">
+  <div class="space-y-3">
+    <label class="block">
+      <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Username *</span>
+      <input type="text" bind:value={newUserName} placeholder="e.g. j.operator" class="input" />
+    </label>
+    <label class="block">
+      <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Display name</span>
+      <input type="text" bind:value={newDisplayName} placeholder="e.g. J. Operator" class="input" />
+    </label>
+    <label class="block">
+      <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Email</span>
+      <input type="email" bind:value={newEmail} placeholder="e.g. j.operator@example.com" class="input" />
+    </label>
+    {#if createUserError}
+      <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{createUserError}</div>
+    {/if}
   </div>
-{/if}
+  {#snippet footer()}
+    <button onclick={() => { createUserOpen = false; }} class="btn btn-secondary">Cancel</button>
+    <button onclick={() => doCreateUser()} disabled={createUserLoading} class="btn btn-primary">{createUserLoading ? 'Creating…' : 'Create'}</button>
+  {/snippet}
+</Modal>
 
 <!-- Create group dialog -->
-{#if createGroupOpen}
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" role="presentation" onclick={() => { createGroupOpen = false; }}>
-    <div
-      class="w-full max-w-md rounded-lg border border-rule bg-paper shadow-2xl"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Create group"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => { if (e.key === 'Escape') createGroupOpen = false; }}
-      tabindex="-1"
-    >
-      <div class="px-5 py-4 border-b border-rule bg-paper-soft">
-        <h2 class="text-lg font-display font-semibold text-ink">Create Group</h2>
-      </div>
-      <div class="p-5 space-y-3">
-        <label class="block">
-          <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Display name *</span>
-          <input type="text" bind:value={newGroupName} placeholder="e.g. on-call" class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40" />
-        </label>
-        {#if createGroupError}
-          <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{createGroupError}</div>
-        {/if}
-      </div>
-      <div class="px-5 py-3 border-t border-rule flex justify-end gap-3">
-        <button onclick={() => { createGroupOpen = false; }} class="px-4 py-2 rounded-md border border-rule bg-paper-soft text-ink text-sm font-medium hover:bg-paper-warm transition-colors">Cancel</button>
-        <button onclick={() => doCreateGroup()} disabled={createGroupLoading} class="px-4 py-2 rounded-md bg-accent text-paper-soft text-sm font-medium hover:bg-accent-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors">{createGroupLoading ? 'Creating…' : 'Create'}</button>
-      </div>
-    </div>
+<Modal bind:open={createGroupOpen} title="Create Group" width="sm">
+  <div class="space-y-3">
+    <label class="block">
+      <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Display name *</span>
+      <input type="text" bind:value={newGroupName} placeholder="e.g. on-call" class="input" />
+    </label>
+    {#if createGroupError}
+      <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{createGroupError}</div>
+    {/if}
   </div>
-{/if}
+  {#snippet footer()}
+    <button onclick={() => { createGroupOpen = false; }} class="btn btn-secondary">Cancel</button>
+    <button onclick={() => doCreateGroup()} disabled={createGroupLoading} class="btn btn-primary">{createGroupLoading ? 'Creating…' : 'Create'}</button>
+  {/snippet}
+</Modal>

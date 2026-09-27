@@ -4,6 +4,8 @@
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import SkeletonTable from '$lib/components/SkeletonTable.svelte';
   import type { Adapter } from '$lib/api/types';
 
   let items = $state<Adapter[]>([]);
@@ -11,12 +13,25 @@
   let denied = $state(false);
   let error = $state<string | null>(null);
   let filter = $state('');
+  let filterQuery = $state('');
+  let filterTimer: ReturnType<typeof setTimeout> | undefined;
 
-  let filtered = $derived(
-    filter
-      ? items.filter((a) => JSON.stringify(a).toLowerCase().includes(filter.toLowerCase()))
-      : items
-  );
+  function onFilterInput(e: Event) {
+    const value = (e.currentTarget as HTMLInputElement).value;
+    filter = value;
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => (filterQuery = value), 120);
+  }
+
+  let filtered = $derived.by(() => {
+    const q = filterQuery.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((a) =>
+      `${a.key ?? ''} ${a.kind ?? ''} ${a.stage ?? ''} ${(a.capabilities ?? []).join(' ')}`
+        .toLowerCase()
+        .includes(q)
+    );
+  });
 
   async function load() {
     loading = true;
@@ -33,20 +48,22 @@
 </script>
 
 <div class="space-y-4">
-  <div class="flex items-center justify-between">
-    <h1 class="text-2xl font-display font-bold text-ink">Adapters</h1>
-    <button onclick={load} class="text-sm text-accent-deep hover:underline">Refresh</button>
-  </div>
+  <PageHeader title="Adapters" subtitle="Provider adapter registry — kind, lifecycle stage and capabilities.">
+    {#snippet actions()}
+      <button onclick={load} class="btn btn-secondary btn-sm">Refresh</button>
+    {/snippet}
+  </PageHeader>
 
   <input
     type="search"
-    bind:value={filter}
+    value={filter}
+    oninput={onFilterInput}
     placeholder="Filter by key, kind, stage…"
-    class="w-full max-w-sm px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+    class="input max-w-sm"
   />
 
   {#if loading}
-    <div class="text-ink-mute text-sm">Loading…</div>
+    <SkeletonTable rows={6} cols={4} />
   {:else if denied}
     <DeniedPanel resource="adapters" />
   {:else if error}
@@ -54,25 +71,25 @@
   {:else if filtered.length === 0}
     <EmptyState message="No adapters found." hint={filter ? 'Try clearing the filter.' : 'Install adapters via the gateway configuration.'} />
   {:else}
-    <div class="rounded-md border border-rule overflow-x-auto">
+    <div class="table-wrap">
       <table class="w-full text-sm">
-        <thead class="bg-paper-soft border-b border-rule">
+        <thead class="thead">
           <tr>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Key</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Kind</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Stage</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Capabilities</th>
+            <th class="th">Key</th>
+            <th class="th">Kind</th>
+            <th class="th">Stage</th>
+            <th class="th">Capabilities</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-rule">
           {#each filtered as adapter (adapter.key)}
-            <tr class="hover:bg-paper-soft transition-colors">
-              <td class="px-4 py-2.5 font-mono text-ink-mute text-xs">{adapter.key}</td>
-              <td class="px-4 py-2.5 text-ink font-medium">{adapter.kind}</td>
-              <td class="px-4 py-2.5">
+            <tr class="transition-colors hover:bg-paper-soft/70">
+              <td class="td font-mono text-xs text-ink-mute">{adapter.key}</td>
+              <td class="td font-medium text-ink">{adapter.kind}</td>
+              <td class="td">
                 <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-paper-soft border border-rule text-ink-soft font-mono">{adapter.stage}</span>
               </td>
-              <td class="px-4 py-2.5 text-ink-soft text-xs">{adapter.capabilities?.join(', ') ?? '—'}</td>
+              <td class="td text-xs">{adapter.capabilities?.join(', ') ?? '—'}</td>
             </tr>
           {/each}
         </tbody>

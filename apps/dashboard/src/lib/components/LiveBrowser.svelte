@@ -123,6 +123,7 @@
     ws.onopen = () => {
       connecting = false;
       connected = true;
+      retryDelay = RETRY_BASE; // successful connection resets backoff
       send({ t: 'targets' });
       // Register our real visibility so a backgrounded dashboard tab stops
       // receiving frames (and stops holding the VPS screencast hot).
@@ -157,38 +158,64 @@
         }
         return;
       }
-      // Binary JPEG frame.
-      try {
-        const blob = new Blob([ev.data as ArrayBuffer], { type: 'image/jpeg' });
-        const bmp = await createImageBitmap(blob);
-        if (canvas) {
-          if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
-            canvas.width = bmp.width;
-            canvas.height = bmp.height;
-          }
-          ctx?.drawImage(bmp, 0, 0);
-          hasFrame = true;
-        }
-        bmp.close();
-      } catch {
-        /* ignore a bad frame */
-      }
+      // Binary JPEG frame. Decodes are serialized and only the latest pending
+      // frame is kept, so a fast bridge can't pile up bitmaps.
+      void decodeFrame(ev.data as ArrayBuffer);
     };
   }
+
+  let pendingFrame: ArrayBuffer | null = null;
+  let decoding = false;
+
+  async function decodeFrame(data: ArrayBuffer) {
+    if (decoding) {
+      pendingFrame = data;
+      return;
+    }
+    decoding = true;
+    try {
+      const blob = new Blob([data], { type: 'image/jpeg' });
+      const bmp = await createImageBitmap(blob);
+      if (canvas) {
+        if (canvas.width !== bmp.width || canvas.height !== bmp.height) {
+          canvas.width = bmp.width;
+          canvas.height = bmp.height;
+        }
+        ctx?.drawImage(bmp, 0, 0);
+        hasFrame = true;
+      }
+      bmp.close();
+    } catch {
+      /* ignore a bad frame */
+    }
+    decoding = false;
+    if (pendingFrame) {
+      const next = pendingFrame;
+      pendingFrame = null;
+      void decodeFrame(next);
+    }
+  }
+
+  const RETRY_BASE = 1500;
+  const RETRY_MAX = 30_000;
+  let retryDelay = RETRY_BASE;
 
   function scheduleRetry() {
     if (retryTimer) return;
     retryTimer = setTimeout(() => {
       retryTimer = null;
       connect();
-    }, 1500);
+    }, retryDelay);
+    // Exponential backoff, capped — a bridge that is down for hours must not
+    // hot-loop reconnect attempts every 1.5s forever.
+    retryDelay = Math.min(RETRY_MAX, retryDelay * 2);
   }
 
   function send(obj: Record<string, unknown>) {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
   }
 
-  function frac(e: MouseEvent | WheelEvent): { fx: number; fy: number } | null {
+  function frac(e: MouseEvent | WheelEvent | PointerEvent): { fx: number; fy: number } | null {
     if (!canvas) return null;
     const r = canvas.getBoundingClientRect();
     if (r.width === 0 || r.height === 0) return null;
@@ -197,18 +224,23 @@
     return { fx, fy };
   }
 
-  function onMouseDown(e: MouseEvent) {
+  // Pointer events cover mouse, touch and pen in one path — the remote page
+  // gets down/up/move pairs from touch drags too. touch-action: none on the
+  // canvas keeps the browser from scrolling during a drag.
+  function onPointerDown(e: PointerEvent) {
     if (!interactive) return;
     canvas?.focus();
+    try { canvas?.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     const p = frac(e);
     if (p) send({ t: 'mouse', kind: 'down', fx: p.fx, fy: p.fy, button: e.button });
   }
-  function onMouseUp(e: MouseEvent) {
+  function onPointerUp(e: PointerEvent) {
     if (!interactive) return;
+    try { canvas?.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
     const p = frac(e);
     if (p) send({ t: 'mouse', kind: 'up', fx: p.fx, fy: p.fy, button: e.button });
   }
-  function onMouseMove(e: MouseEvent) {
+  function onPointerMove(e: PointerEvent) {
     if (!interactive) return;
     const now = Date.now();
     if (now - lastMoveSent < 33) return; // ~30fps input cap
@@ -418,9 +450,9 @@
   </div>
 
   <!-- Viewport -->
-  <div class="relative bg-[#0b0d10]">
+  <div class="relative bg-ink">
     {#if !connected}
-      <div class="flex items-center justify-center" style="min-height: 24rem;">
+      <div class="flex items-center justify-center min-h-[24rem]">
         <div class="text-center text-xs text-ink-mute space-y-2 px-8 max-w-md">
           <p class="font-medium text-ink text-sm">Live browser bridge not connected</p>
           <p>Trying <span class="font-mono text-ink-soft break-all">{activeWsUrl}</span>{savedWsUrl ? ' — saved in this browser' : ''}.</p>
@@ -443,10 +475,10 @@
       class="block w-full h-auto outline-none"
       class:hidden={!connected}
       class:cursor-not-allowed={!interactive}
-      style="aspect-ratio: {deviceW} / {deviceH};"
-      onmousedown={onMouseDown}
-      onmouseup={onMouseUp}
-      onmousemove={onMouseMove}
+      style="aspect-ratio: {deviceW} / {deviceH}; touch-action: none;"
+      onpointerdown={onPointerDown}
+      onpointerup={onPointerUp}
+      onpointermove={onPointerMove}
       onwheel={onWheel}
       oncontextmenu={onContextMenu}
       onkeydown={onKeyDown}

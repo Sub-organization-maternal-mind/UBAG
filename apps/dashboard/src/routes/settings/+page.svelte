@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { settings } from '$lib/stores/settings';
   import { api } from '$lib/api/client';
+  import PageHeader from '$lib/components/PageHeader.svelte';
   import type { HealthResponse } from '$lib/api/types';
 
   let gatewayUrl = $state($settings.gatewayUrl);
@@ -91,12 +92,12 @@
   });
 </script>
 
-<div class="space-y-6 max-w-xl">
-  <h1 class="text-2xl font-display font-bold text-ink">Settings</h1>
+<div class="space-y-6">
+  <PageHeader title="Settings" subtitle="Gateway connection for this browser profile, plus SIEM export sinks." />
 
-  <form onsubmit={(e) => { e.preventDefault(); save(); }} class="space-y-4">
+  <form onsubmit={(e) => { e.preventDefault(); save(); }} class="card max-w-xl space-y-4">
     <div>
-      <label class="block text-sm font-medium text-ink mb-1" for="gateway-url">
+      <label class="label" for="gateway-url">
         Gateway URL
       </label>
       <input
@@ -104,14 +105,14 @@
         type="url"
         bind:value={gatewayUrl}
         placeholder="http://127.0.0.1:8081"
-        class="w-full px-3 py-2 rounded-md border border-rule bg-paper-soft text-ink text-sm font-mono focus:outline-none focus:border-accent"
+        class="input font-mono"
         autocomplete="off"
       />
       <p class="text-xs text-ink-mute mt-1">The UBAG gateway API base URL</p>
     </div>
 
     <div>
-      <label class="block text-sm font-medium text-ink mb-1" for="app-secret">
+      <label class="label" for="app-secret">
         App Secret (Bearer token)
       </label>
       <input
@@ -119,7 +120,7 @@
         type="password"
         bind:value={appSecret}
         placeholder="paste your UBAG_APP_SECRET"
-        class="w-full px-3 py-2 rounded-md border border-rule bg-paper-soft text-ink text-sm font-mono focus:outline-none focus:border-accent"
+        class="input font-mono"
         autocomplete="off"
       />
       <p class="text-xs text-ink-mute mt-1">
@@ -129,20 +130,11 @@
     </div>
 
     <div class="flex items-center gap-3 flex-wrap">
-      <button
-        type="submit"
-        disabled={saving}
-        class="px-4 py-2 rounded-md bg-accent text-paper-soft text-sm font-medium hover:bg-accent-deep transition-colors disabled:opacity-50"
-      >
+      <button type="submit" disabled={saving} class="btn btn-primary">
         {saving ? 'Saving…' : 'Save'}
       </button>
 
-      <button
-        type="button"
-        onclick={testConnection}
-        disabled={testing}
-        class="px-4 py-2 rounded-md border border-rule bg-paper-soft text-ink text-sm font-medium hover:bg-rule-soft transition-colors disabled:opacity-50"
-      >
+      <button type="button" onclick={testConnection} disabled={testing} class="btn btn-secondary">
         {testing ? 'Testing…' : 'Test Connection'}
       </button>
 
@@ -204,27 +196,27 @@
     {:else if siemSinks.length === 0}
       <p class="text-xs text-ink-mute italic">No SIEM sinks configured.</p>
     {:else}
-      <div class="rounded-md border border-rule overflow-x-auto">
+      <div class="table-wrap">
         <table class="w-full text-sm">
-          <thead class="bg-paper-soft border-b border-rule">
+          <thead class="thead">
             <tr>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Name</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Kind</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Target</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Enabled</th>
+              <th class="th">Name</th>
+              <th class="th">Kind</th>
+              <th class="th">Target</th>
+              <th class="th">Enabled</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-rule">
             {#each siemSinks as sink (sink.id)}
-              <tr class="hover:bg-paper-soft transition-colors">
-                <td class="px-4 py-2.5 text-ink font-medium text-xs">{sink.name}</td>
-                <td class="px-4 py-2.5 font-mono text-xs text-ink-soft">{sink.kind}{sink.network ? `/${sink.network}` : ''}</td>
-                <td class="px-4 py-2.5 font-mono text-xs text-ink-mute break-all max-w-[16rem]">{sink.target ?? '—'}</td>
-                <td class="px-4 py-2.5">
+              <tr class="transition-colors hover:bg-paper-soft/70">
+                <td class="td text-xs font-medium text-ink">{sink.name}</td>
+                <td class="td font-mono text-xs">{sink.kind}{sink.network ? `/${sink.network}` : ''}</td>
+                <td class="td font-mono text-xs text-ink-mute break-all max-w-[16rem]">{sink.target ?? '—'}</td>
+                <td class="td">
                   <button
                     onclick={() => toggleSiemSink(sink)}
                     disabled={siemSavingId === sink.id}
-                    class="text-xs text-accent-deep hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+                    class="btn-link text-xs"
                   >
                     {siemSavingId === sink.id ? 'Saving…' : sink.enabled ? 'Disable' : 'Enable'}
                   </button>

@@ -3,12 +3,17 @@
 
   let { workflow }: { workflow: Workflow } = $props();
 
+  // Token-driven colors (must stay in sync with the legend on /workflows).
   const STATUS_COLORS: Record<string, string> = {
-    completed: '#50a082', // success green
-    running: '#366290',   // marine
-    pending: '#b08840',   // saffron
-    failed: '#b04040',    // danger red
+    completed: 'var(--color-success)',
+    running: 'var(--color-marine)',
+    pending: 'var(--color-warning)',
+    failed: 'var(--color-danger)',
   };
+
+  function statusColor(status?: string): string {
+    return STATUS_COLORS[status ?? ''] ?? 'var(--color-ink-mute)';
+  }
 
   // Compute layers (topological sort with cycle guard)
   function computeLayers(steps: WorkflowStep[]): Map<string, number> {
@@ -43,6 +48,12 @@
   const COL_GAP = 220;
   const ROW_GAP = 80;
   const PAD = 20;
+  const NAME_MAX = 22;
+
+  function displayName(name: string | undefined): string {
+    const n = name ?? '';
+    return n.length > NAME_MAX ? n.slice(0, NAME_MAX - 1) + '…' : n;
+  }
 
   type Node = { step: WorkflowStep; x: number; y: number; layer: number };
 
@@ -98,38 +109,39 @@
 
 <div class="overflow-x-auto rounded-md border border-rule bg-paper-soft p-2" aria-label="Workflow DAG">
   <svg
+    viewBox="0 0 {svgWidth} {svgHeight}"
     width={svgWidth}
     height={svgHeight}
-    viewBox="0 0 {svgWidth} {svgHeight}"
+    class="h-auto w-full min-w-[560px]"
     aria-label="Workflow steps diagram for {workflow.name}"
     role="img"
   >
     <defs>
-      <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-        <path d="M0,0 L0,6 L8,3 z" fill="#86868a" />
+      <marker id="dag-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L0,6 L8,3 z" fill="var(--color-ink-mute)" />
       </marker>
     </defs>
 
     <!-- Edges -->
-    {#each edges as edge}
+    {#each edges as edge, i (i)}
       <line
         x1={edge.x1} y1={edge.y1}
         x2={edge.x2} y2={edge.y2}
-        stroke="#86868a"
+        stroke="var(--color-ink-mute)"
         stroke-width="1.5"
-        marker-end="url(#arrow)"
+        marker-end="url(#dag-arrow)"
       />
     {/each}
 
     <!-- Nodes -->
-    {#each nodes as node}
-      {@const color = STATUS_COLORS[node.step.status ?? ''] ?? '#86868a'}
+    {#each nodes as node (node.step.id)}
+      {@const color = statusColor(node.step.status)}
       <g transform="translate({node.x},{node.y})" role="listitem">
         <rect
           width={RECT_W}
           height={RECT_H}
           rx="6"
-          fill="var(--color-paper-soft, #f9f9f6)"
+          fill="var(--color-paper-soft)"
           stroke={color}
           stroke-width="2"
         />
@@ -139,16 +151,16 @@
           text-anchor="middle"
           dominant-baseline="middle"
           font-size="12"
-          font-family="Cascadia Mono, monospace"
-          fill="var(--color-ink, #1a1a1a)"
-        >{node.step.name}</text>
+          font-family="var(--font-mono)"
+          fill="var(--color-ink)"
+        >{displayName(node.step.name)}</text>
         <text
           x={RECT_W / 2}
           y={RECT_H / 2 + 10}
           text-anchor="middle"
           font-size="10"
           fill={color}
-          font-family="monospace"
+          font-family="var(--font-mono)"
         >{node.step.status ?? 'pending'}</text>
       </g>
     {/each}

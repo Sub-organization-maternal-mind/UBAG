@@ -4,7 +4,11 @@
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import SkeletonTable from '$lib/components/SkeletonTable.svelte';
   import type { AuditEntry } from '$lib/api/types';
+
+  const PAGE_SIZE = 50;
 
   let items = $state<AuditEntry[]>([]);
   let loading = $state(true);
@@ -12,11 +16,12 @@
   let error = $state<string | null>(null);
   let filterActor = $state('');
   let filterAction = $state('');
+  let page = $state(0);
   let exporting = $state(false);
   let exportError = $state<string | null>(null);
   let exportSummary = $state<string | null>(null);
 
-  let filtered = $derived(() => {
+  let filtered = $derived.by(() => {
     let result = items;
     if (filterActor) {
       result = result.filter(e => e.actor.toLowerCase().includes(filterActor.toLowerCase()));
@@ -27,14 +32,24 @@
     return result;
   });
 
-  // Chain verification: items[i].prev_hash === items[i-1].hash
-  function chainValid(index: number, filteredItems: AuditEntry[]): boolean | null {
-    if (index === 0) return null; // first entry — no previous to compare
-    const prev = filteredItems[index - 1];
-    const cur = filteredItems[index];
-    if (!cur.prev_hash || !prev.hash) return null; // missing hashes — can't verify
-    return cur.prev_hash === prev.hash;
-  }
+  // Chain verification (items[i].prev_hash === items[i-1].hash) computed in a
+  // single pass per filtered dataset — not per row, per render.
+  let chainResults = $derived.by(() => {
+    const results: Array<boolean | null> = [];
+    for (let i = 0; i < filtered.length; i++) {
+      if (i === 0) { results.push(null); continue; }
+      const prev = filtered[i - 1];
+      const cur = filtered[i];
+      if (!cur.prev_hash || !prev.hash) { results.push(null); continue; }
+      results.push(cur.prev_hash === prev.hash);
+    }
+    return results;
+  });
+
+  let pageCount = $derived(Math.max(1, Math.ceil(filtered.length / PAGE_SIZE)));
+  // Clamp the page when filters shrink the result set.
+  let safePage = $derived(Math.min(page, pageCount - 1));
+  let pageItems = $derived(filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE));
 
   function fmtDate(s: string): string {
     try { return new Date(s).toLocaleString(); } catch { return s; }
@@ -83,15 +98,14 @@
 </script>
 
 <div class="space-y-4">
-  <div class="flex items-center justify-between">
-    <h1 class="text-2xl font-display font-bold text-ink">Audit Log</h1>
-    <div class="flex items-center gap-3">
-      <button onclick={() => exportChain()} disabled={exporting || loading} class="text-sm text-accent-deep hover:underline disabled:opacity-40 disabled:cursor-not-allowed">
+  <PageHeader title="Audit Log" subtitle="Append-only audit chain with hash-link integrity verification.">
+    {#snippet actions()}
+      <button onclick={() => exportChain()} disabled={exporting || loading} class="btn btn-secondary btn-sm">
         {exporting ? 'Exporting…' : 'Export chain'}
       </button>
-      <button onclick={() => load()} class="text-sm text-accent-deep hover:underline">Refresh</button>
-    </div>
-  </div>
+      <button onclick={() => load()} class="btn btn-secondary btn-sm">Refresh</button>
+    {/snippet}
+  </PageHeader>
 
   {#if exportError}
     <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{exportError}</div>
@@ -106,29 +120,28 @@
       type="search"
       bind:value={filterActor}
       placeholder="Filter by actor…"
-      class="w-full max-w-xs px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+      class="input max-w-xs"
     />
     <input
       type="search"
       bind:value={filterAction}
       placeholder="Filter by action…"
-      class="w-full max-w-xs px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+      class="input max-w-xs"
     />
   </div>
 
   {#if loading}
-    <div class="text-ink-mute text-sm">Loading…</div>
+    <SkeletonTable rows={10} cols={7} />
   {:else if denied}
     <DeniedPanel resource="audit log" />
   {:else if error}
     <ErrorPanel message={error} retry={load} />
   {:else}
-    {@const filteredItems = filtered()}
-    {#if filteredItems.length === 0}
+    {#if filtered.length === 0}
       <EmptyState message="No audit entries found." hint={filterActor || filterAction ? 'Try clearing the filters.' : ''} />
     {:else}
       <!-- Chain integrity summary -->
-      {@const chainIssues = filteredItems.filter((_, i) => chainValid(i, filteredItems) === false).length}
+      {@const chainIssues = chainResults.filter((v) => v === false).length}
       {#if chainIssues > 0}
         <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger flex items-center gap-2" role="alert">
           <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
@@ -145,36 +158,36 @@
         </div>
       {/if}
 
-      <div class="rounded-md border border-rule overflow-x-auto">
+      <div class="table-wrap">
         <table class="w-full text-sm">
-          <thead class="bg-paper-soft border-b border-rule">
+          <thead class="thead">
             <tr>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Timestamp</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Actor</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Action</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Resource</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Hash</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Prev Hash</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Chain</th>
+              <th class="th">Timestamp</th>
+              <th class="th">Actor</th>
+              <th class="th">Action</th>
+              <th class="th">Resource</th>
+              <th class="th">Hash</th>
+              <th class="th">Prev Hash</th>
+              <th class="th">Chain</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-rule">
-            {#each filteredItems as entry, i (entry.id)}
-              {@const valid = chainValid(i, filteredItems)}
-              <tr class="hover:bg-paper-soft transition-colors" class:bg-danger-soft={valid === false}>
-                <td class="px-4 py-2.5 text-ink-mute text-xs whitespace-nowrap">{fmtDate(entry.timestamp)}</td>
-                <td class="px-4 py-2.5 text-ink font-mono text-xs">{entry.actor}</td>
-                <td class="px-4 py-2.5 text-ink font-mono text-xs">{entry.action}</td>
-                <td class="px-4 py-2.5 text-ink-soft text-xs">{entry.resource ?? '—'}</td>
-                <td class="px-4 py-2.5 font-mono text-xs text-ink-mute">{shortHash(entry.hash)}</td>
-                <td class="px-4 py-2.5 font-mono text-xs text-ink-mute">{shortHash(entry.prev_hash)}</td>
-                <td class="px-4 py-2.5">
+            {#each pageItems as entry, i (entry.id)}
+              {@const valid = chainResults[safePage * PAGE_SIZE + i]}
+              <tr class="transition-colors hover:bg-paper-soft/70" class:bg-danger-soft={valid === false}>
+                <td class="td text-xs text-ink-mute whitespace-nowrap">{fmtDate(entry.timestamp)}</td>
+                <td class="td font-mono text-xs text-ink">{entry.actor}</td>
+                <td class="td font-mono text-xs text-ink">{entry.action}</td>
+                <td class="td text-xs max-w-[16rem] truncate" title={entry.resource}>{entry.resource ?? '—'}</td>
+                <td class="td font-mono text-xs text-ink-mute">{shortHash(entry.hash)}</td>
+                <td class="td font-mono text-xs text-ink-mute">{shortHash(entry.prev_hash)}</td>
+                <td class="td">
                   {#if valid === null}
                     <span class="text-xs text-ink-mute" aria-label="Chain not verified">—</span>
                   {:else if valid}
                     <span class="text-success" title="Chain valid" aria-label="Chain valid">✓</span>
                   {:else}
-                    <span class="text-danger font-bold" title="Chain broken" aria-label="Chain broken">✗</span>
+                    <span class="font-bold text-danger" title="Chain broken" aria-label="Chain broken">✗</span>
                   {/if}
                 </td>
               </tr>
@@ -182,6 +195,21 @@
           </tbody>
         </table>
       </div>
+
+      <!-- Pagination -->
+      {#if pageCount > 1}
+        <div class="flex items-center justify-between gap-3 text-sm">
+          <button onclick={() => (page = Math.max(0, safePage - 1))} disabled={safePage === 0} class="btn btn-secondary btn-sm">
+            ← Prev
+          </button>
+          <span class="text-xs text-ink-mute font-mono">
+            page {safePage + 1} of {pageCount} · {filtered.length} entries
+          </span>
+          <button onclick={() => (page = Math.min(pageCount - 1, safePage + 1))} disabled={safePage >= pageCount - 1} class="btn btn-secondary btn-sm">
+            Next →
+          </button>
+        </div>
+      {/if}
     {/if}
   {/if}
 </div>

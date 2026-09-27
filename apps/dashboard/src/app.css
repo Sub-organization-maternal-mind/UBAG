@@ -21,9 +21,12 @@
   --color-marine-soft: oklch(83% 0.045 240);
   --color-success: oklch(50% 0.09 150);
   --color-success-soft: oklch(90% 0.04 145);
+  --color-warning: oklch(55% 0.13 70);
+  --color-warning-soft: oklch(90% 0.06 75);
   --color-danger: oklch(52% 0.17 25);
   --color-danger-soft: oklch(89% 0.055 32);
   --color-focus-ring: oklch(48% 0.2 32);
+  --color-scrim: oklch(20% 0.022 55 / 0.45);
 
   --font-display: ui-rounded, "Aptos Display", "Segoe UI", system-ui, sans-serif;
   --font-body: "Aptos", "Segoe UI", BlinkMacSystemFont, sans-serif;
@@ -65,6 +68,63 @@ html, body {
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
+}
+
+/* --- shared UI primitives (one spacing/padding system for every page) --- */
+@layer components {
+  .card {
+    @apply rounded-md border border-rule bg-paper-soft p-4;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors duration-100 select-none disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-primary { @apply bg-accent text-paper-soft hover:bg-accent-deep; }
+  .btn-secondary { @apply border border-rule bg-paper-soft text-ink hover:bg-rule-soft; }
+  .btn-danger { @apply border border-danger/40 bg-danger-soft text-danger hover:bg-danger hover:text-paper-soft; }
+  .btn-ghost { @apply border border-transparent text-ink-soft hover:bg-rule-soft hover:text-ink; }
+  .btn-sm { @apply min-h-9 px-3 py-1.5 text-xs; }
+  .btn-link {
+    @apply inline-flex min-h-9 items-center gap-1 rounded-sm px-1 text-sm font-medium text-accent-deep hover:underline disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .input {
+    @apply w-full rounded-md border border-rule bg-paper px-3 py-2 text-sm text-ink transition-colors duration-100 placeholder:text-ink-mute focus:outline-none focus:border-accent;
+  }
+  .label { @apply mb-1 block text-sm font-medium text-ink; }
+
+  .table-wrap { @apply overflow-x-auto rounded-md border border-rule; }
+  .thead { @apply border-b border-rule bg-paper-soft; }
+  .th { @apply whitespace-nowrap px-4 py-2.5 text-left text-xs font-medium uppercase tracking-wider text-ink-mute; }
+  .td { @apply px-4 py-2.5 align-middle text-sm text-ink-soft; }
+  .tr-hover { @apply border-rule transition-colors duration-100 hover:bg-paper-soft/70; }
+
+  .skeleton { @apply animate-pulse rounded-md bg-rule-soft; }
+}
+
+/* --- motion (durations come from tokens; the global reduced-motion rule
+       at the bottom of this file neutralizes all of it) --- */
+@keyframes ubag-fade-in {
+  from { opacity: 0; }
+}
+@keyframes ubag-pop-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+.ubag-fade-in { animation: ubag-fade-in var(--dur-base) var(--ease-out); }
+
+/* Native <dialog> chrome — one backdrop/panel look for every modal in the app. */
+dialog.ubag-modal {
+  padding: 0;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  background: var(--color-paper-soft);
+  color: var(--color-ink);
+  box-shadow: 0 16px 48px oklch(20% 0.022 55 / 0.18);
+}
+dialog.ubag-modal[open] { animation: ubag-pop-in var(--dur-slow) var(--ease-out); }
+dialog.ubag-modal::backdrop {
+  background: var(--color-scrim);
+  animation: ubag-fade-in var(--dur-base) var(--ease-out);
 }
 
 @media (prefers-reduced-motion: reduce) {

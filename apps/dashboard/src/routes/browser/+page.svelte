@@ -6,6 +6,10 @@
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import LiveBrowser from '$lib/components/LiveBrowser.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import SkeletonCards from '$lib/components/SkeletonCards.svelte';
+  import UpdatedAgo from '$lib/components/UpdatedAgo.svelte';
+  import { pollWhileVisible } from '$lib/poll';
   import type {
     BrowserInstance,
     BrowserContext,
@@ -21,6 +25,7 @@
   let loading = $state(true);
   let denied = $state(false);
   let error = $state<string | null>(null);
+  let lastUpdated = $state<Date | null>(null);
 
   let selectedInstance = $state<BrowserInstance | null>(null);
 
@@ -80,10 +85,12 @@
     return String(c.provider_id ?? c.target_id ?? '—');
   }
 
-  async function load() {
-    loading = true;
-    error = null;
-    denied = false;
+  async function load(silent = false) {
+    if (!silent) {
+      loading = true;
+      error = null;
+      denied = false;
+    }
 
     const [sumRes, instRes, ctxRes, tabRes] = await Promise.all([
       api.get('/v1/browser/summary'),
@@ -92,10 +99,9 @@
       api.get('/v1/browser/tabs'),
     ]);
 
-    loading = false;
-
     if (instRes.denied) { denied = true; return; }
     if (instRes.error) { error = instRes.error; return; }
+    if (!silent) loading = false;
 
     summary = (sumRes.data as BrowserSummary | null) ?? null;
     instances = listOf<BrowserInstance>(instRes);
@@ -105,6 +111,7 @@
       instances.find((inst) => selectedInstance && instanceId(inst) === instanceId(selectedInstance)) ??
       instances[0] ??
       null;
+    lastUpdated = new Date();
   }
 
   async function initTerminal() {
@@ -113,19 +120,32 @@
       const { Terminal } = await import('@xterm/xterm');
       await import('@xterm/xterm/css/xterm.css');
       term = new Terminal({
-        theme: { background: '#111418', foreground: '#d4d4d8' },
+        // Terminal panes render on canvas where CSS vars don't resolve; use the
+        // ink token's concrete value (oklch 20% 0.022 55) for the background.
+        theme: { background: '#221e1b', foreground: '#f4f1ec' },
         fontFamily: '"Cascadia Mono", "Fira Code", monospace',
         fontSize: 12,
         rows: 20,
-        cols: 90,
         cursorBlink: true,
+        scrollback: 200,
       });
       (term as unknown as { open: (el: HTMLElement) => void }).open(terminalEl);
+      fitTerm();
       termReady = true;
       refreshTerminal();
     } catch (e) {
       console.warn('xterm init failed', e);
     }
+  }
+
+  // Keep the terminal width matched to its container without the FitAddon
+  // dependency: resize against a measured monospace advance (~0.6em at 12px).
+  function fitTerm() {
+    if (!term || !terminalEl) return;
+    const width = terminalEl.clientWidth;
+    if (width < 80) return;
+    const cols = Math.max(20, Math.floor((width - 24) / 7.2));
+    (term as unknown as { resize?: (cols: number, rows: number) => void }).resize?.(cols, 20);
   }
 
   function writeWelcome() {
@@ -211,6 +231,14 @@
   onMount(() => {
     load();
     loadConcurrency();
+    const stopPolling = pollWhileVisible(() => load(true), 45_000);
+    // Refit the terminal when the viewport changes.
+    const onResize = () => fitTerm();
+    window.addEventListener('resize', onResize);
+    return () => {
+      stopPolling();
+      window.removeEventListener('resize', onResize);
+    };
   });
 
   $effect(() => {
@@ -232,29 +260,28 @@
 </script>
 
 <div class="space-y-6">
-  <div class="flex items-center justify-between">
-    <div>
-      <h1 class="text-2xl font-display font-bold text-ink">Browser Sessions</h1>
-      <p class="text-xs text-ink-mute mt-0.5">Live Chromium automation via UBAG gateway</p>
-    </div>
-    <button onclick={() => load()} class="text-sm text-accent-deep hover:underline">Refresh</button>
-  </div>
+  <PageHeader title="Browser Sessions" subtitle="Live Chromium automation via UBAG gateway.">
+    {#snippet actions()}
+      <UpdatedAgo at={lastUpdated} />
+      <button onclick={() => load()} class="btn btn-secondary btn-sm">Refresh</button>
+    {/snippet}
+  </PageHeader>
 
   {#if loading}
-    <div class="text-ink-mute text-sm animate-pulse">Loading...</div>
+    <SkeletonCards count={3} cols="grid-cols-1 sm:grid-cols-3" />
   {:else if denied}
     <DeniedPanel resource="browser sessions" />
   {:else if error}
     <ErrorPanel message={error} retry={load} />
   {:else}
     {#if summary}
-      <div class="grid grid-cols-3 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {#each [
           { label: 'Instances', value: summary.total_instances ?? summary.instances ?? 0, color: 'text-marine' },
-          { label: 'Contexts', value: summary.total_contexts ?? summary.contexts ?? 0, color: 'text-saffron' },
+          { label: 'Contexts', value: summary.total_contexts ?? summary.contexts ?? 0, color: 'text-accent-deep' },
           { label: 'Tabs', value: summary.total_tabs ?? summary.tabs ?? 0, color: 'text-success' },
-        ] as card}
-          <div class="rounded-md border border-rule bg-paper-soft px-4 py-3 flex flex-col gap-1">
+        ] as card (card.label)}
+          <div class="card flex flex-col gap-1">
             <span class="text-xs text-ink-mute uppercase tracking-wider font-mono">{card.label}</span>
             <span class="text-2xl font-display font-bold {card.color}">{card.value}</span>
           </div>
@@ -278,31 +305,35 @@
         {#if instances.length === 0}
           <EmptyState message="No browser instances." hint="Start a browser session via the gateway." />
         {:else}
-          <div class="rounded-md border border-rule overflow-x-auto">
+          <div class="table-wrap">
             <table class="w-full text-sm">
-              <thead class="bg-paper-soft border-b border-rule">
+              <thead class="thead">
                 <tr>
-                  <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Instance ID</th>
-                  <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Status</th>
-                  <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Contexts</th>
+                  <th class="th">Instance ID</th>
+                  <th class="th">Status</th>
+                  <th class="th">Contexts</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-rule">
                 {#each instances as inst, i (instanceId(inst) || i)}
                   <tr
-                    role="option"
                     tabindex="0"
+                    role="button"
                     aria-label="Select instance {instanceId(inst)}"
-                    aria-selected={selectedInstance ? instanceId(selectedInstance) === instanceId(inst) : false}
-                    class="cursor-pointer transition-colors"
+                    aria-pressed={selectedInstance ? instanceId(selectedInstance) === instanceId(inst) : false}
+                    class="cursor-pointer transition-colors hover:bg-paper-soft/70"
                     class:bg-accent-soft={selectedInstance ? instanceId(selectedInstance) === instanceId(inst) : false}
-                    class:hover:bg-paper-soft={selectedInstance ? instanceId(selectedInstance) !== instanceId(inst) : true}
                     onclick={() => selectInstance(inst)}
-                    onkeydown={(e) => e.key === 'Enter' && selectInstance(inst)}
+                    onkeydown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        selectInstance(inst);
+                      }
+                    }}
                   >
-                    <td class="px-4 py-2.5 font-mono text-xs text-ink-mute">{truncate(instanceId(inst), 12)}</td>
-                    <td class="px-4 py-2.5"><StatusBadge status={instanceState(inst)} /></td>
-                    <td class="px-4 py-2.5 text-ink-soft text-center">{inst.context_count ?? 0}</td>
+                    <td class="td font-mono text-xs text-ink-mute">{truncate(instanceId(inst), 12)}</td>
+                    <td class="td"><StatusBadge status={instanceState(inst)} /></td>
+                    <td class="td text-center">{inst.context_count ?? 0}</td>
                   </tr>
                 {/each}
               </tbody>
@@ -312,21 +343,21 @@
 
         {#if contexts.length > 0}
           <h2 class="text-sm font-semibold text-ink uppercase tracking-wider pt-2">Contexts</h2>
-          <div class="rounded-md border border-rule overflow-x-auto">
+          <div class="table-wrap">
             <table class="w-full text-sm">
-              <thead class="bg-paper-soft border-b border-rule">
+              <thead class="thead">
                 <tr>
-                  <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Context ID</th>
-                  <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Instance</th>
-                  <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Tabs</th>
+                  <th class="th">Context ID</th>
+                  <th class="th">Instance</th>
+                  <th class="th">Tabs</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-rule">
                 {#each contexts as ctx, i (contextId(ctx) || i)}
-                  <tr class="hover:bg-paper-soft transition-colors">
-                    <td class="px-4 py-2.5 font-mono text-xs text-ink-mute">{truncate(contextId(ctx), 12)}</td>
-                    <td class="px-4 py-2.5 font-mono text-xs text-ink-soft">{truncate(ctx.instance_id, 8)}</td>
-                    <td class="px-4 py-2.5 text-ink-soft text-center">{contextTabCount(ctx)}</td>
+                  <tr class="transition-colors hover:bg-paper-soft/70">
+                    <td class="td font-mono text-xs text-ink-mute">{truncate(contextId(ctx), 12)}</td>
+                    <td class="td font-mono text-xs">{truncate(ctx.instance_id, 8)}</td>
+                    <td class="td text-center">{contextTabCount(ctx)}</td>
                   </tr>
                 {/each}
               </tbody>
@@ -336,25 +367,25 @@
 
         {#if tabs.length > 0}
           <h2 class="text-sm font-semibold text-ink uppercase tracking-wider pt-2">Tabs</h2>
-          <div class="rounded-md border border-rule overflow-x-auto">
+          <div class="table-wrap">
             <table class="w-full text-sm">
-              <thead class="bg-paper-soft border-b border-rule">
+              <thead class="thead">
                 <tr>
-                  <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Tab ID</th>
-                  <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Context</th>
-                  <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">URL</th>
-                  <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Title</th>
-                  <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Status</th>
+                  <th class="th">Tab ID</th>
+                  <th class="th">Context</th>
+                  <th class="th">URL</th>
+                  <th class="th">Title</th>
+                  <th class="th">Status</th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-rule">
                 {#each tabs as tab, i (tabId(tab) || i)}
-                  <tr class="hover:bg-paper-soft transition-colors">
-                    <td class="px-4 py-2.5 font-mono text-xs text-ink-mute">{truncate(tabId(tab), 8)}</td>
-                    <td class="px-4 py-2.5 font-mono text-xs text-ink-mute">{truncate(tab.context_id, 8)}</td>
-                    <td class="px-4 py-2.5 text-xs text-ink-soft max-w-[12rem] truncate" title={tabUrl(tab)}>{truncate(tabUrl(tab), 40)}</td>
-                    <td class="px-4 py-2.5 text-xs text-ink max-w-[10rem] truncate" title={tab.title ?? ''}>{truncate(tab.title, 30)}</td>
-                    <td class="px-4 py-2.5"><StatusBadge status={tabState(tab)} /></td>
+                  <tr class="transition-colors hover:bg-paper-soft/70">
+                    <td class="td font-mono text-xs text-ink-mute">{truncate(tabId(tab), 8)}</td>
+                    <td class="td font-mono text-xs text-ink-mute">{truncate(tab.context_id, 8)}</td>
+                    <td class="td text-xs max-w-[12rem] truncate" title={tabUrl(tab)}>{truncate(tabUrl(tab), 40)}</td>
+                    <td class="td text-xs text-ink max-w-[10rem] truncate" title={tab.title ?? ''}>{truncate(tab.title, 30)}</td>
+                    <td class="td"><StatusBadge status={tabState(tab)} /></td>
                   </tr>
                 {/each}
               </tbody>
@@ -381,23 +412,23 @@
           {:else if concurrency.length === 0}
             <p class="text-xs text-ink-mute mt-2 italic">No worker-reported ceilings yet — they appear once a live worker runs with orchestration enabled.</p>
           {:else}
-            <div class="mt-2 rounded-md border border-rule overflow-x-auto">
+            <div class="mt-2 table-wrap">
               <table class="w-full text-xs">
-                <thead class="bg-paper-soft border-b border-rule">
+                <thead class="thead">
                   <tr>
-                    <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">Provider</th>
-                    <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">Lane</th>
-                    <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">Cap</th>
-                    <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">In&nbsp;Flight</th>
+                    <th class="th">Provider</th>
+                    <th class="th">Lane</th>
+                    <th class="th">Cap</th>
+                    <th class="th">In&nbsp;Flight</th>
                   </tr>
                 </thead>
                 <tbody class="divide-y divide-rule">
                   {#each concurrency as c, i (i)}
-                    <tr class="hover:bg-paper-soft transition-colors">
-                      <td class="px-3 py-2 font-mono text-ink">{ceilingLabel(c)}</td>
-                      <td class="px-3 py-2 text-ink-soft">{c.lane ?? '—'}</td>
-                      <td class="px-3 py-2 text-ink">{c.current_cap ?? '—'}{c.maximum != null ? ` / ${c.maximum}` : ''}</td>
-                      <td class="px-3 py-2 text-ink-soft">{c.in_flight ?? 0}</td>
+                    <tr class="transition-colors hover:bg-paper-soft/70">
+                      <td class="td font-mono text-ink">{ceilingLabel(c)}</td>
+                      <td class="td">{c.lane ?? '—'}</td>
+                      <td class="td text-ink">{c.current_cap ?? '—'}{c.maximum != null ? ` / ${c.maximum}` : ''}</td>
+                      <td class="td">{c.in_flight ?? 0}</td>
                     </tr>
                   {/each}
                 </tbody>
@@ -424,8 +455,7 @@
             </div>
             <div
               bind:this={terminalEl}
-              class="w-full rounded-md overflow-hidden border border-rule"
-              style="min-height: 180px;"
+              class="w-full min-h-[180px] rounded-md overflow-hidden border border-rule bg-[#221e1b]"
               aria-label="Terminal log pane for instance {instanceId(selectedInstance)}"
             ></div>
           </div>
@@ -463,14 +493,13 @@
             {#if noVncSrc}
               <iframe
                 src={noVncSrc}
-                class="w-full rounded-md border border-rule bg-paper-warm"
-                style="height: 20rem;"
+                class="w-full h-80 rounded-md border border-rule bg-paper-warm"
                 title="noVNC Viewer - {instanceId(selectedInstance)}"
                 sandbox="allow-same-origin allow-scripts allow-forms"
                 aria-label="noVNC remote desktop viewer for instance {instanceId(selectedInstance)}"
               ></iframe>
             {:else}
-              <div class="flex items-center justify-center rounded-md border border-rule bg-paper-warm" style="height: 20rem;">
+              <div class="flex items-center justify-center h-80 rounded-md border border-rule bg-paper-warm">
                 <div class="text-center text-xs text-ink-mute space-y-1">
                   <p class="font-medium text-ink">noVNC unavailable</p>
                   {#if rejectedNoVnc}
@@ -484,7 +513,7 @@
             {/if}
           </div>
         {:else}
-          <div class="flex items-center justify-center rounded-md border border-rule border-dashed bg-paper-warm" style="min-height: 28rem;">
+          <div class="flex items-center justify-center min-h-[28rem] rounded-md border border-rule border-dashed bg-paper-warm">
             <div class="text-center text-sm text-ink-mute space-y-2 px-8">
               <div class="w-12 h-12 mx-auto rounded-md bg-paper-soft border border-rule flex items-center justify-center" aria-hidden="true">
                 <svg class="w-6 h-6 text-ink-mute" fill="none" viewBox="0 0 24 24" stroke="currentColor">

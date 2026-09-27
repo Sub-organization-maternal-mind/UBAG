@@ -4,6 +4,9 @@
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import SkeletonCards from '$lib/components/SkeletonCards.svelte';
+  import Modal from '$lib/components/Modal.svelte';
 
   // Real gateway shape: { profile, enabled, entries: [] }
   interface CacheEntry {
@@ -32,7 +35,6 @@
   let purgeError = $state<string | null>(null);
   let purgeSuccess = $state<string | null>(null);
   let purgeTag = $state('');
-  let confirmDialogEl = $state<HTMLDialogElement | null>(null);
 
   async function load() {
     loading = true;
@@ -50,12 +52,10 @@
     purgeError = null;
     purgeSuccess = null;
     purgeConfirmOpen = true;
-    requestAnimationFrame(() => { confirmDialogEl?.showModal(); });
   }
 
   function closePurgeConfirm() {
     purgeConfirmOpen = false;
-    confirmDialogEl?.close();
   }
 
   async function doPurge() {
@@ -101,22 +101,23 @@
 </script>
 
 <div class="space-y-6">
-  <div class="flex items-center justify-between">
-    <h1 class="text-2xl font-display font-bold text-ink">Cache</h1>
-    <button onclick={() => load()} class="text-sm text-accent-deep hover:underline">Refresh</button>
-  </div>
+  <PageHeader title="Cache" subtitle="Gateway response-cache profile, entry count and purge controls.">
+    {#snippet actions()}
+      <button onclick={() => load()} class="btn btn-secondary btn-sm">Refresh</button>
+    {/snippet}
+  </PageHeader>
 
   {#if loading}
-    <div class="text-ink-mute text-sm">Loading…</div>
+    <SkeletonCards count={3} cols="grid-cols-1 sm:grid-cols-3" />
   {:else if denied}
     <DeniedPanel resource="cache statistics" />
   {:else if error}
     <ErrorPanel message={error} retry={load} />
   {:else}
     <!-- Summary cards -->
-    <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
-      <div class="rounded-md border border-rule bg-paper-soft p-4">
-        <p class="text-xs font-mono text-ink-mute uppercase tracking-wider mb-1">Status</p>
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div class="card">
+        <p class="mb-1 text-xs font-mono uppercase tracking-wider text-ink-mute">Status</p>
         {#if cacheConfig?.enabled === true}
           <p class="text-lg font-display font-bold text-success">Enabled</p>
         {:else if cacheConfig?.enabled === false}
@@ -125,12 +126,12 @@
           <p class="text-lg font-display font-bold text-ink">—</p>
         {/if}
       </div>
-      <div class="rounded-md border border-rule bg-paper-soft p-4">
-        <p class="text-xs font-mono text-ink-mute uppercase tracking-wider mb-1">Profile</p>
-        <p class="text-lg font-display font-bold text-ink font-mono">{cacheConfig?.profile ?? '—'}</p>
+      <div class="card">
+        <p class="mb-1 text-xs font-mono uppercase tracking-wider text-ink-mute">Profile</p>
+        <p class="text-lg font-display font-bold font-mono text-ink">{cacheConfig?.profile ?? '—'}</p>
       </div>
-      <div class="rounded-md border border-rule bg-paper-soft p-4">
-        <p class="text-xs font-mono text-ink-mute uppercase tracking-wider mb-1">Entries</p>
+      <div class="card">
+        <p class="mb-1 text-xs font-mono uppercase tracking-wider text-ink-mute">Entries</p>
         <p class="text-2xl font-display font-bold text-ink">{cacheConfig?.entries?.length ?? 0}</p>
       </div>
     </div>
@@ -145,33 +146,28 @@
 
     <!-- Purge button -->
     <div>
-      <button
-        onclick={openPurgeConfirm}
-        class="px-4 py-2 rounded-md border border-danger/40 bg-danger-soft text-danger text-sm font-medium hover:bg-danger/10 transition-colors"
-      >
-        Purge Cache
-      </button>
+      <button onclick={openPurgeConfirm} class="btn btn-danger">Purge Cache</button>
     </div>
 
     <!-- Entries table -->
     {#if cacheConfig?.entries && cacheConfig.entries.length > 0}
       <div>
         <h2 class="text-base font-semibold text-ink mb-2">Cache Entries</h2>
-        <div class="rounded-md border border-rule overflow-x-auto">
+        <div class="table-wrap">
           <table class="w-full text-sm">
-            <thead class="bg-paper-soft border-b border-rule">
+            <thead class="thead">
               <tr>
-                <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Key</th>
-                <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Size</th>
-                <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Expires At</th>
+                <th class="th">Key</th>
+                <th class="th">Size</th>
+                <th class="th">Expires At</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-rule">
               {#each cacheConfig.entries as entry, i (entry.key ?? i)}
-                <tr class="hover:bg-paper-soft transition-colors">
-                  <td class="px-4 py-2.5 font-mono text-xs text-ink">{entry.key ?? '—'}</td>
-                  <td class="px-4 py-2.5 text-xs text-ink-soft">{entry.size != null ? `${entry.size} B` : '—'}</td>
-                  <td class="px-4 py-2.5 text-xs text-ink-mute">{fmtDate(entry.expires_at)}</td>
+                <tr class="transition-colors hover:bg-paper-soft/70">
+                  <td class="td font-mono text-xs text-ink break-all">{entry.key ?? '—'}</td>
+                  <td class="td text-xs">{entry.size != null ? `${entry.size} B` : '—'}</td>
+                  <td class="td text-xs text-ink-mute whitespace-nowrap">{fmtDate(entry.expires_at)}</td>
                 </tr>
               {/each}
             </tbody>
@@ -186,13 +182,13 @@
     {#if cacheConfig}
       {@const extra = extraKeys(cacheConfig)}
       {#if extra.length > 0}
-        <div class="rounded-md border border-rule bg-paper-soft p-4">
-          <p class="text-xs font-mono text-ink-mute uppercase tracking-wider mb-2">Additional Fields</p>
+        <div class="card">
+          <p class="mb-2 text-xs font-mono uppercase tracking-wider text-ink-mute">Additional Fields</p>
           <dl class="space-y-1 text-sm">
-            {#each extra as k}
+            {#each extra as k (k)}
               <div class="flex gap-3">
-                <dt class="font-mono text-ink-mute w-40 shrink-0">{k}</dt>
-                <dd class="text-ink font-mono text-xs break-all">{JSON.stringify(cacheConfig![k])}</dd>
+                <dt class="w-40 shrink-0 font-mono text-ink-mute">{k}</dt>
+                <dd class="break-all font-mono text-xs text-ink">{JSON.stringify(cacheConfig![k])}</dd>
               </div>
             {/each}
           </dl>
@@ -203,44 +199,20 @@
 </div>
 
 <!-- Purge confirmation dialog -->
-{#if purgeConfirmOpen}
-  <dialog
-    bind:this={confirmDialogEl}
-    class="w-full max-w-md rounded-lg border border-rule bg-paper shadow-2xl p-0 backdrop:bg-ink/40"
-    aria-label="Confirm cache purge"
-    onclose={closePurgeConfirm}
-  >
-    <div class="px-5 py-4 border-b border-rule bg-paper-soft">
-      <h2 class="text-lg font-display font-semibold text-ink">Confirm Purge</h2>
-    </div>
-    <div class="p-5 space-y-3">
-      <p class="text-sm text-ink-soft">
-        Optionally purge only one tag. Leave empty to delete all cached entries. This action cannot be undone. Are you sure?
-      </p>
-      <label class="block">
-        <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Tag (optional)</span>
-        <input
-          type="text"
-          bind:value={purgeTag}
-          placeholder="e.g. template:radiology_ct_brain_v3"
-          class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
-        />
-      </label>
-    </div>
-    <div class="px-5 py-3 border-t border-rule flex justify-end gap-3">
-      <button
-        onclick={closePurgeConfirm}
-        class="px-4 py-2 rounded-md border border-rule bg-paper-soft text-ink text-sm font-medium hover:bg-paper-warm transition-colors"
-      >
-        Cancel
-      </button>
-      <button
-        onclick={doPurge}
-        disabled={purgeLoading}
-        class="px-4 py-2 rounded-md border border-danger/40 bg-danger-soft text-danger text-sm font-medium hover:bg-danger/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      >
-        {purgeLoading ? 'Purging…' : 'Purge'}
-      </button>
-    </div>
-  </dialog>
-{/if}
+<Modal bind:open={purgeConfirmOpen} title="Confirm Purge" width="sm">
+  <div class="space-y-3">
+    <p class="text-sm text-ink-soft">
+      Optionally purge only one tag. Leave empty to delete all cached entries. This action cannot be undone. Are you sure?
+    </p>
+    <label class="block">
+      <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Tag (optional)</span>
+      <input type="text" bind:value={purgeTag} placeholder="e.g. template:radiology_ct_brain_v3" class="input" />
+    </label>
+  </div>
+  {#snippet footer()}
+    <button onclick={closePurgeConfirm} class="btn btn-secondary">Cancel</button>
+    <button onclick={doPurge} disabled={purgeLoading} class="btn btn-danger">
+      {purgeLoading ? 'Purging…' : 'Purge'}
+    </button>
+  {/snippet}
+</Modal>

@@ -4,6 +4,9 @@
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import SkeletonCards from '$lib/components/SkeletonCards.svelte';
+  import SkeletonTable from '$lib/components/SkeletonTable.svelte';
 
   // Real gateway shape: { enabled, policies: [ { action, limit, window_seconds, burst? } ] }
   interface RateLimitPolicy {
@@ -103,7 +106,7 @@
 </script>
 
 <div class="space-y-8">
-  <h1 class="text-2xl font-display font-bold text-ink">Quotas &amp; Billing</h1>
+  <PageHeader title="Quotas & Billing" subtitle="Rate-limit policies and per-name quota usage reported by the gateway." />
 
   <!-- Rate Limits -->
   <section aria-labelledby="rate-limits-heading">
@@ -116,11 +119,11 @@
           <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-paper-soft text-ink-mute">Disabled</span>
         {/if}
       </div>
-      <button onclick={() => loadRateLimits()} class="text-sm text-accent-deep hover:underline">Refresh</button>
+      <button onclick={() => loadRateLimits()} class="btn btn-secondary btn-sm">Refresh</button>
     </div>
 
     {#if rateLimitsLoading}
-      <div class="text-ink-mute text-sm">Loading rate limits…</div>
+      <SkeletonTable rows={4} cols={4} />
     {:else if rateLimitsDenied}
       <DeniedPanel resource="rate limits" />
     {:else if rateLimitsError}
@@ -128,23 +131,23 @@
     {:else if policies.length === 0}
       <EmptyState message="No rate limit policies configured." />
     {:else}
-      <div class="rounded-md border border-rule overflow-x-auto">
+      <div class="table-wrap">
         <table class="w-full text-sm">
-          <thead class="bg-paper-soft border-b border-rule">
+          <thead class="thead">
             <tr>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Action</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Limit</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Window</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Burst</th>
+              <th class="th">Action</th>
+              <th class="th">Limit</th>
+              <th class="th">Window</th>
+              <th class="th">Burst</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-rule">
             {#each policies as policy, i (policy.action ?? i)}
-              <tr class="hover:bg-paper-soft transition-colors">
-                <td class="px-4 py-2.5 font-mono text-xs text-ink">{policy.action}</td>
-                <td class="px-4 py-2.5 text-xs text-ink-soft">{policy.limit}</td>
-                <td class="px-4 py-2.5 text-xs text-ink-soft">{policy.window_seconds}s</td>
-                <td class="px-4 py-2.5 text-xs text-ink-mute">{policy.burst ?? '—'}</td>
+              <tr class="transition-colors hover:bg-paper-soft/70">
+                <td class="td font-mono text-xs text-ink">{policy.action}</td>
+                <td class="td text-xs">{policy.limit}</td>
+                <td class="td text-xs">{policy.window_seconds}s</td>
+                <td class="td text-xs text-ink-mute">{policy.burst ?? '—'}</td>
               </tr>
             {/each}
           </tbody>
@@ -157,11 +160,11 @@
   <section aria-labelledby="quotas-heading">
     <div class="flex items-center justify-between mb-3">
       <h2 id="quotas-heading" class="text-lg font-display font-semibold text-ink">Quota Usage</h2>
-      <button onclick={() => loadQuotas()} class="text-sm text-accent-deep hover:underline">Refresh</button>
+      <button onclick={() => loadQuotas()} class="btn btn-secondary btn-sm">Refresh</button>
     </div>
 
     {#if quotasLoading}
-      <div class="text-ink-mute text-sm">Loading quotas…</div>
+      <SkeletonCards count={3} cols="grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" />
     {:else if quotasDenied}
       <DeniedPanel resource="quotas and billing" />
     {:else if quotasError}
@@ -172,14 +175,14 @@
       <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {#each quotas as q, i (q.name ?? i)}
           {@const p = pct(q.used, q.limit)}
-          <div class="rounded-md border border-rule bg-paper-soft p-4 space-y-2">
+          <div class="card space-y-2">
             <div class="flex items-baseline justify-between gap-2">
-              <p class="text-sm font-medium text-ink truncate">{q.name}</p>
+              <p class="text-sm font-medium text-ink truncate" title={q.name}>{q.name}</p>
               <p class="text-xs text-ink-mute shrink-0">{p}%</p>
             </div>
             <div class="h-2 rounded-full bg-rule overflow-hidden">
               <div
-                class="h-full rounded-full transition-all {barColor(p)}"
+                class="h-full rounded-full transition-all duration-500 ease-out {barColor(p)}"
                 style="width: {p}%"
                 role="progressbar"
                 aria-label="{q.name} usage"

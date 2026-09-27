@@ -3,6 +3,8 @@
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import SkeletonTable from '$lib/components/SkeletonTable.svelte';
   import type { Conversation } from '$lib/api/types';
   import { loadConversations } from './loader';
 
@@ -12,22 +14,40 @@
   let disabled = $state(false);
   let error = $state<string | null>(null);
   let filter = $state('');
+  let filterQuery = $state('');
+  let filterTimer: ReturnType<typeof setTimeout> | undefined;
   let nextCursor = $state<string | undefined>(undefined);
   let prevCursors = $state<string[]>([]);
   let currentCursor = $state<string | undefined>(undefined);
 
-  let filtered = $derived(
-    filter
-      ? items.filter((c) => JSON.stringify(c).toLowerCase().includes(filter.toLowerCase()))
-      : items
-  );
+  function onFilterInput(e: Event) {
+    const value = (e.currentTarget as HTMLInputElement).value;
+    filter = value;
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => (filterQuery = value), 120);
+  }
 
-  async function load(cursor?: string) {
-    loading = true;
-    error = null;
-    denied = false;
-    disabled = false;
+  let filtered = $derived.by(() => {
+    const q = filterQuery.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((c) =>
+      `${c.conversation_key ?? ''} ${c.target ?? ''} ${c.state ?? ''}`
+        .toLowerCase()
+        .includes(q)
+    );
+  });
+
+  let loadSeq = 0;
+  async function load(cursor?: string, silent = false) {
+    const seq = ++loadSeq;
+    if (!silent) {
+      loading = true;
+      error = null;
+      denied = false;
+      disabled = false;
+    }
     const view = await loadConversations(cursor);
+    if (seq !== loadSeq) return; // a newer load superseded this one
     loading = false;
     if (view.kind === 'denied') { denied = true; return; }
     if (view.kind === 'disabled') { disabled = true; return; }
@@ -58,26 +78,23 @@
 </script>
 
 <div class="space-y-4">
-  <div class="flex items-center justify-between">
-    <h1 class="text-2xl font-display font-bold text-ink">Conversations</h1>
-    <button onclick={() => load(currentCursor)} class="text-sm text-accent-deep hover:underline">Refresh</button>
-  </div>
-
-  <p class="text-sm text-ink-mute max-w-2xl">
-    Durable bindings from a caller-owned conversation key to a provider chat thread. Reused keys resume the same
-    chat so the end user keeps their context.
-  </p>
+  <PageHeader title="Conversations" subtitle="Durable bindings from a caller-owned conversation key to a provider chat thread. Reused keys resume the same chat so the end user keeps their context.">
+    {#snippet actions()}
+      <button onclick={() => load(currentCursor)} class="btn btn-secondary btn-sm">Refresh</button>
+    {/snippet}
+  </PageHeader>
 
   <!-- Filter -->
   <input
     type="search"
-    bind:value={filter}
+    value={filter}
+    oninput={onFilterInput}
     placeholder="Filter by key, target, state…"
-    class="w-full max-w-sm px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+    class="input max-w-sm"
   />
 
   {#if loading}
-    <div class="text-ink-mute text-sm">Loading…</div>
+    <SkeletonTable rows={6} cols={5} />
   {:else if denied}
     <DeniedPanel resource="conversations" />
   {:else if disabled}
@@ -90,31 +107,31 @@
   {:else if filtered.length === 0}
     <EmptyState message="No conversations found." hint={filter ? 'Try clearing the filter.' : ''} />
   {:else}
-    <div class="rounded-md border border-rule overflow-x-auto">
+    <div class="table-wrap">
       <table class="w-full text-sm">
-        <thead class="bg-paper-soft border-b border-rule">
+        <thead class="thead">
           <tr>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Conversation Key</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Target</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">State</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Last Used</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Last Job</th>
+            <th class="th">Conversation Key</th>
+            <th class="th">Target</th>
+            <th class="th">State</th>
+            <th class="th">Last Used</th>
+            <th class="th">Last Job</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-rule">
           {#each filtered as conv (conv.tenant_id + '/' + conv.app_id + '/' + conv.target + '/' + conv.conversation_key)}
-            <tr class="hover:bg-paper-soft transition-colors">
-              <td class="px-4 py-2.5 font-mono text-xs text-ink break-all">{conv.conversation_key}</td>
-              <td class="px-4 py-2.5 text-ink-soft">{conv.target}</td>
-              <td class="px-4 py-2.5">
+            <tr class="transition-colors hover:bg-paper-soft/70">
+              <td class="td font-mono text-xs text-ink break-all max-w-[16rem]">{conv.conversation_key}</td>
+              <td class="td">{conv.target}</td>
+              <td class="td">
                 {#if conv.state === 'broken'}
                   <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-danger-soft text-danger">broken</span>
                 {:else}
                   <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-success-soft text-success">active</span>
                 {/if}
               </td>
-              <td class="px-4 py-2.5 text-ink-mute text-xs">{fmtDate(conv.last_used_at)}</td>
-              <td class="px-4 py-2.5 font-mono text-ink-mute text-xs">{conv.last_job_id ? conv.last_job_id.slice(0, 8) + '…' : '—'}</td>
+              <td class="td text-xs text-ink-mute whitespace-nowrap">{fmtDate(conv.last_used_at)}</td>
+              <td class="td font-mono text-xs text-ink-mute">{conv.last_job_id ? conv.last_job_id.slice(0, 8) + '…' : '—'}</td>
             </tr>
           {/each}
         </tbody>
@@ -123,18 +140,10 @@
 
     <!-- Pagination -->
     <div class="flex items-center gap-3 text-sm">
-      <button
-        onclick={goPrev}
-        disabled={prevCursors.length === 0}
-        class="px-3 py-1.5 rounded-md border border-rule text-ink-soft hover:bg-paper-soft disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      >
+      <button onclick={goPrev} disabled={prevCursors.length === 0} class="btn btn-secondary btn-sm">
         ← Prev
       </button>
-      <button
-        onclick={goNext}
-        disabled={!nextCursor}
-        class="px-3 py-1.5 rounded-md border border-rule text-ink-soft hover:bg-paper-soft disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      >
+      <button onclick={goNext} disabled={!nextCursor} class="btn btn-secondary btn-sm">
         Next →
       </button>
     </div>

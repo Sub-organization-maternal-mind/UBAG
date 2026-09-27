@@ -7,6 +7,10 @@
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import AttachmentPicker from '$lib/components/AttachmentPicker.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import SkeletonTable from '$lib/components/SkeletonTable.svelte';
+  import UpdatedAgo from '$lib/components/UpdatedAgo.svelte';
+  import { pollWhileVisible } from '$lib/poll';
   import type { SelectedAttachment } from '$lib/attachments';
   import type { BrowserContext, Job, JobCreateResponse, JobEnvelope, JobsResponse, Template } from '$lib/api/types';
   import { isTerminalStatus } from '$lib/api/statuses';
@@ -25,10 +29,11 @@
   let loading = $state(true);
   let denied = $state(false);
   let error = $state<string | null>(null);
-  let filter = $state('');
   let nextCursor = $state<string | undefined>(undefined);
   let prevCursors = $state<string[]>([]);
   let currentCursor = $state<string | undefined>(undefined);
+
+  let lastUpdated = $state<Date | null>(null);
 
   // Detail drawer
   let selectedJob = $state<Job | null>(null);
@@ -50,11 +55,24 @@
   let attachmentError = $state<string | null>(null);
   let attachmentPicker = $state<{ clear: () => void } | null>(null);
 
-  let filtered = $derived(
-    filter
-      ? items.filter((j) => JSON.stringify(j).toLowerCase().includes(filter.toLowerCase()))
-      : items
-  );
+  let filtered = $derived.by(() => {
+    const q = filterQuery.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter((j) =>
+      `${j.id ?? ''} ${j.target ?? ''} ${j.command_type ?? ''} ${j.status ?? ''} ${j.error ?? ''}`
+        .toLowerCase()
+        .includes(q)
+    );
+  });
+  let filter = $state('');
+  let filterQuery = $state('');
+  let filterTimer: ReturnType<typeof setTimeout> | undefined;
+  function onFilterInput(e: Event) {
+    const value = (e.currentTarget as HTMLInputElement).value;
+    filter = value;
+    clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => (filterQuery = value), 120);
+  }
   let providerState = $derived(
     Object.fromEntries(contexts.map((ctx) => [ctx.target_id, ctx.login_state ?? 'unknown']))
   );
@@ -62,17 +80,23 @@
     templates.filter((template) => !createCommandType || template.command_type === createCommandType)
   );
 
-  async function load(cursor?: string) {
-    loading = true;
-    error = null;
-    denied = false;
+  let loadSeq = 0;
+  async function load(cursor?: string, silent = false) {
+    const seq = ++loadSeq;
+    if (!silent) {
+      loading = true;
+      error = null;
+      denied = false;
+    }
     const path = cursor ? `/v1/jobs?cursor=${encodeURIComponent(cursor)}&limit=20` : '/v1/jobs?limit=20';
     const res = await api.get<JobsResponse>(path);
+    if (seq !== loadSeq) return; // a newer load superseded this one
     loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
     items = normalizeJobs(res.data?.jobs);
     nextCursor = res.data?.next_cursor;
+    lastUpdated = new Date();
   }
 
   async function loadSupportData() {
@@ -292,37 +316,42 @@
   onMount(() => {
     load();
     loadSupportData();
+    // Gentle auto-refresh while the tab is visible; silent (no skeleton flash).
+    const stopPolling = pollWhileVisible(() => load(currentCursor, true), 45_000);
+    return stopPolling;
   });
 </script>
 
 <div class="space-y-4">
-  <div class="flex items-center justify-between">
-    <h1 class="text-2xl font-display font-bold text-ink">Jobs</h1>
-    <button onclick={() => load(currentCursor)} class="text-sm text-accent-deep hover:underline">Refresh</button>
-  </div>
+  <PageHeader title="Jobs" subtitle="Submit, inspect and manage provider jobs on the gateway queue.">
+    {#snippet actions()}
+      <UpdatedAgo at={lastUpdated} />
+      <button onclick={() => load(currentCursor)} class="btn btn-secondary btn-sm">Refresh</button>
+    {/snippet}
+  </PageHeader>
 
-  <form onsubmit={(e) => { e.preventDefault(); createJob(); }} class="rounded-md border border-rule bg-paper-soft p-4 space-y-4">
+  <form onsubmit={(e) => { e.preventDefault(); createJob(); }} class="card space-y-4">
     <div class="flex items-center justify-between gap-3 flex-wrap">
       <h2 class="text-sm font-display font-semibold text-ink">Submit Provider Job</h2>
-      <div class="text-xs text-ink-mute font-mono">ChatGPT -> Gemini -> DeepSeek</div>
+      <div class="text-xs text-ink-mute font-mono">ChatGPT → Gemini → DeepSeek → Duck.ai</div>
     </div>
 
-    <div class="grid gap-4 lg:grid-cols-[1.2fr_1fr_1fr]">
-      <div>
+    <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1.2fr_1fr_1fr]">
+      <div class="sm:col-span-2 lg:col-span-1">
         <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Provider</span>
-        <div class="grid grid-cols-3 rounded-md border border-rule overflow-hidden bg-paper" role="group" aria-label="Provider">
-          {#each PROVIDERS as provider}
+        <div class="grid grid-cols-2 sm:grid-cols-4 rounded-md border border-rule overflow-hidden bg-paper" role="group" aria-label="Provider">
+          {#each PROVIDERS as provider (provider.key)}
             <button
               type="button"
               onclick={() => { createTarget = provider.key; }}
-              class="px-3 py-2 text-sm border-r border-rule last:border-r-0 transition-colors"
+              class="min-w-0 px-3 py-2 text-sm transition-colors [overflow-wrap:anywhere]"
               class:bg-accent-soft={createTarget === provider.key}
               class:text-accent-deep={createTarget === provider.key}
               class:font-medium={createTarget === provider.key}
               class:text-ink-soft={createTarget !== provider.key}
             >
-              <span>{provider.label}</span>
-              <span class="block text-[11px] font-mono text-ink-mute mt-0.5">{providerState[provider.key] ?? 'unknown'}</span>
+              <span class="block truncate">{provider.label}</span>
+              <span class="block truncate text-[11px] font-mono text-ink-mute mt-0.5">{providerState[provider.key] ?? 'unknown'}</span>
             </button>
           {/each}
         </div>
@@ -330,18 +359,12 @@
 
       <label class="block">
         <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Command Type</span>
-        <input
-          bind:value={createCommandType}
-          class="w-full px-3 py-2 rounded-md border border-rule bg-paper text-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
-        />
+        <input bind:value={createCommandType} class="input" />
       </label>
 
       <label class="block">
         <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Template</span>
-        <select
-          bind:value={createTemplateId}
-          class="w-full px-3 py-2 rounded-md border border-rule bg-paper text-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
-        >
+        <select bind:value={createTemplateId} class="input">
           <option value="">No template</option>
           {#each matchingTemplates as template (template.id)}
             <option value={template.id}>{template.id}</option>
@@ -356,7 +379,7 @@
         bind:value={createPrompt}
         rows="4"
         placeholder="Enter the provider prompt..."
-        class="w-full px-3 py-2 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40 resize-y"
+        class="input resize-y"
       ></textarea>
     </label>
 
@@ -377,11 +400,7 @@
     </div>
 
     <div class="flex items-center gap-3 flex-wrap">
-      <button
-        type="submit"
-        disabled={createLoading}
-        class="px-4 py-2 rounded-md bg-accent text-paper text-sm font-medium hover:bg-accent-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      >
+      <button type="submit" disabled={createLoading} class="btn btn-primary">
         {createLoading ? 'Submitting...' : 'Submit Job'}
       </button>
       {#if createError}
@@ -394,7 +413,7 @@
   </form>
 
   <!-- Batch submit -->
-  <section aria-labelledby="batch-heading" class="rounded-md border border-rule bg-paper-soft p-4 space-y-3">
+  <section aria-labelledby="batch-heading" class="card space-y-3">
     <div class="flex items-center justify-between gap-3 flex-wrap">
       <h2 id="batch-heading" class="text-sm font-display font-semibold text-ink">Batch Submit</h2>
       <div class="text-xs text-ink-mute font-mono">one job per line · "command type | prompt" · max 100 · target = {createTarget}</div>
@@ -403,15 +422,11 @@
       bind:value={batchText}
       rows="5"
       placeholder={"chat.prompt | Summarize the incident report\nchat.prompt | Draft the follow-up email\nmock.complete | UBAG_BATCH_CHECK"}
-      class="w-full px-3 py-2 rounded-md border border-rule bg-paper text-sm text-ink font-mono placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40 resize-y"
+      class="input resize-y font-mono"
       aria-label="Batch job lines"
     ></textarea>
     <div class="flex items-center gap-3 flex-wrap">
-      <button
-        onclick={() => submitBatch()}
-        disabled={batchLoading}
-        class="px-4 py-2 rounded-md bg-marine text-paper text-sm font-medium hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      >
+      <button onclick={() => submitBatch()} disabled={batchLoading} class="btn btn-primary">
         {batchLoading ? 'Submitting…' : 'Submit Batch'}
       </button>
       {#if batchError}
@@ -419,29 +434,29 @@
       {/if}
     </div>
     {#if batchResults}
-      <div class="rounded-md border border-rule overflow-x-auto">
+      <div class="table-wrap">
         <table class="w-full text-xs">
-          <thead class="bg-paper border-b border-rule">
+          <thead class="thead">
             <tr>
-              <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">#</th>
-              <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">Status</th>
-              <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">Job</th>
-              <th class="px-3 py-2 text-left font-medium text-ink-mute uppercase tracking-wider">Error</th>
+              <th class="th">#</th>
+              <th class="th">Status</th>
+              <th class="th">Job</th>
+              <th class="th">Error</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-rule">
             {#each batchResults as outcome (outcome.index)}
               <tr>
-                <td class="px-3 py-1.5 font-mono text-ink-mute">{outcome.index}</td>
-                <td class="px-3 py-1.5">
+                <td class="td font-mono text-ink-mute">{outcome.index}</td>
+                <td class="td">
                   {#if outcome.status === 'accepted'}
                     <span class="text-success font-medium">accepted</span>
                   {:else}
                     <span class="text-danger font-medium">rejected</span>
                   {/if}
                 </td>
-                <td class="px-3 py-1.5 font-mono text-ink-soft">{outcome.job_id ?? '—'}</td>
-                <td class="px-3 py-1.5 text-ink-soft">{outcome.error?.code ?? ''} {outcome.error?.message ?? ''}</td>
+                <td class="td font-mono text-ink-soft">{outcome.job_id ?? '—'}</td>
+                <td class="td">{outcome.error?.code ?? ''} {outcome.error?.message ?? ''}</td>
               </tr>
             {/each}
           </tbody>
@@ -453,13 +468,14 @@
   <!-- Filter -->
   <input
     type="search"
-    bind:value={filter}
+    value={filter}
+    oninput={onFilterInput}
     placeholder="Filter by status, target, type…"
-    class="w-full max-w-sm px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+    class="input max-w-sm"
   />
 
   {#if loading}
-    <div class="text-ink-mute text-sm">Loading…</div>
+    <SkeletonTable rows={8} cols={6} />
   {:else if denied}
     <DeniedPanel resource="jobs" />
   {:else if error}
@@ -467,37 +483,42 @@
   {:else if filtered.length === 0}
     <EmptyState message="No jobs found." hint={filter ? 'Try clearing the filter.' : ''} />
   {:else}
-    <div class="rounded-md border border-rule overflow-x-auto">
+    <div class="table-wrap">
       <table class="w-full text-sm">
-        <thead class="bg-paper-soft border-b border-rule">
+        <thead class="thead">
           <tr>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">ID</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Target</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Command Type</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Status</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Created At</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Actions</th>
+            <th class="th">ID</th>
+            <th class="th">Target</th>
+            <th class="th">Command Type</th>
+            <th class="th">Status</th>
+            <th class="th">Created At</th>
+            <th class="th">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-rule">
           {#each filtered as job (job.id)}
             <tr
-              class="hover:bg-paper-soft transition-colors cursor-pointer"
+              class="cursor-pointer transition-colors hover:bg-paper-soft/70"
               onclick={() => openDrawer(job)}
               tabindex="0"
               role="button"
               aria-label="View job {job.id}"
-              onkeydown={(e) => e.key === 'Enter' && openDrawer(job)}
+              onkeydown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  openDrawer(job);
+                }
+              }}
             >
-              <td class="px-4 py-2.5 font-mono text-ink-mute text-xs">{job.id.slice(0, 8)}…</td>
-              <td class="px-4 py-2.5 text-ink-soft">{job.target}</td>
-              <td class="px-4 py-2.5 text-ink-soft font-mono text-xs">{job.command_type}</td>
-              <td class="px-4 py-2.5"><StatusBadge status={job.status} /></td>
-              <td class="px-4 py-2.5 text-ink-mute text-xs">{fmtDate(job.created_at)}</td>
-              <td class="px-4 py-2.5">
+              <td class="td font-mono text-xs text-ink-mute">{job.id.slice(0, 8)}…</td>
+              <td class="td max-w-[10rem] truncate text-ink" title={job.target}>{job.target}</td>
+              <td class="td font-mono text-xs">{job.command_type}</td>
+              <td class="td"><StatusBadge status={job.status} /></td>
+              <td class="td whitespace-nowrap text-xs text-ink-mute">{fmtDate(job.created_at)}</td>
+              <td class="td">
                 <button
                   onclick={(e) => { e.stopPropagation(); openDrawer(job); }}
-                  class="text-xs text-accent-deep hover:underline"
+                  class="btn-link text-xs"
                 >
                   Details
                 </button>
@@ -510,18 +531,10 @@
 
     <!-- Pagination -->
     <div class="flex items-center gap-3 text-sm">
-      <button
-        onclick={goPrev}
-        disabled={prevCursors.length === 0}
-        class="px-3 py-1.5 rounded-md border border-rule text-ink-soft hover:bg-paper-soft disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      >
+      <button onclick={goPrev} disabled={prevCursors.length === 0} class="btn btn-secondary btn-sm">
         ← Prev
       </button>
-      <button
-        onclick={goNext}
-        disabled={!nextCursor}
-        class="px-3 py-1.5 rounded-md border border-rule text-ink-soft hover:bg-paper-soft disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      >
+      <button onclick={goNext} disabled={!nextCursor} class="btn btn-secondary btn-sm">
         Next →
       </button>
     </div>
@@ -532,7 +545,7 @@
 {#if drawerOpen}
   <dialog
     bind:this={dialogEl}
-    class="fixed inset-y-0 right-0 m-0 h-full w-full max-w-lg bg-paper border-l border-rule shadow-2xl overflow-y-auto p-0"
+    class="fixed inset-y-0 right-0 m-0 ml-auto h-dvh w-full max-w-lg bg-paper border-l border-rule shadow-2xl overflow-y-auto p-0 backdrop:bg-ink/40"
     aria-label="Job details"
     onclose={closeDrawer}
   >
@@ -540,7 +553,7 @@
       <h2 class="text-lg font-display font-semibold text-ink">Job Details</h2>
       <button
         onclick={closeDrawer}
-        class="p-1.5 rounded-md hover:bg-rule-soft transition-colors text-ink-mute"
+        class="flex h-9 w-9 items-center justify-center rounded-md text-ink-mute transition-colors hover:bg-rule-soft hover:text-ink"
         aria-label="Close"
       >
         <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -605,15 +618,11 @@
           <button
             onclick={cancelJob}
             disabled={cancelLoading || isTerminalStatus(selectedJob.status)}
-            class="px-4 py-2 rounded-md border border-danger/40 bg-danger-soft text-danger text-sm font-medium hover:bg-danger/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            class="btn btn-danger"
           >
             {cancelLoading ? 'Cancelling…' : 'Cancel Job'}
           </button>
-          <button
-            onclick={retryJob}
-            disabled={retryLoading}
-            class="px-4 py-2 rounded-md border border-rule bg-paper-soft text-ink text-sm font-medium hover:bg-paper-warm disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
+          <button onclick={retryJob} disabled={retryLoading} class="btn btn-secondary">
             {retryLoading ? 'Retrying…' : 'Retry'}
           </button>
         </div>

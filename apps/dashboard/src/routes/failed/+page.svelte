@@ -6,6 +6,10 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import SkeletonTable from '$lib/components/SkeletonTable.svelte';
+  import UpdatedAgo from '$lib/components/UpdatedAgo.svelte';
+  import { pollWhileVisible } from '$lib/poll';
   import type { Job, JobsResponse } from '$lib/api/types';
   import { FAILED_STATES } from '$lib/api/statuses';
 
@@ -25,15 +29,20 @@
     allJobs.filter((j) => TERMINAL_STATES.has(j.status?.toLowerCase()))
   );
 
-  async function load() {
-    loading = true;
-    error = null;
-    denied = false;
+  let lastUpdated = $state<Date | null>(null);
+
+  async function load(silent = false) {
+    if (!silent) {
+      loading = true;
+      error = null;
+      denied = false;
+    }
     const res = await api.get<JobsResponse>('/v1/jobs?limit=100');
-    loading = false;
+    if (!silent) loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
     allJobs = normalizeJobs(res.data?.jobs);
+    lastUpdated = new Date();
   }
 
   // Requeue retries the failed job itself (POST /v1/jobs/{id}/retry) instead
@@ -71,20 +80,23 @@
     return s.length > n ? s.slice(0, n) + '…' : s;
   }
 
-  onMount(() => load());
+  onMount(() => {
+    load();
+    const stopPolling = pollWhileVisible(() => load(true), 45_000);
+    return stopPolling;
+  });
 </script>
 
 <div class="space-y-4">
-  <div class="flex items-center justify-between">
-    <div>
-      <h1 class="text-2xl font-display font-bold text-ink">Failed / DLQ</h1>
-      <p class="text-xs text-ink-mute mt-0.5">Jobs in terminal failure states: {[...FAILED_STATES].join(', ')}</p>
-    </div>
-    <button onclick={() => load()} class="text-sm text-accent-deep hover:underline">Refresh</button>
-  </div>
+  <PageHeader title="Failed / DLQ" subtitle="Jobs in terminal failure states: {[...FAILED_STATES].join(', ')}">
+    {#snippet actions()}
+      <UpdatedAgo at={lastUpdated} />
+      <button onclick={() => load()} class="btn btn-secondary btn-sm">Refresh</button>
+    {/snippet}
+  </PageHeader>
 
   {#if loading}
-    <div class="text-ink-mute text-sm animate-pulse">Loading…</div>
+    <SkeletonTable rows={5} cols={7} />
   {:else if denied}
     <DeniedPanel resource="jobs" />
   {:else if error}
@@ -100,38 +112,34 @@
       {failed.length} job{failed.length === 1 ? '' : 's'} in terminal failure state
     </div>
 
-    <div class="rounded-md border border-rule overflow-x-auto">
+    <div class="table-wrap">
       <table class="w-full text-sm">
-        <thead class="bg-paper-soft border-b border-rule">
+        <thead class="thead">
           <tr>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">ID</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Target</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Command Type</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Status</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Error</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Created At</th>
-            <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Actions</th>
+            <th class="th">ID</th>
+            <th class="th">Target</th>
+            <th class="th">Command Type</th>
+            <th class="th">Status</th>
+            <th class="th">Error</th>
+            <th class="th">Created At</th>
+            <th class="th">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-rule">
           {#each failed as job (job.id)}
             {@const rs = requeueState[job.id]}
-            <tr class="hover:bg-paper-soft transition-colors">
-              <td class="px-4 py-2.5 font-mono text-ink-mute text-xs">{job.id.slice(0, 8)}…</td>
-              <td class="px-4 py-2.5 text-ink-soft max-w-[8rem] truncate" title={job.target}>{job.target}</td>
-              <td class="px-4 py-2.5 font-mono text-xs text-ink-soft">{job.command_type}</td>
-              <td class="px-4 py-2.5"><StatusBadge status={job.status} /></td>
-              <td class="px-4 py-2.5 text-xs text-danger font-mono max-w-[20rem]" title={job.error}>
+            <tr class="transition-colors hover:bg-paper-soft/70">
+              <td class="td font-mono text-xs text-ink-mute">{job.id.slice(0, 8)}…</td>
+              <td class="td max-w-[8rem] truncate text-ink" title={job.target}>{job.target}</td>
+              <td class="td font-mono text-xs">{job.command_type}</td>
+              <td class="td"><StatusBadge status={job.status} /></td>
+              <td class="td text-xs font-mono text-danger max-w-[20rem] truncate" title={job.error}>
                 {truncate(job.error, 80)}
               </td>
-              <td class="px-4 py-2.5 text-ink-mute text-xs whitespace-nowrap">{fmtDate(job.created_at)}</td>
-              <td class="px-4 py-2.5">
+              <td class="td text-xs text-ink-mute whitespace-nowrap">{fmtDate(job.created_at)}</td>
+              <td class="td">
                 <div class="flex items-center gap-2">
-                  <button
-                    onclick={() => requeue(job)}
-                    disabled={rs?.loading}
-                    class="px-3 py-1 rounded-md border border-rule bg-paper-soft text-xs font-medium text-ink hover:bg-paper-warm disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                  >
+                  <button onclick={() => requeue(job)} disabled={rs?.loading} class="btn btn-secondary btn-sm">
                     {rs?.loading ? 'Queuing…' : 'Requeue'}
                   </button>
                 </div>

@@ -5,6 +5,8 @@
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import SkeletonCards from '$lib/components/SkeletonCards.svelte';
   import type { MetricsResponse } from '$lib/api/types';
   import { FAILED_STATES as FAILED_STATUS_LIST } from '$lib/api/statuses';
   import type { Chart as ChartJS } from 'chart.js/auto';
@@ -136,18 +138,14 @@ const FAILED_STATES = new Set(FAILED_STATUS_LIST);
 </script>
 
 <div class="space-y-6">
-  <div class="flex items-center justify-between">
-    <h1 class="text-2xl font-display font-bold text-ink">Metrics</h1>
-    <div class="flex items-center gap-3">
-      <button
-        onclick={() => (grafanaVisible = !grafanaVisible)}
-        class="text-sm text-accent-deep hover:underline"
-      >
+  <PageHeader title="Metrics" subtitle="Aggregated operator metrics plus the optional Grafana dashboard.">
+    {#snippet actions()}
+      <button onclick={() => (grafanaVisible = !grafanaVisible)} class="btn btn-secondary btn-sm">
         {grafanaVisible ? 'Hide Grafana' : 'Show Grafana Dashboard'}
       </button>
-      <button onclick={() => load()} class="text-sm text-accent-deep hover:underline">Refresh</button>
-    </div>
-  </div>
+      <button onclick={() => load()} class="btn btn-secondary btn-sm">Refresh</button>
+    {/snippet}
+  </PageHeader>
 
   <!-- Grafana iframe (optional) -->
   {#if grafanaVisible}
@@ -181,7 +179,7 @@ const FAILED_STATES = new Set(FAILED_STATUS_LIST);
 
   <!-- Metric cards -->
   {#if loading}
-    <div class="text-ink-mute text-sm">Loading metrics…</div>
+    <SkeletonCards count={4} cols="grid-cols-1 sm:grid-cols-2 xl:grid-cols-4" />
   {:else if denied}
     <DeniedPanel resource="metrics" />
   {:else if error}
@@ -195,7 +193,7 @@ const FAILED_STATES = new Set(FAILED_STATUS_LIST);
         <h2 id="chart-heading" class="text-base font-semibold text-ink mb-3">
           Top metrics
         </h2>
-        <div class="rounded-md border border-rule bg-paper-soft p-4" style="max-width: 600px">
+        <div class="card w-full max-w-3xl">
           <canvas bind:this={chartCanvas} aria-label="Top metrics bar chart"></canvas>
         </div>
       </section>
@@ -204,10 +202,10 @@ const FAILED_STATES = new Set(FAILED_STATUS_LIST);
     <!-- All metric cards -->
     <section aria-labelledby="all-metrics-heading">
       <h2 id="all-metrics-heading" class="text-base font-semibold text-ink mb-3">All Metrics</h2>
-      <div class="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
-        {#each allEntries as [key, value]}
-          <div class="rounded-md border border-rule bg-paper-soft p-3 space-y-1">
-            <p class="text-xs text-ink-mute font-mono truncate" title={key}>{key.replace(/_/g, ' ')}</p>
+      <div class="grid gap-3 grid-cols-1 sm:grid-cols-3 lg:grid-cols-4">
+        {#each allEntries as [key, value] (key)}
+          <div class="card space-y-1">
+            <p class="text-xs font-mono text-ink-mute truncate" title={key}>{key.replace(/_/g, ' ')}</p>
             <p class="text-lg font-display font-bold text-ink truncate" title={fmtValue(value)}>
               {typeof value === 'number' ? value.toLocaleString() : fmtValue(value)}
             </p>

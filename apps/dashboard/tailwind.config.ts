@@ -1,39 +1,37 @@
-import { createRequire } from 'node:module';
-import { join } from 'path';
 import type { Config } from 'tailwindcss';
-import { skeleton } from '@skeletonlabs/tw-plugin';
-
-const require = createRequire(import.meta.url);
 
 export default {
-  darkMode: 'class',
   content: [
     './src/**/*.{html,js,svelte,ts}',
-    join(require.resolve('@skeletonlabs/skeleton'), '../**/*.{html,js,svelte,ts}'),
   ],
   theme: {
     extend: {
+      // Values must mirror src/app.css. The `/ <alpha-value>` placeholder is
+      // required: without it Tailwind silently drops every opacity-modified
+      // utility (bg-ink/30, backdrop:bg-ink/40, …) for oklch string colors.
       colors: {
-        paper: 'oklch(96.5% 0.012 75)',
-        'paper-soft': 'oklch(99% 0.006 75)',
-        'paper-warm': 'oklch(93% 0.02 70)',
-        ink: 'oklch(20% 0.022 55)',
-        'ink-soft': 'oklch(38% 0.018 55)',
-        'ink-mute': 'oklch(50% 0.012 60)',
-        rule: 'oklch(86% 0.014 70)',
-        'rule-soft': 'oklch(91% 0.01 70)',
-        accent: 'oklch(58% 0.18 35)',
-        'accent-deep': 'oklch(42% 0.2 32)',
-        'accent-soft': 'oklch(82% 0.08 45)',
-        saffron: 'oklch(78% 0.16 78)',
-        'saffron-soft': 'oklch(91% 0.07 80)',
-        marine: 'oklch(34% 0.09 240)',
-        'marine-soft': 'oklch(83% 0.045 240)',
-        success: 'oklch(50% 0.09 150)',
-        'success-soft': 'oklch(90% 0.04 145)',
-        danger: 'oklch(52% 0.17 25)',
-        'danger-soft': 'oklch(89% 0.055 32)',
-        'focus-ring': 'oklch(48% 0.2 32)',
+        paper: 'oklch(96.5% 0.012 75 / <alpha-value>)',
+        'paper-soft': 'oklch(99% 0.006 75 / <alpha-value>)',
+        'paper-warm': 'oklch(93% 0.02 70 / <alpha-value>)',
+        ink: 'oklch(20% 0.022 55 / <alpha-value>)',
+        'ink-soft': 'oklch(38% 0.018 55 / <alpha-value>)',
+        'ink-mute': 'oklch(50% 0.012 60 / <alpha-value>)',
+        rule: 'oklch(86% 0.014 70 / <alpha-value>)',
+        'rule-soft': 'oklch(91% 0.01 70 / <alpha-value>)',
+        accent: 'oklch(58% 0.18 35 / <alpha-value>)',
+        'accent-deep': 'oklch(42% 0.2 32 / <alpha-value>)',
+        'accent-soft': 'oklch(82% 0.08 45 / <alpha-value>)',
+        saffron: 'oklch(78% 0.16 78 / <alpha-value>)',
+        'saffron-soft': 'oklch(91% 0.07 80 / <alpha-value>)',
+        marine: 'oklch(34% 0.09 240 / <alpha-value>)',
+        'marine-soft': 'oklch(83% 0.045 240 / <alpha-value>)',
+        success: 'oklch(50% 0.09 150 / <alpha-value>)',
+        'success-soft': 'oklch(90% 0.04 145 / <alpha-value>)',
+        warning: 'oklch(55% 0.13 70 / <alpha-value>)',
+        'warning-soft': 'oklch(90% 0.06 75 / <alpha-value>)',
+        danger: 'oklch(52% 0.17 25 / <alpha-value>)',
+        'danger-soft': 'oklch(89% 0.055 32 / <alpha-value>)',
+        'focus-ring': 'oklch(48% 0.2 32 / <alpha-value>)',
       },
       fontFamily: {
         display: ['ui-rounded', 'Aptos Display', 'Segoe UI', 'system-ui', 'sans-serif'],
@@ -43,14 +41,11 @@ export default {
       borderRadius: {
         sm: '4px',
         md: '8px',
-        lg: '8px',
+        lg: '12px',
         pill: '999px',
       },
     },
   },
-  plugins: [
-    skeleton({
-      themes: { preset: [{ name: 'skeleton', enhancements: true }] },
-    }),
-  ],
+  // The Skeleton preset plugin was removed: no Skeleton preset classes are
+  // used anywhere in src/ (the design system is fully custom in app.css).
 } satisfies Config;

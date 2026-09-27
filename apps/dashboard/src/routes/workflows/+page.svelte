@@ -5,6 +5,11 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import WorkflowDag from '$lib/components/WorkflowDag.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
+  import SkeletonTable from '$lib/components/SkeletonTable.svelte';
+  import UpdatedAgo from '$lib/components/UpdatedAgo.svelte';
+  import Modal from '$lib/components/Modal.svelte';
+  import { pollWhileVisible } from '$lib/poll';
   import {
     assignStepIds,
     toCreateSteps,
@@ -130,7 +135,7 @@
     }
     dagOpen = false;
     createSuccess = `Created ${res.data?.id?.slice(0, 8) ?? 'workflow'}`;
-    await load();
+    await load(true);
   }
 
   let activeWorkflow = $derived(selectedWorkflow ?? items[0] ?? null);
@@ -145,16 +150,22 @@
   })));
   let orderedHasUnknown = $derived(orderedProviders.some((provider) => provider.loginState !== 'authenticated'));
 
-  async function load() {
-    loading = true;
-    error = null;
-    denied = false;
+  let lastUpdated = $state<Date | null>(null);
+
+  async function load(silent = false) {
+    if (!silent) {
+      loading = true;
+      error = null;
+      denied = false;
+    }
     const res = await api.get('/v1/workflows');
-    loading = false;
+    if (!silent) loading = false;
     if (res.denied) { denied = true; return; }
     if (res.error) { error = res.error; return; }
     items = listOf<Workflow>(res);
-    selectedWorkflow = null;
+    // Keep the operator's selection across refreshes when it still exists.
+    if (!selectedWorkflow || !items.some((w) => w.id === selectedWorkflow?.id)) selectedWorkflow = null;
+    lastUpdated = new Date();
   }
 
   async function loadContexts() {
@@ -212,7 +223,7 @@
     }
     createSuccess = `Created ${res.data?.id?.slice(0, 8) ?? 'workflow'}`;
     createPrompt = '';
-    await load();
+    await load(true);
   }
 
   async function runWorkflow(workflow: Workflow) {
@@ -228,25 +239,29 @@
       return;
     }
     runSuccess = `Run ${res.data?.id?.slice(0, 8) ?? ''} ${res.data?.state ?? 'queued'}`;
-    await load();
+    await load(true);
   }
 
   onMount(() => {
     load();
     loadContexts();
+    const stopPolling = pollWhileVisible(() => load(true), 45_000);
+    return stopPolling;
   });
 </script>
 
 <div class="space-y-4">
-  <div class="flex items-center justify-between">
-    <h1 class="text-2xl font-display font-bold text-ink">Workflows</h1>
-    <button onclick={() => load()} class="text-sm text-accent-deep hover:underline">Refresh</button>
-  </div>
+  <PageHeader title="Workflows" subtitle="Ordered provider chains and custom step graphs, run on the gateway.">
+    {#snippet actions()}
+      <UpdatedAgo at={lastUpdated} />
+      <button onclick={() => load()} class="btn btn-secondary btn-sm">Refresh</button>
+    {/snippet}
+  </PageHeader>
 
-  <form onsubmit={(e) => { e.preventDefault(); createWorkflow(); }} class="rounded-md border border-rule bg-paper-soft p-4 space-y-4">
+  <form onsubmit={(e) => { e.preventDefault(); createWorkflow(); }} class="card space-y-4">
     <div class="flex items-center justify-between gap-3 flex-wrap">
       <h2 class="text-sm font-display font-semibold text-ink">Create Provider Workflow</h2>
-      <div class="text-xs text-ink-mute font-mono">ChatGPT -> Gemini -> DeepSeek</div>
+      <div class="text-xs text-ink-mute font-mono">ChatGPT → Gemini → DeepSeek → Duck.ai</div>
     </div>
 
     <div class="grid gap-3 md:grid-cols-[1fr_1.4fr]">
@@ -256,7 +271,7 @@
           <button
             type="button"
             onclick={() => { createMode = 'ordered'; createName = 'ChatGPT Gemini DeepSeek workflow'; }}
-            class="px-3 py-2 text-sm border-r border-rule transition-colors"
+            class="px-3 py-2 text-sm transition-colors"
             class:bg-accent-soft={createMode === 'ordered'}
             class:text-accent-deep={createMode === 'ordered'}
             class:font-medium={createMode === 'ordered'}
@@ -280,11 +295,11 @@
 
       <div>
         <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Provider readiness</span>
-        <div class="grid grid-cols-3 rounded-md border border-rule overflow-hidden bg-paper">
-          {#each orderedProviders as provider}
-            <div class="px-3 py-2 border-r border-rule last:border-r-0">
-              <div class="text-sm font-medium text-ink-soft">{provider.label}</div>
-              <div class="text-[11px] font-mono text-ink-mute mt-0.5">{provider.loginState}</div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 rounded-md border border-rule overflow-hidden bg-paper">
+          {#each orderedProviders as provider (provider.key)}
+            <div class="min-w-0 px-3 py-2">
+              <div class="truncate text-sm font-medium text-ink-soft">{provider.label}</div>
+              <div class="truncate text-[11px] font-mono text-ink-mute mt-0.5">{provider.loginState}</div>
             </div>
           {/each}
         </div>
@@ -299,21 +314,18 @@
     <div class="grid gap-4 lg:grid-cols-[1fr_1.2fr_1fr]">
       <label class="block">
         <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Name</span>
-        <input
-          bind:value={createName}
-          class="w-full px-3 py-2 rounded-md border border-rule bg-paper text-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
-        />
+        <input bind:value={createName} class="input" />
       </label>
 
       {#if createMode === 'single'}
-        <div>
+        <div class="sm:col-span-2 lg:col-span-1">
           <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Provider</span>
-          <div class="grid grid-cols-3 rounded-md border border-rule overflow-hidden bg-paper" role="group" aria-label="Provider">
-            {#each PROVIDERS as provider}
+          <div class="grid grid-cols-2 sm:grid-cols-4 rounded-md border border-rule overflow-hidden bg-paper" role="group" aria-label="Provider">
+            {#each PROVIDERS as provider (provider.key)}
               <button
                 type="button"
                 onclick={() => { createTarget = provider.key; }}
-                class="px-3 py-2 text-sm border-r border-rule last:border-r-0 transition-colors"
+                class="min-w-0 truncate px-3 py-2 text-sm transition-colors"
                 class:bg-accent-soft={createTarget === provider.key}
                 class:text-accent-deep={createTarget === provider.key}
                 class:font-medium={createTarget === provider.key}
@@ -325,20 +337,17 @@
           </div>
         </div>
       {:else}
-        <div>
+        <div class="sm:col-span-2 lg:col-span-1">
           <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Steps</span>
           <div class="rounded-md border border-rule bg-paper px-3 py-2 text-sm text-ink-soft">
-            1. ChatGPT <span class="text-ink-mute">-></span> 2. Gemini <span class="text-ink-mute">-></span> 3. DeepSeek
+            1. ChatGPT <span class="text-ink-mute">→</span> 2. Gemini <span class="text-ink-mute">→</span> 3. DeepSeek <span class="text-ink-mute">→</span> 4. Duck.ai
           </div>
         </div>
       {/if}
 
       <label class="block">
         <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Command</span>
-        <input
-          bind:value={createCommand}
-          class="w-full px-3 py-2 rounded-md border border-rule bg-paper text-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
-        />
+        <input bind:value={createCommand} class="input" />
       </label>
     </div>
 
@@ -348,23 +357,15 @@
         bind:value={createPrompt}
         rows="3"
         placeholder="Enter the workflow prompt..."
-        class="w-full px-3 py-2 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40 resize-y"
+        class="input resize-y"
       ></textarea>
     </label>
 
     <div class="flex items-center gap-3 flex-wrap">
-      <button
-        type="submit"
-        disabled={createLoading}
-        class="px-4 py-2 rounded-md bg-accent text-paper text-sm font-medium hover:bg-accent-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      >
+      <button type="submit" disabled={createLoading} class="btn btn-primary">
         {createLoading ? 'Creating...' : 'Create Workflow'}
       </button>
-      <button
-        type="button"
-        onclick={() => openDagEditor()}
-        class="px-4 py-2 rounded-md border border-rule bg-paper text-sm font-medium text-ink hover:bg-paper-soft transition-colors"
-      >
+      <button type="button" onclick={() => openDagEditor()} class="btn btn-secondary">
         Custom DAG…
       </button>
       {#if createError}
@@ -377,7 +378,7 @@
   </form>
 
   {#if loading}
-    <div class="text-ink-mute text-sm">Loading...</div>
+    <SkeletonTable rows={4} cols={3} />
   {:else if denied}
     <DeniedPanel resource="workflows" />
   {:else if error}
@@ -386,18 +387,18 @@
     {#if items.length === 0}
       <EmptyState message="No workflows found." hint="Create a workflow through the gateway API to display its metadata here." />
     {:else}
-      <div class="flex gap-4 min-h-0">
-        <div class="w-64 shrink-0">
+      <div class="flex flex-col gap-4 min-h-0 lg:flex-row">
+        <div class="w-full lg:w-64 lg:shrink-0">
           <div class="rounded-md border border-rule overflow-hidden">
             <div class="px-4 py-2 bg-paper-soft border-b border-rule text-xs font-medium text-ink-mute uppercase tracking-wider">
               Workflows
             </div>
-            <ul class="divide-y divide-rule" role="list">
+            <ul class="divide-y divide-rule max-h-80 lg:max-h-none overflow-y-auto" role="list">
               {#each items as wf (wf.id)}
                 <li>
                   <button
                     onclick={() => { selectedWorkflow = wf; }}
-                    class="w-full text-left px-4 py-3 text-sm transition-colors hover:bg-paper-soft"
+                    class="w-full min-h-16 text-left px-4 py-3 text-sm transition-colors hover:bg-paper-soft"
                     class:bg-accent-soft={activeWorkflow?.id === wf.id}
                     class:text-accent-deep={activeWorkflow?.id === wf.id}
                     class:font-medium={activeWorkflow?.id === wf.id}
@@ -422,15 +423,15 @@
         <div class="flex-1 min-w-0">
           {#if activeWorkflow}
             <div class="space-y-3">
-              <div class="flex items-center gap-3">
-                <h2 class="text-lg font-display font-semibold text-ink">{activeWorkflow.name}</h2>
+              <div class="flex flex-wrap items-center gap-3">
+                <h2 class="text-lg font-display font-semibold text-ink min-w-0 truncate">{activeWorkflow.name}</h2>
                 {#if activeWorkflow.status}
-                  <span class="text-xs px-2 py-0.5 rounded-full bg-paper-soft border border-rule text-ink-soft font-mono">{activeWorkflow.status}</span>
+                  <span class="text-xs px-2 py-0.5 rounded-pill bg-paper-soft border border-rule text-ink-soft font-mono">{activeWorkflow.status}</span>
                 {/if}
                 <button
                   onclick={() => runWorkflow(activeWorkflow!)}
                   disabled={runLoading}
-                  class="ml-auto px-3 py-1.5 rounded-md border border-accent-deep/40 text-accent-deep text-xs font-medium hover:bg-accent-soft disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  class="btn btn-sm ml-auto border border-accent-deep/40 text-accent-deep hover:bg-accent-soft"
                 >
                   {runLoading ? 'Running...' : 'Run'}
                 </button>
@@ -453,16 +454,16 @@
                 <div class="flex items-center gap-4 text-xs text-ink-mute flex-wrap">
                   <span class="font-medium">Status:</span>
                   <span class="flex items-center gap-1.5">
-                    <span class="w-3 h-3 rounded-sm inline-block" style="background:#50a082"></span> completed
+                    <span class="w-3 h-3 rounded-sm inline-block bg-success"></span> completed
                   </span>
                   <span class="flex items-center gap-1.5">
-                    <span class="w-3 h-3 rounded-sm inline-block" style="background:#366290"></span> running
+                    <span class="w-3 h-3 rounded-sm inline-block bg-marine"></span> running
                   </span>
                   <span class="flex items-center gap-1.5">
-                    <span class="w-3 h-3 rounded-sm inline-block" style="background:#b08840"></span> pending
+                    <span class="w-3 h-3 rounded-sm inline-block bg-warning"></span> pending
                   </span>
                   <span class="flex items-center gap-1.5">
-                    <span class="w-3 h-3 rounded-sm inline-block" style="background:#b04040"></span> failed
+                    <span class="w-3 h-3 rounded-sm inline-block bg-danger"></span> failed
                   </span>
                 </div>
               {:else}
@@ -482,130 +483,95 @@
 </div>
 
 <!-- Custom DAG editor dialog -->
-{#if dagOpen}
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 p-4" role="presentation" onclick={() => closeDagEditor()}>
-    <div
-      class="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-lg border border-rule bg-paper shadow-2xl"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Custom DAG editor"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => { if (e.key === 'Escape') closeDagEditor(); }}
-      tabindex="-1"
-    >
-      <div class="px-5 py-4 border-b border-rule bg-paper-soft sticky top-0">
-        <h2 class="text-lg font-display font-semibold text-ink">Custom DAG</h2>
-        <p class="text-xs text-ink-mute mt-0.5">Compose arbitrary step graphs. Steps with no dependencies follow the previous step; the gateway rejects cycles and dangling references.</p>
-      </div>
-      <div class="p-5 space-y-4">
-        <label class="block">
-          <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Workflow name *</span>
-          <input
-            type="text"
-            bind:value={dagName}
-            placeholder="e.g. research-fanout"
-            class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
-          />
-        </label>
+<Modal bind:open={dagOpen} title="Custom DAG" width="lg" onClose={closeDagEditor}>
+  <div class="space-y-4">
+    <p class="text-xs text-ink-mute">Compose arbitrary step graphs. Steps with no dependencies follow the previous step; the gateway rejects cycles and dangling references.</p>
+    <label class="block">
+      <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Workflow name *</span>
+      <input
+        type="text"
+        bind:value={dagName}
+        placeholder="e.g. research-fanout"
+        class="input"
+      />
+    </label>
 
-        {#each dagSteps as step, i (step.key)}
-          <div class="rounded-md border border-rule bg-paper-soft p-4 space-y-3">
-            <div class="flex items-center justify-between">
-              <p class="text-sm font-mono font-semibold text-accent-deep">step_{i + 1}</p>
-              <button
-                onclick={() => removeDagStep(step.key)}
-                disabled={dagSteps.length <= 1}
-                class="text-xs text-danger hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Remove
-              </button>
-            </div>
-            <div class="grid gap-3 md:grid-cols-2">
-              <label class="block">
-                <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Target *</span>
-                <select
-                  bind:value={step.target}
-                  class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
-                >
-                  {#each PROVIDERS as provider}
-                    <option value={provider.key}>{provider.label}</option>
-                  {/each}
-                </select>
-              </label>
-              <label class="block">
-                <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Command *</span>
-                <input
-                  type="text"
-                  bind:value={step.command}
-                  placeholder="submit"
-                  class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
-                />
-              </label>
-            </div>
-            <label class="block">
-              <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Prompt</span>
-              <textarea
-                bind:value={step.prompt}
-                rows="2"
-                placeholder="Step prompt (optional)"
-                class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40 resize-y"
-              ></textarea>
-            </label>
-            {#if dagSteps.length > 1}
-              <div>
-                <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Depends on (empty = previous step)</span>
-                <div class="flex gap-3 flex-wrap">
-                  {#each dagSteps as other (other.key)}
-                    {#if other.key !== step.key}
-                      {@const depId = `step_${dagSteps.findIndex((s) => s.key === other.key) + 1}`}
-                      <label class="flex items-center gap-1.5 text-xs text-ink-soft cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={step.deps.includes(other.key)}
-                          onchange={() => toggleDagDep(step.key, other.key)}
-                          class="accent-[var(--color-accent)]"
-                        />
-                        <span class="font-mono">{depId}</span>
-                      </label>
-                    {/if}
-                  {/each}
-                </div>
-              </div>
-            {/if}
-          </div>
-        {/each}
-
-        <button
-          onclick={() => addDagStep()}
-          class="px-3 py-1.5 rounded-md border border-rule bg-paper-soft text-xs font-medium text-ink hover:bg-paper-warm transition-colors"
-        >
-          + Add step
-        </button>
-
-        <div>
-          <p class="text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Live preview</p>
-          <WorkflowDag workflow={dagPreview} />
+    {#each dagSteps as step, i (step.key)}
+      <div class="card space-y-3">
+        <div class="flex items-center justify-between">
+          <p class="text-sm font-mono font-semibold text-accent-deep">step_{i + 1}</p>
+          <button
+            onclick={() => removeDagStep(step.key)}
+            disabled={dagSteps.length <= 1}
+            class="btn-link text-xs text-danger disabled:text-danger"
+          >
+            Remove
+          </button>
         </div>
-
-        {#if dagError}
-          <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{dagError}</div>
+        <div class="grid gap-3 md:grid-cols-2">
+          <label class="block">
+            <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Target *</span>
+            <select bind:value={step.target} class="input">
+              {#each PROVIDERS as provider (provider.key)}
+                <option value={provider.key}>{provider.label}</option>
+              {/each}
+            </select>
+          </label>
+          <label class="block">
+            <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Command *</span>
+            <input type="text" bind:value={step.command} placeholder="submit" class="input" />
+          </label>
+        </div>
+        <label class="block">
+          <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Prompt</span>
+          <textarea
+            bind:value={step.prompt}
+            rows="2"
+            placeholder="Step prompt (optional)"
+            class="input resize-y"
+          ></textarea>
+        </label>
+        {#if dagSteps.length > 1}
+          <div>
+            <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Depends on (empty = previous step)</span>
+            <div class="flex gap-3 flex-wrap">
+              {#each dagSteps as other (other.key)}
+                {#if other.key !== step.key}
+                  {@const depId = `step_${dagSteps.findIndex((s) => s.key === other.key) + 1}`}
+                  <label class="flex min-h-6 items-center gap-1.5 text-xs text-ink-soft cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={step.deps.includes(other.key)}
+                      onchange={() => toggleDagDep(step.key, other.key)}
+                      class="accent-[var(--color-accent)]"
+                    />
+                    <span class="font-mono">{depId}</span>
+                  </label>
+                {/if}
+              {/each}
+            </div>
+          </div>
         {/if}
       </div>
-      <div class="px-5 py-3 border-t border-rule flex justify-end gap-3 sticky bottom-0 bg-paper">
-        <button
-          onclick={() => closeDagEditor()}
-          class="px-4 py-2 rounded-md border border-rule bg-paper-soft text-ink text-sm font-medium hover:bg-paper-warm transition-colors"
-        >
-          Cancel
-        </button>
-        <button
-          onclick={() => createDagWorkflow()}
-          disabled={dagLoading}
-          class="px-4 py-2 rounded-md bg-accent text-paper-soft text-sm font-medium hover:bg-accent-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          {dagLoading ? 'Creating…' : 'Create Workflow'}
-        </button>
-      </div>
+    {/each}
+
+    <button onclick={() => addDagStep()} class="btn btn-secondary btn-sm">
+      + Add step
+    </button>
+
+    <div>
+      <p class="text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Live preview</p>
+      <WorkflowDag workflow={dagPreview} />
     </div>
+
+    {#if dagError}
+      <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{dagError}</div>
+    {/if}
   </div>
-{/if}
+  {#snippet footer()}
+    <button onclick={() => closeDagEditor()} class="btn btn-secondary">Cancel</button>
+    <button onclick={() => createDagWorkflow()} disabled={dagLoading} class="btn btn-primary">
+      {dagLoading ? 'Creating…' : 'Create Workflow'}
+    </button>
+  {/snippet}
+</Modal>

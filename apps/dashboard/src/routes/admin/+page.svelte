@@ -4,6 +4,7 @@
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
 
   // --- Privacy (GDPR export / erase receipts) ---
   interface PrivacyReceipt {
@@ -139,11 +140,7 @@
 </script>
 
 <div class="space-y-8">
-  <h1 class="text-2xl font-display font-bold text-ink">Administration</h1>
-  <p class="text-sm text-ink-soft max-w-2xl">
-    Privileged operations: GDPR subject requests, just-in-time admin elevation,
-    and the region kill switch. Every action here is audit-logged by the gateway.
-  </p>
+  <PageHeader title="Administration" subtitle="Privileged operations: GDPR subject requests, just-in-time admin elevation, and the region kill switch. Every action here is audit-logged by the gateway." />
 
   <!-- Privacy requests -->
   <section aria-labelledby="privacy-heading">
@@ -155,24 +152,24 @@
           type="text"
           bind:value={privacySubject}
           placeholder="e.g. user_42 or device_id:abc123"
-          class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+          class="input"
         />
       </label>
       <div class="flex items-center gap-3 flex-wrap">
-        <button
-          onclick={() => doPrivacyRequest('export')}
-          disabled={privacyLoading}
-          class="px-4 py-2 rounded-md border border-rule bg-paper text-ink text-sm font-medium hover:bg-paper-warm disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          {privacyLoading ? 'Working…' : 'Request export'}
-        </button>
-        <button
-          onclick={() => doPrivacyRequest('erase')}
-          disabled={privacyLoading}
-          class="px-4 py-2 rounded-md bg-danger text-paper-soft text-sm font-medium hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          Request erase
-        </button>
+      <button
+        onclick={() => doPrivacyRequest('export')}
+        disabled={privacyLoading}
+        class="btn btn-secondary"
+      >
+        {privacyLoading ? 'Working…' : 'Request export'}
+      </button>
+      <button
+        onclick={() => doPrivacyRequest('erase')}
+        disabled={privacyLoading}
+        class="btn btn-danger"
+      >
+        Request erase
+      </button>
       </div>
       {#if privacyError}
         <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{privacyError}</div>
@@ -185,21 +182,21 @@
     {#if privacyRequests.length > 0}
       <div class="mt-4 rounded-md border border-rule overflow-x-auto">
         <table class="w-full text-sm">
-          <thead class="bg-paper-soft border-b border-rule">
+          <thead class="thead">
             <tr>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Request</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Kind</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Status</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Receipt</th>
+              <th class="th">Request</th>
+              <th class="th">Kind</th>
+              <th class="th">Status</th>
+              <th class="th">Receipt</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-rule">
             {#each privacyRequests as req (req.request_id)}
-              <tr class="hover:bg-paper-soft transition-colors">
-                <td class="px-4 py-2.5 font-mono text-xs text-ink-mute">{req.request_id}</td>
-                <td class="px-4 py-2.5 text-xs text-ink font-medium">{req.kind}</td>
-                <td class="px-4 py-2.5 text-xs text-ink-soft">{req.status}</td>
-                <td class="px-4 py-2.5 font-mono text-xs text-ink-soft break-all">{req.receipt}</td>
+              <tr class="transition-colors hover:bg-paper-soft/70">
+                <td class="td font-mono text-xs text-ink-mute">{req.request_id}</td>
+                <td class="td text-xs font-medium text-ink">{req.kind}</td>
+                <td class="td text-xs">{req.status}</td>
+                <td class="td font-mono text-xs break-all">{req.receipt}</td>
               </tr>
             {/each}
           </tbody>
@@ -215,14 +212,14 @@
       <div class="grid gap-3 sm:grid-cols-2">
         <label class="block">
           <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">Role</span>
-          <select bind:value={elevRole} class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-ring/40">
+          <select bind:value={elevRole} class="input">
             <option value="operator">operator</option>
             <option value="admin">admin</option>
           </select>
         </label>
         <label class="block">
           <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">TTL (seconds)</span>
-          <input type="number" min="60" step="60" bind:value={elevTtl} class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-ring/40" />
+          <input type="number" min="60" step="60" bind:value={elevTtl} class="input" />
         </label>
       </div>
       <label class="block">
@@ -231,14 +228,10 @@
           type="text"
           bind:value={elevReason}
           placeholder="e.g. incident response — disk pressure on gateway host"
-          class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+          class="input"
         />
       </label>
-      <button
-        onclick={() => doRequestElevation()}
-        disabled={elevLoading}
-        class="px-4 py-2 rounded-md bg-accent text-paper-soft text-sm font-medium hover:bg-accent-deep disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      >
+      <button onclick={() => doRequestElevation()} disabled={elevLoading} class="btn btn-primary">
         {elevLoading ? 'Requesting…' : 'Request elevation'}
       </button>
       {#if elevError}
@@ -252,32 +245,29 @@
     {#if elevations.length > 0}
       <div class="mt-4 rounded-md border border-rule overflow-x-auto">
         <table class="w-full text-sm">
-          <thead class="bg-paper-soft border-b border-rule">
+          <thead class="thead">
             <tr>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Grant</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Role</th>
-              <th class="px-4 py-2.5 text-left font-medium text-ink-mute text-xs uppercase tracking-wider">Status</th>
-              <th class="px-4 py-2.5 text-right font-medium text-ink-mute text-xs uppercase tracking-wider">Action</th>
+              <th class="th">Grant</th>
+              <th class="th">Role</th>
+              <th class="th">Status</th>
+              <th class="th text-right">Action</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-rule">
             {#each elevations as grant (grant.id)}
-              <tr class="hover:bg-paper-soft transition-colors">
-                <td class="px-4 py-2.5 font-mono text-xs text-ink-mute">{grant.id}</td>
-                <td class="px-4 py-2.5 text-xs text-ink font-medium">{grant.role}</td>
-                <td class="px-4 py-2.5">
+              <tr class="transition-colors hover:bg-paper-soft/70">
+                <td class="td font-mono text-xs text-ink-mute">{grant.id}</td>
+                <td class="td text-xs font-medium text-ink">{grant.role}</td>
+                <td class="td">
                   {#if grant.approved}
                     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-success-soft text-success">Approved</span>
                   {:else}
                     <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-accent-soft text-accent-deep">Pending</span>
                   {/if}
                 </td>
-                <td class="px-4 py-2.5 text-right">
+                <td class="td text-right">
                   {#if !grant.approved}
-                    <button
-                      onclick={() => doApproveElevation(grant)}
-                      class="text-sm text-accent-deep hover:underline"
-                    >Approve</button>
+                    <button onclick={() => doApproveElevation(grant)} class="btn-link text-sm">Approve</button>
                   {/if}
                 </td>
               </tr>
@@ -303,23 +293,19 @@
             type="text"
             bind:value={regionName}
             placeholder="e.g. eu-central"
-            class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink placeholder:text-ink-mute focus:outline-none focus:ring-2 focus:ring-focus-ring/40"
+            class="input"
           />
         </label>
         <label class="block">
           <span class="block text-xs uppercase tracking-wider font-mono text-ink-mute mb-1.5">State</span>
-          <select bind:value={regionState} class="w-full px-3 py-1.5 rounded-md border border-rule bg-paper text-sm text-ink focus:outline-none focus:ring-2 focus:ring-focus-ring/40">
+          <select bind:value={regionState} class="input">
             <option value="active">active</option>
             <option value="draining">draining</option>
             <option value="disabled">disabled</option>
           </select>
         </label>
       </div>
-      <button
-        onclick={() => doSetRegionState()}
-        disabled={regionLoading}
-        class="px-4 py-2 rounded-md bg-marine text-paper-soft text-sm font-medium hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-      >
+      <button onclick={() => doSetRegionState()} disabled={regionLoading} class="btn btn-primary bg-marine hover:opacity-90">
         {regionLoading ? 'Applying…' : 'Apply state'}
       </button>
       {#if regionError}

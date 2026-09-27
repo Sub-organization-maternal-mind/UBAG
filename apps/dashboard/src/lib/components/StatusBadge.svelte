@@ -3,16 +3,18 @@
 
   // Keys are real gateway job statuses (contract vocabulary). The fallback
   // tone covers non-job statuses (alerts, contexts) without inventing words.
+  // Text on saffron-soft uses `warning` (darker amber) so every badge keeps
+  // ≥4.5:1 contrast on its soft background.
   const tone: Record<string, string> = {
     created: 'bg-rule-soft text-ink-mute',
-    scheduled: 'bg-saffron-soft text-saffron',
-    queued: 'bg-saffron-soft text-saffron',
+    scheduled: 'bg-saffron-soft text-warning',
+    queued: 'bg-saffron-soft text-warning',
     assigned: 'bg-marine-soft text-marine',
     running: 'bg-marine-soft text-marine',
     token_streaming: 'bg-marine-soft text-marine',
     completing: 'bg-marine-soft text-marine',
     completed: 'bg-success-soft text-success',
-    completed_with_warnings: 'bg-saffron-soft text-saffron',
+    completed_with_warnings: 'bg-saffron-soft text-warning',
     failed_retryable: 'bg-danger-soft text-danger',
     failed_terminal: 'bg-danger-soft text-danger',
     dead_letter: 'bg-danger-soft text-danger',
