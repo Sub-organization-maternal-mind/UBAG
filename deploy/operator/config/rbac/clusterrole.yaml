@@ -33,6 +33,8 @@ rules:
       - update
       - patch
   # Read gateway credentials secret only (no list/watch — least privilege).
+  # trivy:ignore:KSV-041 — get-only access to one credential Secret is the
+  # operator's core function; it cannot reconcile gateway credentials without it.
   - apiGroups:
       - ""
     resources:
