@@ -41,6 +41,8 @@ jobs:
         run: node tools/make-sdks/generate-manifest.mjs
       - name: Build SDK
         run: pnpm --filter @ubag/sdk build
+      - name: Build dashboard
+        run: pnpm --filter @ubag/dashboard build
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
@@ -50,9 +52,13 @@ jobs:
       - name: Install Playwright browsers
         working-directory: apps/dashboard
         run: npx playwright install chromium --with-deps || npx playwright install chromium
+      # No `|| true`: with -u a genuine baseline drift is updated AND the test
+      # passes, so any remaining failure is real (crashed webServer, axe
+      # regression) and must fail this job instead of being reported as "no
+      # drift".
       - name: Regenerate Linux baselines
         working-directory: apps/dashboard
-        run: npx playwright test -u -g "desktop snapshot" || true
+        run: npx playwright test -u -g "desktop snapshot"
       - name: Commit updated baselines
         run: |
           set -euo pipefail

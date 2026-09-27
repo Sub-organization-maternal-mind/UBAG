@@ -23,7 +23,7 @@
   --color-success-soft: oklch(90% 0.04 145);
   --color-warning: oklch(55% 0.13 70);
   --color-warning-soft: oklch(90% 0.06 75);
-  --color-danger: oklch(52% 0.17 25);
+  --color-danger: oklch(48% 0.17 25);
   --color-danger-soft: oklch(89% 0.055 32);
   --color-focus-ring: oklch(48% 0.2 32);
   --color-scrim: oklch(20% 0.022 55 / 0.45);

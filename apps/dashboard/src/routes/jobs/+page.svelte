@@ -351,7 +351,7 @@
               class:text-ink-soft={createTarget !== provider.key}
             >
               <span class="block truncate">{provider.label}</span>
-              <span class="block truncate text-[11px] font-mono text-ink-mute mt-0.5">{providerState[provider.key] ?? 'unknown'}</span>
+              <span class="block truncate text-[11px] font-mono text-ink-soft mt-0.5">{providerState[provider.key] ?? 'unknown'}</span>
             </button>
           {/each}
         </div>

@@ -29,7 +29,7 @@ export default {
         'success-soft': 'oklch(90% 0.04 145 / <alpha-value>)',
         warning: 'oklch(55% 0.13 70 / <alpha-value>)',
         'warning-soft': 'oklch(90% 0.06 75 / <alpha-value>)',
-        danger: 'oklch(52% 0.17 25 / <alpha-value>)',
+        danger: 'oklch(48% 0.17 25 / <alpha-value>)',
         'danger-soft': 'oklch(89% 0.055 32 / <alpha-value>)',
         'focus-ring': 'oklch(48% 0.2 32 / <alpha-value>)',
       },

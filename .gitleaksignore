@@ -1,0 +1,42 @@
+# gitleaks fingerprints for test fixtures / doc examples / vendored chart samples.
+# The secret-scan job first ran successfully on 2026-09-27 (gitleaks-action v2 previously
+# failed on its license requirement); all matches below are synthetic values in
+# committed test fixtures, API docs and the vendored dragonfly chart, not credentials.
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:UBAG_World_Class_Blueprint_v2.md:generic-api-key:273
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:apps/gateway/internal/httpapi/server_test.go:generic-api-key:409
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:apps/gateway/internal/siem/event_test.go:jwt:21
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:1052
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:1057
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:1088
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:1111
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:1116
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:522
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:527
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:581
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:586
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:915
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:920
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:949
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:954
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:987
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:992
+0364595ecbcfb9daddd6c6c30cb9bf48ef2ec2df:packages/openapi/openapi.yaml:generic-api-key:497
+1b20fc70633a6bf08751ea9cfa7367c0207ad0fd:apps/gateway/internal/httpapi/openai_facade_test.go:generic-api-key:666
+3ac06a788e5843afe400464d9d9bfead0fc309a5:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:3297
+3ac06a788e5843afe400464d9d9bfead0fc309a5:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:3302
+3ac06a788e5843afe400464d9d9bfead0fc309a5:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:3362
+3ac06a788e5843afe400464d9d9bfead0fc309a5:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:3367
+6527c20c5c497db6948a8bd2144ff093ae3e6de8:docs/superpowers/plans/2026-06-01-phase4-sdk-implementation.md:generic-api-key:1152
+6e701283fde67dbfc928e032110858bffb448bf1:deploy/helm/ubag/charts/dragonfly/values.yaml:private-key:140
+82d32ccdb3b59f2ab70482038c5e8467ae616fc2:docs/handoffs/live-worker-enablement.md:curl-auth-user:101
+82d32ccdb3b59f2ab70482038c5e8467ae616fc2:docs/handoffs/live-worker-enablement.md:generic-api-key:25
+85d6eb0e0795a403e5de350ac42f3c0de44dd6a9:UBAG_World_Class_Blueprint_v2.1.md:generic-api-key:290
+85d6eb0e0795a403e5de350ac42f3c0de44dd6a9:packages/openapi/openapi.yaml:generic-api-key:1018
+9b3820d61430fc7a7923f7344b3ef98821d78c34:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:3271
+9b3820d61430fc7a7923f7344b3ef98821d78c34:packages/conformance/fixtures/v0/scenarios.json:generic-api-key:3276
+a2a1ce80e84b57ed2b376ec72b7a229dd3e21be5:apps/gateway/internal/attachments/attachments.go:generic-api-key:19
+a2a1ce80e84b57ed2b376ec72b7a229dd3e21be5:apps/gateway/internal/attachments/attachments.go:generic-api-key:21
+e0db672808b75000591db1beb4cdfec4f57b633e:deploy/small/nginx-dashboard/README.md:curl-auth-user:53
+e0db672808b75000591db1beb4cdfec4f57b633e:deploy/small/nginx-dashboard/set-operator-password.sh:curl-auth-user:19
+e79c0c6ff03969d087909c8d1d6aed40e6902423:packages/sdk-typescript/test/client-retry.test.mjs:generic-api-key:26
+fdbf31637068d4af6120ceb5f46b245dd8549ecb:apps/docs/src/content/docs/operations/multi-region.md:generic-api-key:278

@@ -1,6 +1,13 @@
 import { test, expect } from '@playwright/test';
 import { injectAxe, getViolations } from 'axe-playwright';
 
+// The dashboard registers a service worker on every load. Requests handled by
+// a service worker bypass page.route(), so tests that mock gateway endpoints
+// (all the Antigravity tests) would nondeterministically hit the real SPA
+// fallback instead of the mock depending on whether the SW wins the install
+// race. Blocking SWs makes route mocks and page state deterministic.
+test.use({ serviceWorkers: 'block' });
+
 const BREAKPOINTS = [
   { name: 'mobile-320', width: 320, height: 568 },
   { name: 'mobile-375', width: 375, height: 667 },

@@ -89,9 +89,12 @@ jobs:
         run: node tools/check-enterprise-deploy.mjs
       - name: Check goreleaser config
         run: |
-          # Installed, not skipped - the `|| echo "goreleaser not installed"`
-          # mask meant an invalid release config passed silently.
-          curl -fsSL https://goreleaser.com/install.sh | sh -s -- -b /usr/local/bin v2.5.1
+          # Installed from the release tarball rather than goreleaser.com/install.sh:
+          # that script started returning 404 (the domain now serves docs only).
+          curl -fsSL -o goreleaser.tgz \
+            https://github.com/goreleaser/goreleaser/releases/download/v2.5.1/goreleaser_Linux_x86_64.tar.gz
+          tar -xzf goreleaser.tgz goreleaser
+          mv goreleaser /usr/local/bin/goreleaser
           goreleaser check
       - name: Validate GitOps manifests
         run: node tools/check-gitops.mjs
@@ -188,6 +191,16 @@ jobs:
         run: npx playwright install chromium --with-deps || npx playwright install chromium
       - name: CLI, dashboard, docs
         run: pnpm test:cli && pnpm test:dashboard && pnpm test:docs
+      - name: Upload Playwright evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-evidence
+          path: |
+            apps/dashboard/test-results/
+            apps/dashboard/playwright-report/
+          retention-days: 7
+          if-no-files-found: ignore
       - name: Cookbook recipe count check
         run: node tools/check-cookbook.mjs
       - name: License posture check
