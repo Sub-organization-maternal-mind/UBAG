@@ -55,6 +55,10 @@ dependencies:
     repository: https://charts.bitnami.com/bitnami
     condition: minio.deploy
   - name: dragonfly
-    version: "~1.1.0"
-    repository: https://dragonflydb.github.io/charts
+    version: "v2.0.0"
+    # Vendored under charts/dragonfly: upstream killed both public helm
+    # indexes (dragonflydb.github.io/charts and dragonflydb.io/charts now
+    # redirect to 404), so a file:// dependency is the only lint-clean,
+    # network-independent source for the subchart.
+    repository: file://charts/dragonfly
     condition: dragonfly.deploy

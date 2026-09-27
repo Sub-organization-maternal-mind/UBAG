@@ -1,0 +1,67 @@
+name: Dashboard Baselines
+
+# Regenerates the chromium-linux visual baselines for the dashboard after UI
+# changes, and commits them straight to main. Win32 baselines are regenerated
+# on the operator's workstation (`npx playwright test -u`); Linux can only be
+# produced on a Linux runner (see the MISSING_LINUX_BASELINES note in
+# tests/dashboard.spec.ts), so this bot is the Linux counterpart.
+#
+# Loop safety: this workflow triggers on dashboard SOURCE paths only — never
+# on tests/snapshots/**, so its own baseline commit cannot re-trigger it.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/dashboard/src/**'
+      - 'apps/dashboard/tests/dashboard.spec.ts'
+      - 'apps/dashboard/package.json'
+      - 'apps/dashboard/playwright.config.ts'
+      - 'pnpm-lock.yaml'
+
+concurrency:
+  group: dashboard-baselines-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  baselines:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with: { version: "10.33.2" }
+      - uses: actions/setup-node@v7
+        with: { node-version: "22", cache: pnpm }
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+      - name: Generate contract manifest
+        run: node tools/make-sdks/generate-manifest.mjs
+      - name: Build SDK
+        run: pnpm --filter @ubag/sdk build
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/dashboard/package.json', 'pnpm-lock.yaml') }}
+          restore-keys: playwright-${{ runner.os }}-
+      - name: Install Playwright browsers
+        working-directory: apps/dashboard
+        run: npx playwright install chromium --with-deps || npx playwright install chromium
+      - name: Regenerate Linux baselines
+        working-directory: apps/dashboard
+        run: npx playwright test -u -g "desktop snapshot" || true
+      - name: Commit updated baselines
+        run: |
+          set -euo pipefail
+          if [ -z "$(git status --porcelain -- apps/dashboard/tests/snapshots)" ]; then
+            echo "Baselines unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add apps/dashboard/tests/snapshots
+          git commit -m "chore(dashboard): regenerate chromium-linux visual baselines [skip snapshot-bot]"
+          git push

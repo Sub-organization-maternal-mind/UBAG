@@ -15,7 +15,7 @@ export default {
         'paper-warm': 'oklch(93% 0.02 70 / <alpha-value>)',
         ink: 'oklch(20% 0.022 55 / <alpha-value>)',
         'ink-soft': 'oklch(38% 0.018 55 / <alpha-value>)',
-        'ink-mute': 'oklch(50% 0.012 60 / <alpha-value>)',
+        'ink-mute': 'oklch(46% 0.012 60 / <alpha-value>)',
         rule: 'oklch(86% 0.014 70 / <alpha-value>)',
         'rule-soft': 'oklch(91% 0.01 70 / <alpha-value>)',
         accent: 'oklch(58% 0.18 35 / <alpha-value>)',

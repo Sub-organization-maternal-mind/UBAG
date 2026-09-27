@@ -192,7 +192,7 @@
           <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger" role="alert">{mfaError}</div>
         {/if}
         <p class="text-xs text-ink-mute">
-          Enroll from <a href="{base}/users" class="text-accent-deep hover:underline">Users &amp; Roles</a> if this identity has no TOTP secret yet.
+          Enroll from <a href="{base}/users" class="text-accent-deep underline underline-offset-2 hover:text-accent">Users &amp; Roles</a> if this identity has no TOTP secret yet.
         </p>
       {/if}
     </div>
