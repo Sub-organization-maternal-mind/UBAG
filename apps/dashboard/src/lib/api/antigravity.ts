@@ -9,14 +9,35 @@ export interface AntigravityAccount {
   cooldown_until: string | null;
   created_at: string;
   worker_socket_present: boolean;
+  verification_state?: 'unverified' | 'pending' | 'verified' | 'failed';
+  verification_job_id?: string;
+  verified_at?: string;
 }
+
+export interface AntigravityLoginSession {
+  state: 'not_started' | 'starting' | 'awaiting_code' | 'verifying' | 'closed' | 'stopped';
+  authorization_url?: string;
+}
+
+async function accountLogin(id: string, method: 'GET' | 'POST' | 'DELETE', body?: unknown): Promise<AntigravityLoginSession> {
+  const res = await gw<AntigravityLoginSession>(
+    method, `/v1/antigravity/accounts/${encodeURIComponent(id)}/login`, body
+  );
+  if (res.data && !res.error) return res.data;
+  throw new Error(res.error || 'Login session unavailable');
+}
+
+export const getAntigravityLogin = (id: string) => accountLogin(id, 'GET');
+export const startAntigravityLogin = (id: string) => accountLogin(id, 'POST', { action: 'start' });
+export const submitAntigravityCode = (id: string, input: string) => accountLogin(id, 'POST', { action: 'input', input });
+export const stopAntigravityLogin = (id: string) => accountLogin(id, 'DELETE');
 
 export interface AntigravityConfig {
   default_model: string;
   default_effort: string;
   max_concurrent: number;
   account_count: number;
-  oauth_enabled: boolean;
+  oauth_enabled?: boolean;
 }
 
 export async function listAntigravityAccounts(): Promise<AntigravityAccount[]> {

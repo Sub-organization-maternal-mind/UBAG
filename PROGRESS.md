@@ -2,6 +2,153 @@
 
 Last updated: 2026-09-27
 
+## 2026-09-27 — Dashboard ultra-fluid polish pass (all 21 routes)
+
+A full UI/UX/responsiveness/polish sweep across the dashboard, built on top of
+the Antigravity entries below. Highlights, by area:
+
+**Foundations.** `warning`/`warning-soft` tokens added (the quota bars on
+/quotas and the manual-login badges on /targets previously referenced
+`bg-warning`/`text-warning`, which did not exist and rendered unstyled).
+Tailwind colors switched to the `oklch(... / <alpha-value>)` form: previously
+Tailwind silently dropped EVERY opacity-modified utility for oklch string
+colors, so `bg-ink/40` dialog backdrops and the mobile-nav scrim compiled to
+nothing (fully transparent). Shared component classes added to `app.css`
+(`.card`, `.btn*`, `.input`, `.label`, `.table-wrap/.thead/.th/.td`,
+`.skeleton`) plus a styled native-`<dialog>` chrome (`.ubag-modal`) with one
+consistent backdrop; every page now shares one spacing/padding system.
+
+**New shared components** in `src/lib/components/`: `PageHeader` (uniform
+header + per-route tab title), `Modal` (native `<dialog>` wrapper with
+Escape/backdrop/focus handling), `ConfirmDialog`, `SkeletonTable`,
+`SkeletonCards`, `UpdatedAgo`; `src/lib/poll.ts` (`pollWhileVisible`);
+root `+error.svelte` so render errors no longer blank the shell.
+
+**Shell.** Dead theme toggle removed (`class="dark"` was hardcoded and zero
+`dark:` variants existed — the toggle never changed anything; the dashboard
+stays warm-cream light per design.md). Sidebar nav grouped into the 5 IA
+sections with Escape-to-close drawer and 40px+ touch targets. Health poll now
+pauses when the tab is hidden. Content pane got a consistent
+`max-w-[1440px]` container and scrolls to top on navigation.
+
+**Pages (21 routes).** Workflows master-detail now stacks below `lg` (the
+fixed 256px list used to crush the detail pane to ~150px on phones);
+provider segmented controls are 2x2 on mobile instead of 4-crushed-columns;
+stale "ChatGPT -> Gemini -> DeepSeek" copy updated to the real 4-provider
+chain; Browser KPI cards collapse to 1-col on mobile; WorkflowDag uses token
+colors + scales fluidly; hand-rolled modals on users/webhooks/workflows
+migrated to the shared Modal (Escape/focus/scroll containment); native
+`window.confirm`/`window.prompt` on antigravity/webhooks replaced with
+ConfirmDialog/Modal; Overview recent-jobs table got horizontal scroll back;
+UUID cells truncated; audit log paginated (50/page) with one-pass chain
+verification; security's bare `/users` link fixed for the `/dashboard` base
+path; metrics chart container made fluid. Tested copy left byte-identical.
+
+**Auto-refresh + performance.** Jobs / Failed/DLQ / Workflows / Browser /
+Webhooks now refresh every 45s while the tab is visible (silent — no
+skeleton flash; manual Refresh still there with an "updated Xm ago" hint).
+Per-keystroke `JSON.stringify` filters replaced with field haystacks + 120ms
+debounce on 7 pages; stale-response guards on cursor pagination. LiveBrowser
+switched to pointer events (touch/pen now drive the remote Chrome),
+exponential reconnect backoff capped at 30s (was a blind 1.5s hot-loop), and
+a frame-decode queue that keeps only the latest pending frame. xterm pane
+refits on container resize. StatusBadge saffron text darkened to `warning`
+for ≥4.5:1 contrast; axe-core loop extended to all 21 routes.
+
+**Static server.** `serve-dashboard.mjs` now sends `cache-control: immutable,
+max-age=31536000` for `/_app/immutable/*` (was no-cache for everything,
+forcing full re-downloads) and gzips text assets on the fly; covered by a
+new test.
+
+**Weight budget fixed.** The Skeleton preset plugin (unused — zero Skeleton
+classes in src/) was generating its entire class library into the global
+stylesheet; removing it cut the global CSS from ~113KB to 40KB and dist
+total from 1.1MB to ~904KB — every `tools/check-weight.mjs` budget now
+passes instead of two breaching.
+
+**Focused checks:** `svelte-check` 0 errors (2 pre-existing LiveBrowser
+warnings); vitest `src/lib` 43/43; `node --test serve-dashboard.test.mjs`
+3/3; Playwright chromium: 65 passed / 0 failed with `--retries=2` (4 flaky
+passes caused by local `ERR_NETWORK_CHANGED` flapping, not page faults);
+visual snapshots regenerated for the new UI (`npx playwright test -u` on
+win32 — Linux baselines still need the noble-image regen for the 4 routes
+that skip there); all weight budgets pass.
+
+## 2026-09-27 — Antigravity dashboard sign-in and verified account routing (local only)
+
+The dashboard now starts/stops a per-account worker login session, opens only
+a vetted Google authorization URL, and relays a code-shaped one-time response
+through the authenticated gateway without storing or echoing it. Worker PTY
+echo is disabled and raw CLI output is discarded; any Linux Secret Service
+password prompt still requires the operator's own terminal. Account status
+comes from the latest owned, account-pinned canary job: only clean completion
+reports `verified` and `verified_at`, while submission remains `pending`.
+
+The per-job executor now routes ordinary Antigravity CLI work only through
+enabled, non-cooling accounts whose latest matching pinned canary completed.
+An unfinished canary may use its own account but cannot authorize any other
+job. The gateway stores the canary ID before enqueue so a fast worker can
+recognize it. The `UBAG_ANTIGRAVITY_ENABLED` switch blocks both login and
+direct CLI execution when off, even with a pre-existing socket. The VPS
+runbook now describes dashboard code entry and the separate SSH/keyring
+fallback; no production OAuth setting was changed.
+
+**Focused local checks:** 22 Python worker tests and focused Go account,
+executor, HTTP, and runner-wiring tests; Redocly OpenAPI lint; Svelte check
+(1 unrelated type error in the already-modified Webhooks route, 2 existing
+LiveBrowser warnings; no Antigravity file diagnostics); a dashboard-only build
+with no nonempty `UBAG_DEV_DEFAULT_*` value; and six synthetic Antigravity
+Playwright tests including code privacy, pinned-canary status, 401 handling,
+and layout at 320, 375, 414, and 768 px. The dashboard browser checks use an
+isolated static preview and mocked API responses, not a real Google account.
+
+**Still unverified:** the official `agy` Linux remote-login prompt and code
+handling, Secret Service persistence/unlock, Docker socket permissions,
+quota behavior, a completed real account-backed canary, and production
+deployment. The running production-backed local gateway previously omitted
+`oauth_enabled` despite the checked-in handler exposing it; it was not
+rebuilt or changed. Keep OAuth disabled on production until the Linux and
+real-canary gates have been completed by the operator.
+
+## 2026-09-27 — Local Antigravity dashboard restored; OAuth runtime remains gated
+
+The local static dashboard at `http://127.0.0.1:58180/antigravity` is now
+connected to the gateway through a same-origin `/v1` proxy. Previously its
+static server returned `index.html` for API requests, so the browser reported
+"Invalid response from gateway". The static proxy pins upstream requests to
+the configured gateway even for absolute-form request targets, and mocked
+account POSTs preserve the body, auth header, and status. Vite development
+also proxies `/v1` for fresh sessions; an explicitly saved gateway URL still
+takes precedence. The production-backed `start-local.ps1` no longer bakes its
+gateway app secret into dashboard assets; an in-process scan of the rebuilt
+bundle found no copy of the configured credential. The operator enters it
+through Settings instead.
+
+**Observed runtime:** The local gateway's health endpoint returns 200 JSON.
+Without a saved credential, the Antigravity page gets real 401 responses and
+links directly to Settings. With the existing configured local credential,
+read-only account and config GETs through the dashboard proxy each return 200
+JSON; no account metadata or credential was printed. The running gateway's
+config omits `oauth_enabled`, although the checked-in handler includes it.
+The dashboard now reports "OAuth status unavailable" in this case and keeps
+test jobs disabled rather than claiming the gateway is disabled. No gateway
+rebuild or production-backed account mutation was performed.
+
+**Focused checks:** `node --test serve-dashboard.test.mjs` (2 pass), the
+dashboard settings Vitest file (2 pass), three focused Antigravity Playwright
+checks (401 navigation, synthetic account rendering, missing OAuth flag),
+`svelte-check` (0 errors; 2 existing LiveBrowser warnings), and PowerShell
+launcher parse (0 errors). Browser checks at 320, 375, 414, and 768 px found
+no horizontal overflow for either the real 401 view or synthetic account data.
+
+**Remaining:** No real authenticated browser account view was inspected; its
+authorized rendering was exercised with synthetic data, while real authorized
+GETs were validated without exposing their contents. The gateway binary's
+missing OAuth flag needs reconciliation with the checked-in handler before
+calling its OAuth state known. Linux container, keyring, CLI sign-in, quota
+error, and completed real-job gates remain unverified. Production OAuth is
+still disabled and must not be enabled on this evidence alone.
+
 ## 2026-09-27 — Antigravity OAuth accounts: tenant-safe canaries, isolated sockets, admin route (local only)
 
 The Antigravity CLI integration remains **opt-in and not deployed**. Admin
@@ -37,12 +184,8 @@ documentation; Docker is unavailable on this Windows machine.
 **Remaining / runtime state:** No container build, Linux keyring persistence,
 socket permission probe, authenticated CLI JSONL or quota-error canary, or
 real-job outcome has been verified; OAuth remains disabled on production.
-The local dashboard Vite server is running at `http://127.0.0.1:5175/antigravity`
-for development only; it is not a working operator login or a deployed route.
-Mobile/browser gates at 320/375/414/768 px are **not verified**: the existing
-dev CSP blocks SvelteKit's inline bootstrap and a browser-only bypass exposes
-a shared layout hydration error before account data renders. The production
-build's CSP hash patch was not run as part of this targeted local pass.
+The dashboard and mobile/browser status from this earlier pass is superseded
+by the local launcher verification above; it is not a production deployment.
 
 ## 2026-09-27 — Infrastructure hardening pass: data containment, fail-closed migrations, real gates (6 commits)
 

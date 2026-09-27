@@ -209,10 +209,10 @@ if (Test-PortOpen $dashboardPort) {
     Push-Location $repoRoot
     & pnpm --filter @ubag/sdk build
     Pop-Location
-    $env:UBAG_DEV_DEFAULT_GATEWAY_URL = $gatewayUrl
-    # Baked build-time default (same pattern as tools/local-launcher) so a fresh
-    # browser profile opens already authenticated to the local gateway.
-    $env:UBAG_DEV_DEFAULT_APP_SECRET = $env:UBAG_APP_SECRET
+    # Use the dashboard's same-origin API proxy. Never bake the production-backed
+    # gateway credential into assets served to a browser.
+    $env:UBAG_DEV_DEFAULT_GATEWAY_URL = ''
+    $env:UBAG_DEV_DEFAULT_APP_SECRET = ''
     # Browser Sessions widget streams the PRODUCTION Chrome on the VPS through
     # the SSH tunnel (not a local bridge on the default 58090 port).
     $env:UBAG_DEV_DEFAULT_LIVE_BROWSER_WS = 'ws://127.0.0.1:15990'
@@ -223,6 +223,7 @@ if (Test-PortOpen $dashboardPort) {
 
   Write-Host "Starting dashboard on port $dashboardPort..."
   $env:PORT = "$dashboardPort"
+  $env:UBAG_DASHBOARD_GATEWAY_URL = $gatewayUrl
   Start-Process -FilePath 'node' -ArgumentList 'serve-dashboard.mjs' -WorkingDirectory $repoRoot -WindowStyle Minimized
 
   if (-not (Wait-ForHttp $dashboardUrl 30)) {

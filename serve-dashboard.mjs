@@ -8,9 +8,11 @@ import http from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gzipSync } from 'node:zlib';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), 'apps', 'dashboard', 'dist');
 const port = Number(process.env.PORT || 58180);
+const gatewayUrl = new URL(process.env.UBAG_DASHBOARD_GATEWAY_URL || 'http://127.0.0.1:58080');
 const types = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript',
@@ -27,9 +29,39 @@ const types = {
   '.woff2': 'font/woff2',
 };
 
+// Content types worth gzipping on the fly (text-ish assets).
+const compressible = new Set([
+  'text/html; charset=utf-8',
+  'text/javascript',
+  'text/css',
+  'application/json',
+  'image/svg+xml',
+]);
+
 http.createServer(async (req, res) => {
   try {
-    const urlPath = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+    const requestUrl = new URL(req.url, 'http://localhost');
+    const urlPath = decodeURIComponent(requestUrl.pathname);
+    if (urlPath === '/v1' || urlPath.startsWith('/v1/')) {
+      const upstream = http.request(new URL(requestUrl.pathname + requestUrl.search, gatewayUrl), {
+        method: req.method,
+        headers: { ...req.headers, host: gatewayUrl.host },
+      }, (response) => {
+        res.writeHead(response.statusCode ?? 502, response.headers);
+        response.pipe(res);
+      });
+      upstream.on('error', () => {
+        if (res.headersSent) {
+          res.destroy();
+        } else {
+          res.writeHead(502, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Gateway unavailable' }));
+        }
+      });
+      res.on('close', () => upstream.destroy());
+      req.pipe(upstream);
+      return;
+    }
     let rel = urlPath.replace(/^\/+/, '');
     if (rel === '') rel = 'index.html';
     let file = path.resolve(root, rel);
@@ -44,10 +76,20 @@ http.createServer(async (req, res) => {
       file = path.join(root, 'index.html');
       data = await readFile(file);
     }
-    res.writeHead(200, {
+    // Vite content-hashes everything under _app/immutable — safe to cache
+    // forever. Everything else (index.html, sw.js, manifest) revalidates.
+    const immutable = urlPath.includes('/_app/immutable/');
+    const headers = {
       'content-type': types[path.extname(file).toLowerCase()] || 'application/octet-stream',
-      'cache-control': 'no-cache',
-    });
+      'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+    };
+    const acceptsGzip = (req.headers['accept-encoding'] ?? '').includes('gzip');
+    if (acceptsGzip && compressible.has(headers['content-type']) && data.length > 1024) {
+      headers['content-encoding'] = 'gzip';
+      headers['vary'] = 'Accept-Encoding';
+      data = gzipSync(data);
+    }
+    res.writeHead(200, headers);
     res.end(data);
   } catch (err) {
     res.writeHead(500, { 'content-type': 'text/plain' });

@@ -96,6 +96,143 @@ test.describe('Page routing', () => {
   }
 });
 
+test('Antigravity 401 links to gateway credential settings', async ({ page }) => {
+  await page.route('**/v1/antigravity/**', (route) => route.fulfill({
+    status: 401,
+    contentType: 'application/json',
+    body: '{"error":"unauthorized"}',
+  }));
+  await page.goto('/antigravity');
+  await expect(page.getByText('Sign in to manage Antigravity accounts.')).toBeVisible();
+  const settingsLink = page.getByRole('main').getByRole('link', { name: 'Settings' });
+  await expect(settingsLink).toBeVisible();
+  await settingsLink.click();
+  await expect(page.getByLabel('App Secret (Bearer token)')).toBeVisible();
+});
+
+test('Antigravity sign-in keeps the code private until an account-pinned canary completes', async ({ page }) => {
+  const accountID = 'acct_1';
+  const authorizationURL = 'https://accounts.google.com/o/oauth2/auth?state=synthetic';
+  let loginState = 'not_started';
+  let verificationState = 'unverified';
+  let canaryCalls = 0;
+
+  await page.route('**/v1/antigravity/accounts', (route) => route.fulfill({
+    json: { accounts: [{
+      account_id: accountID, label: 'Synthetic worker', tier: 'pro', enabled: true,
+      last_used: '0001-01-01T00:00:00Z', cooldown_until: null,
+      created_at: '2026-01-01T00:00:00Z', worker_socket_present: true,
+      verification_state: verificationState,
+      verification_job_id: verificationState === 'unverified' ? undefined : 'job_synthetic',
+      verified_at: verificationState === 'verified' ? '2026-01-01T12:00:00Z' : undefined,
+    }] },
+  }));
+  await page.route('**/v1/antigravity/config', (route) => route.fulfill({
+    json: { default_model: 'test-model', default_effort: 'high', account_count: 1, oauth_enabled: true },
+  }));
+  await page.route(`**/v1/antigravity/accounts/${accountID}/login`, (route) => {
+    const method = route.request().method();
+    if (method === 'POST') {
+      const input = route.request().postDataJSON();
+      if (input.action === 'start') loginState = 'awaiting_code';
+      if (input.action === 'input') {
+        expect(input.input).toBe('synthetic-code');
+        loginState = 'verifying';
+      }
+    } else if (method === 'DELETE') loginState = 'stopped';
+    return route.fulfill({
+      json: {
+        state: loginState,
+        ...(loginState === 'awaiting_code' ? { authorization_url: authorizationURL } : {}),
+      },
+    });
+  });
+  await page.route('**/v1/antigravity/test', (route) => {
+    expect(route.request().postDataJSON().account_id).toBe(accountID);
+    canaryCalls++;
+    verificationState = 'pending';
+    return route.fulfill({ status: 202, json: { job_id: 'job_synthetic', status: 'accepted', model: 'test-model' } });
+  });
+
+  await page.goto('/antigravity');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.getByRole('link', { name: 'Open Google sign-in' })).toHaveAttribute('href', authorizationURL);
+  for (const bp of BREAKPOINTS.filter(({ width }) => width <= 768)) {
+    await page.setViewportSize({ width: bp.width, height: bp.height });
+    const layout = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+      overflowingControls: Array.from(document.querySelectorAll('main button, main input, main select, main a'))
+        .filter((element) => {
+          const bounds = element.getBoundingClientRect();
+          return bounds.left < -1 || bounds.right > document.documentElement.clientWidth + 1;
+        }).map((element) => element.textContent?.trim()),
+    }));
+    expect(layout.scrollWidth, `Login panel horizontal scroll at ${bp.name}`).toBeLessThanOrEqual(layout.clientWidth + 1);
+    expect(layout.overflowingControls, `Clipped login controls at ${bp.name}`).toEqual([]);
+  }
+  expect(canaryCalls).toBe(0);
+  await page.getByLabel('Authorization code').fill('synthetic-code');
+  await page.getByRole('button', { name: 'Submit code' }).click();
+  await expect(page.getByText('Code submitted')).toBeVisible();
+  await expect(page.getByText('synthetic-code')).toHaveCount(0);
+  expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain('synthetic-code');
+  await page.getByRole('button', { name: 'Verify with test job' }).click();
+  await expect.poll(() => canaryCalls).toBe(1);
+  await expect(page.getByText('Canary pending')).toBeVisible();
+  verificationState = 'verified';
+  await page.getByRole('button', { name: 'Refresh accounts' }).click();
+  await expect(page.getByText(/Canary passed/)).toBeVisible();
+});
+
+test('Antigravity account details fit the Hallmark mobile breakpoints', async ({ page }) => {
+  await page.route('**/v1/antigravity/accounts', (route) => route.fulfill({
+    json: { accounts: [{
+      account_id: 'synthetic-slot', label: 'Synthetic slot', tier: 'pro', enabled: true,
+      last_used: '0001-01-01T00:00:00Z', cooldown_until: null,
+      created_at: '2026-01-01T00:00:00Z', worker_socket_present: false,
+      verification_state: 'unverified',
+    }] },
+  }));
+  await page.route('**/v1/antigravity/config', (route) => route.fulfill({
+    json: {
+      default_model: 'test-model', default_effort: 'high', max_concurrent: 1,
+      account_count: 1, oauth_enabled: false,
+    },
+  }));
+
+  for (const bp of BREAKPOINTS.filter(({ width }) => width <= 768)) {
+    await page.setViewportSize({ width: bp.width, height: bp.height });
+    await page.goto('/antigravity');
+    await expect(page.getByText('Synthetic slot')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Test account' })).toBeDisabled();
+    const layout = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+      overflowingControls: Array.from(document.querySelectorAll('main button, main input, main select, main a'))
+        .filter((element) => {
+          const bounds = element.getBoundingClientRect();
+          return bounds.left < -1 || bounds.right > document.documentElement.clientWidth + 1;
+        }).map((element) => element.textContent?.trim()),
+    }));
+    expect(layout.scrollWidth, `Horizontal scroll at ${bp.name}`).toBeLessThanOrEqual(layout.clientWidth + 1);
+    expect(layout.overflowingControls, `Clipped controls at ${bp.name}`).toEqual([]);
+  }
+});
+
+test('Antigravity does not claim an unreported OAuth status is disabled', async ({ page }) => {
+  await page.route('**/v1/antigravity/accounts', (route) => route.fulfill({
+    json: { accounts: [] },
+  }));
+  await page.route('**/v1/antigravity/config', (route) => route.fulfill({
+    json: { default_model: 'test-model', default_effort: 'high', max_concurrent: 1, account_count: 0 },
+  }));
+  await page.goto('/antigravity');
+  await expect(page.getByText('OAuth status unavailable')).toBeVisible();
+  await expect(page.getByText('Disabled on gateway')).toHaveCount(0);
+});
+
 test('jobs attachment picker fits the Hallmark mobile breakpoints', async ({ page }) => {
   for (const bp of BREAKPOINTS.filter(({ width }) => width <= 768)) {
     await page.setViewportSize({ width: bp.width, height: bp.height });
@@ -190,6 +327,28 @@ test.describe('Accessibility (axe-core)', () => {
       JSON.stringify(critical.map((v) => v.description))
     ).toHaveLength(0);
   });
+
+  for (const route of ALL_ROUTES) {
+    if (route.path === '/' || route.path === '/settings') continue; // covered above
+    test(`${route.name} passes axe check`, async ({ page }) => {
+      await page.goto(route.path);
+      await page.waitForLoadState('domcontentloaded');
+      await page.waitForTimeout(300); // let error/empty states settle
+
+      await injectAxe(page);
+      const violations = await getViolations(page, undefined, {
+        runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] },
+      });
+
+      const critical = violations.filter(
+        (v) => v.impact === 'critical' || v.impact === 'serious'
+      );
+      expect(
+        critical,
+        `${route.path}: ` + JSON.stringify(critical.map((v) => ({ id: v.id, description: v.description })))
+      ).toHaveLength(0);
+    });
+  }
 });
 
 test.describe('§24.2 page set completeness', () => {
