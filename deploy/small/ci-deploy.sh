@@ -108,8 +108,10 @@ deploy_dashboard() {
 
   # Unpack to a staging dir first; a truncated/corrupt tarball must never take
   # over the live document root. tar exits non-zero on a short read, which with
-  # set -e aborts before the swap.
-  if ! tar -xzf - -C "$staging"; then
+  # set -e aborts before the swap. The CI tarball is created with
+  # `tar -czf ... -C apps/dashboard dist`, i.e. everything under a top-level
+  # dist/ component — strip it so staging IS the document root.
+  if ! tar -xzf - -C "$staging" --strip-components=1; then
     rm -rf "$staging"
     fail "dashboard tarball unpack failed; live dist untouched"
   fi
