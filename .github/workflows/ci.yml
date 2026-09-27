@@ -65,17 +65,23 @@ jobs:
         run: node tools/check-nginx-dashboard.mjs
       - name: Lint Helm chart
         run: |
-          # Install helm rather than skipping when it is missing: the `|| echo
-          # "helm not installed, skipping"` mask meant this check could never
-          # fail, and the chart's own comments state it must lint cleanly with
-          # the backing-service deploy toggles false (the default), so a
+          # Install helm rather than skipping when it is missing: the
+          # `|| echo "helm not installed, skipping"` mask meant this check could
+          # never fail, and the chart's own comments state it must lint cleanly
+          # with the backing-service deploy toggles false (the default), so a
           # failure here is a real regression.
           curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 -o get-helm-3
           chmod +x get-helm-3
           ./get-helm-3
           helm version
-          # All optional in-cluster backing services are toggled off by default,
-          # so no subchart needs vendoring and this runs fully offline.
+          # The chart declares four OPTIONAL in-cluster backing-service subcharts
+          # (postgresql, nats, minio, dragonfly) behind *.deploy toggles. Helm
+          # still requires every declared dependency to be resolvable before it
+          # will lint, even one whose condition is false, so the deps have to be
+          # materialised first. `dependency update` (not `build`) because there
+          # is no committed Chart.lock to build from. Rendering afterwards proves
+          # the default - all toggles false - still needs none of them.
+          helm dependency update deploy/helm/ubag
           helm lint deploy/helm/ubag
           helm template deploy/helm/ubag > /dev/null
           helm template deploy/helm/ubag -f deploy/helm/ubag/values-ha.yaml > /dev/null
@@ -200,6 +206,13 @@ jobs:
   security-scan:
     name: Supply-chain & vuln scan
     runs-on: ubuntu-latest
+    # The workflow-level default is contents: read. gitleaks-action uploads a
+    # SARIF report to the code-scanning API, which needs security-events: write;
+    # without this scope the job fails before any step runs ("Set up job").
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
     steps:
       - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
