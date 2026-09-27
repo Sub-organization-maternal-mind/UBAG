@@ -58,6 +58,11 @@ jobs:
       # drift".
       - name: Regenerate Linux baselines
         working-directory: apps/dashboard
+        # Same webServer as the ci dashboard job (serve-dashboard + dead
+        # gateway): under vite preview the /v1 SPA fallback produces a
+        # DIFFERENT error panel than the proxy's 502, so baselines captured
+        # here would not match what ci renders (page-height drift).
+        env: { UBAG_PLAYWRIGHT_PREVIEW_PORT: "5899" }
         run: npx playwright test -u -g "desktop snapshot"
       - name: Commit updated baselines
         run: |
