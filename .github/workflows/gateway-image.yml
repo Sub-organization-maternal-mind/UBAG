@@ -9,13 +9,18 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - main
       - perf/latency-az
     paths:
       - 'apps/gateway/**'
       - 'apps/worker/**'
       - 'adapters/**'
+      - 'apps/dashboard/**'
       - 'packages/proto/gen/go/**'
+      - 'packages/sdk-typescript/**'
+      - 'packages/openapi/**'
       - 'deploy/small/gateway.Dockerfile'
+      - 'deploy/small/ci-deploy.sh'
       - '.github/workflows/gateway-image.yml'
 
 concurrency:
@@ -78,7 +83,7 @@ jobs:
           # names an exact build instead of racing a moving branch tag.
           tags: |
             ghcr.io/sub-organization-maternal-mind/ubag-gateway:sha-${{ github.sha }}
-            ghcr.io/sub-organization-maternal-mind/ubag-gateway:perf-latency-az
+            ghcr.io/sub-organization-maternal-mind/ubag-gateway:${{ github.ref_name == 'perf/latency-az' && 'perf-latency-az' || 'main' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -89,16 +94,48 @@ jobs:
           echo "ghcr.io/sub-organization-maternal-mind/ubag-gateway:sha-${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
+  # The dashboard is plain static files: build the dist here (pnpm workspace +
+  # generated contract manifest + sdk), tar it, and stream it to the VPS in the
+  # deploy job. The nginx-dashboard container bind-mounts apps/dashboard/dist,
+  # so replacing that directory is the whole deploy — the box never runs
+  # node/pnpm and never builds anything.
+  dashboard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with: { version: "10.33.2" }
+      - uses: actions/setup-node@v7
+        with: { node-version: "22", cache: pnpm }
+      - name: Install workspace
+        run: pnpm install --frozen-lockfile
+      - name: Generate contract manifest
+        run: node tools/make-sdks/generate-manifest.mjs
+      - name: Build SDK
+        run: pnpm --filter @ubag/sdk build
+      - name: Build dashboard (base path /dashboard/)
+        env:
+          UBAG_BASE_PATH: /dashboard
+        run: pnpm --filter @ubag/dashboard build
+      - name: Tar dist
+        run: tar -czf /tmp/dashboard-dist.tar.gz -C apps/dashboard dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-dist-${{ github.sha }}
+          path: /tmp/dashboard-dist.tar.gz
+          retention-days: 7
+
   # Pull-based deploy: the VPS never builds and never stores a registry
   # credential. This job authenticates with the run's own GITHUB_TOKEN, which
   # expires with the job, and hands it to the box over stdin for a single pull.
   # The deploy key is pinned by command= to deploy/small/ci-deploy.sh, so it
   # cannot open a shell or deploy anything but a validated sha-<commit> tag.
   deploy:
-    # Both, deliberately: a green build only proves it compiles. This branch
-    # deploys straight to prod, which drives live radiology reporting.
-    needs: [build, test]
-    if: github.ref == 'refs/heads/perf/latency-az'
+    # Both, deliberately: a green build only proves it compiles. main and the
+    # perf rollout branch deploy straight to prod, which drives live radiology
+    # reporting; ci-deploy.sh health-checks and rolls back on failure.
+    needs: [build, test, dashboard]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/perf/latency-az'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -122,6 +159,20 @@ jobs:
             -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes \
             "root@${{ secrets.UBAG_DEPLOY_HOST }}" \
             "deploy-gateway sha-${{ github.sha }}"
+
+      - name: Download dashboard dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dashboard-dist-${{ github.sha }}
+          path: /tmp/dashboard-artifact
+
+      - name: Deploy dashboard
+        run: |
+          set -euo pipefail
+          ssh \
+            -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes \
+            "root@${{ secrets.UBAG_DEPLOY_HOST }}" \
+            "deploy-dashboard" < /tmp/dashboard-artifact/dashboard-dist.tar.gz
 
       - name: Revoke local key material
         if: always()
