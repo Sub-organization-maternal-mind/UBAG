@@ -16,3 +16,8 @@ FROM minio/mc:RELEASE.2025-04-16T18-13-26Z AS mc
 FROM postgres:16-alpine
 COPY --from=mc /usr/bin/mc /usr/local/bin/mc
 RUN mc --version
+
+# trivy:ignore:DS-0002 — the backup runner writes to host-mounted backup
+# directories owned by root and runs under the compose `backup` profile with
+# root-owned volume mounts; dropping privileges would break the writes it
+# exists to perform.

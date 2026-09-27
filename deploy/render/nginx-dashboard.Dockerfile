@@ -33,4 +33,7 @@ RUN chmod +x /docker-entrypoint.d/40-generate-htpasswd.sh
 # UBAG_-prefixed vars, so nginx variables like $host/$uri survive untouched.
 ENV NGINX_ENVSUBST_FILTER=UBAG_
 
+# trivy:ignore:DS-0002 — the official nginx entrypoint must start as root to
+# run envsubst and generate .htpasswd before re-execing workers as the nginx
+# user; this is the upstream image's designed lifecycle, not an oversight.
 EXPOSE 80
