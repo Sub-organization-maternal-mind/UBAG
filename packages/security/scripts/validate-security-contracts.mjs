@@ -32,19 +32,25 @@ for (const header of [WEBHOOK_SIGNATURE_HEADER, WEBHOOK_TIMESTAMP_HEADER, WEBHOO
   check(`webhook header ${header} uses UBAG namespace`, () => header.startsWith("Ubag-Webhook-"));
 }
 
-for (const role of ["viewer", "developer", "operator", "admin", "superadmin", "support", "service"]) {
+// Mirrors the gateway-enforced role table in
+// apps/gateway/internal/authz/authz.go (cross-checked by tools/check-contracts.mjs).
+for (const role of ["viewer", "developer", "operator", "admin", "superadmin", "service"]) {
   check(`role ${role} exported`, () => UBAG_ROLES.includes(role));
 }
 
-for (const action of ["secret:rotate", "webhook:replay", "device:enroll", "audit:read", "rate_limit:manage", "role:manage"]) {
+for (const action of ["secret:rotate", "webhook:replay", "device:enroll", "audit:read", "rate_limit:manage", "role:manage", "data:erase"]) {
   check(`action ${action} exported`, () => UBAG_ACTIONS.includes(action));
 }
 
 const matrix = permissionMatrix();
 check("viewer cannot rotate secrets", () => !matrix.viewer.includes("secret:rotate"));
 check("admin can rotate secrets", () => matrix.admin.includes("secret:rotate"));
+check("admin can erase data", () => matrix.admin.includes("data:erase"));
 check("superadmin can manage policy", () => matrix.superadmin.includes("policy:manage"));
-check("support requires support access action only, not secret rotation", () => matrix.support.includes("support:access") && !matrix.support.includes("secret:rotate"));
+check("support:access is held only by superadmin (there is no support role)", () => {
+  const holders = Object.keys(matrix).filter((role) => matrix[role].includes("support:access"));
+  return holders.length === 1 && holders[0] === "superadmin";
+});
 
 for (const eventName of [
   "auth.app_secret.accepted",

@@ -2,6 +2,76 @@
 
 Last updated: 2026-09-27
 
+## 2026-09-27 — Architecture-audit closure items (templates/RBAC/coverage/reaper tests)
+
+Five audit follow-ups, verified with targeted checks only; NOT committed. Items
+touching `internal/httpapi`/`internal/middleware`/`blueprint-coverage.md` were
+explicitly left to the parallel agent that owns those uncommitted edits.
+
+1. **`internal/templates` tests (was 0).** New
+   `apps/gateway/internal/templates/templates_test.go` (10 tests): scope
+   visibility (`*`/empty/exact tenant+app, TrimSpace id normalization),
+   ID-ordered `List` with exclusive `AfterID` cursor / unknown-cursor
+   ignore / `Limit`, `Set`+`Get` clone isolation for maps and body, valid
+   render, empty-body backward compat, missing-variable → empty substitution,
+   `errors.Is(ErrNotFound)` for unknown AND out-of-scope ids (scoping enforced
+   on the Render path), malformed pongo2 body rejected at compile with the
+   template id in the error, and the discovered escape contract: pongo2 v6
+   default autoescape HTML-escapes variable output (pinned by test).
+2. **RBAC spec ↔ gateway cross-check (audit finding 32).**
+   `packages/security/src/rbac.ts` now mirrors
+   `apps/gateway/internal/authz/authz.go` exactly: the phantom `support` role
+   is gone from `UBAG_ROLES`/`ROLE_PERMISSIONS` (support access stays
+   reason-gated by the `support:access` ACTION, held only by superadmin; the
+   ts `authorize()` support check keys on the action, since `support` is an
+   actor type, not a role), and the gateway-enforced per-role action sets were
+   added (developer/operator/admin/service gain artifact/alerts/browser/
+   concurrency/`region:manage`/`data:erase` to match the enforced table).
+   `packages/security/scripts/validate-security-contracts.mjs` updated off the
+   support-role assertions. `tools/check-contracts.mjs` gained the gate: it
+   extracts the role table from BOTH files (superadmin normalized to the
+   wildcard — Go fast path ↔ `Set(UBAG_ACTIONS)`) and fails on any role-set or
+   per-role action-set disagreement; negative-tested against re-adding
+   `support`, dropping `region:manage`, and wildcard asymmetry. Docs fixed:
+   `security/model.md` + `security/implementation-contracts.md` no longer list
+   a `support` role. Verified: `node tools/check-contracts.mjs` → "RBAC
+   cross-check ok" with identical role→action maps; `pnpm test:security` green
+   (7 tests + validation). Known pre-existing red (NOT this workstream):
+   check-contracts also fails on 3 parity terms (`Ubag-Trace-Id`,
+   `handleWebSocketUpgrade`, `Sec-WebSocket-Accept`) removed by the parallel
+   agent's uncommitted `internal/httpapi/server.go` edit — present in HEAD.
+3. **IMPLEMENTATION_COVERAGE.md counts corrected.** 41/19 → 45 executable REST
+   scenarios + 286 coverage scenarios, recounted from
+   `packages/conformance/fixtures/v0/scenarios.json` (`scenarios`=45,
+   `coverage_scenarios`=286); derivation documented inline.
+4. **`cmd/ubag` smoke test (was 0).** New `apps/gateway/cmd/ubag/main_test.go`:
+   `setEdgeDefaults` fills the full edge-profile env when unset, never
+   overwrites operator-set values, and `edgeSpoolDir`/`edgeSQLiteDSN` produce
+   absolute `~/.ubag` paths with the WAL/busy-timeout/foreign-keys pragmas.
+   `main()` itself stays untested by design (it boots the server).
+5. **Worker reaper tests (the one irreversible code path).** New
+   `apps/worker/tests/test_run_chat_reaper.py` (14 tests, unittest style, all
+   externals mocked — no browser/ledger/network): dry-run is the default and
+   reports `would_delete` only; explicit `UBAG_CHAT_REAPER_ENABLED=true`
+   variants (`1/yes/on/TRUE`) activate delete; `0/false/no/off/""` never do;
+   empty ledger exits clean; 8-entry malformed/bound/deleted/id-less/fresh
+   ledger yields exactly 1 target via the real `chat_ledger.reapable`; TTL
+   boundary (age == ttl reapable, just-under not) + garbage-TTL fallback to
+   7200; unknown provider and `delete_chat is None` providers are skipped
+   fail-closed with the driver never created; only VERIFIED deletions are
+   marked in the ledger; one failing/raising chat doesn't stop the rest;
+   `driver.open` failure is contained, still closes, marks nothing; browser
+   opens with `headless=False`; `_emit` writes compact JSONL. Verified: full
+   `node tools/run-python-worker-tests.mjs` green (347 pytest + mock-adapter
+   unittest suite + compileall + smoke).
+
+Verification summary (all run this session): `gofmt -l` clean on
+`internal/templates`, `cmd/ubag`, `internal/authz`; `go build ./...` ok;
+scoped `go vet` + `go test` green for templates/cmd/ubag/authz (repo-wide
+`gofmt -l .`/`go vet ./...` currently report pre-existing issues ONLY in the
+parallel agent's uncommitted `internal/httpapi/server.go` and
+`internal/middleware/middleware_test.go`).
+
 ## 2026-09-27 — Gateway throughput/retention hardening (audit workstream 5)
 
 Nine audit items on the executor/httpapi hot paths, all verified with targeted

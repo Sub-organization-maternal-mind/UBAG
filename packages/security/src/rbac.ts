@@ -1,4 +1,7 @@
-export const UBAG_ROLES = ["viewer", "developer", "operator", "admin", "superadmin", "support", "service"] as const;
+// Roles mirror the gateway-enforced table in
+// apps/gateway/internal/authz/authz.go (roleActions is the source of truth);
+// tools/check-contracts.mjs cross-checks the two files and fails on drift.
+export const UBAG_ROLES = ["viewer", "developer", "operator", "admin", "superadmin", "service"] as const;
 export type UbagRole = (typeof UBAG_ROLES)[number];
 
 export const UBAG_ACTIONS = [
@@ -16,6 +19,7 @@ export const UBAG_ACTIONS = [
   "role:manage",
   "policy:manage",
   "data:export",
+  "data:erase",
   "support:access",
   // Gateway-enforced actions (internal/authz roleActions is the source of
   // truth; this list is kept in sync with it).
@@ -68,14 +72,17 @@ export interface AuthzDecision {
   requiredAudit: boolean;
 }
 
+// Per-role action sets mirror apps/gateway/internal/authz/authz.go roleActions
+// exactly (cross-checked by tools/check-contracts.mjs). superadmin is the
+// wildcard in both: the gateway's RoleAllows fast path allows every action,
+// mirrored here by granting the full action registry.
 const ROLE_PERMISSIONS: Record<UbagRole, ReadonlySet<UbagAction>> = {
   viewer: new Set(["job:read"]),
-  developer: new Set(["job:create", "job:read", "job:cancel", "job:retry", "webhook:configure"]),
-  operator: new Set(["job:create", "job:read", "job:cancel", "job:retry", "device:enroll", "device:revoke", "webhook:configure", "webhook:replay", "audit:read"]),
-  admin: new Set(["job:create", "job:read", "job:cancel", "job:retry", "device:enroll", "device:revoke", "secret:rotate", "webhook:configure", "webhook:replay", "audit:read", "rate_limit:manage", "role:manage", "data:export"]),
+  developer: new Set(["job:create", "job:read", "job:cancel", "job:retry", "artifact:write", "artifact:delete", "webhook:configure", "browser:read", "concurrency:read"]),
+  operator: new Set(["job:create", "job:read", "job:cancel", "job:retry", "artifact:write", "artifact:delete", "device:enroll", "device:revoke", "webhook:configure", "webhook:replay", "audit:read", "alerts:read", "alerts:manage", "browser:read", "concurrency:read"]),
+  admin: new Set(["job:create", "job:read", "job:cancel", "job:retry", "artifact:write", "artifact:delete", "device:enroll", "device:revoke", "secret:rotate", "webhook:configure", "webhook:replay", "audit:read", "rate_limit:manage", "role:manage", "data:export", "data:erase", "alerts:read", "alerts:manage", "browser:read", "concurrency:read", "region:manage"]),
   superadmin: new Set(UBAG_ACTIONS),
-  support: new Set(["job:read", "audit:read", "support:access"]),
-  service: new Set(["job:create", "job:read", "job:cancel", "job:retry", "webhook:replay"])
+  service: new Set(["job:create", "job:read", "job:cancel", "job:retry", "artifact:write", "artifact:delete", "webhook:replay"])
 };
 
 const PRIVILEGED_ACTIONS = new Set<UbagAction>([
@@ -130,7 +137,10 @@ export function authorize(request: AuthzRequest): AuthzDecision {
     return deny("secret_data_class_blocked", request.action);
   }
 
-  if ((actor.role === "support" || request.action === "support:access") && isBlank(request.supportReason)) {
+  // Support access is reason-gated by action, not by role: "support" is an
+  // actor TYPE (AuditActorType/AuthzActor.type), never a UbagRole, so the
+  // only path to support:access is an explicit grant (superadmin).
+  if (request.action === "support:access" && isBlank(request.supportReason)) {
     return deny("support_reason_required", request.action);
   }
 

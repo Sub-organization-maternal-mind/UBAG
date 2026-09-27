@@ -271,6 +271,117 @@ for (const path of legacySchemaFiles) {
   }
 }
 
+// ─── RBAC cross-check: @ubag/security spec ↔ gateway-enforced authz table ───
+// packages/security/src/rbac.ts publishes the RBAC spec and
+// apps/gateway/internal/authz/authz.go enforces it. Both must declare the same
+// role set and the same per-role action sets, or a role like the historical
+// (removed) "support" role can exist in the spec but not in the enforcement
+// path. Normalization:
+//   - roles are the quoted identifiers of the role table in each file;
+//   - per-role actions are the quoted action strings of that role's entry;
+//   - superadmin is a full grant in both files (Go: the RoleAllows fast path,
+//     ts: `new Set(UBAG_ACTIONS)`), so it is compared as the wildcard "*"
+//     rather than by enumerating actions.
+const rbacSpecSource = requireFile('packages/security/src/rbac.ts');
+const authzSource = requireFile('apps/gateway/internal/authz/authz.go');
+
+// rbac.ts: `role: new Set([...])` rows inside ROLE_PERMISSIONS; superadmin uses
+// `new Set(UBAG_ACTIONS)`, which we normalize to the wildcard.
+function extractTsRoleActions(source) {
+  const roleActions = new Map();
+  const start = source.indexOf('const ROLE_PERMISSIONS');
+  if (start === -1) return roleActions;
+  const body = source.slice(start, source.indexOf('};', start));
+  const rowPattern = /\b(viewer|developer|operator|admin|superadmin|service|support)\s*:\s*new Set\(([^)]*)\)/g;
+  for (const match of body.matchAll(rowPattern)) {
+    const [, role, setArg] = match;
+    if (setArg.trim() === 'UBAG_ACTIONS') {
+      roleActions.set(role, '*');
+      continue;
+    }
+    const actions = [...setArg.matchAll(/"([^"]+)"/g)].map((quoted) => quoted[1]).sort();
+    roleActions.set(role, actions);
+  }
+  return roleActions;
+}
+
+// authz.go: `"role": { ... "action": {}, ... }` rows inside the roleActions
+// map; the superadmin entry is an intentionally empty map satisfied by the
+// RoleAllows fast path, so it is normalized to the wildcard too.
+function extractGoRoleActions(source) {
+  const roleActions = new Map();
+  const start = source.indexOf('var roleActions');
+  if (start === -1) return roleActions;
+  const body = source.slice(start);
+  const rowPattern = /^\t"([a-z]+)": \{/gm;
+  const matches = [...body.matchAll(rowPattern)];
+  for (let index = 0; index < matches.length; index += 1) {
+    const [, role] = matches[index];
+    const rowStart = matches[index].index + matches[index][0].length;
+    const rowEnd = index + 1 < matches.length ? matches[index + 1].index : body.length;
+    const row = body.slice(rowStart, rowEnd);
+    // gofmt aligns the empty action structs (e.g. `"job:create":        {},`),
+    // so allow arbitrary spacing before `{},`.
+    const actions = [...row.matchAll(/"([a-z:_-]+)":\s*\{\}/g)].map((quoted) => quoted[1]).sort();
+    roleActions.set(role, role === 'superadmin' ? '*' : actions);
+  }
+  return roleActions;
+}
+
+function describeRoleActions(roleActions) {
+  return [...roleActions.entries()]
+    .map(([role, actions]) => `${role}=${actions === '*' ? '*' : `[${actions.join(',')}]`}`)
+    .join(' ');
+}
+
+if (rbacSpecSource && authzSource) {
+  const tsRoles = extractTsRoleActions(rbacSpecSource);
+  const goRoles = extractGoRoleActions(authzSource);
+  const rbacFailures = [];
+
+  if (tsRoles.size === 0) {
+    rbacFailures.push('could not parse ROLE_PERMISSIONS rows from packages/security/src/rbac.ts');
+  }
+  if (goRoles.size === 0) {
+    rbacFailures.push('could not parse roleActions rows from apps/gateway/internal/authz/authz.go');
+  }
+  if (tsRoles.size > 0 && goRoles.size > 0) {
+    for (const role of tsRoles.keys()) {
+      if (!goRoles.has(role)) {
+        rbacFailures.push(`RBAC role "${role}" exists in packages/security/src/rbac.ts but not in the gateway authz roleActions table`);
+      }
+    }
+    for (const role of goRoles.keys()) {
+      if (!tsRoles.has(role)) {
+        rbacFailures.push(`RBAC role "${role}" exists in the gateway authz roleActions table but not in packages/security/src/rbac.ts`);
+      }
+    }
+    for (const role of tsRoles.keys()) {
+      if (!goRoles.has(role)) continue;
+      const tsActions = tsRoles.get(role);
+      const goActions = goRoles.get(role);
+      if (tsActions === '*' || goActions === '*') {
+        if (tsActions !== goActions) {
+          rbacFailures.push(`RBAC role "${role}" must be a full grant (wildcard) in BOTH rbac.ts and authz.go`);
+        }
+        continue;
+      }
+      const mismatched = [
+        ...new Set([...tsActions.filter((action) => !goActions.includes(action)), ...goActions.filter((action) => !tsActions.includes(action))])
+      ];
+      if (mismatched.length > 0) {
+        rbacFailures.push(
+          `RBAC role "${role}" action sets disagree between rbac.ts and authz.go — ts-only: [${tsActions.filter((action) => !goActions.includes(action)).join(',')}], go-only: [${goActions.filter((action) => !tsActions.includes(action)).join(',')}]`
+        );
+      }
+    }
+    if (rbacFailures.length === 0) {
+      console.log(`RBAC cross-check ok: ${describeRoleActions(tsRoles)}`);
+    }
+  }
+  failures.push(...rbacFailures);
+}
+
 const fixture = parseJson('packages/conformance/fixtures/v0/scenarios.json');
 if (fixture) {
   if (!Array.isArray(fixture.scenarios) || fixture.scenarios.length < 8) {

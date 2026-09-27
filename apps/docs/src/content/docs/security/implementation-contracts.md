@@ -50,7 +50,7 @@ Expected audit events:
 
 The implementation scaffold exports explicit role and action registries for RBAC checks:
 
-- Roles: `viewer`, `developer`, `operator`, `admin`, `superadmin`, `support`, `service`.
+- Roles: `viewer`, `developer`, `operator`, `admin`, `superadmin`, `service` (mirroring the gateway-enforced table in `apps/gateway/internal/authz/authz.go`; "support" is an actor type, not a role).
 - Privileged actions include `device:enroll`, `device:revoke`, `secret:rotate`, `webhook:configure`, `webhook:replay`, `audit:read`, `rate_limit:manage`, `role:manage`, `policy:manage`, `data:export`, and `support:access`.
 
 ABAC checks deny tenant-boundary mismatches, disabled actors, unsupported secret data-class access, support access without a reason, and regulated-mode exports by non-superadmin actors.
