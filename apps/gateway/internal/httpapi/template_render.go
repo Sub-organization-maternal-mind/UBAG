@@ -79,9 +79,15 @@ func (s *Server) renderTemplate(w http.ResponseWriter, r *http.Request, id strin
 		return
 	}
 
+	// Bounded read: the body is optional, but when present it must pass through
+	// readOptionalBody so an oversize payload is rejected with 413.
+	raw, hasBody, ok := s.readOptionalBody(w, r)
+	if !ok {
+		return
+	}
 	var req renderTemplateRequest
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if hasBody {
+		if err := json.Unmarshal(raw, &req); err != nil {
 			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-JSON-001", "request body must be valid JSON"))
 			return
 		}
@@ -97,7 +103,8 @@ func (s *Server) renderTemplate(w http.ResponseWriter, r *http.Request, id strin
 			s.writeNotFound(w, r)
 			return
 		}
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-TEMPLATE-RENDER-001", err.Error()))
+		// Fixed message: render/compile errors may embed engine internals.
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-TEMPLATE-RENDER-001", "template could not be rendered"))
 		return
 	}
 

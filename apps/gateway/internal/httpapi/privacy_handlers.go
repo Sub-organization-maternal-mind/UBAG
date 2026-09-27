@@ -76,7 +76,8 @@ func (s *Server) handlePrivacyRequest(w http.ResponseWriter, r *http.Request, ki
 		Kind:       kind,
 	})
 	if err != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-PRIVACY-002", err.Error()))
+		// Fixed message: the store error text is not reflected verbatim.
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-PRIVACY-002", "privacy request could not be created"))
 		return
 	}
 

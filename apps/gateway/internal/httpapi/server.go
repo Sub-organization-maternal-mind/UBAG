@@ -714,7 +714,9 @@ func (s *Server) handleSetRegionState(w http.ResponseWriter, r *http.Request) {
 
 	newState := region.State(body.State)
 	if err := s.killSwitch.SetState(r.Context(), region.Region(regionName), newState, actor, tenantID, appID); err != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-REGION-STATE-INVALID-001", err.Error()))
+		// Fixed message: the registry error can wrap store failures; only the
+		// state/transition validation is client-facing.
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-REGION-STATE-INVALID-001", "region state change was rejected; the requested state or transition is invalid"))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1290,8 +1292,15 @@ func (s *Server) handleBatchJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	const maxBatchSize = 100
-	body, err := io.ReadAll(io.LimitReader(r.Body, s.maxBody))
+	// MaxBytesReader (not a silent LimitReader): an oversize batch must fail
+	// with 413 instead of being truncated and then mis-reported as invalid JSON.
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.maxBody))
 	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			s.writeError(w, r, http.StatusRequestEntityTooLarge, validationError("UBAG-VALIDATION-BODY-TOO-LARGE-001", "request body exceeds gateway limit"))
+			return
+		}
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-BODY-READ-001", "failed to read request body"))
 		return
 	}
@@ -1412,7 +1421,7 @@ func (s *Server) processBatchEntry(
 		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
 	}
 	if err := validateExecutableJobPayload(req); err != nil {
-		e := validationError("UBAG-VALIDATION-JOB-PAYLOAD-SAFETY-001", err.Error())
+		e := validationError("UBAG-VALIDATION-JOB-PAYLOAD-SAFETY-001", "job payload contains material that is not allowed")
 		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
 	}
 	if code, msg, ok := validateModelSettingsForCreate(req.Job.Target, req.Job.ModelSettings); !ok {
@@ -1735,11 +1744,11 @@ func (s *Server) prepareCreateJob(w http.ResponseWriter, r *http.Request, reques
 		return preparedCreateJob{}, false
 	}
 	if _, _, err := webhooks.CallbackFromMap(request.Job.Callbacks, s.webhookURLs); err != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WEBHOOK-CALLBACK-001", err.Error()))
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WEBHOOK-CALLBACK-001", "job.callbacks is not a valid webhook callback configuration"))
 		return preparedCreateJob{}, false
 	}
 	if err := validateExecutableJobPayload(request); err != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-JOB-PAYLOAD-SAFETY-001", err.Error()))
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-JOB-PAYLOAD-SAFETY-001", "job payload contains material that is not allowed"))
 		return preparedCreateJob{}, false
 	}
 	if code, msg, ok := validateModelSettingsForCreate(request.Job.Target, request.Job.ModelSettings); !ok {
@@ -1977,7 +1986,9 @@ func (s *Server) createJob(w http.ResponseWriter, r *http.Request) {
 					retryAfterSecs = 1
 				}
 				w.Header().Set("Retry-After", strconv.Itoa(retryAfterSecs))
-				s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-BREAKER-OPEN-001", breakerErr.Error(), true))
+				// Fixed message: never reflect the raw breaker error into the
+				// response; the target name is caller-supplied and non-sensitive.
+				s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-BREAKER-OPEN-001", fmt.Sprintf("circuit breaker is open for target %q; retry later", breakerErr.Target), true))
 				return
 			}
 			s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-ENQUEUE-001", "failed to enqueue job for execution", true))
@@ -2232,7 +2243,9 @@ func (s *Server) retryJob(w http.ResponseWriter, r *http.Request, id string) {
 				retryAfterSecs = 1
 			}
 			w.Header().Set("Retry-After", strconv.Itoa(retryAfterSecs))
-			s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-BREAKER-OPEN-001", breakerErr.Error(), true))
+			// Fixed message: never reflect the raw breaker error into the
+			// response; the target name is caller-supplied and non-sensitive.
+			s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-BREAKER-OPEN-001", fmt.Sprintf("circuit breaker is open for target %q; retry later", breakerErr.Target), true))
 			return
 		}
 		s.writeError(w, r, http.StatusServiceUnavailable, queueError("UBAG-QUEUE-ENQUEUE-001", "failed to enqueue retry job for execution", true))
@@ -3399,7 +3412,7 @@ func validateModelSettingsForCreate(target string, settings map[string]any) (cod
 		if errors.As(err, &mse) {
 			return mse.Code, mse.Message, false
 		}
-		return "UBAG-VALIDATION-MODE-UNAVAILABLE-001", err.Error(), false
+		return "UBAG-VALIDATION-MODE-UNAVAILABLE-001", "model settings could not be validated for this target", false
 	}
 	return "", "", true
 }
@@ -4342,7 +4355,7 @@ func (s *Server) putJobArtifact(w http.ResponseWriter, r *http.Request, jobID, k
 	}
 	declared, err := attachments.DeclaredAttachments(job.Input)
 	if err != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError(attachments.ErrorCode(err), err.Error()))
+		s.writeError(w, r, http.StatusBadRequest, validationError(attachments.ErrorCode(err), "declared attachments in job.input are invalid"))
 		return
 	}
 	var matched *attachments.Attachment
@@ -4530,7 +4543,7 @@ func (s *Server) deleteJobArtifact(w http.ResponseWriter, r *http.Request, jobID
 	}
 	declared, err := attachments.DeclaredAttachments(job.Input)
 	if err != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError(attachments.ErrorCode(err), err.Error()))
+		s.writeError(w, r, http.StatusBadRequest, validationError(attachments.ErrorCode(err), "declared attachments in job.input are invalid"))
 		return
 	}
 	if len(declared) > 0 {

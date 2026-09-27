@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
 	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/payloadpolicy"
@@ -192,7 +193,7 @@ func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
 		}
 		if step.Input != nil {
 			if err := payloadpolicy.Validate(step.Input); err != nil {
-				s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WORKFLOW-STEP-PAYLOAD-SAFETY-001", err.Error()))
+				s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WORKFLOW-STEP-PAYLOAD-SAFETY-001", "step input contains material that is not allowed"))
 				return
 			}
 		}
@@ -208,11 +209,39 @@ func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
 		_ = i
 	}
 	if err := workflow.ValidateDependencies(steps); err != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WORKFLOW-DEPENDENCY-001", err.Error()))
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WORKFLOW-DEPENDENCY-001", "workflow step dependencies are invalid"))
 		return
 	}
 
 	tenantID, appID := requestScope(r)
+
+	// Idempotent create: reserve the key before any write, replay the stored
+	// definition on a retry, release on failure, and complete with the created
+	// definition id on success (mirrors the webhook secret rotation handler).
+	scope := idempotency.Scope{
+		TenantID:  tenantID,
+		AppID:     appID,
+		Operation: "create_workflow",
+		Key:       idempotencyKey,
+	}
+	decision, err := s.idempotency.Reserve(r.Context(), scope, hashBytes(raw))
+	if err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to reserve idempotency key"))
+		return
+	}
+	switch decision.Kind {
+	case idempotency.DecisionConflict:
+		s.writeError(w, r, http.StatusConflict, validationError("UBAG-VALIDATION-IDEMPOTENCY-CONFLICT-001", "idempotency key was replayed with a different payload"))
+		return
+	case idempotency.DecisionReplay:
+		if decision.Record.ResourceID != "" {
+			if prior, found, getErr := s.workflows.GetDefinition(r.Context(), tenantID, appID, decision.Record.ResourceID); getErr == nil && found {
+				s.writeJSON(w, replayHTTPStatus(decision.Record, http.StatusCreated), s.workflowDefinitionToResponse(apiVersion, prior, traceIDFromContext(r.Context())))
+				return
+			}
+		}
+	}
+
 	def, err := s.workflows.CreateDefinition(r.Context(), workflow.Definition{
 		TenantID: tenantID,
 		AppID:    appID,
@@ -220,10 +249,15 @@ func (s *Server) createWorkflow(w http.ResponseWriter, r *http.Request) {
 		Steps:    steps,
 	})
 	if err != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WORKFLOW-DEFINITION-001", err.Error()))
+		_ = s.idempotency.Release(r.Context(), scope)
+		// Fixed message: store failures must not leak internal error text.
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WORKFLOW-DEFINITION-001", "workflow definition was rejected"))
 		return
 	}
-	_ = idempotencyKey
+	if err := s.idempotency.Complete(r.Context(), scope, def.ID, http.StatusCreated); err != nil {
+		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to complete idempotency record"))
+		return
+	}
 
 	w.Header().Set("Location", "/v1/workflows/"+def.ID)
 	s.writeJSON(w, http.StatusCreated, s.workflowDefinitionToResponse(apiVersion, def, traceIDFromContext(r.Context())))
@@ -275,7 +309,8 @@ func (s *Server) createWorkflowRun(w http.ResponseWriter, r *http.Request, defin
 		Steps:          workflow.NewStepRuns(def),
 	})
 	if err != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WORKFLOW-RUN-001", err.Error()))
+		// Fixed message: store failures must not leak internal error text.
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-WORKFLOW-RUN-001", "workflow run could not be created"))
 		return
 	}
 

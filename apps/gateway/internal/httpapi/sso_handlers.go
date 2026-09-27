@@ -135,7 +135,9 @@ func (s *Server) putSSOConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.sso.SetOIDC(r.Context(), tenantID, *request.OIDC); err != nil {
-			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-OIDC-002", err.Error()))
+			// Fixed message: store persistence errors (e.g. Postgres SQLSTATE
+			// text) must never surface in the response body.
+			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-OIDC-002", "OIDC configuration was rejected"))
 			return
 		}
 	case "saml":
@@ -150,7 +152,9 @@ func (s *Server) putSSOConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := s.sso.SetSAML(r.Context(), tenantID, *request.SAML); err != nil {
-			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-SAML-002", err.Error()))
+			// Fixed message: store persistence errors (e.g. Postgres SQLSTATE
+			// text) must never surface in the response body.
+			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-SAML-002", "SAML configuration was rejected"))
 			return
 		}
 	default:
@@ -339,7 +343,8 @@ func (s *Server) handleSSOOIDCCallbackGET(w http.ResponseWriter, r *http.Request
 
 	principal, mapErr := sso.MapPrincipal(claims.Attributes(), cfg.AttributeMapping)
 	if mapErr != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-PRINCIPAL-001", mapErr.Error()))
+		// Fixed message: mapping failure detail is not reflected verbatim.
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-PRINCIPAL-001", "verified identity could not be mapped to a principal"))
 		return
 	}
 
@@ -387,7 +392,8 @@ func (s *Server) handleSSOOIDCCallbackPOST(w http.ResponseWriter, r *http.Reques
 	}
 	principal, err := sso.MapPrincipal(claims.Attributes(), cfg.AttributeMapping)
 	if err != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-PRINCIPAL-001", err.Error()))
+		// Fixed message: mapping failure detail is not reflected verbatim.
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-PRINCIPAL-001", "verified identity could not be mapped to a principal"))
 		return
 	}
 	s.writeSSOPrincipal(w, r, apiVersion, tenantID, appID, principal)
@@ -435,7 +441,8 @@ func (s *Server) handleSSOSAMLACS(w http.ResponseWriter, r *http.Request) {
 	}
 	principal, err := sso.MapPrincipal(assertion.Attributes, cfg.AttributeMapping)
 	if err != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-PRINCIPAL-001", err.Error()))
+		// Fixed message: mapping failure detail is not reflected verbatim.
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SSO-PRINCIPAL-001", "verified identity could not be mapped to a principal"))
 		return
 	}
 	s.writeSSOPrincipal(w, r, apiVersion, tenantID, appID, principal)

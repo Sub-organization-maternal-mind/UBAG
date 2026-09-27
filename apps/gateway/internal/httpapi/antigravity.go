@@ -227,12 +227,18 @@ func (s *Server) handleAntigravityTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bounded read: reject oversize bodies with 413 via readBody instead of
+	// streaming r.Body unbounded into the decoder.
+	raw, ok := s.readBody(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		Prompt    string `json:"prompt"`
 		Model     string `json:"model,omitempty"`
 		AccountID string `json:"account_id,omitempty"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(raw, &req); err != nil {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-ANTIGRAVITY-002", "request body must be valid JSON"))
 		return
 	}
@@ -465,12 +471,17 @@ func (s *Server) listAntigravityAccounts(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) addAntigravityAccount(w http.ResponseWriter, r *http.Request) {
+	// Bounded read: reject oversize bodies with 413 via readBody.
+	raw, ok := s.readBody(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		Label  string `json:"label"`
 		Tier   string `json:"tier"`
 		APIKey string `json:"api_key"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(raw, &req); err != nil {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-ANTIGRAVITY-005", "request body must be valid JSON"))
 		return
 	}
@@ -491,10 +502,10 @@ func (s *Server) addAntigravityAccount(w http.ResponseWriter, r *http.Request) {
 	account, err := s.antigravityAccountStore().AddAccount(tenantID, req.Label, tier)
 	if err != nil {
 		if errors.Is(err, antigravity.ErrAccountLimit) {
-			s.writeError(w, r, http.StatusConflict, validationError("UBAG-ANTIGRAVITY-012", err.Error()))
+			s.writeError(w, r, http.StatusConflict, validationError("UBAG-ANTIGRAVITY-012", "tenant OAuth account limit reached"))
 			return
 		}
-		s.writeError(w, r, http.StatusInternalServerError, internalError(err.Error()))
+		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to add OAuth account"))
 		return
 	}
 
@@ -510,19 +521,25 @@ func (s *Server) addAntigravityAccount(w http.ResponseWriter, r *http.Request) {
 func (s *Server) removeAntigravityAccount(w http.ResponseWriter, r *http.Request, accountID string) {
 	tenantID, _ := requestScope(r)
 	if err := s.antigravityAccountStore().RemoveAccount(tenantID, accountID); err != nil {
-		s.writeError(w, r, http.StatusNotFound, validationError("UBAG-ANTIGRAVITY-008", err.Error()))
+		// Fixed message: the underlying store error can carry internal detail.
+		s.writeError(w, r, http.StatusNotFound, validationError("UBAG-ANTIGRAVITY-008", "account not found"))
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"removed": accountID})
 }
 
 func (s *Server) updateAntigravityAccount(w http.ResponseWriter, r *http.Request, accountID string) {
+	// Bounded read: reject oversize bodies with 413 via readBody.
+	raw, ok := s.readBody(w, r)
+	if !ok {
+		return
+	}
 	var req struct {
 		Enabled *bool  `json:"enabled"`
 		Label   string `json:"label"`
 		Tier    string `json:"tier"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(raw, &req); err != nil {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-ANTIGRAVITY-009", "request body must be valid JSON"))
 		return
 	}
@@ -535,7 +552,8 @@ func (s *Server) updateAntigravityAccount(w http.ResponseWriter, r *http.Request
 
 	account, err := s.antigravityAccountStore().UpdateAccount(tenantID, accountID, enabled)
 	if err != nil {
-		s.writeError(w, r, http.StatusNotFound, validationError("UBAG-ANTIGRAVITY-010", err.Error()))
+		// Fixed message: the underlying store error can carry internal detail.
+		s.writeError(w, r, http.StatusNotFound, validationError("UBAG-ANTIGRAVITY-010", "account not found"))
 		return
 	}
 
@@ -559,8 +577,13 @@ func (s *Server) getAntigravityConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateAntigravityConfig(w http.ResponseWriter, r *http.Request) {
+	// Bounded read: reject oversize bodies with 413 via readBody.
+	raw, ok := s.readBody(w, r)
+	if !ok {
+		return
+	}
 	var req antigravity.Config
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(raw, &req); err != nil {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-ANTIGRAVITY-011", "request body must be valid JSON"))
 		return
 	}

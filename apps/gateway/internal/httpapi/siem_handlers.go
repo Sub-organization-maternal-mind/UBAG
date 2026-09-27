@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -151,7 +152,8 @@ func (s *Server) putSIEMConfig(w http.ResponseWriter, r *http.Request) {
 	var bodyMap map[string]any
 	if err := json.Unmarshal(raw, &bodyMap); err == nil {
 		if err := payloadpolicy.Validate(bodyMap); err != nil {
-			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SIEM-PAYLOAD-SAFETY-001", err.Error()))
+			// Fixed message: the policy violation text is not reflected verbatim.
+			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SIEM-PAYLOAD-SAFETY-001", "sink configuration contains material that is not allowed"))
 			return
 		}
 	}
@@ -179,7 +181,8 @@ func (s *Server) putSIEMConfig(w http.ResponseWriter, r *http.Request) {
 		Enabled:   request.Enabled,
 	})
 	if err != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SIEM-SINK-001", err.Error()))
+		// Fixed message: store persistence failures must not leak internal text.
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-SIEM-SINK-001", "SIEM sink configuration was rejected"))
 		return
 	}
 	s.writeJSON(w, http.StatusOK, siemConfigResponse{
@@ -203,7 +206,8 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The filter body is optional. An empty body exports the full tenant chain.
+	// The filter body is optional. An empty body exports the tenant chain,
+	// bounded by the default export limit below.
 	var request auditExportRequest
 	if raw, hasBody, ok := s.readOptionalBody(w, r); !ok {
 		return
@@ -221,6 +225,22 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 		apiVersion = resolved
 	}
 
+	// Export cap: without a floor the limit is 0 = unlimited in the audit
+	// store, which chain-verifies and serializes the whole tenant chain into
+	// one response. Default to 1000 records and reject anything above the hard
+	// maximum of 10000.
+	const auditExportDefaultLimit = 1000
+	const auditExportMaxLimit = 10000
+	exportLimit := request.Limit
+	if exportLimit == 0 {
+		exportLimit = auditExportDefaultLimit
+	}
+	if exportLimit < 0 || exportLimit > auditExportMaxLimit {
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-LIMIT-001",
+			fmt.Sprintf("limit must be between 1 and %d", auditExportMaxLimit)))
+		return
+	}
+
 	tenantID, _ := requestScope(r)
 	resp := auditExportResponse{
 		APIVersion: apiVersion,
@@ -231,7 +251,11 @@ func (s *Server) handleAuditExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if s.audit != nil {
-		filter := audit.Filter{TenantID: tenantID, Limit: request.Limit}
+		// The store-level Limit truncates the query itself (WHERE/ORDER BY seq
+		// LIMIT), so an unbounded tenant chain is never materialized in memory.
+		// The audit.Filter has no sequence-window fields, so the optional
+		// [from_sequence, to_sequence] window is still applied afterwards.
+		filter := audit.Filter{TenantID: tenantID, Limit: exportLimit}
 		if since, ok := parseExportTime(request.Since); ok {
 			filter.Since = since
 		}

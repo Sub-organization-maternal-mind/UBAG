@@ -52,9 +52,15 @@ func (s *Server) handleIssuePAT(w http.ResponseWriter, r *http.Request) {
 
 	principal, hasPrincipal := principalFromContext(r.Context())
 
+	// Bounded read: the body is optional, but when present it must pass through
+	// readOptionalBody so an oversize payload is rejected with 413.
+	raw, hasBody, ok := s.readOptionalBody(w, r)
+	if !ok {
+		return
+	}
 	var req issuePatRequest
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if hasBody {
+		if err := json.Unmarshal(raw, &req); err != nil {
 			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-JSON-001", "request body must be valid JSON"))
 			return
 		}
@@ -111,7 +117,8 @@ func (s *Server) handleIssuePAT(w http.ResponseWriter, r *http.Request) {
 
 	token, err := pat.Issue(tenantID, appID, role, ttl)
 	if err != nil {
-		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-PAT-001", err.Error()))
+		// Fixed message: the issuance error text is not reflected verbatim.
+		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-PAT-001", "PAT could not be issued with the requested parameters"))
 		return
 	}
 	if err := s.patStore.Save(r.Context(), token); err != nil {

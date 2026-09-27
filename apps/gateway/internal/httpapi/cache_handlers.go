@@ -34,8 +34,14 @@ func (s *Server) handleCacheInvalidate(w http.ResponseWriter, r *http.Request) {
 	if !s.authorizeGatewayAction(w, r, "rate_limit:manage") {
 		return
 	}
+	// Bounded read: the body must pass through readBody so an oversize payload
+	// is rejected with 413 instead of being streamed into memory unbounded.
+	raw, ok := s.readBody(w, r)
+	if !ok {
+		return
+	}
 	var req cacheInvalidateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Tag) == "" {
+	if err := json.Unmarshal(raw, &req); err != nil || strings.TrimSpace(req.Tag) == "" {
 		s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-CACHE-TAG-001", "tag is required"))
 		return
 	}
