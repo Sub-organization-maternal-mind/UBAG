@@ -211,7 +211,7 @@ CHATGPT_WEB = ProviderSelectors(
     provider_id="chatgpt_web",
     display_name="ChatGPT Web",
     target_url="https://chatgpt.com/",
-    selector_version="2026-08-10-advanced-model-menu",
+    selector_version="2026-09-21-model-view-toggle",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
@@ -298,27 +298,41 @@ CHATGPT_WEB = ProviderSelectors(
         list_ready="a[href^='/c/']",
         baseline_version="2026-07-17-verified",
     ),
-    # Operator default (always-on), superseding the 2026-06-29 "leave the account
-    # default" decision: pin GPT-5.6 Sol + Medium intelligence on every job.
-    # The worker resolves this default when no per-job override is present;
-    # the gateway forwards UBAG_PROVIDER_CONFIG_CHATGPT_WEB into the worker
-    # subprocess env (see executor minimalWorkerEnv) so an operator override
-    # survives process boundaries. A drifted Effort menu fails CLOSED as
-    # selector_drift_detected (required=True) instead of answering off-Medium.
+    # Operator default (always-on): pin GPT-5.6 Sol on every job. The worker
+    # resolves this default when no per-job override is present; the gateway
+    # forwards UBAG_PROVIDER_CONFIG_CHATGPT_WEB into the worker subprocess env
+    # (see executor minimalWorkerEnv) so an operator override survives process
+    # boundaries.
     #
-    # Re-verified 2026-08-10 against live chatgpt.com. The composer pill still
-    # carries the current effort label ("Medium"), but its compact menu now shows
-    # a Power slider and an Advanced toggle. Expanding Advanced reveals separate
-    # Model and Effort submenu openers; their options remain menuitemradio rows
-    # with aria-checked='true' on the selected value. Escape closes the picker and
-    # resets it to compact mode, so each setting follows the complete path.
+    # Re-baselined 2026-09-21 against live chatgpt.com. Two structural changes
+    # broke the 2026-08-10 baseline and failed every job closed with
+    # UBAG-ADAPTER-DRIFT-014 on ``setting:model``:
     #
-    # role=menuitemradio remains load-bearing: each submenu opener also contains
-    # the current value, so text matching without the role would click the opener
-    # rather than read or apply the actual option.
+    #   1. The "Advanced" toggle and its Model/Effort submenus are gone. The
+    #      composer pill now opens a single Radix menu
+    #      (data-testid="composer-intelligence-picker-content") that already
+    #      contains BOTH the power slider and the model menu.
+    #   2. Model selection moved behind a view toggle,
+    #      [role='menuitem'][aria-label='Select model'], which flips the
+    #      advanced panel (data-testid="composer-model-picker-slider-advanced-view")
+    #      from inert to active. The option rows are still menuitemradio with
+    #      aria-checked='true' on the selected value — clicking the toggle is
+    #      what makes the options clickable at all.
+    #
+    # role=menuitemradio remains load-bearing: the toggle also contains the
+    # current model ("High"/"5.6 High"), so text matching without the role would
+    # click the toggle rather than read or apply the actual option.
+    #
+    # The "thinking" level is now a Power SLIDER (role='slider', aria-valuemin=0,
+    # aria-valuemax=3, announcement "High, 3 of 4") instead of a menuitemradio
+    # list, and it ships aria-hidden='true' with tabindex='-1' — the power level
+    # is NOT settable from the DOM (verified: clicking the Power menuitem, the
+    # thumb, and ArrowLeft/ArrowRight all leave aria-valuenow unchanged). It is
+    # therefore advisory only (required=False): a slider relabel must never fail
+    # a job closed the way the "Medium" Effort menu did.
     #
     # Order matters: model is enforced BEFORE thinking, because switching model can
-    # reset the intelligence level (settings are applied in declaration order).
+    # reset the power level (settings are applied in declaration order).
     settings=(
         ProviderSetting(
             key="model",
@@ -329,11 +343,7 @@ CHATGPT_WEB = ProviderSelectors(
                     "button.__composer-pill[aria-haspopup='menu']",
                     "button[class*='composer-pill'][aria-haspopup='menu']",
                 ),
-                (
-                    "[role='menuitem'][aria-label='Show advanced options']",
-                    "[role='menuitem'][aria-expanded='false']:has-text(\"Advanced\")",
-                ),
-                ("[role='menuitem'][aria-haspopup='menu']:has-text(\"Model\")",),
+                ("[role='menuitem'][aria-label='Select model']",),
             ),
             satisfied_when="[role='menuitemradio'][aria-checked='true']:has-text(\"{value}\")",
             apply_click="[role='menuitemradio']:has-text(\"{value}\")",
@@ -341,24 +351,21 @@ CHATGPT_WEB = ProviderSelectors(
         ProviderSetting(
             key="thinking",
             kind="choice",
-            desired="Medium",
+            desired="High",
             open_steps=(
                 (
                     "button.__composer-pill[aria-haspopup='menu']",
                     "button[class*='composer-pill'][aria-haspopup='menu']",
                 ),
-                (
-                    "[role='menuitem'][aria-label='Show advanced options']",
-                    "[role='menuitem'][aria-expanded='false']:has-text(\"Advanced\")",
-                ),
-                ("[role='menuitem'][aria-haspopup='menu']:has-text(\"Effort\")",),
             ),
             satisfied_when="[role='menuitemradio'][aria-checked='true']:has-text(\"{value}\")",
             apply_click="[role='menuitemradio']:has-text(\"{value}\")",
+            required=False,
         ),
     ),
-    # Medium intelligence thinks before answering, so give the reader the longer
-    # reasoning timeout rather than mistaking a think for a hang.
+    # The default power level ("High", 3 of 4) thinks before answering, so give
+    # the reader the longer reasoning timeout rather than mistaking a think for a
+    # hang.
     reasoning=True,
 )
 

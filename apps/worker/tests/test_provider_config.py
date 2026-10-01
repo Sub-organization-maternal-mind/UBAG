@@ -263,9 +263,15 @@ class NewChatAndConfigTests(unittest.TestCase):
 
     def test_chatgpt_pins_model_and_thinking(self):
         # Supersedes the earlier "no forced model/mode for ChatGPT" decision:
-        # the operator now requires every ChatGPT job to run on GPT-5.6 Sol at
-        # Medium intelligence, so chatgpt_web enforces both settings (in that
-        # order — switching model can reset the intelligence level).
+        # the operator now requires every ChatGPT job to run on GPT-5.6 Sol, and
+        # to ask for the strongest default power level ("High") — enforced in that
+        # order, because switching model can reset the power level.
+        #
+        # Re-baselined 2026-09-21: the effort menu became a read-only Power slider
+        # with a different label set ("High, 3 of 4"), and the old "Medium" pin
+        # failed every job closed as UBAG-ADAPTER-DRIFT-014. "thinking" is now
+        # advisory (required=False) so a slider relabel cannot take the provider
+        # down again; "model" stays required.
         selectors = get_provider_selectors("chatgpt_web")
         driver = MockPageDriver(response_text="Canberra")
         events = LiveSessionEngine(selectors).run(_payload("chatgpt_web"), driver=driver)
@@ -275,7 +281,7 @@ class NewChatAndConfigTests(unittest.TestCase):
         self.assertIn("completed", types)
         self.assertEqual(
             [(r["key"], r["desired"]) for r in driver.ensured_settings],
-            [("model", "GPT-5.6 Sol"), ("thinking", "Medium")],
+            [("model", "GPT-5.6 Sol"), ("thinking", "High")],
         )
 
     def test_chatgpt_model_and_thinking_are_overridable_per_job(self):

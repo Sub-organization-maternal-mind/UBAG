@@ -118,27 +118,40 @@ class SelectorConfigTests(unittest.TestCase):
         candidates = get_provider_selectors("deepseek_web").authenticated_signal.as_list()
         self.assertIn("textarea[placeholder*='Message']", candidates)
 
-    def test_chatgpt_settings_follow_advanced_model_menu(self):
+    def test_chatgpt_settings_follow_model_view_toggle(self):
         selectors = get_provider_selectors("chatgpt_web")
         settings = {setting.key: setting for setting in selectors.settings}
 
-        self.assertEqual(selectors.selector_version, "2026-08-10-advanced-model-menu")
-        self.assertIn(
-            "[role='menuitem'][aria-label='Show advanced options']",
-            settings["model"].open_steps[1],
-        )
+        self.assertEqual(selectors.selector_version, "2026-09-21-model-view-toggle")
+        # The 2026-08-10 "Advanced" submenu is gone: the composer pill opens one
+        # Radix menu that already carries the model list, and
+        # role=menuitem[aria-label='Select model'] is the view toggle that makes
+        # the (otherwise inert) advanced panel clickable.
         self.assertEqual(
-            settings["model"].open_steps[2],
-            ("[role='menuitem'][aria-haspopup='menu']:has-text(\"Model\")",),
+            settings["model"].open_steps,
+            (
+                (
+                    "button.__composer-pill[aria-haspopup='menu']",
+                    "button[class*='composer-pill'][aria-haspopup='menu']",
+                ),
+                ("[role='menuitem'][aria-label='Select model']",),
+            ),
         )
-        self.assertIn(
-            "[role='menuitem'][aria-label='Show advanced options']",
-            settings["thinking"].open_steps[1],
-        )
-        self.assertEqual(
-            settings["thinking"].open_steps[2],
-            ("[role='menuitem'][aria-haspopup='menu']:has-text(\"Effort\")",),
-        )
+        self.assertEqual(settings["model"].desired, "GPT-5.6 Sol")
+        self.assertTrue(settings["model"].required)
+
+        # The effort menu became a read-only Power slider (aria-hidden, tabindex
+        # -1, not settable), so "thinking" must never fail a job closed the way
+        # the old "Medium" Effort menu did.
+        self.assertFalse(settings["thinking"].required)
+        self.assertEqual(settings["thinking"].desired, "High")
+
+    def test_chatgpt_model_setting_never_opens_a_removed_advanced_submenu(self):
+        selectors = get_provider_selectors("chatgpt_web")
+        for setting in selectors.settings:
+            for step in setting.open_steps:
+                for candidate in step:
+                    self.assertNotIn("Show advanced options", candidate)
 
 
 class EngineHappyPathTests(unittest.TestCase):
