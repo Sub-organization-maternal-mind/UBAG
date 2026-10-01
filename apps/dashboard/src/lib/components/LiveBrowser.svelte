@@ -13,6 +13,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { RefreshCw } from 'lucide-svelte';
 
   // The live-browser bridge (tools/live-browser/bridge.mjs) streams the real
   // Chrome as JPEG frames over this WebSocket and accepts mouse/keyboard input
@@ -80,6 +81,10 @@
   let currentTargetId = $state('');
   let hasFrame = $state(false);
   let capturing = $state(false);
+  // True from a reset request until the bridge pushes the tab list of the
+  // relaunched browser.
+  let resetting = $state(false);
+  let resetDialog = $state<HTMLDialogElement | null>(null);
 
   // Live-stream viewer registry (from the bridge): the admin can see every
   // dashboard tab streaming the production Chrome and terminate any of them —
@@ -155,6 +160,7 @@
         } else if (m.type === 'targets') {
           targets = (m.targets as typeof targets) ?? [];
           if (m.current) currentTargetId = m.current as string;
+          resetting = false;
         }
         return;
       }
@@ -291,10 +297,15 @@
     let u = urlInput.trim();
     if (u && !/^https?:\/\//i.test(u)) u = 'https://' + u;
     send({ t: 'newtab', url: u });
-    setTimeout(() => send({ t: 'targets' }), 800);
   }
   function switchTarget(id: string) {
     if (id && id !== currentTargetId) send({ t: 'attach', targetId: id });
+    showTabs = false;
+  }
+  function resetBrowser() {
+    resetDialog?.close();
+    resetting = true;
+    send({ t: 'reset' });
   }
   function reconnect() {
     manualClose = true;
@@ -353,7 +364,7 @@
       <button type="button" onclick={newTab} class="px-2.5 py-1 rounded border border-rule text-ink text-xs hover:bg-rule-soft transition-colors">+ Tab</button>
     </form>
 
-    <!-- Open tabs in the remote Chrome: view + terminate (resource control) -->
+<!-- Open tabs in the remote Chrome: view + terminate (resource control) -->
     {#if connected && targets.length > 0}
       <div class="relative shrink-0">
         <button
@@ -426,6 +437,15 @@
           </div>
         {/if}
       </div>
+
+      <!-- Reset: relaunch the remote Chrome. Keeps the operator logins warm. -->
+      <button
+        type="button"
+        onclick={() => resetDialog?.showModal()}
+        disabled={resetting}
+        class="flex items-center gap-1 shrink-0 px-2 py-1 rounded border border-danger/40 bg-danger-soft text-danger text-xs hover:bg-danger/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        title="Restart the server browser: closes every tab and kills all its processes. Logins are kept."
+      ><RefreshCw size={12} class={resetting ? 'animate-spin' : ''} /> {resetting ? 'Restarting…' : 'Reset browser'}</button>
     {/if}
 
     <label class="flex items-center gap-1.5 text-xs text-ink-soft cursor-pointer select-none shrink-0">
@@ -492,6 +512,15 @@
       <div class="absolute inset-0 flex items-center justify-center text-ink-mute text-xs animate-pulse">Waiting for first frame...</div>
     {/if}
 
+    {#if connected && resetting}
+      <div class="absolute inset-0 flex items-center justify-center bg-[#0b0d10]/70" role="status">
+        <div class="text-center text-xs text-paper-soft space-y-1 px-6">
+          <p class="font-medium text-sm">Restarting browser…</p>
+          <p class="text-paper-soft/70">All tabs and browser processes are being discarded. Logins are kept.</p>
+        </div>
+      </div>
+    {/if}
+
     {#if connected}
       <div class="absolute top-2 right-2 flex items-center gap-2">
         {#if interactive}
@@ -505,3 +534,29 @@
     {/if}
   </div>
 </div>
+
+<dialog
+  bind:this={resetDialog}
+  class="w-full max-w-md rounded-lg border border-rule bg-paper shadow-2xl p-0 backdrop:bg-ink/40"
+  aria-label="Confirm browser reset"
+>
+  <div class="px-5 py-4 border-b border-rule bg-paper-soft">
+    <h2 class="text-lg font-display font-semibold text-ink">Reset browser?</h2>
+  </div>
+  <div class="p-5 space-y-2 text-sm text-ink-soft">
+    <p>Chrome on the server quits and is relaunched fresh: every tab, renderer and stalled process is discarded and its memory released.</p>
+    <p>Provider logins are kept (the profile is persistent). Any job running right now will fail.</p>
+  </div>
+  <div class="px-5 py-3 border-t border-rule flex justify-end gap-3">
+    <button
+      type="button"
+      onclick={() => resetDialog?.close()}
+      class="px-4 py-2 rounded-md border border-rule bg-paper-soft text-ink text-sm font-medium hover:bg-paper-warm transition-colors"
+    >Cancel</button>
+    <button
+      type="button"
+      onclick={resetBrowser}
+      class="px-4 py-2 rounded-md border border-danger/40 bg-danger-soft text-danger text-sm font-medium hover:bg-danger/10 transition-colors"
+    >Reset browser</button>
+  </div>
+</dialog>
