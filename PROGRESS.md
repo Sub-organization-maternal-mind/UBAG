@@ -700,7 +700,7 @@ files; all six workflows parse and now carry a top-level `permissions` block;
 all four static gates pass (contracts, alert-metrics, provider-selectors,
 small-deployment). Negative tests confirm the new gates actually fail.
 
-**Open / not done here.** `docker-compose.vps.yml` and `vps2.yml` have no backup
+**Open / not done here.** `docker-compose.vps.yml` has no backup
 service, and the small profile's backup containers sit on an `internal: true`
 network so they cannot reach off-host S3 — production has no working backup.
 `/v1/stream` is still a 2-second heartbeat stub, not a WebSocket server, while
@@ -749,9 +749,7 @@ Owner symptoms: FAILED 14→26, Live Browser stuck on "Waiting for first frame",
 
 **Fixes applied:**
 - Ops: browser container raised to cpus=2.0 / mem_limit=4096m on the primary
-  (owner directive; docker-compose.vps.yml + recreated, healthy; vps2 compose
-  changed too, applied via relay TASK deploy/vps2/EXECUTOR-TASK-20260927-
-  resources.md because SSH from the workstation is key-denied). .env.local:
+  (owner directive; docker-compose.vps.yml + recreated, healthy). .env.local:
   UBAG_WORKER_CONCURRENCY=2, UBAG_JOB_REAPER_ENABLED=1,
   UBAG_JOB_MAX_LIFETIME_SECONDS=3600. Test-artifact backlog cancelled via the
   cancel API (job_449 orphan + e2e-test pending jobs); real duckai backlog
@@ -784,16 +782,13 @@ Owner symptoms: FAILED 14→26, Live Browser stuck on "Waiting for first frame",
   was moved to apps/dashboard/_wip/antigravity (twice — restore it only once
   it compiles).
 
-**Workload distribution test (primary vs vps2):** architecture fact confirmed
-— there is NO job distribution between the boxes today: each runs an
-independent file-spool stack (compose: "No queue — jobs spool to disk and are
-picked up in-process"; the multi-region/geodns design in deploy/multi-region
-is blueprint-only). Primary half verified empirically: mock jobs submitted to
-the local gateway completed in the LOCAL spool (done 16→18) and never crossed
-boxes. The vps2 half is scripted in the relay TASK (submit one mock job on
-vps2, confirm it completes in vps2's spool and the primary's doesn't move).
-Real distribution would need a shared queue (NATS, per deploy/multi-region)
-or geo-DNS routing — decision for the owner, not implemented.
+**Workload distribution:** architecture fact confirmed — everything runs on
+an independent file-spool stack (compose: "No queue — jobs spool to disk and
+are picked up in-process"; the multi-region/geodns design in deploy/multi-region
+is blueprint-only). Mock jobs submitted to the local gateway complete in the
+LOCAL spool (done 16→18). Real distribution would need a shared queue (NATS,
+per deploy/multi-region) or geo-DNS routing — decision for the owner, not
+implemented.
 
 **Post-fix state:** queue fully drained (pending=0), Live Browser streams
 (green Live, frames render), failure reasons now visible in
@@ -939,53 +934,10 @@ dropdown populated, production Chrome frames streaming. The Reset-button and
 diagnostics hardening stays as defense-in-depth for any profile that does
 hold a stale override.
 
-## 2026-09-13 vps2 PAT issued + cf8de88 smoke PASS (job_000000000006)
-
-Owner asked the primary session to self-serve the missing vps2 smoke
-credential. Mechanism (mirrors the dashboard's own path): the dashboard
-nginx injects `Authorization: Bearer ${UBAG_GATEWAY_SECRET}` into /v1/
-proxy calls — the app secret IS the master Bearer credential — and
-`POST /v1/auth/pat` (pat_handlers.go) requires the superadmin actor,
-which vps2's `UBAG_ACTOR_ROLE=superadmin` provides. Issued ON the box via
-a scp'd script (secret never transited the transcript in plaintext):
-`{"tenant_id":"tenant_oet","app_id":"oet-platform","role":"service",
-"ttl_seconds":-1}` → HTTP 201, token (len 53) saved root-only at
-`/opt/docker/ubag/deploy/vps/.smoke-pat.json` (chmod 600; token only ever
-printed masked). Live proof on the cf8de88 build: facade mock smoke
-`job_000000000006` COMPLETED with exact token `UBAG-VPS2-CF8DE88-SMOKE-OK`
-— the previously SKIPPED verify step (e) on vps2 is now closed; both
-boxes' cf8de88 builds are smoke-verified. Future vps2 relay TASKs: smoke
-credential = that on-box file (have the executor read it like
-`.oet-pat.json` on the primary).
-
-## 2026-09-13 vps2 synced to latest main `cf8de88` via executor relay — both boxes on same commit
-
-Follow-up to the primary sync above: the owner's vps2 agent session executed
-the vps2 half using the relay template (`deploy/vps2/EXECUTOR-PROMPT.md`,
-TASK = RUNBOOK A). The primary session staged the tracked-only tarball on
-the box (`/tmp/ubag-cf8de88.tgz`, sha256 `51f2134…`) over SSH; the vps2
-session ran backup → extract → `UBAG_BUILD_COMMIT` bump → `up -d --build
-gateway chat-reaper` and reported DONE with a full report. Independently
-re-verified over SSH by the primary session: gateway
-`UBAG_BUILD_COMMIT=cf8de88371e8…` (container env + env.local line 7),
-`/v1/ready` fully true (`0.0.0-vps2`, all 7 checks), 5/5 containers
-healthy (browser NOT recreated — untouched, Up 13h; profile intact),
-htpasswd still 644, 0 panics, staged tarball removed. Backup:
-`/opt/docker/ubag-sync-backups/ubag-pre-cf8de88-20260913T174536Z`.
-Smoke step e remains SKIPPED on vps2 (no PAT json on the box — issue one
-via the operator before the next vps2 smoke is needed). **Both production
-gateways now run exactly `cf8de88371e8329373e1fd7ccb3f09b90105f564`.**
-Operational note: the relay pattern worked first try — template at
-`deploy/vps2/EXECUTOR-PROMPT.md`, fill the TASK block, owner pastes it
-into the vps2 session, report comes back in the pinned format. Also
-cleaned the vps2 session's scratch files from the repo root
-(`ubag-cf8de88.tgz`, `ubag-runbookA-1.sh` — never committed; the 28 MB
-tarball must stay out of git history).
-
 ## 2026-09-13 Primary synced to latest main `cf8de88` (docs-parity deploy, live-verified)
 
-Owner ask: publish the vps2-session changes to the primary
-`185.252.233.186`. Functional deltas were already live there (gateway image
+Functional deltas were already live on the primary
+`185.252.233.186` (gateway image
 ran `efd13d2` ⊇ strict `0cc04e2`; DuckAI dashboard dist from `8632121`;
 zero dashboard/deploy file changes since `8632121` — `cbf518f`/`cf8de88`
 are docs-only). Ran the standard flow anyway so the box is unambiguously
@@ -1000,11 +952,9 @@ operator logins persist). Verified live: gateway
 `UBAG_BUILD_COMMIT=cf8de88371e8…`, `/v1/ready` fully true (all 7 checks),
 4/4 containers healthy, 0 panics, facade mock smoke `job_000000000422`
 COMPLETED with exact token `UBAG-CF8DE88-PRIMARY-OK`. Rollback: re-tag
-the prior gateway image + restore the sync-backup snapshot. vps2 remains
-on image `0cc04e2` (functionally identical code; `efd13d2..cf8de88` adds
-docs only) — no vps2 changes were needed.
+the prior gateway image + restore the sync-backup snapshot.
 
-## 2026-09-13 STRICT picker enforcement is now the facade default — live on both boxes
+## 2026-09-13 STRICT picker enforcement is now the facade default — live
 
 Owner mandate: the model/reasoning settings the operator defines — explicit
 `model_settings` OR the per-provider selector defaults (e.g. duckai_web =
@@ -1020,13 +970,7 @@ updated to the new contract; the idempotency fingerprint still uses the raw
 `ubag_strict` value, so existing callers' replays keep resolving to the same
 jobs.
 
-Deployed and live-verified on both production gateways:
-- **vps2 `213.163.201.37`** (image from `0cc04e2`): two duckai_web facade
-  jobs — explicit Luna/Reasoning and a bare-model call — both COMPLETED with
-  exact tokens, `provider_config` carries NO `_enabled` marker, and the
-  worker emitted `session.configured` (the per-setting enforcement phase;
-  under drift the engine emits `blocked`/`selector_drift_detected` instead
-  and never completes — pinned by `test_provider_config.py`).
+Live-verified on the primary gateway:
 - **primary `185.252.233.186`** (image from `efd13d2`, `/v1/ready` fully
   true, 0 panics): mock-target facade probes — default call shows NO marker;
   explicit `ubag_strict:false` still produces `{"_enabled": false}`
@@ -1043,118 +987,9 @@ Reasoning (`selectors.py:1004`, marked "user decision") — so with strict
 enforcement now default, EVERY duckai_web job (facade or direct, with or
 without explicit settings) selects Luna + Reasoning on-page before
 submitting, on every run (new chats reset the picker, the per-job config
-phase re-applies it). No `UBAG_PROVIDER_CONFIG_*` overrides exist on either
-box. Live proofs of bare no-settings jobs completing under enforcement:
-vps2 `job_000000000005`, primary `job_000000000421`
-(`PRIMARY-DEF-DEFAULTS-7BBFB7` exact token).
-
-## 2026-09-13 VPS2 deployed (213.163.201.37, ubag2.polytronx.com) — LIVE over HTTPS
-
-Second in-line production box deployed with `docker-compose.vps2.yml` (commit
-`5295ed9`, includes the 2026-09-10 perf program): gateway + **local**
-postgres:16-alpine + nginx-dashboard + live browser + chat-reaper + a
-**dedicated** Nginx Proxy Manager edge (jc21 v2.15, openresty) publishing host
-80/443/81. Fully self-contained — no platform / oetwebsite_internal networks.
-
-Live proof at the origin (bypassing Cloudflare, Host-header direct):
-`/v1/ready` fully true; all 5 containers healthy; authed `GET /v1/jobs?limit=1`
-200 through the full edge chain (NPM → dashboard nginx → gateway → postgres);
-dashboard assets 200 with real bytes (CSS 110KB, entry chunks present, bundle
-references `/dashboard/_app/…`); facade E2E `job_000000000001` COMPLETED
-(model `mock`, exact token `VPS2-DEPLOY-SMOKE-*` in output). Rollback: N/A
-(new box; prior state was empty).
-
-Fresh secrets generated **on the VPS** in
-`/opt/docker/ubag/deploy/vps/env.local` (never in transit or transcript); env
-mirrors primary knobs (poll 75ms, daemon on, PAT enabled, facade wait 240s,
-actor superadmin). Operator `.htpasswd` copied from the primary. Dashboard
-dist built in an isolated worktree at HEAD with `UBAG_BASE_PATH=/dashboard`
-(Git-Bash quirk: needs `MSYS2_ENV_CONV_EXCL=UBAG_BASE_PATH`, and
-`pnpm generate:sdk-contracts` writes to the main checkout — copy
-`packages/sdk-typescript/dist` into the worktree before building).
-
-Gotchas captured for the next deploy:
-- `.htpasswd` must be **chmod 644**: at 600 the nginx worker cannot read it →
-  any authed request 500s while unauthenticated requests 401 normally.
-- NPM v2.15 API: no `/api/setup`; first admin is `POST /api/users` in setup
-  mode with `{name, nickname, email, roles, auth:{type:"password",secret}}`.
-- NPM v2.15 proxy-host blocks lack the ACME challenge include; fixed via
-  `advanced_config` injecting
-  `location ^~ /.well-known/acme-challenge/ { root /data/letsencrypt-acme-challenge; }`
-  (verified serving tokens for Host=ubag2).
-
-**TLS finished same day (owner fixed the DNS record):** Cloudflare now routes
-`ubag2.polytronx.com` → 213.163.201.37 (http 301 from our NPM instead of the
-edge openresty 404). Let's Encrypt cert issued via
-`POST /api/nginx/certificates` (cert `npm-2`, valid to 2026-12-12, HTTP-01
-through Cloudflare to origin :80), attached to proxy host 1 with
-`ssl_forced` + `http2_support`. Live proof through Cloudflare HTTPS:
-`/healthz` → `ok`; `/` → 301 `/dashboard/`; `/dashboard/` 401 unauth → 200
-with Basic Auth; authed `/v1/jobs?limit=1` → 200. Browser-side cert is
-Cloudflare's universal SSL (expected); origin TLS is the LE cert.
-
-Deploy gotchas captured for the next deploy:
-- `.htpasswd` must be **chmod 644**: at 600 the nginx worker cannot read it →
-  any authed request 500s while unauthenticated requests 401 normally.
-- NPM v2.15 API: no `/api/setup`; first admin is `POST /api/users` in setup
-  mode with `{name, nickname, email, roles, auth:{type:"password",secret}}`.
-  The LE contact email comes from the admin user's email; certificates meta
-  only allows `dns_challenge` etc. (no letsencrypt_email).
-- **Do NOT inject a `/.well-known/acme-challenge/` location via
-  `advanced_config`** — the proxy-host template adds it itself once a cert is
-  attached; duplicating it makes `nginx -t` fail (duplicate location) and NPM
-  silently rolls back by DELETING the generated conf (only visible with
-  `DEBUG=true`). `advanced_config` stays empty.
-
-NPM admin creds: root-only
-`/opt/docker/nginx-proxy-manager/ADMIN-CREDENTIALS.txt` (UI :81). Full
-setup record: `deploy/vps2/npm-setup.sh`; one-time flow:
-`deploy/vps2/README.md` + `one-time-setup.sh`. Provider logins in the vps2
-browser container are fresh — the operator signs in via the dashboard's
-Browser Sessions widget.
-
-**2026-09-13 later — DuckAI login shortcut on vps2 dashboard (live):**
-`LiveBrowser.svelte` provider quick-links gained `{label:"DuckAI",
-url:"https://duck.ai"}` (`8632121`); dist rebuilt in an isolated worktree
-(UBAG_BASE_PATH=/dashboard) and swapped onto vps2 — backup at
-`/opt/docker/ubag/apps/dashboard/dist.bak.duckai`, nginx-dashboard recreated
-healthy. Verified live: served chunk `nodes/7.PjMLmmeb.js` contains the
-DuckAI/duck.ai entry; /dashboard 200 authed. **Also deployed to the primary
-(185.252.233.186) same day** — same swap flow (backup
-`apps/dashboard/dist.bak.duckai`), container healthy, verified live through
-Cloudflare: /dashboard 200 authed, served chunk carries the DuckAI/duck.ai
-entry.
-
-**2026-09-13 — duckai_web live E2E with 5.6 Luna + Reasoning (vps2, PASS):**
-Full pipeline with explicit pins: `POST /v1/jobs` target `duckai_web`,
-`model_settings {"model":"GPT-5.6 Luna","reasoning":"Reasoning"}` (validated
-against the manifest catalog, injected as `options.provider_config` — visible
-in `metadata.options.provider_config`). `job_000000000002` COMPLETED in ~15s:
-queued → assigned → live session over CDP (`session.opening`,
-`session.authenticated`, `session.new_chat`, `session.configured`) → streamed
-token deltas → exact token `DUCKAI-LUNA-R-D977DF` returned as the entire
-output. Worker enforces both settings on-page (strict path — direct pins
-carry no `_enabled` best-effort marker; a picker mismatch would fail the
-job). Operator defaults for duckai_web already match (selectors: model
-desired GPT-5.6 Luna, reasoning desired Reasoning).
-
-**2026-09-13 — duckai_web attachment E2E (vps2, PASS after infra fix):**
-Facade call with `ubag_attachments` `[{key:"invoice", application/pdf,
-kind:document}]` + Luna/Reasoning `model_settings` → 202-held
-`job_000000000003`; a generated PDF with INVENTED facts (invoice INV-3097,
-total 1,284.60 EUR — base-14 Helvetica, built on-box, 985 bytes) PUT to
-`/v1/jobs/{id}/artifacts/invoice` → born-complete auto-dispatch on the PUT
-hook → `file.attached` worker event → duck.ai answered
-**"INV-3097 — 1,284.60 EUR"** (facts exist only in the PDF = genuine
-comprehension). Guardrails verified live: artifact PUT with mismatched
-Content-Type → 400 ATTACHMENT-CONTENT-TYPE-001; without the required
-`Idempotency-Key` header → 400 IDEMPOTENCY-KEY-MISSING-001.
-**Infra fix on vps2:** the fresh `artifact_data` volume came up **root-owned**
-(gateway runs uid 999) so every artifact store 500'd
-(UBAG-INTERNAL-GATEWAY-001, "failed to store artifact");
-`docker exec -u root ubag-vps2-gateway-1 chown -R 999:999
-/var/lib/ubag/artifacts` fixed it. Primary's volume verified ubag-owned
-(unaffected). Add this chown to one-time setup on any new box.
+phase re-applies it). No `UBAG_PROVIDER_CONFIG_*` overrides exist on the box.
+Live proof of a bare no-settings job completing under enforcement: primary
+`job_000000000421` (`PRIMARY-DEF-DEFAULTS-7BBFB7` exact token).
 
 ## 2026-09-10 Live pipeline perf program: 2-5x faster jobs, 4x smaller browser
 

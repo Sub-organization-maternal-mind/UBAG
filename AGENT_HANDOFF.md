@@ -131,30 +131,28 @@ SQLite 0009–0013 apply on next boot; the outbox table (0017) is provisioned
 for the (still optional) durable-dispatch path. CI now runs the 20
 env-gated integration tests against real postgres:16/NATS/MinIO containers.
 
-## Both production boxes on exactly `cf8de88` (2026-09-13, live-verified)
+## Production on `cf8de88` (2026-09-13, live-verified)
 
-Primary `185.252.233.186` AND vps2 `213.163.201.37` both run
+Primary `185.252.233.186` runs
 `UBAG_BUILD_COMMIT=cf8de88371e8329373e1fd7ccb3f09b90105f564` (strict
-default build `0cc04e2` + docs/OpenAPI deltas; functionally identical
-code everywhere). The vps2 sync was executed BY the owner's vps2 session
-using the relay template `deploy/vps2/EXECUTOR-PROMPT.md` (RUNBOOK A);
-primary session staged the tarball + re-verified independently: ready
+default build `0cc04e2` + docs/OpenAPI deltas). The primary session
+staged the tarball + re-verified independently: ready
 true, containers healthy, htpasswd 644, 0 panics, backup
-`/opt/docker/ubag-sync-backups/ubag-pre-cf8de88-20260913T174536Z` on
-vps2 and `ubag-pre-cf8de88-20260913T2131Z` on the primary. vps2 smoke
-later closed same day: a PAT was issued on-box (app-secret Bearer →
-`POST /v1/auth/pat`, tenant_oet/oet-platform/service, no expiry) and
-saved root-only at `/opt/docker/ubag/deploy/vps/.smoke-pat.json`; facade
-mock `job_000000000006` COMPLETED with exact token
-`UBAG-VPS2-CF8DE88-SMOKE-OK`. For future vps2 work prefer the relay:
-stage artifacts over SSH, fill the TASK block, owner pastes into the
-vps2 session; smoke credential = the on-box `.smoke-pat.json`.
+`/opt/docker/ubag-sync-backups/ubag-pre-cf8de88-20260913T2131Z` on the
+primary.
+
+## vps2 retired (2026-10-01)
+
+The second production box `213.163.201.37` (`upcloud-prod`, Ubag2) is
+retired and no longer part of the platform. All vps2 reference material
+(`docker-compose.vps2.yml`, `deploy/vps2/`) was removed from the repo;
+production is the single primary box `185.252.233.186`.
 
 ## Primary on latest main `cf8de88` (2026-09-13, live-verified)
 
 Primary `185.252.233.186` re-synced to main HEAD `cf8de88` — docs-only
-delta over its prior `efd13d2` build (strict-by-default `0cc04e2` code
-identical on both). Tracked-only tarball extracted over
+delta over its prior `efd13d2` build (strict-by-default `0cc04e2` code).
+Tracked-only tarball extracted over
 `/opt/docker/ubag` (env.local/.htpasswd/.oet-pat.json/DBs/dist
 untouched); gateway + chat-reaper rebuilt and recreated (browser
 recreated too, profile volume kept). Verified:
@@ -162,7 +160,6 @@ recreated too, profile volume kept). Verified:
 containers healthy, 0 panics, mock smoke `job_000000000422` exact token
 `UBAG-CF8DE88-PRIMARY-OK`. Rollback: prior gateway image (from
 `efd13d2`) + `/opt/docker/ubag-sync-backups/ubag-pre-cf8de88-20260913T2131Z`.
-vps2 stays on image `0cc04e2` — same functional code.
 
 ## Facade strict-by-default (2026-09-13, live on both boxes)
 
@@ -172,33 +169,10 @@ on explicit `ubag_strict:false`. Without the marker the worker enforces the
 operator's model/reasoning settings on-page — explicit `model_settings` or
 the per-provider selector defaults — fail-closed (`selector_drift_detected`
 blocks the job on menu drift). Deployed on primary `185.252.233.186`
-(image `efd13d2`, ready true, mock probes `job_...419/420`) and vps2
-`213.163.201.37` (image `0cc04e2`, duckai facade jobs strict-verified).
+(image `efd13d2`, ready true, mock probes `job_...419/420`).
 If OET calls start failing with `selector_drift_detected`, that is this
 change working as mandated — fix the selectors for the drifted target, do
 NOT flip the default back.
-
-## VPS2 (second in-line production) state (2026-09-13, LIVE over HTTPS)
-
-UBAG main `5295ed9` deployed on the NEW dedicated box `213.163.201.37`
-(`ssh upcloud-prod`, Upcloud Singapore 4c/8GB) via
-`docker-compose.vps2.yml`: standalone stack with LOCAL postgres:16-alpine,
-dedicated NPM v2.15 edge (host 80/443/81), gateway + nginx-dashboard +
-browser + chat-reaper all healthy, `/v1/ready` fully true, authed
-`/v1/jobs` 200 through the edge, dashboard assets 200, facade mock E2E
-`job_000000000001` COMPLETED (exact token). TLS live: LE cert `npm-2`
-(valid to 2026-12-12) on proxy host 1 with ssl_forced + http2;
-`https://ubag2.polytronx.com` fully verified through Cloudflare (healthz ok,
-dashboard 401→200 with Basic Auth, authed /v1/jobs 200). Fresh on-box
-secrets in `/opt/docker/ubag/deploy/vps/env.local`; NPM admin creds
-root-only at `/opt/docker/nginx-proxy-manager/ADMIN-CREDENTIALS.txt`;
-setup record in `deploy/vps2/npm-setup.sh` (+ README.md,
-one-time-setup.sh) — includes the v2.15 API gotchas (setup via
-`POST /api/users`, certificates meta schema, and: never inject the ACME
-location via advanced_config — NPM adds it itself and duplicates make
-nginx -t fail → silent conf rollback, DEBUG=true to see it). Provider
-logins in the vps2 browser are fresh — operator signs in via Browser
-Sessions.
 
 ## Production performance state (2026-09-10 perf program, live)
 

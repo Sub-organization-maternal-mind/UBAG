@@ -35,6 +35,6 @@ find . -path ./.git -prune -o -type f -newermt "2026-09-13" -print 2>/dev/null |
 
 echo
 echo "############ COMPOSE FILE MTIME + HASH ############"
-for f in docker-compose.vps.yml docker-compose.small.yml docker-compose.vps2.yml; do
+for f in docker-compose.vps.yml docker-compose.small.yml; do
   [ -f "$f" ] && md5sum "$f" && stat -c '%y %n' "$f"
 done

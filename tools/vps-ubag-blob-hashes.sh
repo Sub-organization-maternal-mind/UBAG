@@ -9,7 +9,6 @@ AGENTS.md
 Makefile
 package.json
 docker-compose.vps.yml
-docker-compose.vps2.yml
 docker-compose.small.yml
 adapters/registry.json
 adapters/chatgpt_web/manifest.json

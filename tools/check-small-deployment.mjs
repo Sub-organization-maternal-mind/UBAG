@@ -203,8 +203,7 @@ if (!/OPTIONAL_MIGRATIONS="[^"]*0008_blueprint_schema\.sql/.test(entrypoint)) {
 // compose interpolation - it does not inject).
 for (const compose of [
   'docker-compose.small.yml',
-  'docker-compose.vps.yml',
-  'docker-compose.vps2.yml'
+  'docker-compose.vps.yml'
 ]) {
   if (!read(compose).includes('UBAG_ALLOW_OPTIONAL_MIGRATIONS')) {
     failures.push(`${compose} must pass UBAG_ALLOW_OPTIONAL_MIGRATIONS to the gateway service`);

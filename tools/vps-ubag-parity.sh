@@ -1,11 +1,10 @@
 #!/bin/bash
-# Read-only: verify BOTH UBAG production boxes and source/commit parity.
+# Read-only: verify the UBAG production box and source/commit parity.
 set -u
 
-echo "############ BOTH PRODUCTION BOXES ############"
-for host in vps vps2; do :; done 2>/dev/null
+echo "############ PRODUCTION BOX (primary / vps) ############"
 
-echo "--- this box (primary / vps) ---"
+echo "--- this box ---"
 docker ps --format '{{.Names}}|{{.Image}}|{{.CreatedAt}}' | grep -i ubag
 echo "gateway build commit: $(docker exec ubag-vps-gateway-1 printenv UBAG_BUILD_COMMIT 2>/dev/null || echo n/a)"
 echo "gateway version:      $(docker exec ubag-vps-gateway-1 printenv UBAG_GATEWAY_VERSION 2>/dev/null || echo n/a)"
@@ -32,5 +31,4 @@ echo "gateway entrypoint script hash:"
 md5sum /opt/docker/ubag/deploy/vps/*.sh 2>/dev/null | head -5
 
 echo
-echo "############ vps2 reachability from here ############"
-(getent hosts vps2 2>/dev/null || echo "vps2 not resolvable from this box")
+echo "############ this box (primary / vps) is the only production box ############"
