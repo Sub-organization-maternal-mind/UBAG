@@ -125,6 +125,9 @@ jobs:
   gateway:
     name: Gateway (Go)
     runs-on: ubuntu-latest
+    # The failure-log publish step pushes to the throwaway ci-logs-gateway ref.
+    permissions:
+      contents: write
     # Real service containers: 17 Postgres + 2 NATS + 1 MinIO tests in the
     # tree skip silently without these, leaving every persistent store
     # production uses untested. The DSNs below match the env names those
@@ -179,12 +182,7 @@ jobs:
           set +e
           go test -race -coverprofile=coverage.out ./... 2>&1 | tee /tmp/gotest.log
           rc=${PIPESTATUS[0]}
-          if [ "$rc" -ne 0 ]; then
-            # Surface the failing output as check-run annotations: the full job
-            # log is auth-gated, annotations are readable from any public tooling.
-            tail -n 45 /tmp/gotest.log | awk '{ printf "::error title=gotest::%s\n", $0 }'
-            exit 1
-          fi
+          [ "$rc" -eq 0 ] || exit "$rc"
           echo "go test clean"
       - name: Postgres round-trip tests (migrations applied)
         working-directory: apps/gateway
@@ -210,10 +208,25 @@ jobs:
       - name: Phase 9 packages (region, mfa, jitadmin, audit, siem)
         working-directory: apps/gateway
         run: go test -race ./internal/region/... ./internal/mfa/... ./internal/jitadmin/... ./internal/audit/... ./internal/siem/...
+      # The full job log is auth-gated; on failure publish the raw go test
+      # output to a throwaway ref that can be read without a token.
+      - name: Publish failure log
+        if: failure()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/ci-artifacts"
+          cp -f /tmp/gotest.log "$GITHUB_WORKSPACE/ci-artifacts/gotest.log" 2>/dev/null || true
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
+          git add -f ci-artifacts/gotest.log
+          git commit -m "ci: go test failure log for ${GITHUB_SHA} [skip ci]" || exit 0
+          git push -f origin HEAD:ci-logs-gateway
 
   worker:
     name: Worker (Python)
     runs-on: ubuntu-latest
+    # The failure-log publish step pushes to the throwaway ci-logs-worker ref.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -224,10 +237,27 @@ jobs:
         run: python -m pip install "ruff==0.8.4" && ruff check apps/worker adapters
       - name: pytest (UBAG_ADAPTER_OFFLINE=1)
         env: { UBAG_ADAPTER_OFFLINE: "1" }
-        run: node tools/run-python-worker-tests.mjs
+        run: |
+          set +e
+          node tools/run-python-worker-tests.mjs 2>&1 | tee /tmp/pytest.log
+          rc=${PIPESTATUS[0]}
+          [ "$rc" -eq 0 ] || exit "$rc"
+          echo "worker suite clean"
       - name: Worker region pinning tests
         env: { UBAG_ADAPTER_OFFLINE: "1" }
         run: python -m pytest apps/worker/tests/test_region.py -v
+      # The full job log is auth-gated; on failure publish the raw pytest
+      # output to a throwaway ref that can be read without a token.
+      - name: Publish failure log
+        if: failure()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/ci-artifacts"
+          cp -f /tmp/pytest.log "$GITHUB_WORKSPACE/ci-artifacts/pytest.log" 2>/dev/null || true
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
+          git add -f ci-artifacts/pytest.log
+          git commit -m "ci: worker failure log for ${GITHUB_SHA} [skip ci]" || exit 0
+          git push -f origin HEAD:ci-logs-worker
 
   node-suite:
     name: Node packages, SDKs, dashboard, docs
@@ -298,7 +328,9 @@ jobs:
     # SARIF report to the code-scanning API, which needs security-events: write;
     # without this scope the job fails before any step runs ("Set up job").
     permissions:
-      contents: read
+      # write: the failure-log publish step pushes to the throwaway
+      # ci-logs-supplychain ref.
+      contents: write
       security-events: write
       actions: read
     steps:
@@ -331,7 +363,10 @@ jobs:
         # to build, and GOTOOLCHAIN=local forbids the auto-upgrade.
         env: { GOTOOLCHAIN: local }
         run: |
-          go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+          set +e
+          go run golang.org/x/vuln/cmd/govulncheck@latest ./... 2>&1 | tee /tmp/govulncheck.log
+          rc=${PIPESTATUS[0]}
+          [ "$rc" -eq 0 ] || exit "$rc"
           echo "govulncheck clean"
 
       # pip-audit pointed at apps/worker/requirements.txt, which does not exist -
@@ -408,6 +443,18 @@ jobs:
         with: { format: spdx-json, output-file: ubag.sbom.spdx.json }
       - uses: actions/upload-artifact@v7
         with: { name: sbom, path: ubag.sbom.spdx.json }
+      # The full job log is auth-gated; on failure publish the raw scan
+      # outputs to a throwaway ref that can be read without a token.
+      - name: Publish failure log
+        if: failure()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/ci-artifacts"
+          cp -f /tmp/govulncheck.log "$GITHUB_WORKSPACE/ci-artifacts/govulncheck.log" 2>/dev/null || true
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
+          git add -f ci-artifacts/govulncheck.log
+          git commit -m "ci: scan failure log for ${GITHUB_SHA} [skip ci]" || exit 0
+          git push -f origin HEAD:ci-logs-supplychain
 
   dependency-review:
     name: Dependency review (PR only)
