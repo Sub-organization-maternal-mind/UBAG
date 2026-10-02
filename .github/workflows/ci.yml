@@ -175,7 +175,17 @@ jobs:
           GOTOOLCHAIN: local
           UBAG_TEST_POSTGRES_DSN: postgres://ubag:ubag-test@localhost:5432/ubag_test?sslmode=disable
           UBAG_TEST_NATS_URL: nats://localhost:4222
-        run: go test -race -coverprofile=coverage.out ./...
+        run: |
+          set +e
+          go test -race -coverprofile=coverage.out ./... 2>&1 | tee /tmp/gotest.log
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ]; then
+            # Surface the failing output as check-run annotations: the full job
+            # log is auth-gated, annotations are readable from any public tooling.
+            tail -n 45 /tmp/gotest.log | awk '{ printf "::error title=gotest::%s\n", $0 }'
+            exit 1
+          fi
+          echo "go test clean"
       - name: Postgres round-trip tests (migrations applied)
         working-directory: apps/gateway
         env:
