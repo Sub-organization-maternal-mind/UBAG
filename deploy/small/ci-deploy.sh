@@ -74,6 +74,16 @@ deploy_gateway() {
   printf 'UBAG_GATEWAY_IMAGE=%s\n' "$IMAGE" >>"$ENV_FILE"
   log "pinned UBAG_GATEWAY_IMAGE=$IMAGE (was: ${previous:-<unset>})"
 
+  # Record the commit this image was built from. The box is a tarball extract,
+  # not a git checkout, so env.local is the only place the running build's
+  # provenance is kept; /v1/ready and version consumers read this value.
+  local commit previous_commit
+  commit="${tag#sha-}"
+  previous_commit="$(grep -E '^UBAG_BUILD_COMMIT=' "$ENV_FILE" | tail -1 | cut -d= -f2- || true)"
+  sed -i '/^UBAG_BUILD_COMMIT=/d' "$ENV_FILE"
+  printf 'UBAG_BUILD_COMMIT=%s\n' "$commit" >>"$ENV_FILE"
+  log "pinned UBAG_BUILD_COMMIT=$commit (was: ${previous_commit:-<unset>})"
+
   log "recreating gateway"
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --no-deps --force-recreate gateway
 
