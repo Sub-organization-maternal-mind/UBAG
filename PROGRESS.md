@@ -20,14 +20,19 @@ in CI), so latent test/policy drift surfaced all at once. Fixes on the branch:
 - **Supply-chain:** otel exporters 1.44.0 -> 1.47.0 fixes GO-2026-6505 /
   CVE-2026-81870 (otlptrace exporter config logging could leak collector
   URLs with embedded credentials); govulncheck is clean again.
-- **npm audit baseline refreshed (2026-10-03): 48 -> 66 advisories.** All
-  additions are newly published advisories (vite, esbuild, js-yaml, fast-uri,
-  sharp, svgo, undici via jsdom, devalue via @sveltejs/kit, astro/starlight,
-  postcss, browserslist, vitest, nanoid, smol-toml) against the same
-  build/test-only toolchain. Nothing here ships: the gateway is a Go binary
-  and apps/dashboard deploys static files with no Node runtime. The gate
-  stays regression-based; dependency upgrades (dependabot branches exist for
-  astro/vite/kit/etc.) remain their own tracked work.
+- **npm audit baseline refreshed twice on 2026-10-03: 48 -> 66 -> 68
+  advisories.** All additions are newly published advisories (vite, esbuild,
+  js-yaml, fast-uri, sharp, svgo, undici via jsdom, devalue via
+  @sveltejs/kit, astro/starlight, postcss, browserslist, vitest, nanoid,
+  smol-toml) against the same build/test-only toolchain — two waves landed
+  within the hour of the first refresh, i.e. registry churn rather than a
+  dependency we added. Nothing here ships: the gateway is a Go binary and
+  apps/dashboard deploys static files with no Node runtime. Dependency
+  upgrades (dependabot branches exist for astro/vite/kit/etc.) remain their
+  own tracked work. **Owner follow-up:** a count-based gate re-reds on every
+  advisory-publication wave against this backlog; if the churn continues,
+  consider gating only on advisories with a patched version available, or on
+  newly vulnerable packages rather than counts.
 - **Postgres round-trip runner** mirrors the production entrypoint's
   optional-migration policy (skips the pg_partman-dependent
   0008_blueprint_schema.sql unless UBAG_ALLOW_OPTIONAL_MIGRATIONS=1).
