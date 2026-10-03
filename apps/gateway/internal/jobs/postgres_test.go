@@ -107,6 +107,60 @@ func TestPostgresStoreContract(t *testing.T) {
 	}
 }
 
+// TestPostgresStoreAllowsSafeManualSessionRuntimeFields mirrors the memory
+// store: a loopback noVNC URL and a runtime-shaped session id on a
+// manual-session event are the operator-viewer contract, not secrets, so they
+// are preserved rather than redacted.
+func TestPostgresStoreAllowsSafeManualSessionRuntimeFields(t *testing.T) {
+	dsn := os.Getenv("UBAG_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("UBAG_TEST_POSTGRES_DSN is not set")
+	}
+
+	db := openPostgresTestDB(t, dsn)
+	defer db.Close()
+	applyPostgresGatewayMigration(t, db)
+
+	store := NewPostgresStore(db)
+	tenantID := "tenant_pg_redact_ok_" + time.Now().UTC().Format("20060102150405")
+	defer cleanupPostgresJobs(t, db, tenantID)
+	job, err := store.Create(context.Background(), CreateRequest{
+		APIVersion:     "2026-05-22",
+		TenantID:       tenantID,
+		AppID:          "app_pg_redact",
+		IdempotencyKey: "idem_pg_redact_ok",
+		Target:         "mock",
+		CommandType:    "submit",
+		Input:          map[string]any{"prompt": "hello"},
+		TraceID:        "trace_pg_redact_ok",
+	})
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	_, found, err := store.ApplyWorkerEvent(context.Background(), WorkerEvent{
+		EventID:    "pg_manual_session_safe",
+		JobID:      job.ID,
+		APIVersion: job.APIVersion,
+		Type:       "session.manual_action_required",
+		Sequence:   2,
+		TraceID:    job.TraceID,
+		Data:       map[string]any{"status": "running", "novnc_url": "http://127.0.0.1:7900/session/sess_1", "session_id": "sess_1"},
+	})
+	if err != nil || !found {
+		t.Fatalf("ApplyWorkerEvent found=%v err=%v", found, err)
+	}
+
+	events, found, err := store.ListEvents(context.Background(), job.ID, 0, 10)
+	if err != nil || !found {
+		t.Fatalf("ListEvents found=%v err=%v", found, err)
+	}
+	data := events[1].Data
+	if data["novnc_url"] != "http://127.0.0.1:7900/session/sess_1" || data["session_id"] != "sess_1" {
+		t.Fatalf("safe manual session fields were not preserved: %#v", data)
+	}
+}
+
 func TestPostgresStoreRedactsUnsafeWorkerEventData(t *testing.T) {
 	dsn := os.Getenv("UBAG_TEST_POSTGRES_DSN")
 	if dsn == "" {
@@ -141,7 +195,7 @@ func TestPostgresStoreRedactsUnsafeWorkerEventData(t *testing.T) {
 		Type:       "session.manual_action_required",
 		Sequence:   2,
 		TraceID:    job.TraceID,
-		Data:       map[string]any{"status": "running", "novnc_url": "http://127.0.0.1:7900/session/sess_1", "session_id": "sess_1"},
+		Data:       map[string]any{"status": "running", "novnc_url": "https://example.invalid/session/sess_1", "session_id": "sess 1"},
 	})
 	if err != nil || !found {
 		t.Fatalf("ApplyWorkerEvent found=%v err=%v", found, err)
