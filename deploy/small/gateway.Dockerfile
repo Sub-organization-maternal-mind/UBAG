@@ -18,7 +18,12 @@ ARG UBAG_ANTIGRAVITY_SLOT_1_ID=acct_1
 ARG UBAG_ANTIGRAVITY_SLOT_2_ID=acct_2
 ARG UBAG_ANTIGRAVITY_SLOT_3_ID=acct_3
 
-RUN apt-get update -qq && apt-get install -y --no-install-recommends wget postgresql-client \
+# apt-get upgrade applies Debian security updates to the base image packages
+# (e.g. libpcre2 CVE-2026-103111, fixed upstream but not yet reflected in the
+# python:3.12-slim tag); Trivy fails the build on fixed HIGH/CRITICAL findings.
+RUN apt-get update -qq \
+  && apt-get upgrade -y -qq \
+  && apt-get install -y --no-install-recommends wget postgresql-client \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd -r ubag \
   && groupadd -g 10001 agy-ipc \
