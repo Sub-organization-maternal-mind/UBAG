@@ -18,7 +18,7 @@ ENV UBAG_BASE_PATH=/dashboard
 RUN pnpm install --frozen-lockfile \
  && pnpm --filter @ubag/dashboard build
 
-# trivy:ignore:DS-0002 — official nginx entrypoint needs root for envsubst/htpasswd before dropping to the nginx user
+# trivy:ignore:AVD-DS-0002 — official nginx entrypoint needs root for envsubst/htpasswd before dropping to the nginx user (also accepted in .trivyignore; the inline ID must carry the AVD- prefix to match)
 FROM nginx:1.27-alpine
 
 # nginx:alpine links OpenSSL into nginx itself but doesn't ship the `openssl`

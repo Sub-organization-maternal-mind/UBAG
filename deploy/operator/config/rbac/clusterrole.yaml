@@ -36,8 +36,10 @@ rules:
   - apiGroups:
       - ""
     resources:
-      # trivy:ignore:KSV-041 — get-only access to one credential Secret is the
-      # operator's core function; it cannot reconcile gateway credentials without it.
+      # trivy:ignore:AVD-KSV-0041 — get-only access to one credential Secret is
+      # the operator's core function; it cannot reconcile gateway credentials
+      # without it (also accepted in .trivyignore; the inline ID must carry the
+      # AVD- prefix to match).
       - secrets
     verbs:
       - get

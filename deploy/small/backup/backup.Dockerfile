@@ -13,7 +13,7 @@
 # postgres:16-alpine base. Tag pinned to match minio-init in docker-compose.small.yml.
 FROM minio/mc:RELEASE.2025-04-16T18-13-26Z AS mc
 
-# trivy:ignore:DS-0002 — root-owned backup volume writes are the tool purpose
+# trivy:ignore:AVD-DS-0002 — root-owned backup volume writes are the tool purpose (also accepted in .trivyignore; the inline ID must carry the AVD- prefix to match)
 FROM postgres:16-alpine
 COPY --from=mc /usr/bin/mc /usr/local/bin/mc
 RUN mc --version

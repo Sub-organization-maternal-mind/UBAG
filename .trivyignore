@@ -1,0 +1,29 @@
+# Reviewed, deliberate acceptances for trivy misconfiguration checks — the
+# same philosophy as tools/audit-baseline.json: known, reasoned, tracked.
+# Rationale per group below; recorded in PROGRESS.md ("2026-10-03 — CI
+# green-up") and in inline # trivy:ignore comments where the finding has a
+# line to attach to.
+#
+# Deliberate-root service images (see the per-file trivy:ignore comments):
+# the official nginx entrypoint needs root for envsubst/htpasswd before
+# dropping to the nginx user; the viewer/backup/mock-worker images write to
+# root-owned state paths on purpose.
+AVD-DS-0002
+#
+# Operator ClusterRole holds get-only access to the single credential Secret
+# it reconciles; without it the operator cannot function (KSV-0041).
+AVD-KSV-0041
+#
+# Blueprint-only cloud Terraform (deploy/terraform/{aws,azure,gcp,digitalocean}):
+# none of it is deployed — production is the VPS compose stack, and the
+# multi-region/geodns work is design-only (PROGRESS.md). Reviewed 2026-10-03;
+# re-scope these checks the moment a cloud deployment becomes real.
+AVD-AWS-0039
+AVD-AWS-0040
+AVD-AWS-0041
+AVD-AWS-0164
+AVD-AZU-0041
+AVD-AZU-0042
+AVD-DIG-0008
+AVD-GCP-0048
+AVD-GCP-0061

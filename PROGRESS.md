@@ -36,6 +36,16 @@ in CI), so latent test/policy drift surfaced all at once. Fixes on the branch:
 - **Postgres round-trip runner** mirrors the production entrypoint's
   optional-migration policy (skips the pg_partman-dependent
   0008_blueprint_schema.sql unless UBAG_ALLOW_OPTIONAL_MIGRATIONS=1).
+- **IaC scan (trivy config):** the closeout's KSV annotation used the wrong
+  ID (`KSV-041` for the `KSV-0041` check) so it never matched, and the
+  deliberate-root service Dockerfiles plus blueprint-only cloud Terraform
+  had no acceptances at all. Added a reviewed `.trivyignore` (AVD-<ID>
+  form with rationale per group — the documented mechanism; inline
+  trivy:ignore comments cannot attach to line-less findings like
+  DS-0002) and corrected the inline IDs where they exist. The four root
+  Dockerfiles and deploy/terraform/{aws,azure,gcp,digitalocean} are
+  accepted deliberately; re-scope those checks when a cloud deployment
+  becomes real.
 - **Deploy provenance:** deploy/small/ci-deploy.sh now pins
   UBAG_BUILD_COMMIT to the sha-<commit> it deploys (was left at the last
   manual sync, so /v1/ready reported a stale commit for CI-built images).
