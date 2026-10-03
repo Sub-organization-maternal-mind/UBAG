@@ -1,8 +1,44 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-09-28 (CI closeout in progress — see AGENT_HANDOFF.md
-"REMAINING WORK" for the live list: verify ci green on 79c6dee, verify prod
-deploy, plugins deletion, eslint/golangci-lint, MinIO test image source.)
+Last updated: 2026-10-03 (CI green-up on feat/ci-green — the `ci` workflow
+has been red on every main push since the 09-27 closeout; see the section
+below and AGENT_HANDOFF.md "REMAINING WORK" for the live list.)
+
+## 2026-10-03 — CI green-up (feat/ci-green)
+
+The `ci` workflow was red on every main push since the 2026-09-27 closeout:
+the WS-7 service-container wiring started actually RUNNING the Postgres-gated
+tests, which had silently skipped everywhere before (no local Docker, no DSN
+in CI), so latent test/policy drift surfaced all at once. Fixes on the branch:
+
+- **Gateway (Go):** TestPostgresStoreRedactsUnsafeWorkerEventData fed the
+  SAFE manual-session values (loopback noVNC URL + runtime-shaped id) but
+  expected [redacted]; allowManualRuntimeEventKey deliberately preserves
+  those for the operator viewer, and the memory suite already split the
+  allow/redact cases. The postgres test now uses genuinely unsafe values for
+  the redact assertion, with a new safe-case parity test.
+- **Supply-chain:** otel exporters 1.44.0 -> 1.47.0 fixes GO-2026-6505 /
+  CVE-2026-81870 (otlptrace exporter config logging could leak collector
+  URLs with embedded credentials); govulncheck is clean again.
+- **npm audit baseline refreshed (2026-10-03): 48 -> 66 advisories.** All
+  additions are newly published advisories (vite, esbuild, js-yaml, fast-uri,
+  sharp, svgo, undici via jsdom, devalue via @sveltejs/kit, astro/starlight,
+  postcss, browserslist, vitest, nanoid, smol-toml) against the same
+  build/test-only toolchain. Nothing here ships: the gateway is a Go binary
+  and apps/dashboard deploys static files with no Node runtime. The gate
+  stays regression-based; dependency upgrades (dependabot branches exist for
+  astro/vite/kit/etc.) remain their own tracked work.
+- **Postgres round-trip runner** mirrors the production entrypoint's
+  optional-migration policy (skips the pg_partman-dependent
+  0008_blueprint_schema.sql unless UBAG_ALLOW_OPTIONAL_MIGRATIONS=1).
+- **Deploy provenance:** deploy/small/ci-deploy.sh now pins
+  UBAG_BUILD_COMMIT to the sha-<commit> it deploys (was left at the last
+  manual sync, so /v1/ready reported a stale commit for CI-built images).
+- **CI diagnosability:** the gateway/worker/supply-chain jobs publish raw
+  failure logs to throwaway ci-logs-* refs (Actions job logs are auth-gated),
+  and check-npm-audit.mjs lists every advisory with fix availability when the
+  baseline is exceeded. Verification pending on the next branch run; the
+  Postgres round-trip step is the remaining red as of the last run.
 
 ## 2026-09-28 — Backend/API architecture audit implemented (WS-1…WS-8)
 
