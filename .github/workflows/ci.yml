@@ -228,7 +228,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
           # A step that never ran leaves no log; add only what exists.
-          for log in ci-artifacts/*.log; do if [ -f "$log" ]; then git add -f "$log"; fi; done
+          for log in ci-artifacts/*; do if [ -f "$log" ]; then git add -f "$log"; fi; done
           git diff --cached --quiet && exit 0
           git commit -m "ci: go test failure log for ${GITHUB_SHA} [skip ci]"
           git push -f origin HEAD:ci-logs-gateway
@@ -268,7 +268,7 @@ jobs:
           cd "$GITHUB_WORKSPACE"
           git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
           # A step that never ran leaves no log; add only what exists.
-          for log in ci-artifacts/*.log; do if [ -f "$log" ]; then git add -f "$log"; fi; done
+          for log in ci-artifacts/*; do if [ -f "$log" ]; then git add -f "$log"; fi; done
           git diff --cached --quiet && exit 0
           git commit -m "ci: worker failure log for ${GITHUB_SHA} [skip ci]"
           git push -f origin HEAD:ci-logs-worker
@@ -445,6 +445,9 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+          # Also write the table to a file: the job log is auth-gated, and the
+          # publish step below ships this file to the ci-logs ref on failure.
+          output: trivy-image.txt
 
       - name: IaC scan (Terraform / Compose / Helm)
         uses: aquasecurity/trivy-action@v0.36.0
@@ -454,6 +457,7 @@ jobs:
           format: table
           severity: HIGH,CRITICAL
           exit-code: "1"
+          output: trivy-iac.txt
           # Our own IaC is what this gate judges; dependency trees carry
           # third-party Dockerfiles (e.g. yaml-language-server) whose
           # findings are upstream's to fix, not ours.
@@ -473,10 +477,12 @@ jobs:
           cp -f /tmp/govulncheck.log "$GITHUB_WORKSPACE/ci-artifacts/govulncheck.log" 2>/dev/null || true
           cp -f /tmp/npmaudit.log "$GITHUB_WORKSPACE/ci-artifacts/npmaudit.log" 2>/dev/null || true
           cp -f /tmp/dockerbuild.log "$GITHUB_WORKSPACE/ci-artifacts/dockerbuild.log" 2>/dev/null || true
+          cp -f "$GITHUB_WORKSPACE/trivy-image.txt" "$GITHUB_WORKSPACE/ci-artifacts/trivy-image.txt" 2>/dev/null || true
+          cp -f "$GITHUB_WORKSPACE/trivy-iac.txt" "$GITHUB_WORKSPACE/ci-artifacts/trivy-iac.txt" 2>/dev/null || true
           cd "$GITHUB_WORKSPACE"
           git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
           # A step that never ran leaves no log; add only what exists.
-          for log in ci-artifacts/*.log; do if [ -f "$log" ]; then git add -f "$log"; fi; done
+          for log in ci-artifacts/*; do if [ -f "$log" ]; then git add -f "$log"; fi; done
           git diff --cached --quiet && exit 0
           git commit -m "ci: scan failure log for ${GITHUB_SHA} [skip ci]"
           git push -f origin HEAD:ci-logs-supplychain
