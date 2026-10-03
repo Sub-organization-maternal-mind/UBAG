@@ -364,7 +364,17 @@ class DriverFactoryTests(unittest.TestCase):
         payload["job"]["options"] = {"offline_response": "ready", "offline_tokens": ["rea", "dy"]}
         first = engine.run(payload)
         second = engine.run(payload)
-        self.assertEqual(first, second)
+        # created_at is wall-clock unless the process opted into the fixed
+        # clock (events.timestamp(); UBAG_WORKER_EVENT_CLOCK is read at import,
+        # so a test-time env switch cannot flip it). Two runs can straddle a
+        # millisecond tick, so determinism compares everything except it.
+        def stable(events):
+            return [
+                {key: value for key, value in event.items() if key != "created_at"}
+                for event in events
+            ]
+
+        self.assertEqual(stable(first), stable(second))
         self.assertEqual(first[-1]["data"]["result"]["text"], "ready")
 
 
