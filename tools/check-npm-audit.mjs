@@ -129,6 +129,22 @@ const total = SEVERITIES.reduce((sum, s) => sum + counts[s], 0);
 if (failures.length) {
   console.error(`check-npm-audit: ${total} advisories, and the baseline was exceeded:\n`);
   for (const f of failures) console.error(`  - ${f}`);
+  // Print every advisory with its fix availability so a triage does not need
+  // the auth-gated job log: id | severity | package | fix | first path.
+  console.error('\nCurrent advisories:');
+  for (const advisory of advisories) {
+    const finding = (advisory.findings ?? [])[0] ?? {};
+    const fix = finding.fixAvailable;
+    const fixText =
+      fix === false
+        ? 'none'
+        : fix && typeof fix === 'object'
+          ? `${fix.name}@${fix.version}`
+          : String(fix ?? 'unknown');
+    console.error(
+      `  - ${advisory.id ?? '?'} | ${advisory.severity} | ${advisory.module_name} | fix=${fixText} | ${(finding.paths ?? [])[0] ?? ''}`
+    );
+  }
   process.exit(1);
 }
 
