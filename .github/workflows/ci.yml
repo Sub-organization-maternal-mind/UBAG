@@ -191,7 +191,11 @@ jobs:
           UBAG_TEST_POSTGRES_DSN: postgres://ubag:ubag-test@localhost:5432/ubag_test?sslmode=disable
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
-          cd ../.. && node tools/run-postgres-roundtrip-tests.mjs --apply-migrations
+          cd ../..
+          set +e
+          node tools/run-postgres-roundtrip-tests.mjs --apply-migrations 2>&1 | tee /tmp/pg-roundtrip.log
+          rc=${PIPESTATUS[0]}
+          [ "$rc" -eq 0 ] || exit "$rc"
       - name: Coverage summary + gate
         working-directory: apps/gateway
         run: |
@@ -207,7 +211,11 @@ jobs:
           path: apps/gateway/coverage.out
       - name: Phase 9 packages (region, mfa, jitadmin, audit, siem)
         working-directory: apps/gateway
-        run: go test -race ./internal/region/... ./internal/mfa/... ./internal/jitadmin/... ./internal/audit/... ./internal/siem/...
+        run: |
+          set +e
+          go test -race ./internal/region/... ./internal/mfa/... ./internal/jitadmin/... ./internal/audit/... ./internal/siem/... 2>&1 | tee /tmp/phase9.log
+          rc=${PIPESTATUS[0]}
+          [ "$rc" -eq 0 ] || exit "$rc"
       # The full job log is auth-gated; on failure publish the raw go test
       # output to a throwaway ref that can be read without a token.
       - name: Publish failure log
@@ -215,9 +223,11 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/ci-artifacts"
           cp -f /tmp/gotest.log "$GITHUB_WORKSPACE/ci-artifacts/gotest.log" 2>/dev/null || true
+          cp -f /tmp/pg-roundtrip.log "$GITHUB_WORKSPACE/ci-artifacts/pg-roundtrip.log" 2>/dev/null || true
+          cp -f /tmp/phase9.log "$GITHUB_WORKSPACE/ci-artifacts/phase9.log" 2>/dev/null || true
           cd "$GITHUB_WORKSPACE"
           git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
-          git add -f ci-artifacts/gotest.log
+          git add -f ci-artifacts/gotest.log ci-artifacts/pg-roundtrip.log ci-artifacts/phase9.log
           git commit -m "ci: go test failure log for ${GITHUB_SHA} [skip ci]" || exit 0
           git push -f origin HEAD:ci-logs-gateway
 
