@@ -432,7 +432,11 @@ jobs:
       # The production image. It is the artifact gateway-image.yml ships, and it
       # was previously never scanned.
       - name: Build gateway image
-        run: docker build -t ubag/gateway:ci-scan -f deploy/small/gateway.Dockerfile .
+        run: |
+          set +e
+          docker build -t ubag/gateway:ci-scan -f deploy/small/gateway.Dockerfile . 2>&1 | tee /tmp/dockerbuild.log
+          rc=${PIPESTATUS[0]}
+          [ "$rc" -eq 0 ] || exit "$rc"
       - name: Trivy image scan (HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -468,6 +472,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/ci-artifacts"
           cp -f /tmp/govulncheck.log "$GITHUB_WORKSPACE/ci-artifacts/govulncheck.log" 2>/dev/null || true
           cp -f /tmp/npmaudit.log "$GITHUB_WORKSPACE/ci-artifacts/npmaudit.log" 2>/dev/null || true
+          cp -f /tmp/dockerbuild.log "$GITHUB_WORKSPACE/ci-artifacts/dockerbuild.log" 2>/dev/null || true
           cd "$GITHUB_WORKSPACE"
           git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
           # A step that never ran leaves no log; add only what exists.
