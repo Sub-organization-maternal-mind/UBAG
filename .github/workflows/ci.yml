@@ -227,8 +227,10 @@ jobs:
           cp -f /tmp/phase9.log "$GITHUB_WORKSPACE/ci-artifacts/phase9.log" 2>/dev/null || true
           cd "$GITHUB_WORKSPACE"
           git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
-          git add -f ci-artifacts/gotest.log ci-artifacts/pg-roundtrip.log ci-artifacts/phase9.log
-          git commit -m "ci: go test failure log for ${GITHUB_SHA} [skip ci]" || exit 0
+          # A step that never ran leaves no log; add only what exists.
+          for log in ci-artifacts/*.log; do if [ -f "$log" ]; then git add -f "$log"; fi; done
+          git diff --cached --quiet && exit 0
+          git commit -m "ci: go test failure log for ${GITHUB_SHA} [skip ci]"
           git push -f origin HEAD:ci-logs-gateway
 
   worker:
@@ -265,8 +267,10 @@ jobs:
           cp -f /tmp/pytest.log "$GITHUB_WORKSPACE/ci-artifacts/pytest.log" 2>/dev/null || true
           cd "$GITHUB_WORKSPACE"
           git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
-          git add -f ci-artifacts/pytest.log
-          git commit -m "ci: worker failure log for ${GITHUB_SHA} [skip ci]" || exit 0
+          # A step that never ran leaves no log; add only what exists.
+          for log in ci-artifacts/*.log; do if [ -f "$log" ]; then git add -f "$log"; fi; done
+          git diff --cached --quiet && exit 0
+          git commit -m "ci: worker failure log for ${GITHUB_SHA} [skip ci]"
           git push -f origin HEAD:ci-logs-worker
 
   node-suite:
@@ -466,8 +470,10 @@ jobs:
           cp -f /tmp/npmaudit.log "$GITHUB_WORKSPACE/ci-artifacts/npmaudit.log" 2>/dev/null || true
           cd "$GITHUB_WORKSPACE"
           git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
-          git add -f ci-artifacts/govulncheck.log ci-artifacts/npmaudit.log
-          git commit -m "ci: scan failure log for ${GITHUB_SHA} [skip ci]" || exit 0
+          # A step that never ran leaves no log; add only what exists.
+          for log in ci-artifacts/*.log; do if [ -f "$log" ]; then git add -f "$log"; fi; done
+          git diff --cached --quiet && exit 0
+          git commit -m "ci: scan failure log for ${GITHUB_SHA} [skip ci]"
           git push -f origin HEAD:ci-logs-supplychain
 
   dependency-review:
