@@ -399,7 +399,10 @@ jobs:
           # with no npm audit at all. This fails on any INCREASE against the
           # committed baseline in tools/audit-baseline.json, so a new vulnerable
           # dependency breaks the build while the known backlog stays tracked.
-          node tools/check-npm-audit.mjs
+          set +e
+          node tools/check-npm-audit.mjs 2>&1 | tee /tmp/npmaudit.log
+          rc=${PIPESTATUS[0]}
+          [ "$rc" -eq 0 ] || exit "$rc"
 
       - name: cargo audit (Rust sidecar)
         working-directory: packages/sidecar-rust
@@ -450,9 +453,10 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/ci-artifacts"
           cp -f /tmp/govulncheck.log "$GITHUB_WORKSPACE/ci-artifacts/govulncheck.log" 2>/dev/null || true
+          cp -f /tmp/npmaudit.log "$GITHUB_WORKSPACE/ci-artifacts/npmaudit.log" 2>/dev/null || true
           cd "$GITHUB_WORKSPACE"
           git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
-          git add -f ci-artifacts/govulncheck.log
+          git add -f ci-artifacts/govulncheck.log ci-artifacts/npmaudit.log
           git commit -m "ci: scan failure log for ${GITHUB_SHA} [skip ci]" || exit 0
           git push -f origin HEAD:ci-logs-supplychain
 
