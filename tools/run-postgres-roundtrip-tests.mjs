@@ -31,6 +31,14 @@ const migrationsDir = join(repoRoot, 'migrations', 'postgres');
 
 const applyMigrations = process.argv.includes('--apply-migrations');
 
+// Extension-dependent migrations that deploy/small/gateway-entrypoint.sh skips
+// unless UBAG_ALLOW_OPTIONAL_MIGRATIONS=1. 0008 needs pgvector + pg_partman and
+// is not wired into the live gateway, so applying it unconditionally aborts the
+// run on Postgres images that do not ship pg_partman (like the CI service).
+// Declared before the top-level call below: applyPostgresMigrations() runs
+// during module evaluation, so a later `const` would be in its TDZ.
+const OPTIONAL_MIGRATIONS = new Set(['0008_blueprint_schema.sql']);
+
 const dsn = process.env.UBAG_TEST_POSTGRES_DSN;
 if (!dsn || dsn.trim() === '') {
   console.error('Postgres round-trip tests blocked: UBAG_TEST_POSTGRES_DSN is not set.');
@@ -126,12 +134,6 @@ function discoverPostgresPackages(root) {
     }
   }
 }
-
-// Extension-dependent migrations that deploy/small/gateway-entrypoint.sh skips
-// unless UBAG_ALLOW_OPTIONAL_MIGRATIONS=1. 0008 needs pgvector + pg_partman and
-// is not wired into the live gateway, so applying it unconditionally aborts the
-// run on Postgres images that do not ship pg_partman (like the CI service).
-const OPTIONAL_MIGRATIONS = new Set(['0008_blueprint_schema.sql']);
 
 function applyPostgresMigrations(connString) {
   const psql = resolveExecutable('psql');
