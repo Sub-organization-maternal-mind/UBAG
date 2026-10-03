@@ -8,7 +8,9 @@
 //
 //   1. Requires UBAG_TEST_POSTGRES_DSN (fails loudly when missing).
 //   2. Optionally applies migrations/postgres/*.sql with `--apply-migrations`
-//      (idempotent CREATE TABLE IF NOT EXISTS migrations; needs `psql`).
+//      (idempotent CREATE TABLE IF NOT EXISTS migrations; needs `psql`). The
+//      extension-dependent optional migration (0008) is skipped unless
+//      UBAG_ALLOW_OPTIONAL_MIGRATIONS=1, mirroring the production entrypoint.
 //   3. Runs ONLY the packages that carry Postgres tests, verbosely.
 //   4. Fails if every Postgres test was skipped — i.e. the DSN never connected.
 //
@@ -125,6 +127,12 @@ function discoverPostgresPackages(root) {
   }
 }
 
+// Extension-dependent migrations that deploy/small/gateway-entrypoint.sh skips
+// unless UBAG_ALLOW_OPTIONAL_MIGRATIONS=1. 0008 needs pgvector + pg_partman and
+// is not wired into the live gateway, so applying it unconditionally aborts the
+// run on Postgres images that do not ship pg_partman (like the CI service).
+const OPTIONAL_MIGRATIONS = new Set(['0008_blueprint_schema.sql']);
+
 function applyPostgresMigrations(connString) {
   const psql = resolveExecutable('psql');
   if (!psql) {
@@ -132,10 +140,17 @@ function applyPostgresMigrations(connString) {
     console.error('Apply migrations/postgres/*.sql manually, then re-run without --apply-migrations.');
     process.exit(1);
   }
+  const allowOptional = process.env.UBAG_ALLOW_OPTIONAL_MIGRATIONS === '1';
   const files = readdirSync(migrationsDir)
     .filter((name) => name.endsWith('.sql'))
     .sort();
   for (const file of files) {
+    if (OPTIONAL_MIGRATIONS.has(file) && !allowOptional) {
+      console.log(
+        `Skipping optional migration ${file} (set UBAG_ALLOW_OPTIONAL_MIGRATIONS=1 after installing pgvector + pg_partman to enable).`
+      );
+      continue;
+    }
     const path = join(migrationsDir, file);
     console.log(`Applying migration ${file} ...`);
     const run = spawnSync(psql, [connString, '-v', 'ON_ERROR_STOP=1', '-f', path], {
