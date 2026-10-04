@@ -19,6 +19,7 @@ and prompt submission), so existing flows are preserved.
 import os
 import sys
 import unittest
+from unittest.mock import MagicMock
 from pathlib import Path
 
 from attachment_paths import temp_attachment
@@ -45,6 +46,32 @@ _MANUAL_CONTEXT = {
     "consent_ref": "consent_live_123",
     "automation_scope": ["manual_login", "submit_prompt", "read_response"],
 }
+
+
+class MenuChoiceDispatchTests(unittest.TestCase):
+    def test_visible_radio_choice_does_not_depend_on_pointer_overlay(self):
+        driver = PlaywrightPageDriver()
+        driver._page = MagicMock()
+        choice = driver._page.locator.return_value.first
+        choice.count.return_value = 1
+        choice.get_attribute.return_value = "menuitemradio"
+        driver._click_any = MagicMock(return_value=False)
+        setting = get_provider_selectors("chatgpt_web").settings[0]
+        self.assertTrue(driver._apply_setting(setting, setting.desired))
+        choice.evaluate.assert_called_once_with("el => el.click()")
+        driver._click_any.assert_not_called()
+
+    def test_ordinary_control_keeps_pointer_actionability_checks(self):
+        driver = PlaywrightPageDriver()
+        driver._page = MagicMock()
+        choice = driver._page.locator.return_value.first
+        choice.count.return_value = 1
+        choice.get_attribute.return_value = "button"
+        driver._click_any = MagicMock(return_value=False)
+        setting = get_provider_selectors("chatgpt_web").settings[0]
+        self.assertFalse(driver._apply_setting(setting, setting.desired))
+        choice.evaluate.assert_not_called()
+        driver._click_any.assert_called_once()
 
 
 def _payload(target, *, prompt="Reply with the word ready.", provider_config=None):

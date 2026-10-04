@@ -83,3 +83,26 @@ waited for human login instead of sending a prompt. Added the observed current
 composer to readiness signals and versioned the baseline; 29 adapter tests and
 provider consistency check pass. Mistral has a visible Sign in wall and no auth
 markers; manual human login requested via Browser Sessions. Do not bypass it.
+
+
+Final acceptance checkpoint before menu repair deployment:
+- Revision fef1570 deployed; Gateway Image 37233948951 and CI 37233948858
+  succeeded. CI ran TestPostgresStoreLeaseDueDoesNotLeaseTwice against Postgres.
+- Signed webhook job 1041 delivered once with HTTP 204; isolated receiver
+  confirmed a fresh valid HMAC signature. Old callback job 1036 received a
+  generic ingress 200 while its temporary route was absent during replacement;
+  that response alone is NOT signature-verification evidence.
+- Quotas & Limits deployed, no failed API calls/JS errors; no overflow at
+  320/375/414/768; authenticated noVNC RFB session connected.
+- ChatGPT job 1040 reached authenticated/running and then reported
+  setting:model drift. Live menu options/selection were correct; native click
+  failed because the visible radio menu row was covered by the horizontal
+  ViewTrack/Track overlay. Added direct dispatch restricted to visible radio
+  menu items; _ensure_setting still verifies selection and fails closed.
+  Ordinary controls/login/prompt actions keep normal pointer checks. Two tests
+  cover that boundary; provider-config tests 21 passed.
+- A subsequent push interrupted the previous CI deploy mid-replacement (the
+  workflow had cancel-in-progress=true). Restored service through Compose and
+  the final deploy completed. Changed the production workflow to queue pushes,
+  so subsequent pushes cannot cancel a container replacement in progress.
+- Mistral needs human Sign in; no credentials or CAPTCHA automation performed.

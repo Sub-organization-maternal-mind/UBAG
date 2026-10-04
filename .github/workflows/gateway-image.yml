@@ -28,7 +28,8 @@ on:
 
 concurrency:
   group: gateway-image-${{ github.ref }}
-  cancel-in-progress: true
+  # Never interrupt a production container replacement when another push lands.
+  cancel-in-progress: false
 
 # This workflow builds the production image AND deploys to the VPS over SSH, so
 # it previously inherited the repository default token permissions with no

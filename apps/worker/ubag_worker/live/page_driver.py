@@ -1345,6 +1345,17 @@ class PlaywrightPageDriver(PageDriver):
                 return True
             return self._click_any(list(setting.toggle_click), timeout_ms=4000)
         selector = setting.apply_click.format(value=desired)
+        # ChatGPT's visible model rows can be covered by its scroll-track
+        # overlay (observed 2026-10-05). Dispatch only a visible radio menu
+        # choice directly; the next _ensure_setting pass still verifies it.
+        # Ordinary controls, prompts and login buttons keep pointer checks.
+        try:
+            choice = self._page.locator(_visible(selector)).first
+            if choice.count() > 0 and choice.get_attribute("role") == "menuitemradio":
+                choice.evaluate("el => el.click()")
+                return True
+        except Exception:  # noqa: BLE001 - retain the ordinary click fallback
+            pass
         return self._click_any([selector], timeout_ms=4000)
 
     def _ensure_setting(self, selectors, setting, desired):  # pragma: no cover
