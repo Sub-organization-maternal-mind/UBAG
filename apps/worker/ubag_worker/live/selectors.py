@@ -220,7 +220,7 @@ CHATGPT_WEB = ProviderSelectors(
     # current value ("Thinking effortMedium"). Assistant replies render under
     # div[data-content-search-unit-key*='assistant'] with a MarkdownRoot child;
     # the old data-message-author-role/article DOM is gone.
-    selector_version="2026-10-05-composer-readiness-rebased",
+    selector_version="2026-10-05-answer-readiness-rebased",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
@@ -242,6 +242,9 @@ CHATGPT_WEB = ProviderSelectors(
     response_container=SelectorGroup(
         "response_container",
         (
+            # VPS DOM 2026-10-05: this child contains only the answer; the
+            # outer assistant unit also includes the "ChatGPT said" label.
+            "[data-content-search-unit-key*='assistant'] div[class*='MarkdownRoot']",
             # Verified 2026-09-26: assistant turns are
             # div[data-content-search-unit-key*='assistant'] wrapping
             # div.MarkdownRoot-* > [data-testid='chatgpt-writing-block'].

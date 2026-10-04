@@ -19,8 +19,8 @@ and prompt submission), so existing flows are preserved.
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from attachment_paths import temp_attachment
 

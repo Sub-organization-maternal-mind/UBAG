@@ -3548,3 +3548,15 @@ Final acceptance checkpoint before menu repair deployment:
   the final deploy completed. Changed the production workflow to queue pushes,
   so subsequent pushes cannot cancel a container replacement in progress.
 - Mistral needs human Sign in; no credentials or CAPTCHA automation performed.
+
+
+Revision 064f8fd deployed (Gateway Image 37234939541 success). Authenticated
+Jobs form submitted DuckAI job 1042 (202); job details dialog opened and result
+completed with the exact UI audit marker. ChatGPT 1043 completed and created an
+active Postgres conversation binding. Its result included the outer UI label
+"ChatGPT said", so the observed scoped MarkdownRoot child is now the primary
+response selector (verified DOM contains the exact answer, no label).
+CI 37234939579 failed solely on Ruff I001 in the new test imports; corrected
+stdlib import ordering. Latest selector/import fix must pass CI and deploy;
+then verify exact ChatGPT output and same-thread second turn. Mistral login
+remains pending. Temporary webhook receiver and nginx audit route removed.

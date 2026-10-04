@@ -123,7 +123,7 @@ class SelectorConfigTests(unittest.TestCase):
         selectors = get_provider_selectors("chatgpt_web")
         settings = {setting.key: setting for setting in selectors.settings}
 
-        self.assertEqual(selectors.selector_version, "2026-10-05-composer-readiness-rebased")
+        self.assertEqual(selectors.selector_version, "2026-10-05-answer-readiness-rebased")
         self.assertIn(
             "div[contenteditable='true'][data-virtualkeyboard='true']",
             selectors.authenticated_signal.as_list(),
