@@ -56,7 +56,7 @@ If you only read one new thing, read **§12.6–§12.13** — that is the multi-
 - **Legacy apps** — through the localhost Sidecar Connector (no code changes needed to the legacy app).
 
 ### 1.3 What sits behind the gateway
-- **Web AI chat targets** — DeepSeek Web, ChatGPT, Gemini, Mistral Le Chat, Perplexity, Poe, Kimi, Qwen Chat, You.com, plus any future site. (Claude.ai was supported as `claude_web` until it was retired from the product on 2026-09-26; later sections mentioning it are historical.)
+- **Web AI chat targets** — DeepSeek Web, ChatGPT, Gemini, Mistral Le Chat, Poe, Kimi, Qwen Chat, You.com, plus any future site. (Claude.ai was supported as `claude_web` until it was retired from the product on 2026-09-26; later sections mentioning it are historical.)
 - **Custom internal portals** — hospital PACS/RIS, EMRs, ERP web UIs, ticketing systems, dashboards.
 - **Generic web tasks** — form fill, data extraction, OCR cleanup pipelines, document download, multi-step workflows.
 
@@ -986,7 +986,6 @@ The optional **ML last-resort** uses a small open-source vision model (e.g. **Om
 - `chatgpt_web`
 - `gemini_web`
 - `mistral_lechat`
-- `perplexity_web`
 - `generic_chat` — config-driven (selectors + URLs in YAML), covers ~80% of simple chat sites with no code.
 - `generic_form` — for arbitrary form-fill tasks.
 - `mock` — for testing.
@@ -1976,7 +1975,6 @@ ubag/
 │   ├── chatgpt_web/
 │   ├── gemini_web/
 │   ├── mistral_lechat/
-│   ├── perplexity_web/
 │   ├── generic_chat/             # Config-driven adapter
 │   ├── generic_form/
 │   └── mock/

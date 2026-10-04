@@ -175,7 +175,7 @@ Occupational Therapy 5.
 - **40 models** exposed. `mock`, `mock|mock-fast`, `mock|extended` work.
 - All consumer-web targets fail:
   - **Cloudflare 403 `Cf-Mitigated: challenge`**: chatgpt.com, claude.ai,
-    chat.mistral.ai, www.perplexity.ai (datacenter IP)
+    chat.mistral.ai (datacenter IP)
   - HTTP 202 soft-block: chat.deepseek.com
   - `generic_chat` / `generic_form`: `requires user-owned manual session context
     fields: account_binding_id, consent_ref, automation_scope`
@@ -349,7 +349,7 @@ row explicitly — document which you chose.
 
 ### TASK C — UBAG on the office PC (the Cloudflare work)
 
-This is the only way the chatgpt.com / claude.ai / mistral / perplexity targets
+This is the only way the chatgpt.com / claude.ai / mistral targets
 will ever work, because they are blocked by **Cloudflare bot-challenge on a
 datacenter IP**. A residential/office IP plus a persistent logged-in profile is
 the fix.

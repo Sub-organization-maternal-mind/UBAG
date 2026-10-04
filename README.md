@@ -12,7 +12,7 @@ This repository has completed the docs-first Milestone 0 baseline and the curren
 - SQLite/localfs-oriented edge store and queue contracts with migrations; the gateway runtime currently uses memory by default and Postgres/MinIO when explicitly configured.
 - Security/compliance TypeScript contracts for app-secret auth, device tokens, RBAC/ABAC, audit events, and webhook signing.
 - Deterministic Python mock adapter and worker JSONL runner.
-- Safe-mode provider adapter manifests and stubs for DeepSeek, ChatGPT, Gemini, Mistral, Perplexity, generic chat, generic form, and mock.
+- Safe-mode provider adapter manifests and stubs for DeepSeek, ChatGPT, Gemini, Mistral, generic chat, generic form, and mock.
 - TypeScript and Go SDKs with shared conformance fixtures for system, jobs, job events/SSE, artifacts, operator collections, webhook replay, workflow/template list, cache, apps/devices/audit, and metrics endpoints.
 - CLI package for health/ready/version, jobs, events, apps/devices/audit collections, artifacts, cache, metrics, webhook replay, SSE snapshot reads, and local mock-worker runs.
 - NAJM/Hallmark dashboard under `apps/dashboard` with gateway API wiring, strict CSP, self-hosted/system fonts, and accessible state fixtures.

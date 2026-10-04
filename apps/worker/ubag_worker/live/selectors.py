@@ -736,70 +736,6 @@ MISTRAL_LECHAT = ProviderSelectors(
     ),
 )
 
-PERPLEXITY_WEB = ProviderSelectors(
-    provider_id="perplexity_web",
-    display_name="Perplexity Web",
-    target_url="https://www.perplexity.ai/",
-    selector_version="2026-05-22-baseline-unverified",
-    prompt_input=SelectorGroup(
-        "prompt_input",
-        (
-            "textarea[placeholder*='Ask anything']",
-            "div[contenteditable='true']",
-            "textarea[autofocus]",
-        ),
-    ),
-    submit_button=SelectorGroup(
-        "submit_button",
-        (
-            "button[aria-label='Submit']",
-            "button[aria-label*='Submit']",
-            "button[type='submit']",
-        ),
-    ),
-    response_container=SelectorGroup(
-        "response_container",
-        (
-            "div[class*='prose']",
-            "div[id^='markdown-content']",
-            "div.answer",
-        ),
-    ),
-    authenticated_signal=SelectorGroup(
-        "authenticated_signal",
-        (
-            "textarea[placeholder*='Ask anything']",
-            "button[aria-label*='Account']",
-            "a[href*='/settings']",
-        ),
-    ),
-    login_signal=SelectorGroup(
-        "login_signal",
-        (
-            "button:has-text('Sign in')",
-            "a[href*='login']",
-            "text=Continue with",
-        ),
-    ),
-    streaming_indicator=SelectorGroup(
-        "streaming_indicator",
-        (
-            "button[aria-label*='Stop']",
-            "div[class*='animate']",
-            ".loading-dots",
-        ),
-    ),
-    drift_signature_nodes=("main", "textarea"),
-    file_input=SelectorGroup(
-        "file_input",
-        (
-            "input[type='file']",
-            "input[accept*='audio']",
-        ),
-    ),
-)
-
-
 # ---------------------------------------------------------------------------
 # Duck.ai Web (https://duck.ai/) — DuckDuckGo's private multi-model chat.
 #
@@ -1103,7 +1039,6 @@ PROVIDER_SELECTORS = {
         DEEPSEEK_WEB,
         GEMINI_WEB,
         MISTRAL_LECHAT,
-        PERPLEXITY_WEB,
         DUCKAI_WEB,
         GENERIC_LIVE_WEB,
     )
@@ -1124,7 +1059,6 @@ __all__ = [
     "DUCKAI_WEB",
     "GENERIC_LIVE_WEB",
     "MISTRAL_LECHAT",
-    "PERPLEXITY_WEB",
     "PROVIDER_SELECTORS",
     "ProviderSelectors",
     "ProviderSetting",

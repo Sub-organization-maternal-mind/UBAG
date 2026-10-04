@@ -293,9 +293,9 @@ class EngineWithOrchestratorTests(unittest.TestCase):
         self.assertLess(cap["current_cap"], 2)
 
     def test_manual_login_block_does_not_lease_or_emit_topology(self):
-        engine, orch = self._engine(provider="perplexity_web")
+        engine, orch = self._engine(provider="gemini_web")
         events = engine.run(
-            _payload("perplexity_web", tenant_id="t1"),
+            _payload("gemini_web", tenant_id="t1"),
             driver=MockPageDriver(authenticated=False, login_after_wait=False),
         )
         types = _types(events)

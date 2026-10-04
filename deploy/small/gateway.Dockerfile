@@ -55,6 +55,10 @@ COPY adapters /app/adapters
 # can apply them itself before the gateway binary starts.
 COPY migrations/postgres /app/migrations/postgres
 COPY deploy/small/gateway-entrypoint.sh /app/gateway-entrypoint.sh
+# Production Compose and ingress must follow the same source revision as the
+# image; the VPS checkout is a tarball and does not update on an image pull.
+COPY docker-compose.vps.yml /app/deploy-config/docker-compose.vps.yml
+COPY deploy/small/nginx-dashboard/default.conf.template /app/deploy-config/default.conf.template
 RUN chmod +x /app/gateway-entrypoint.sh
 
 USER ubag

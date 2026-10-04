@@ -18,7 +18,6 @@ probe https://chatgpt.com/
 probe https://claude.ai/
 probe https://chat.deepseek.com/
 probe https://chat.mistral.ai/
-probe https://www.perplexity.ai/
 probe https://gemini.google.com/
 probe https://duck.ai/
 

@@ -18,7 +18,7 @@
 #   * "cannot login to my Google account / cannot save the auth sessions" —
 #     Chrome is launched with STEALTH flags that hide the browser-automation
 #     fingerprint FROM THE PROVIDER (never from UBAG) so your one-time, manual
-#     Google / DeepSeek / ChatGPT / Perplexity sign-in is not blocked by "this
+#     Google / DeepSeek / ChatGPT sign-in is not blocked by "this
 #     browser or app may not be secure". UBAG keeps FULL CDP control and
 #     automates everything after that single login; the profile (cookies/login)
 #     persists on the mounted volume across restarts. UBAG never types creds.

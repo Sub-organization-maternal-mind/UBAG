@@ -90,6 +90,7 @@ services:
       UBAG_PAT_ENABLED: ${UBAG_PAT_ENABLED:-false}
       UBAG_PAT_DEFAULT_TTL_MS: ${UBAG_PAT_DEFAULT_TTL_MS:-}
       UBAG_GATEWAY_STORE: postgres
+      UBAG_CONVERSATIONS_ENABLED: ${UBAG_CONVERSATIONS_ENABLED:-true}
       UBAG_FACADE_MAX_WAIT_MS: ${UBAG_FACADE_MAX_WAIT_MS:-240000}
       # Full DSN lives in deploy/vps/env.local (platform credentials from
       # /opt/platform/projects/ubag.env on the VPS — never committed).
@@ -154,7 +155,9 @@ services:
       UBAG_ANTIGRAVITY_TOOL_OUTPUT_MAX_CHARS: ${UBAG_ANTIGRAVITY_TOOL_OUTPUT_MAX_CHARS:-10000}
       UBAG_ANTIGRAVITY_RETRY_MAX: ${UBAG_ANTIGRAVITY_RETRY_MAX:-3}
       AGY_BINARY: ${AGY_BINARY:-agy}
-      UBAG_WEBHOOK_WORKER_ENABLED: "false"
+      UBAG_WEBHOOK_OUTBOX: postgres
+      UBAG_WEBHOOK_WORKER_ENABLED: ${UBAG_WEBHOOK_WORKER_ENABLED:-true}
+      UBAG_WEBHOOK_ALLOWED_HOSTS: ${UBAG_WEBHOOK_ALLOWED_HOSTS:-}
       UBAG_WEBHOOK_SECRET: ${UBAG_WEBHOOK_SECRET:-}
       # Record every chat a live job creates, so the chat-reaper below can only
       # ever delete OUR chats and never the operator's own. The accounts are real
@@ -273,7 +276,7 @@ services:
     healthcheck:
       # Healthy only when BOTH the dashboard bridge (58090) and Chrome's CDP
       # (58091) answer — a wedged Chrome behind a live bridge still flips this.
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:58090/health >/dev/null 2>&1 && wget -qO- http://127.0.0.1:58091/json/version >/dev/null 2>&1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:58090/health >/dev/null 2>&1 && wget -qO- http://127.0.0.1:58091/json/version >/dev/null 2>&1 && wget -qO- http://127.0.0.1:6080/vnc.html >/dev/null 2>&1"]
       interval: 20s
       timeout: 5s
       retries: 3
@@ -283,6 +286,7 @@ services:
         # Static IP so the gateway's CDP endpoint (an IP, not a hostname — see
         # UBAG_REMOTE_BROWSER_ENDPOINT above) is stable across recreation.
         ipv4_address: 172.28.0.10
+        aliases: [browser-viewer]
 
   # Deletes UBAG's own stale job chats so the operator's sidebar stays clean.
   # It reads ONLY the chat ledger (chats UBAG recorded itself as creating) — it

@@ -3,7 +3,6 @@
 [exec] (Chrome - Gemini login) {/usr/local/bin/open-chrome https://gemini.google.com}
 [exec] (Chrome - DeepSeek) {/usr/local/bin/open-chrome https://chat.deepseek.com}
 [exec] (Chrome - ChatGPT) {/usr/local/bin/open-chrome https://chatgpt.com}
-[exec] (Chrome - Perplexity) {/usr/local/bin/open-chrome https://www.perplexity.ai}
 [exec] (Re-maximize Chrome) {/usr/local/bin/open-chrome}
 [separator]
 [include] (/etc/X11/fluxbox/fluxbox-menu)

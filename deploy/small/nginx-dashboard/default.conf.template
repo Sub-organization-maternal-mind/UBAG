@@ -102,7 +102,6 @@ server {
     # explicit path query is supplied. Keep this edge route authenticated and
     # proxy it to the private browser-viewer service.
     location = /websockify {
-        auth_basic off;
         set                $ubag_browser_viewer http://browser-viewer:6080;
         proxy_pass         $ubag_browser_viewer;
         proxy_http_version 1.1;

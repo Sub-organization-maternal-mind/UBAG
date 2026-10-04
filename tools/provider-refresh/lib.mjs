@@ -224,6 +224,5 @@ export const LIVE_TARGET_IDS = [
   'deepseek_web',
   'gemini_web',
   'mistral_lechat',
-  'perplexity_web',
   'duckai_web',
 ];

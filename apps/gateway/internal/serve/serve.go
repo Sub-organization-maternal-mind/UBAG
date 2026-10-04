@@ -1219,7 +1219,6 @@ var warmDaemonTargets = map[string]struct{}{
 	"deepseek_web":   {},
 	"gemini_web":     {},
 	"mistral_lechat": {},
-	"perplexity_web": {},
 	"duckai_web":     {},
 }
 

@@ -21,7 +21,6 @@ PROVIDERS = [
     ("gemini_web", S.GEMINI_WEB),
     ("deepseek_web", S.DEEPSEEK_WEB),
     ("mistral_lechat", S.MISTRAL_LECHAT),
-    ("perplexity_web", S.PERPLEXITY_WEB),
     ("duckai_web", S.DUCKAI_WEB),
 ]
 

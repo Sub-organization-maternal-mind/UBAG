@@ -18,7 +18,7 @@ docker exec $G sh -c 'ls /app 2>/dev/null | head -20; echo "---apps/worker---"; 
 
 echo
 echo "======== can the browser reach the providers? ========"
-for url in https://chatgpt.com/ https://claude.ai/ https://gemini.google.com/ https://chat.deepseek.com/ https://duck.ai/ https://www.perplexity.ai/ https://chat.mistral.ai/; do
+for url in https://chatgpt.com/ https://claude.ai/ https://gemini.google.com/ https://chat.deepseek.com/ https://duck.ai/ https://chat.mistral.ai/; do
   code=$(docker exec $B sh -c "wget -qO- --server-response --timeout=20 --tries=1 '$url' 2>&1 | grep -m1 'HTTP/' | awk '{print \$2}'" 2>/dev/null)
   echo "  $url -> ${code:-NO-RESPONSE}"
 done

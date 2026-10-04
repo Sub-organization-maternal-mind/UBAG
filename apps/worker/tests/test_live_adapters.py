@@ -36,7 +36,6 @@ _LIVE_PROVIDERS = (
     "deepseek_web",
     "gemini_web",
     "mistral_lechat",
-    "perplexity_web",
     "duckai_web",
 )
 
@@ -236,10 +235,10 @@ class ManualLoginFlowTests(unittest.TestCase):
         )
 
     def test_manual_login_timeout_blocks_retryable(self):
-        engine = LiveSessionEngine(get_provider_selectors("perplexity_web"))
+        engine = LiveSessionEngine(get_provider_selectors("gemini_web"))
         driver = MockPageDriver(authenticated=False, login_after_wait=False)
 
-        events = engine.run(_payload("perplexity_web"), driver=driver)
+        events = engine.run(_payload("gemini_web"), driver=driver)
 
         self.assertEqual(_types(events), ["queued", "session.opening", "session.manual_action_required", "blocked"])
         blocked = events[-1]

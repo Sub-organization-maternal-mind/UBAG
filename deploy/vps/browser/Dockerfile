@@ -4,9 +4,9 @@
 #
 # This reuses the deploy/small/browser-viewer Chrome recipe (branded Google
 # Chrome on a virtual display, stealth + keychain flags, a supervising
-# watchdog) but streams via the bridge's JPEG screencast instead of noVNC, so
-# the dashboard's built-in Browser Sessions widget is the login surface — no
-# separate noVNC client. A human — never UBAG — completes the one-time provider
+# watchdog) and exposes both the bridge's JPEG screencast and an alternate
+# noVNC client on the same display. Both viewers require ingress Basic Auth.
+# A human — never UBAG — completes the one-time provider
 # sign-in; the profile persists on a mounted volume so it survives restarts.
 #
 # Google ships Linux Chrome for amd64 only; this VPS is x86_64.
@@ -25,6 +25,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
     xvfb \
+    x11vnc \
+    novnc \
+    websockify \
     x11-utils \
     fluxbox \
     xdotool \
@@ -61,7 +64,7 @@ RUN chmod +x /usr/local/bin/ubag-vps-browser
 # 58090 = dashboard-facing bridge WebSocket; 9223 = Docker-private CDP proxy the
 # live worker attaches through. Neither is published to the host — the bridge WS
 # reaches the browser only via nginx, and CDP stays on the internal network.
-EXPOSE 58090 9223
+EXPOSE 58090 9223 6080
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/usr/local/bin/ubag-vps-browser"]

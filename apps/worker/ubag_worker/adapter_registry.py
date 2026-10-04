@@ -39,7 +39,6 @@ REQUIRED_ADAPTER_IDS = (
     "chatgpt_web",
     "gemini_web",
     "mistral_lechat",
-    "perplexity_web",
     "duckai_web",
     "antigravity_sdk",
     "antigravity_cli",

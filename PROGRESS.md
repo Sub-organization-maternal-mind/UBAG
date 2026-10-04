@@ -3385,3 +3385,107 @@ Validation (all exit 0):
 - `cmd /c pnpm test:v0` — green (includes the gateway Go suite).
 
 Honest limitations (unchanged, ToS-bound): the **live real-browser provider path cannot be CI-validated** — ToS forbids automated real-provider runs and the live path requires a real browser with manual human login. All new wiring is validated exclusively via offline/mock drivers, fakes, and unit/structure tests, **not** live provider runs. The gateway topology-event ingestion is in-memory-only by design; durable topology persistence remains the documented worker-writes-tables path.
+
+## 2026-10-05 — Primary production VPS audit (verification only)
+
+**Verdict: core runtime passes; full feature acceptance is NOT established.**
+Checked the exact primary `185.252.233.186`, `/opt/docker/ubag`, and
+`https://ubag.polytronx.com` using the existing SSH `vps` alias/key. No code,
+deployment, credentials, database schema, or service configuration was changed.
+Two harmless mock audit jobs were created (direct jobs API and OpenAI facade).
+Provider checks opened tabs and selected existing operator-default settings;
+no provider prompt, login, CAPTCHA, or chat deletion was performed.
+
+Verified live:
+
+- Gateway and reaper image/build commit `301111c26e35624387f962eb5b27d4c3908017fd`
+  matches GitHub main. Exact-commit `ci` succeeded in runs `37109245058` and
+  `37086568559`; Gateway Image succeeded in `37109245056`.
+- Four UBAG containers running; gateway/browser/nginx healthchecks healthy,
+  zero restarts/OOM flags. Reaper has no Docker healthcheck; its process/logs
+  were checked. No panic/Traceback/OOM signature in the sampled last-24h logs.
+- `/v1/ready`: HTTP 200, ready true, all seven reported checks true.
+  PostgreSQL reachable, UBAG database about 19.2 MB; all 17 mandatory migrations
+  0001–0018 recorded (0008 is intentionally optional and skipped).
+- Authenticated GET probes passed for health, adapters, models, jobs,
+  templates, browser summary, concurrency, apps, devices, webhooks, cache,
+  rate-limits, alerts, and Antigravity config. Unauthenticated jobs returns 401.
+- Direct mock `job_000000001028` completed, expected audit text found in
+  events, replay returned the same job with idempotent_replay=true, artifacts
+  listing returned 200. OpenAI facade model=mock returned 200, expected text,
+  chat.completion, finish_reason=stop. Job SSE returned 200 text/event-stream
+  with a frame. These prove MOCK execution, not external-provider generation.
+- Public and direct-origin TLS validate. Public healthz, sw.js, manifest,
+  favicon return 200; dashboard/API/live-ws require auth (401); readiness and
+  metrics are intentionally hidden at ingress (404). nginx -t passes.
+- Chrome CDP reachable (Chrome 154); private live-browser bridge handshake
+  returns 101. Current dashboard LiveBrowser uses /live-ws.
+- Disk 35% used, about 190 GB free; about 13.6 GB memory available;
+  no failed systemd units; NTP synchronized.
+- `/opt/platform/backups/nightly/20261004/ubag.dump` exists (817557 bytes),
+  checksum matches MANIFEST.sha256, and pg_restore --list succeeds. A full
+  isolated restore was NOT performed. Current backup script includes UBAG.
+- Provider static consistency gate passed (11 adapters, 6 live targets).
+  Targeted local tests: test_provider_config.py 19/19;
+  test_live_adapters.py 29/29. These are source checks, not production E2E.
+
+Gaps / limits:
+
+- `/v1/conversations?limit=1` returns 501 UBAG-NOT-IMPLEMENTED-001:
+  conversation subsystem is not configured; UBAG_CONVERSATIONS_ENABLED unset.
+- UBAG_WEBHOOK_WORKER_ENABLED=false: delivery is disabled even though readiness
+  and webhooks collection respond successfully. Do not equate readiness with
+  acceptance of every advertised feature.
+- Perplexity page remains Cloudflare "Just a moment..." with no composer.
+  Mistral initially blank, then loaded a composer; response generation and
+  authenticated readiness remain unverified.
+- ChatGPT model selection verified, thinking control best-effort unverified;
+  DeepSeek DeepThink, Gemini model/thinking and DuckAI model/reasoning/web-search
+  checks passed. Tools reporting "all settings verified" for Mistral/Perplexity
+  have zero declared settings and do NOT prove provider availability.
+- Initial latest-100 job sample: 94 failed_retryable, 6 completed, all live
+  targets Gemini/DuckAI. Failure records inspected report worker_execution
+  / "worker execution failed"; some failed_retryable records have no failed
+  event. These are historical (September), not evidence of a fresh outage.
+  The last-24h query before the facade probe showed only the new mock job;
+  no fresh live-provider generation was verified. Do not claim an exact root
+  cause for historical failures from these generic/redacted events.
+- `/websockify` returns public 502 (not an auth challenge); configured upstream
+  browser-viewer is absent in this VPS profile. The active /live-ws bridge
+  works privately; alternate noVNC viewer route is not healthy.
+- Browser topology summary reports zero instances/contexts/tabs although CDP
+  is alive: topology reporting does not establish browser-session inventory.
+- Live gateway memory limit is 512 MiB; checkout compose specifies 1300m.
+  No OOM observed, but deployment configuration differs from checkout.
+- Authenticated dashboard rendering/interactions, external provider completions,
+  attachments, cancellation/retry, real webhook delivery, SSO/MFA/PAT lifecycle,
+  optional integrations, and disaster recovery were not accepted by this audit.
+  Operator Basic Auth credentials were not available to the audit; existing
+  protection was preserved. No blanket "100% working" claim is justified.
+- Daily e2e-live run `37186101128` was skipped; CI success is not live E2E.
+
+Evidence: provider-refresh captures generated locally on 2026-10-04 UTC
+(2026-10-05 Asia/Karachi), including verify-settings captures. No large build
+or full test suite was run. Production changes require a separate scoped fix
+request; this audit did not enable optional features or redeploy services.
+
+## 2026-10-05 — Production gap fixes and Perplexity removal (in progress)
+
+User authorized complete Perplexity removal and production gap repair. Removed
+its adapter tree, registry/selector/catalog/env routing, probe/menu targets,
+current documentation and capability column. Historical audit/job records are
+retained; no other provider's data or credentials are deleted.
+
+VPS Compose now enables the implemented conversations store and durable
+Postgres webhook worker, with explicit outbound host allowlist forwarding.
+The existing browser image gains a supervised noVNC viewer on the same display;
+its browser-viewer network alias resolves the old viewer routes, and websockify
+now inherits Basic Auth. CI builds a matching browser image and deployment
+extracts validated Compose/ingress from the gateway image, pins both image
+revisions and recreates browser/gateway/reaper with rollback copies.
+
+Targeted checks: 83 Python tests passed (provider config/live adapters/registry/
+live orchestration); gateway adapter-catalog and daemon-routing Go tests passed;
+provider consistency (10 adapters/5 live targets), existing small-deployment
+check, shell syntax, YAML parse and git diff --check passed. Full local suites
+and builds skipped. Production rollout and live acceptance pending.

@@ -71,7 +71,6 @@ class AdapterRegistryTests(unittest.TestCase):
         self.assertEqual(index["gemini"]["id"], "gemini_web")
         self.assertEqual(index["mistral"]["id"], "mistral_lechat")
         self.assertEqual(index["mistral_web"]["id"], "mistral_lechat")
-        self.assertEqual(index["perplexity"]["id"], "perplexity_web")
         self.assertEqual(index["duckai"]["id"], "duckai_web")
         self.assertEqual(index["duckduckgo"]["id"], "duckai_web")
         self.assertEqual(index["generic_chat"]["id"], "generic_chat")

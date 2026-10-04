@@ -21,6 +21,9 @@ on:
       - 'packages/openapi/**'
       - 'deploy/small/gateway.Dockerfile'
       - 'deploy/small/ci-deploy.sh'
+      - 'deploy/small/nginx-dashboard/default.conf.template'
+      - 'deploy/vps/browser/**'
+      - 'docker-compose.vps.yml'
       - '.github/workflows/gateway-image.yml'
 
 concurrency:
@@ -93,6 +96,17 @@ jobs:
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           echo "ghcr.io/sub-organization-maternal-mind/ubag-gateway:sha-${{ github.sha }}" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build and push production browser
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/vps/browser/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/sub-organization-maternal-mind/ubag-browser:sha-${{ github.sha }}
+          cache-from: type=gha,scope=ubag-browser
+          cache-to: type=gha,scope=ubag-browser,mode=max
 
   # The dashboard is plain static files: build the dist here (pnpm workspace +
   # generated contract manifest + sdk), tar it, and stream it to the VPS in the

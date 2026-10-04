@@ -35,7 +35,7 @@ import (
 // to /v1/jobs/{ubag_job_id}/artifacts/{key} (key-reference), or send the whole
 // call as multipart/form-data to POST /v1/jobs with the first part named
 // "job" carrying this same JSON envelope plus one file part per declared key
-// (one-shot). The provider web UIs (ChatGPT/Gemini/Mistral/Perplexity
+// (one-shot). The provider web UIs (ChatGPT/Gemini/Mistral
 // accept document+image+audio+voice+video; DeepSeek docs+images only;
 // Duck.ai PDF+images only) process the files and the provider's answer comes
 // back as the chat.completion text.
@@ -1017,7 +1017,7 @@ func estimateTokens(chars int) int {
 
 // transcriptionAudioMIMEs is the fail-closed allowlist for the audio file
 // part. It mirrors the audio/voice content types the live provider manifests
-// actually accept (chatgpt/gemini/mistral/perplexity), minus container
+// actually accept (chatgpt/gemini/mistral), minus container
 // variants the worker has no evidence for.
 var transcriptionAudioMIMEs = map[string]string{
 	"audio/webm":  "webm",

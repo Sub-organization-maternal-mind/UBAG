@@ -16,7 +16,7 @@ Every major blueprint section is represented in the docs site and mapped to impl
 | WebSocket stream | M0 | — | Not implemented: `/v1/stream` returns 501 rather than fake a WebSocket upgrade. The supported streaming surfaces are `GET /v1/sse/jobs/{id}` (SSE with heartbeats) and `GET /v1/events`. |
 | gRPC | M0 | v1 | Protobuf service contracts track REST lifecycle operations. |
 | Browser worker and adapter SDK | M0 | v0 | Mock runtime, generic manifests, provider safe-mode stubs, and manual-session events. |
-| AI provider adapters | M0 | v1 | DeepSeek, ChatGPT, Gemini, Mistral, Perplexity, generic chat/form, mock. |
+| AI provider adapters | M0 | v1 | DeepSeek, ChatGPT, Gemini, Mistral, generic chat/form, mock. |
 | Manual login and noVNC | M0 | v0-v1 | User-owned accounts and audited operator actions. |
 | SQLite edge profile | M0 | v0 contracted | SQLite/localfs contracts and migrations exist; runtime gateway persistence currently uses memory or opt-in Postgres/MinIO. |
 | Small compose profile | M0 | v0 | Postgres, MinIO, nginx-dashboard ingress, Dragonfly, Grafana/Prometheus, optional NATS profile. |

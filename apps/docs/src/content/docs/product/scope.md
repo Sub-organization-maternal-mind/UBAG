@@ -19,7 +19,7 @@ UBAG is a single self-hostable gateway that lets any application drive web-based
 
 ## Target surfaces
 
-- AI web targets: DeepSeek, ChatGPT, Gemini, Mistral Le Chat, Perplexity, and future web chat targets.
+- AI web targets: DeepSeek, ChatGPT, Gemini, Mistral Le Chat, and future web chat targets.
 - Internal web portals: EMR, RIS/PACS, ERP, ticketing, dashboards.
 - Generic browser tasks: form fill, extraction, downloads, multistep workflows.
 

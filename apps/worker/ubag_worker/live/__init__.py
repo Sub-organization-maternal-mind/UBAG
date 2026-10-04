@@ -2,7 +2,7 @@
 
 This package contains the shared, provider-agnostic machinery that powers the
 real Playwright-driven adapters (``chatgpt_web``, ``deepseek_web``,
-``gemini_web``, ``mistral_lechat``, ``perplexity_web``, ``duckai_web``).
+``gemini_web``, ``mistral_lechat``, ``duckai_web``).
 
 Design constraints (see UBAG_World_Class_Blueprint_v2.md §13):
 

@@ -15,7 +15,6 @@ description: AI target adapter rollout plan.
 - ChatGPT Web
 - Gemini Web
 - Mistral Le Chat
-- Perplexity Web
 - generic chat
 - generic form
 - mock

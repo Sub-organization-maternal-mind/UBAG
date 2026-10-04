@@ -18,7 +18,6 @@ The blueprint names multiple web AI targets, but Milestone 0 should prevent the 
 | `chatgpt_web` | Prompt run, prompt stream, conversation resume. | Manual login required. | Requires careful account and policy handling. |
 | `gemini_web` | Prompt run and prompt stream. | Manual login required. | Scope file and app integrations separately. |
 | `mistral_lechat` | Prompt run and prompt stream. | Manual login required. | Keep model/provider UI variants explicit. |
-| `perplexity_web` | Prompt run with citation-style output. | Manual login required. | Normalize answer and source sections separately. |
 | `duckai_web` | Prompt run and prompt stream across Duck.ai's free multi-model picker. | Manual login required. | Free tier is anonymous; keep picker labels to picker-verified free models only. |
 
 No adapter is considered production-ready because it exists in the list. Each one must pass rollout gates.
@@ -62,15 +61,15 @@ The exact thresholds can change by target. The shape is the contract: canary, co
 
 ## Provider capability matrix
 
-| Capability | Mock | Generic chat | DeepSeek | ChatGPT | Gemini | Mistral | Perplexity |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| Prompt run | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
-| Streaming | Yes | Optional | Yes | Yes | Yes | Yes | Optional |
-| Conversation resume | Yes | Optional | Yes | Yes | Later | Later | Later |
-| File upload | Yes | Optional | Later | Later | Later | Later | Later |
-| Downloads | Yes | Optional | Later | Later | Later | Later | Later |
-| Manual login | No | Yes | Yes | Yes | Yes | Yes | Yes |
-| Drift baseline | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+| Capability | Mock | Generic chat | DeepSeek | ChatGPT | Gemini | Mistral  |
+|---|---:|---:|---:|---:|---:|---:|---: |
+| Prompt run | Yes | Yes | Yes | Yes | Yes | Yes  |
+| Streaming | Yes | Optional | Yes | Yes | Yes | Yes  |
+| Conversation resume | Yes | Optional | Yes | Yes | Later | Later  |
+| File upload | Yes | Optional | Later | Later | Later | Later  |
+| Downloads | Yes | Optional | Later | Later | Later | Later  |
+| Manual login | No | Yes | Yes | Yes | Yes | Yes  |
+| Drift baseline | Yes | Yes | Yes | Yes | Yes | Yes  |
 
 `Later` means not part of the first stable adapter contract for that target. It must not be silently implemented outside the manifest.
 

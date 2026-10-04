@@ -62,6 +62,27 @@ done
 # Lightweight WM so dialogs, focus, and input behave normally.
 fluxbox >/dev/null 2>&1 &
 
+# The alternate noVNC viewer shares this same display/profile. RFB stays on
+# loopback; nginx's Basic Auth protects both the web client and WebSocket.
+# Neither viewer port is published to the host. Restart either process if it
+# exits so a healthy Chrome cannot conceal a dead alternate viewer.
+(
+  set +e
+  while true; do
+    x11vnc -display "$DISPLAY_NUM" -rfbport 5900 -localhost -nopw -forever -shared \
+      >>/run/ubag/vnc.log 2>&1
+    sleep 2
+  done
+) &
+(
+  set +e
+  while true; do
+    websockify --web=/usr/share/novnc 6080 localhost:5900 \
+      >>/run/ubag/novnc.log 2>&1
+    sleep 2
+  done
+) &
+
 # Clear stale profile guards + crash-restore state WITHOUT touching cookies or
 # "Login Data" (separate SQLite files) — the user-owned login survives relaunch.
 reset_profile_guards() {

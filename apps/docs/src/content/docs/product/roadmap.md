@@ -13,7 +13,7 @@ description: Staged delivery plan from docs baseline to enterprise ecosystem.
 
 - REST jobs API, SSE, app-secret auth, idempotency, stable errors.
 - SQLite/localfs edge runtime, memory/Postgres gateway stores, MinIO/localfs artifacts, and small-profile deployment scaffolding.
-- Mock target, generic adapter manifests, adapter SDK contract, and provider-safe manual-session stubs for DeepSeek, ChatGPT, Gemini, Mistral, and Perplexity.
+- Mock target, generic adapter manifests, adapter SDK contract, and provider-safe manual-session stubs for DeepSeek, ChatGPT, Gemini, and Mistral.
 - Basic worker safe-mode dispatch and manual login handoff events.
 - CLI, sidecar, gateway-wired dashboard, guarded WebSocket baseline, built-in template catalog/application/rendering, workflow/cache foundations, opt-in small-profile Postgres, NATS, MinIO, signed webhook outbox, observability, and TypeScript/JavaScript plus Go SDK wave.
 

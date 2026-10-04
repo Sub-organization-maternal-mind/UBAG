@@ -23,6 +23,7 @@ readonly COMPOSE_FILE=docker-compose.vps.yml
 readonly ENV_FILE=deploy/vps/env.local
 readonly REGISTRY=ghcr.io
 readonly IMAGE_REPO=ghcr.io/sub-organization-maternal-mind/ubag-gateway
+readonly BROWSER_IMAGE_REPO=ghcr.io/sub-organization-maternal-mind/ubag-browser
 readonly DASHBOARD_DIR="$REPO_DIR/apps/dashboard/dist"
 
 log() { printf '[ci-deploy] %s\n' "$*"; }
@@ -31,6 +32,7 @@ fail() { printf '[ci-deploy] REFUSED: %s\n' "$*" >&2; exit 1; }
 deploy_gateway() {
   local tag="$1"
   local IMAGE="${IMAGE_REPO}:${tag}"
+  local BROWSER_IMAGE="${BROWSER_IMAGE_REPO}:${tag}"
   cd "$REPO_DIR"
 
   # --- authenticate, pull, deploy --------------------------------------------
@@ -38,9 +40,13 @@ deploy_gateway() {
   token="$(cat)"
   [ -n "$token" ] || fail "no registry token on stdin"
 
-  local cleanup trap_prev
+  local cleanup trap_prev config_container="" config_dir=""
   trap_prev="$(trap -p EXIT)"
-  cleanup() { docker logout "$REGISTRY" >/dev/null 2>&1 || true; }
+  cleanup() {
+    docker logout "$REGISTRY" >/dev/null 2>&1 || true
+    [ -z "$config_container" ] || docker rm "$config_container" >/dev/null 2>&1 || true
+    [ -z "$config_dir" ] || rm -rf "$config_dir"
+  }
   trap cleanup EXIT
 
   printf '%s' "$token" | docker login "$REGISTRY" -u ubag-ci --password-stdin >/dev/null
@@ -55,7 +61,7 @@ deploy_gateway() {
   log "pulling $IMAGE"
   local pulled=0 attempt
   for attempt in 1 2 3; do
-    if docker pull -q "$IMAGE" >/dev/null; then
+    if docker pull -q "$IMAGE" >/dev/null && docker pull -q "$BROWSER_IMAGE" >/dev/null; then
       pulled=1
       log "pull ok on attempt ${attempt}"
       break
@@ -65,6 +71,17 @@ deploy_gateway() {
   done
   [ "$pulled" = 1 ] || fail "could not pull $IMAGE after 3 attempts"
 
+  # Extract and validate this revision's runtime configuration without starting
+  # the image. Preserve one generation alongside env.local for rollback.
+  config_dir="$(mktemp -d /tmp/ubag-deploy-config.XXXXXX)"
+  config_container="$(docker create "$IMAGE")"
+  docker cp "$config_container:/app/deploy-config/." "$config_dir/"
+  docker compose --project-directory "$REPO_DIR" -f "$config_dir/docker-compose.vps.yml" --env-file "$ENV_FILE" config -q
+  cp "$COMPOSE_FILE" "${COMPOSE_FILE}.ci-deploy.bak"
+  cp deploy/small/nginx-dashboard/default.conf.template deploy/small/nginx-dashboard/default.conf.template.ci-deploy.bak
+  cp "$config_dir/docker-compose.vps.yml" "$COMPOSE_FILE"
+  cp "$config_dir/default.conf.template" deploy/small/nginx-dashboard/default.conf.template
+
   # Pin the image for this and every future `up`. env.local is gitignored and
   # VPS-only, so this is the one place the running tag is recorded.
   local previous
@@ -72,6 +89,8 @@ deploy_gateway() {
   cp "$ENV_FILE" "${ENV_FILE}.ci-deploy.bak"
   sed -i '/^UBAG_GATEWAY_IMAGE=/d' "$ENV_FILE"
   printf 'UBAG_GATEWAY_IMAGE=%s\n' "$IMAGE" >>"$ENV_FILE"
+  sed -i '/^UBAG_BROWSER_IMAGE=/d' "$ENV_FILE"
+  printf 'UBAG_BROWSER_IMAGE=%s\n' "$BROWSER_IMAGE" >>"$ENV_FILE"
   log "pinned UBAG_GATEWAY_IMAGE=$IMAGE (was: ${previous:-<unset>})"
 
   # Record the commit this image was built from. The box is a tarball extract,
@@ -84,8 +103,8 @@ deploy_gateway() {
   printf 'UBAG_BUILD_COMMIT=%s\n' "$commit" >>"$ENV_FILE"
   log "pinned UBAG_BUILD_COMMIT=$commit (was: ${previous_commit:-<unset>})"
 
-  log "recreating gateway"
-  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --no-deps --force-recreate gateway
+  log "recreating browser, gateway, and chat reaper"
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --no-deps --force-recreate browser gateway chat-reaper
 
   # --- verify -------------------------------------------------------------------
   # Health is checked through nginx -> gateway, the same docker-network path
@@ -93,7 +112,8 @@ deploy_gateway() {
   log "waiting for gateway health"
   local i
   for i in $(seq 1 30); do
-    if docker exec ubag-nginx-dashboard wget -qO- -T5 http://gateway:8080/v1/ready >/dev/null 2>&1; then
+    if docker exec ubag-nginx-dashboard wget -qO- -T5 http://gateway:8080/v1/ready >/dev/null 2>&1 \
+      && [ "$(docker inspect ubag-vps-browser --format '{{.State.Health.Status}}')" = healthy ]; then
       log "gateway healthy after ${i} attempt(s)"
       log "running image: $(docker inspect ubag-vps-gateway-1 --format '{{.Config.Image}}')"
       exit 0
@@ -105,7 +125,9 @@ deploy_gateway() {
   # drives RadioPad's report generation, so a failed deploy must not linger.
   log "gateway did NOT become healthy; rolling back"
   cp "${ENV_FILE}.ci-deploy.bak" "$ENV_FILE"
-  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --no-deps --force-recreate gateway || true
+  cp "${COMPOSE_FILE}.ci-deploy.bak" "$COMPOSE_FILE"
+  cp deploy/small/nginx-dashboard/default.conf.template.ci-deploy.bak deploy/small/nginx-dashboard/default.conf.template
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --no-deps --force-recreate browser gateway chat-reaper || true
   fail "health check failed after 60s; rolled back to ${previous:-<unset>}"
 }
 

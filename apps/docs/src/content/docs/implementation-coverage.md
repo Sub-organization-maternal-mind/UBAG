@@ -107,7 +107,7 @@ Honest limitations / externally-blocked:
 | Contracts and schemas | Implemented | `packages/openapi`, `packages/shared-schemas`, `packages/proto`, operation-level REST manifests, `cmd /c pnpm test:schema`, `cmd /c pnpm check:contracts`. |
 | Edge queue/storage | Implemented | `packages/edge-store`, SQLite migrations, queue conformance test. The gateway now wires runtime SQLite stores (`UBAG_GATEWAY_STORE=sqlite`) and a localfs artifact store (`UBAG_ARTIFACT_STORE=localfs`, `UBAG_ARTIFACT_DIR`) plus a SQLite webhook outbox mode (code-complete & locally validated); Postgres/MinIO remain the multi-process durable options. |
 | Mock worker and adapter | Implemented | `apps/worker`, `adapters/mock`, Python worker tests and smoke output. |
-| Built-in provider adapter list | Contracted | Manifests and safe-mode stubs for DeepSeek, ChatGPT, Gemini, Mistral, Perplexity, generic chat, generic form, and mock. |
+| Built-in provider adapter list | Contracted | Manifests and safe-mode stubs for DeepSeek, ChatGPT, Gemini, Mistral, generic chat, generic form, and mock. |
 | User-owned manual login stance | Contracted | Adapter manifests block network automation until manual session runtime is available; docs prohibit credential scraping and bundled CAPTCHA solving. |
 | Operator dashboard | Implemented | `apps/dashboard`, gateway-wired NAJM/Hallmark SvelteKit UI, tabs for Overview, Apps, Targets, Jobs, Sessions, Templates, Runtime, Activation, strict CSP, no external font calls, accessible state fixtures, and responsive check/build scripts. |
 | CLI and sidecar path | Implemented | `packages/cli`, `packages/sidecar`, health/ready/version/job/event/artifact/operator/webhook/cache/metrics/SSE/mock-run commands, CLI option parsing regression tests, loopback sidecar health/proxy tests, artifact PUT/DELETE idempotency, factory loopback enforcement, and absolute-form proxy target hardening. |
@@ -152,7 +152,7 @@ Honest limitations / externally-blocked:
 | Rate limiting | Implemented | `internal/ratelimit` sliding-window limiter with memory + SQLite + Postgres stores, a policy resolver, `GET /v1/rate-limits`, and a `withRateLimit` middleware that is pass-through when disabled (`UBAG_RATE_LIMIT_ENABLED`, default false); code-complete & locally validated. Live tuning still needs deployment config. |
 | Browser sessions | Contracted | Safe manual-login manifests and noVNC/session docs; live sessions require user-owned login. |
 | Adapter SDK | Implemented | Adapter manifest contract, mock adapter, registry tests. |
-| Built-in adapters | Contracted | Safe-mode manifests/stubs for DeepSeek, ChatGPT, Gemini, Mistral, Perplexity, generic chat/form, mock. |
+| Built-in adapters | Contracted | Safe-mode manifests/stubs for DeepSeek, ChatGPT, Gemini, Mistral, generic chat/form, mock. |
 | Drift detection | Contracted | Drift docs and adapter manifest hooks. |
 | Recording and replay | Implemented | Artifact policy docs, worker output conventions, gateway artifact metadata/download APIs, and idempotent artifact PUT/DELETE replay behavior. |
 | Workflow sagas | Implemented | `internal/workflow` multi-step job workflow definitions/runs engine (memory + SQLite) with payload policy enforced on every step input, exposed via `/v1/workflows[/runs]` (code-complete & locally validated); advanced DAG/saga compensation remains future runtime work. |
