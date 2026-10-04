@@ -137,3 +137,46 @@ with activity assertions; it failed before the fix. Successful completion now
 refreshes only the trusted tenant/app/target/conversation key; thread URL stays
 unchanged. Four targeted conversation/consumer Go tests pass. Rollout/live
 metadata verification pending; Mistral human login remains the only provider gate.
+
+
+## 2026-10-05 production gap acceptance — final checkpoint
+
+Deployed gateway/browser/reaper revision:
+`a6bed82b00f22df1765e1e58acee211a812c0842`.
+Gateway Image/deploy run 37236242548 SUCCESS; CI 37236242543 SUCCESS
+(worker, gateway with real Postgres regression, SDK/dashboard/docs,
+integration, contracts and supply-chain checks). Optional SSO and PR-only
+Dependency Review jobs skipped; those are not accepted by this audit.
+
+Accepted on production:
+- Perplexity adapter absent in image and live VPS source; all active registry,
+  selectors/catalogs/routes/tooling removed. No retired-provider env entries.
+- Conversations API 200; real ChatGPT first/second/third turns 1045/1047/1048
+  returned the exact nonce. Third turn resumed the SAME durable provider thread
+  after browser/gateway replacement; binding last_job_id updated to 1048.
+- Postgres webhook worker enabled; job 1041 delivery has one attempt, HTTP 204;
+  disposable receiver verified fresh HMAC signature. Test route/receiver removed.
+- Authenticated websockify/noVNC connects actual RFB, including final revision.
+  Public websockify/dashboard/API challenge 401; ready/metrics remain 404.
+- Four live providers returned fresh responses: ChatGPT, DuckAI, DeepSeek, Gemini.
+  Retry of our PID-limit failure created 1044 and completed; original failures
+  remain truthful historical records. No customer prompts were bulk-replayed.
+- 18 authenticated dashboard routes rendered; actual UI submit/details/retry/
+  cancel exercised. Conversation filter displayed our binding; limits page uses
+  real concurrency API without 404/error panels. Widths 320/375/414/768 passed.
+- Browser cap 1024, pids.events max=0; gateway/browser/nginx healthy, reaper up;
+  readiness all seven true. VPS root 36% used, ample available memory.
+
+Remaining acceptance gate: Mistral Sign in is visible. Manual operator login
+requested and its page left open in the persistent browser, available through
+Browser Sessions / Take control. No login/CAPTCHA/2FA automation or credentials
+captured. Cannot claim every feature is 100% verified while this gate remains;
+optional integrations/SSO/attachments/disaster recovery are outside these
+specific repaired gaps and were not given blanket acceptance.
+
+Cleanup complete: temporary Basic Auth audit account removed IN PLACE while
+preserving existing operator accounts; removed audit credentials rejected 401;
+local credential JSON deleted. Temporary webhook route/receiver, source-sync
+archives and cancelled deployment config carrier removed. User sessions/data,
+production environment secrets, backups and historical ledgers preserved.
+Active VPS source synchronized; CI deploy script retains executable permission.
