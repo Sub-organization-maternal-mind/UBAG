@@ -265,6 +265,9 @@ services:
     # owner directive; the box has 6 cores / 11GB.
     cpus: "2.0"
     mem_limit: 4096m
+    # Chrome uses multiple threads per provider renderer. The inherited 256
+    # task cap caused new_page crashes before any worker event could be emitted.
+    pids_limit: 1024
     environment:
       UBAG_BROWSER_GEOMETRY: ${UBAG_BROWSER_GEOMETRY:-1280x800x24}
       # about:blank keeps the operator's idle tab at ~30MB instead of a parked

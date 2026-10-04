@@ -3489,3 +3489,10 @@ live orchestration); gateway adapter-catalog and daemon-routing Go tests passed;
 provider consistency (10 adapters/5 live targets), existing small-deployment
 check, shell syntax, YAML parse and git diff --check passed. Full local suites
 and builds skipped. Production rollout and live acceptance pending.
+
+Production canary before rollout: DuckAI job_000000001030 failed before worker
+telemetry. Gateway log reports `BrowserContext.new_page: Target crashed`;
+Chrome logs report pthread_create EAGAIN and zygote fork failure. Browser cgroup
+pids.max=256 (222 tasks at observation), memory.events has zero OOMs. Added an
+explicit 1024-task browser cap so Docker's inherited 256-task default cannot
+reintroduce renderer/thread starvation. Deployment/live recheck pending.
