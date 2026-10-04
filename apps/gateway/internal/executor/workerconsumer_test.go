@@ -839,6 +839,18 @@ func TestConsumerInjectsConversationBlockAtDispatch(t *testing.T) {
 	if captured.Conversation.ThreadRef != "https://example/chat/resumed" {
 		t.Fatalf("conversation.thread_ref = %q, want the resolved chat URL", captured.Conversation.ThreadRef)
 	}
+	updated, found, err := manager.Resolve(ctx, conversations.Key{
+		TenantID: "tenant_a", AppID: "app_a", Target: "mock", ConversationKey: "conv_1",
+	})
+	if err != nil || !found {
+		t.Fatalf("Resolve resumed binding found=%v err=%v", found, err)
+	}
+	if updated.LastJobID != job.ID || !updated.LastUsedAt.After(now) {
+		t.Fatalf("resumed activity was not recorded: last_job=%q last_used=%v", updated.LastJobID, updated.LastUsedAt)
+	}
+	if updated.ProviderThreadRef != captured.Conversation.ThreadRef {
+		t.Fatal("completion changed the resumed provider thread")
+	}
 }
 
 func TestWorkerConsumerThreadBoundIsIdempotent(t *testing.T) {

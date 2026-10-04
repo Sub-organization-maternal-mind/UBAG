@@ -118,3 +118,22 @@ CI 37234939579 failed solely on Ruff I001 in the new test imports; corrected
 stdlib import ordering. Latest selector/import fix must pass CI and deploy;
 then verify exact ChatGPT output and same-thread second turn. Mistral login
 remains pending. Temporary webhook receiver and nginx audit route removed.
+
+
+Final CI 37235460962 succeeded at 697a244; deployment 37235460961 succeeded
+on retry after restoring the CI deploy script executable permission (source
+archive synchronization had reset its mode; later sync excludes that script).
+ChatGPT 1045 exact final answer AND exact token deltas passed; 1047 recalled the
+same token from the same provider thread after conversation resume. Public
+curl probes: dashboard/API/websockify 401, ready/metrics 404, healthz 200 and
+origin healthz 200. A server-side Python urllib probe was Cloudflare-blocked
+403 across all paths; actual Chrome UI and local curl remain functional.
+Browser pids.events max=0 under explicit 1024 cap, all seven ready checks true.
+Dashboard retry of our failed PID-limit canary created 1044, completed; separate
+UI canary 1046 cancelled via dashboard (202/cancelled). No user jobs replayed.
+The successful resumed turn exposed stale last_job_id/last_used_at: Touch()
+existed but no worker completion called it. Extended the existing dispatch test
+with activity assertions; it failed before the fix. Successful completion now
+refreshes only the trusted tenant/app/target/conversation key; thread URL stays
+unchanged. Four targeted conversation/consumer Go tests pass. Rollout/live
+metadata verification pending; Mistral human login remains the only provider gate.

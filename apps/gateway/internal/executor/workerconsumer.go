@@ -520,6 +520,9 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		}
 		c.raiseManualActionAlert(ctx, job, normalized)
 		c.recordLoginState(ctx, job, normalized)
+		if normalized.Type == "completed" {
+			c.recordConversationEvent(ctx, job, normalized)
+		}
 	}
 
 	finalJob, found, err := c.Jobs.Get(ctx, lease.JobID())
@@ -782,6 +785,15 @@ func (c *WorkerConsumer) recordConversationEvent(ctx context.Context, job jobsto
 	at := event.CreatedAt
 	if at.IsZero() {
 		at = time.Now().UTC()
+	}
+
+	// Resumed turns do not emit thread_bound again. Refresh only the trusted
+	// job's activity metadata after its completion was successfully ingested.
+	if event.Type == "completed" {
+		if err := c.Conversations.Touch(ctx, key, job.ID, at); err != nil {
+			slog.Warn("conversation activity projection failed", "job_id", job.ID, "error", err)
+		}
+		return
 	}
 
 	if event.Type == conversationThreadBrokenEventType {
