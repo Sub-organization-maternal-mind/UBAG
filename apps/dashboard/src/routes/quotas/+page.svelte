@@ -30,7 +30,9 @@
     limit: number;
     unit?: string;
   }
-  interface QuotasResponse { quotas?: QuotaEntry[]; usage?: QuotaEntry[]; [key: string]: unknown; }
+  interface ConcurrencyResponse {
+    data?: { target: string; identity_ref: string; in_flight: number; current_cap: number }[];
+  }
 
   let policies = $state<RateLimitPolicy[]>([]);
   let rateLimitsEnabled = $state<boolean | null>(null);
@@ -73,30 +75,16 @@
     quotasLoading = true;
     quotasError = null;
     quotasDenied = false;
-    // Try /v1/quotas first, fall back to /v1/billing
-    let res = await api.get<QuotasResponse>('/v1/quotas');
-    if ((res.status === 404 || res.error) && !res.denied) {
-      res = await api.get<QuotasResponse>('/v1/billing');
-    }
+    const res = await api.get<ConcurrencyResponse>('/v1/concurrency');
     quotasLoading = false;
     if (res.denied) { quotasDenied = true; return; }
-    if (res.error && res.status !== 404) { quotasError = res.error; return; }
-    const d = res.data;
-    quotas = d?.quotas ?? d?.usage ?? [];
-    if (!Array.isArray(quotas) && d) {
-      // Attempt to normalise object-keyed quotas
-      quotas = Object.entries(d)
-        .filter(([, v]) => typeof v === 'object' && v !== null && 'limit' in (v as object))
-        .map(([name, v]) => {
-          const o = v as Record<string, unknown>;
-          return {
-            name,
-            used: Number(o.used ?? o.current ?? 0),
-            limit: Number(o.limit ?? o.max ?? 0),
-            unit: o.unit != null ? String(o.unit) : undefined,
-          };
-        });
-    }
+    if (res.error) { quotasError = res.error; return; }
+    quotas = (res.data?.data ?? []).map((entry) => ({
+      name: entry.identity_ref ? `${entry.target} (${entry.identity_ref})` : entry.target,
+      used: entry.in_flight,
+      limit: entry.current_cap,
+      unit: 'in-flight jobs',
+    }));
   }
 
   onMount(() => {
@@ -106,7 +94,7 @@
 </script>
 
 <div class="space-y-8">
-  <PageHeader title="Quotas & Billing" subtitle="Rate-limit policies and per-name quota usage reported by the gateway." />
+  <PageHeader title="Quotas & Limits" subtitle="Rate-limit policies and current concurrency usage reported by the gateway." />
 
   <!-- Rate Limits -->
   <section aria-labelledby="rate-limits-heading">
@@ -156,21 +144,21 @@
     {/if}
   </section>
 
-  <!-- Quota Usage -->
+  <!-- Concurrency Usage -->
   <section aria-labelledby="quotas-heading">
     <div class="flex items-center justify-between mb-3">
-      <h2 id="quotas-heading" class="text-lg font-display font-semibold text-ink">Quota Usage</h2>
+      <h2 id="quotas-heading" class="text-lg font-display font-semibold text-ink">Concurrency Usage</h2>
       <button onclick={() => loadQuotas()} class="btn btn-secondary btn-sm">Refresh</button>
     </div>
 
     {#if quotasLoading}
       <SkeletonCards count={3} cols="grid-cols-1 sm:grid-cols-2 lg:grid-cols-3" />
     {:else if quotasDenied}
-      <DeniedPanel resource="quotas and billing" />
+      <DeniedPanel resource="concurrency limits" />
     {:else if quotasError}
       <ErrorPanel message={quotasError} retry={loadQuotas} />
     {:else if quotas.length === 0}
-      <EmptyState message="No quota data available." hint="The gateway may not expose /v1/quotas or /v1/billing." />
+      <EmptyState message="No concurrency data available." hint="No concurrency ceilings have been reported yet." />
     {:else}
       <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {#each quotas as q, i (q.name ?? i)}

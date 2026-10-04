@@ -57,7 +57,7 @@
         { href: '/users', label: 'Users & Roles', icon: Users },
         { href: '/security', label: 'Security', icon: KeyRound },
         { href: '/admin', label: 'Administration', icon: ServerCog },
-        { href: '/quotas', label: 'Quotas & Billing', icon: CreditCard },
+        { href: '/quotas', label: 'Quotas & Limits', icon: CreditCard },
       ],
     },
     {

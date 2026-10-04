@@ -54,3 +54,23 @@ Conformance coverage is currently 45 executable REST scenarios plus 286 named no
 2026-05-29 gateway runtime + enterprise surface update (code-complete & locally validated; all `apps/gateway` `go build`/`vet`/`test ./...` green on Go 1.26). The gateway now wires runtime SQLite stores (`UBAG_GATEWAY_STORE=sqlite`, WAL/`busy_timeout`/`foreign_keys`/single-writer), a localfs artifact store (`UBAG_ARTIFACT_STORE=localfs`, `UBAG_ARTIFACT_DIR`), and a SQLite webhook outbox mode, plus six enterprise leaf packages each with passing Go tests: `internal/ratelimit` (memory/SQLite/Postgres), `internal/responsecache` (memory/SQLite, never exposes cached payload values), `internal/workflow` (memory/SQLite multi-step runs with payload policy per step), `internal/sso` (stdlib OIDC RS256 + SAML verification, memory/SQLite), `internal/scim` (SCIM v2 Users/Groups, memory/SQLite, passwords never stored), and `internal/siem` (redacted File/HTTP/Syslog export). HTTP wiring is nil-safe/optional and adds `/v1/cache`, `/v1/rate-limits`, `/v1/workflows[/runs]`, `/v1/sso/config` + OIDC/SAML callbacks, `/v1/scim/v2/{Users,Groups}`, `/v1/siem/config` + `/v1/audit/export`, and `/v1/webhooks/secret:rotate`, gated by the corresponding RBAC actions, with new env vars `UBAG_RATE_LIMIT_ENABLED` (default false), `UBAG_CACHE_ENABLED` (default false), `UBAG_CACHE_TTL_MS`, and `UBAG_SIEM_FILE_PATH`. Independent review PASSED with no Critical/High issues; cache purge returns `501` when disabled and SSO config `PUT` rejects OIDC without an Issuer and SAML without an IdP cert. The gRPC + grpc-web layer was completed in a previous slice.
 
 Honest limitations / externally-blocked follow-ups: SSO OIDC/SAML callbacks now mint a revocable, server-side gateway session (memory/SQLite/Postgres `gateway_sessions`), validated per request and revoked on `POST /v1/sso/logout`; SAML signature verification uses Exclusive XML Canonicalization (`http://www.w3.org/2001/10/xml-exc-c14n#`, `internal/sso/canonicalize.go`) and fails closed; native Postgres stores now exist for rate-limiter, response cache, workflow, SSO config, SCIM, sessions, audit, alerts, and topology (in-memory remains an opt-in fallback); `POST /v1/audit/export` streams the persisted Merkle-chained audit records (`records[]`, `head_hash`, `count`) with a `chain_valid` integrity proof; TypeScript/JavaScript and Go are the only active first-class SDKs; and live provider adapters remain externally-blocked until user-owned account sessions are available.
+
+## 2026-10-05 production gap repair checkpoint
+
+Perplexity removed from active adapters/catalogs/selectors/tooling. Matching
+browser/gateway images at 1de7727 deployed successfully (Gateway Image run
+37232300132). Conversations now enabled; noVNC connects through authenticated
+websockify. Browser PID cap raised from inherited 256 to explicit 1024 after
+confirmed pthread_create EAGAIN; memory caps now match source configuration.
+Fresh DuckAI (1032), DeepSeek (1034), Gemini (1035) audit jobs completed.
+18 authenticated dashboard routes rendered without JavaScript errors; 320/375/
+414/768 widths passed overflow checks. ChatGPT/Mistral live acceptance pending.
+Signed webhook canary 1036 exposed PostgreSQL LeaseDue RETURNING ambiguity
+(SQLSTATE 42702). Fixed the CTE update to avoid a joined id ambiguity; added an
+isolated temporary-table PostgreSQL regression proving leasing and exclusion of
+active leases. Targeted webhook Go tests pass locally (real-Postgres tests are
+DSN-gated); CI must execute the new PostgreSQL test before acceptance.
+Quota page called nonexistent /v1/quotas and /v1/billing. It now displays the
+real /v1/concurrency current_cap/in_flight data with existing NAJM states/layout.
+Svelte check: zero errors, two existing LiveBrowser state-capture warnings.
+This follow-up is not deployed yet; webhook/live-provider final checks pending.

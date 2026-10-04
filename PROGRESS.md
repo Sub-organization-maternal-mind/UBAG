@@ -3496,3 +3496,23 @@ Chrome logs report pthread_create EAGAIN and zygote fork failure. Browser cgroup
 pids.max=256 (222 tasks at observation), memory.events has zero OOMs. Added an
 explicit 1024-task browser cap so Docker's inherited 256-task default cannot
 reintroduce renderer/thread starvation. Deployment/live recheck pending.
+
+## 2026-10-05 production gap repair checkpoint
+
+Perplexity removed from active adapters/catalogs/selectors/tooling. Matching
+browser/gateway images at 1de7727 deployed successfully (Gateway Image run
+37232300132). Conversations now enabled; noVNC connects through authenticated
+websockify. Browser PID cap raised from inherited 256 to explicit 1024 after
+confirmed pthread_create EAGAIN; memory caps now match source configuration.
+Fresh DuckAI (1032), DeepSeek (1034), Gemini (1035) audit jobs completed.
+18 authenticated dashboard routes rendered without JavaScript errors; 320/375/
+414/768 widths passed overflow checks. ChatGPT/Mistral live acceptance pending.
+Signed webhook canary 1036 exposed PostgreSQL LeaseDue RETURNING ambiguity
+(SQLSTATE 42702). Fixed the CTE update to avoid a joined id ambiguity; added an
+isolated temporary-table PostgreSQL regression proving leasing and exclusion of
+active leases. Targeted webhook Go tests pass locally (real-Postgres tests are
+DSN-gated); CI must execute the new PostgreSQL test before acceptance.
+Quota page called nonexistent /v1/quotas and /v1/billing. It now displays the
+real /v1/concurrency current_cap/in_flight data with existing NAJM states/layout.
+Svelte check: zero errors, two existing LiveBrowser state-capture warnings.
+This follow-up is not deployed yet; webhook/live-provider final checks pending.

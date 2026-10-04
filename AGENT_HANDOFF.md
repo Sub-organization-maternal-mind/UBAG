@@ -991,3 +991,23 @@ Whenever implementation changes, update these files in the same slice:
 - `IMPLEMENTATION_COVERAGE.md` for A-Z coverage state.
 - `apps/docs/src/content/docs/implementation-coverage.md` for rendered docs coverage.
 - This `AGENT_HANDOFF.md` when the resume procedure, validation evidence, runtime state, or remaining coding queue changes.
+
+## 2026-10-05 production gap repair checkpoint
+
+Perplexity removed from active adapters/catalogs/selectors/tooling. Matching
+browser/gateway images at 1de7727 deployed successfully (Gateway Image run
+37232300132). Conversations now enabled; noVNC connects through authenticated
+websockify. Browser PID cap raised from inherited 256 to explicit 1024 after
+confirmed pthread_create EAGAIN; memory caps now match source configuration.
+Fresh DuckAI (1032), DeepSeek (1034), Gemini (1035) audit jobs completed.
+18 authenticated dashboard routes rendered without JavaScript errors; 320/375/
+414/768 widths passed overflow checks. ChatGPT/Mistral live acceptance pending.
+Signed webhook canary 1036 exposed PostgreSQL LeaseDue RETURNING ambiguity
+(SQLSTATE 42702). Fixed the CTE update to avoid a joined id ambiguity; added an
+isolated temporary-table PostgreSQL regression proving leasing and exclusion of
+active leases. Targeted webhook Go tests pass locally (real-Postgres tests are
+DSN-gated); CI must execute the new PostgreSQL test before acceptance.
+Quota page called nonexistent /v1/quotas and /v1/billing. It now displays the
+real /v1/concurrency current_cap/in_flight data with existing NAJM states/layout.
+Svelte check: zero errors, two existing LiveBrowser state-capture warnings.
+This follow-up is not deployed yet; webhook/live-provider final checks pending.

@@ -129,8 +129,7 @@ SET status = 'leased',
 	lease_id = $3,
 	leased_until = $4,
 	updated_at = $1
-FROM due
-WHERE d.id = due.id
+WHERE d.id IN (SELECT id FROM due)
 RETURNING `+selectDeliveryColumns(), now, limit, leaseID, now.Add(leaseFor))
 	if err != nil {
 		return nil, err
