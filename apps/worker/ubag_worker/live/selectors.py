@@ -220,7 +220,7 @@ CHATGPT_WEB = ProviderSelectors(
     # current value ("Thinking effortMedium"). Assistant replies render under
     # div[data-content-search-unit-key*='assistant'] with a MarkdownRoot child;
     # the old data-message-author-role/article DOM is gone.
-    selector_version="2026-09-26-composer-rebased",
+    selector_version="2026-10-05-composer-readiness-rebased",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
@@ -257,6 +257,8 @@ CHATGPT_WEB = ProviderSelectors(
     authenticated_signal=SelectorGroup(
         "authenticated_signal",
         (
+            # Observed on the VPS 2026-10-05: the rebuilt composer has no id.
+            "div[contenteditable='true'][data-virtualkeyboard='true']",
             "#prompt-textarea",
             "nav[aria-label='Chat history']",
             "button[data-testid='profile-button']",

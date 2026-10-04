@@ -74,3 +74,12 @@ Quota page called nonexistent /v1/quotas and /v1/billing. It now displays the
 real /v1/concurrency current_cap/in_flight data with existing NAJM states/layout.
 Svelte check: zero errors, two existing LiveBrowser state-capture warnings.
 This follow-up is not deployed yet; webhook/live-provider final checks pending.
+
+
+ChatGPT readiness follow-up: the VPS composer matches
+`div[contenteditable=true][data-virtualkeyboard=true]` but all three old auth
+markers match zero nodes and no login signal exists. The worker therefore
+waited for human login instead of sending a prompt. Added the observed current
+composer to readiness signals and versioned the baseline; 29 adapter tests and
+provider consistency check pass. Mistral has a visible Sign in wall and no auth
+markers; manual human login requested via Browser Sessions. Do not bypass it.
