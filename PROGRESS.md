@@ -3622,3 +3622,40 @@ local credential JSON deleted. Temporary webhook route/receiver, source-sync
 archives and cancelled deployment config carrier removed. User sessions/data,
 production environment secrets, backups and historical ledgers preserved.
 Active VPS source synchronized; CI deploy script retains executable permission.
+
+## 2026-10-05 latest-main redeployment and fresh E2E acceptance
+
+User requested commit, push, deploy and production E2E verification.
+Main application changes are pushed. Gateway Image run 37237136071 SUCCESS
+deployed gateway/browser/reaper image revision
+1972d01602fea59edbabac0dbdaf5a6ccf5931ae to 185.252.233.186.
+Previous full CI run 37236242543 remains green; this latest revision only adds
+the earlier acceptance report. This new entry is a documentation-only follow-up.
+
+Fresh verification against that deployment:
+- ChatGPT 1049 completed with the exact fresh nonce; resumed turn 1050 recalled
+  it exactly in the SAME provider thread and updated conversation activity.
+- DuckAI 1051, DeepSeek 1052, Gemini 1053 completed with exact fresh nonces.
+- Signed webhook job 1054: delivered, attempt_count=1, HTTP 204. Disposable
+  receiver verified current timestamp, nonce and HMAC over the actual payload
+  for this job. Temporary nginx route restored and receiver stopped.
+- Actual dashboard UI submitted DeepSeek 1055 with a small text attachment.
+  The token was provided only in the file; returned text matched exactly.
+  Job submission HTTP 202, completion and job-details dialog all passed.
+- 18 authenticated dashboard pages HTTP 200. Mobile widths 320/375/414/768
+  fit without horizontal overflow. Follow-up browser checks found no JS errors
+  or failed /v1/ responses; actual noVNC RFB connection passed.
+- /v1/ready 200, seven checks true; conversations/concurrency/adapters 200.
+  Public healthz 200, dashboard/API/websockify 401, ready/metrics 404.
+  Gateway/browser/nginx healthy; browser pids.events max=0.
+- Perplexity image/source absent, retired-provider env keys absent.
+  Deployment script mode remains 755.
+- Temporary audit Basic Auth account removed in place, operator entries kept.
+  Removed test credentials rejected 401; local credential JSON deleted.
+
+Mistral still presents Sign in; its page is left open in the persistent browser
+for manual operator login via Browser Sessions / Take control. Human-only login
+rule prevents this provider from receiving blanket E2E acceptance. No credentials,
+cookies or CAPTCHA handling automated. Optional SSO/integrations/disaster restore
+remain outside these checks. Text attachment acceptance above is DeepSeek only;
+it does not establish every file type on every provider. Historical jobs preserved.
