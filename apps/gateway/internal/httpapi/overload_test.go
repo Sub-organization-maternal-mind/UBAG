@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -79,5 +80,89 @@ func TestSharedAdmissionAcrossReplicas(t *testing.T) {
 	}
 	if rec.Header().Get("Retry-After") == "" {
 		t.Fatal("overload without Retry-After")
+	}
+}
+
+// A media-only message with an unknown role must not slip past role
+// validation (review repro).
+func TestFacadeRejectsUnknownRoleOnMediaOnlyMessage(t *testing.T) {
+	_, _, ok := flattenFacadeMessages([]openAIFacadeMessage{
+		{Role: "user", Content: "describe this"},
+		{Role: "invalid_role", Content: []any{map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,AQ=="}}}},
+	})
+	if ok {
+		t.Fatal("media-only content bypassed role validation")
+	}
+}
+
+func TestByteBudgetIsNonBlockingAndBounded(t *testing.T) {
+	b := &byteBudget{limit: 100}
+	if !b.tryAcquire(60) || b.tryAcquire(60) {
+		t.Fatal("second 60-byte reservation must be refused while the first is held")
+	}
+	b.release(60)
+	if !b.tryAcquire(60) {
+		t.Fatal("released bytes must be reusable")
+	}
+	b.release(60)
+	// A single request larger than the whole budget may run alone, never twice.
+	if !b.tryAcquire(500) || b.tryAcquire(1) {
+		t.Fatal("an oversized lone request runs alone")
+	}
+	b.release(500)
+	if b.used.Load() != 0 {
+		t.Fatalf("budget leaked %d bytes", b.used.Load())
+	}
+}
+
+// With the in-flight limit at 1, a second concurrent request is refused with
+// an explicit 503 + Retry-After while probes keep answering.
+func TestInflightLimitRefusesExcessRequestsButNotProbes(t *testing.T) {
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	srv := NewServer(Config{AppSecret: "dev-secret", Executor: &recordingExecutor{}, MaxInflightRequests: 1})
+	blocked := srv.withInflightLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		entered <- struct{}{}
+		<-release
+	}))
+	go blocked.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/jobs", nil))
+	<-entered
+	rec := httptest.NewRecorder()
+	blocked.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/jobs", nil))
+	if rec.Code != http.StatusServiceUnavailable || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("excess request = %d retry-after=%q", rec.Code, rec.Header().Get("Retry-After"))
+	}
+	probe := httptest.NewRecorder()
+	srv.withInflightLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })).
+		ServeHTTP(probe, httptest.NewRequest(http.MethodGet, "/v1/health", nil))
+	if probe.Code != http.StatusOK {
+		t.Fatalf("probe was throttled: %d", probe.Code)
+	}
+	close(release)
+}
+
+// Concurrent facade bodies beyond the shared upload-memory budget are refused
+// explicitly instead of all being buffered.
+func TestUploadMemoryBudgetRefusesBeyondBudget(t *testing.T) {
+	srv := NewServer(Config{AppSecret: "dev-secret", Executor: &recordingExecutor{}, UploadMemoryBytes: 1 << 20})
+	req := httptest.NewRequest(http.MethodPost, "/v1/openai/chat/completions", nil)
+	req.ContentLength = 400 << 10
+	w1 := httptest.NewRecorder()
+	release, ok := srv.reserveUploadBytes(w1, req, uploadReservation(req, srv.facadeMaxBody, facadeDecodeFactor), true)
+	if !ok {
+		t.Fatalf("first reservation refused: %s", w1.Body.String())
+	}
+	defer release()
+	w2 := httptest.NewRecorder()
+	if _, ok := srv.reserveUploadBytes(w2, req, uploadReservation(req, srv.facadeMaxBody, facadeDecodeFactor), true); ok {
+		t.Fatal("second 1.2 MiB reservation fit in a 1 MiB budget")
+	}
+	if w2.Code != http.StatusServiceUnavailable || w2.Header().Get("Retry-After") == "" {
+		t.Fatalf("refusal = %d retry-after=%q", w2.Code, w2.Header().Get("Retry-After"))
+	}
+	metrics := httptest.NewRecorder()
+	srv.writeOverloadMetrics(metrics)
+	if !strings.Contains(metrics.Body.String(), `ubag_admission_rejections_total{reason="upload_memory"} 1`) {
+		t.Fatalf("rejection not counted:\n%s", metrics.Body.String())
 	}
 }

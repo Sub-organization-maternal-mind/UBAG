@@ -28,6 +28,16 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, status int, 
 		err.DocURL = fmt.Sprintf("https://docs.ubag.dev/errors/%s", err.Code)
 	}
 
+	switch err.Code {
+	case "UBAG-CONCURRENCY-001":
+		s.overload.reject("concurrency")
+	case "UBAG-QUEUE-BACKPRESSURE-002":
+		s.overload.reject("queue_depth")
+	case "UBAG-RATE-APP-001":
+		s.overload.reject("rate_limit")
+	case "UBAG-VOICE-QUEUE-FULL-004", "UBAG-VOICE-SESSION-LIMIT-003":
+		s.overload.reject("voice_queue")
+	}
 	// Every overload answer (429/503) carries explicit retry guidance in BOTH
 	// the header and the structured body, whichever path produced it: a
 	// retryable error without a hint would invite retry storms.

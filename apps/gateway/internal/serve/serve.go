@@ -255,6 +255,19 @@ func Run(ctx context.Context) error {
 		VoiceStore: voiceStore,
 		VoiceMedia: voiceMedia,
 
+		AdmissionKindCounts: func(ctx context.Context) (map[string]int, error) {
+			if enterprise.admission == nil {
+				return nil, nil
+			}
+			return enterprise.admission.LaneKindCounts(ctx, time.Now().UTC())
+		},
+		DBStats: func() sql.DBStats {
+			if db == nil {
+				return sql.DBStats{}
+			}
+			return db.Stats()
+		},
+
 		VoiceMetrics: voiceMetrics,
 		// Provider voice is started by worker control jobs and a session is only
 		// "connected" once the provider is verified ready. Disable only for

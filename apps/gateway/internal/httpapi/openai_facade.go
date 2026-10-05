@@ -411,6 +411,12 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 	// The body limit is the facade's own (48 MiB default) because inline
 	// multimodal parts arrive base64-inflated; every other route keeps
 	// MaxBodyBytes.
+	releaseUpload, ok := s.reserveUploadBytes(w, r, uploadReservation(r, s.facadeMaxBody, facadeDecodeFactor), true)
+	if !ok {
+		outcome = facadeOutcomeRejected
+		return
+	}
+	defer releaseUpload()
 	limited := http.MaxBytesReader(w, r.Body, s.facadeMaxBody)
 	raw, err := io.ReadAll(limited)
 	if err != nil {
@@ -779,6 +785,13 @@ func flattenFacadeMessages(messages []openAIFacadeMessage) (string, []facadeInli
 	partCount := 0
 	sawText := false
 	for _, msg := range messages {
+		// Every message's role is validated BEFORE its parts are parsed, so a
+		// media-only message with an unknown role cannot slip through.
+		switch msg.Role {
+		case "system", "user", "assistant":
+		default:
+			return "", nil, false
+		}
 		var text string
 		switch content := msg.Content.(type) {
 		case string:
@@ -1313,6 +1326,12 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	releaseUpload, ok := s.reserveUploadBytes(w, r, uploadReservation(r, int64(maxTranscriptionAudioBytes)+s.maxBody, 2), true)
+	if !ok {
+		outcome = facadeOutcomeRejected
+		return
+	}
+	defer releaseUpload()
 	reader := multipart.NewReader(io.LimitReader(r.Body, int64(maxTranscriptionAudioBytes)+s.maxBody), params["boundary"])
 	var audioBytes []byte
 	var audioMIME, audioFilename, modelField, language, promptHint string

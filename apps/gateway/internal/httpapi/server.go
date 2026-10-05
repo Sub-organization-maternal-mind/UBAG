@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"database/sql"
 	"bufio"
 	"bytes"
 	"context"
@@ -244,6 +245,16 @@ type Config struct {
 	// connect with 501 while create/status still work.
 	VoiceStore voice.Store
 	VoiceMedia MediaNegotiator
+
+	// MaxInflightRequests bounds concurrent requests (probes and event
+	// streams exempt); excess requests get an explicit 503 with Retry-After.
+	// UploadMemoryBytes bounds request-body bytes held in memory at once
+	// across every upload path. AdmissionKindCounts and DBStats feed the
+	// pressure metrics.
+	MaxInflightRequests int
+	UploadMemoryBytes   int64
+	AdmissionKindCounts func(context.Context) (map[string]int, error)
+	DBStats             func() sql.DBStats
 	// VoiceProviderActivation makes live sessions start the provider voice UI
 	// through worker control jobs and reach connected only once the provider is
 	// verified ready. Off keeps sessions at connecting (unit tests, media-only
@@ -298,6 +309,7 @@ type Server struct {
 	devCORSOrigin    string
 	maxBody          int64
 	facadeMaxBody    int64
+	overload         *overloadState
 	voice            voice.Store
 	voiceActivation  bool
 	voiceLife        voiceLifecycle
@@ -498,6 +510,12 @@ func NewServer(config Config) *Server {
 	if config.FacadeMaxBodyBytes <= 0 {
 		config.FacadeMaxBodyBytes = parseEnvInt64("UBAG_FACADE_MAX_BODY_BYTES", defaultFacadeMaxBodyBytes)
 	}
+	if config.MaxInflightRequests <= 0 {
+		config.MaxInflightRequests = parseEnvInt("UBAG_GATEWAY_MAX_INFLIGHT_REQUESTS", defaultMaxInflightRequests)
+	}
+	if config.UploadMemoryBytes <= 0 {
+		config.UploadMemoryBytes = parseEnvInt64("UBAG_GATEWAY_UPLOAD_MEMORY_BYTES", defaultUploadMemoryBytes)
+	}
 	if config.VoiceMaxSessionsPerTenant <= 0 {
 		config.VoiceMaxSessionsPerTenant = parseEnvInt("UBAG_VOICE_MAX_SESSIONS_PER_TENANT", defaultVoiceMaxSessionsPerTenant)
 	}
@@ -611,6 +629,8 @@ func NewServer(config Config) *Server {
 		mfaSvc:                    config.MFA,
 		jitAdmin:                  config.JITAdmin,
 
+		overload: newOverloadState(config),
+
 		metrics: &metricState{
 			requests:           make(map[string]int),
 			durationSum:        make(map[string]float64),
@@ -647,6 +667,7 @@ func (s *Server) routes() {
 		s.withMetrics,                     // outermost: always records request timing
 		s.withRecovery,                    // catches panics before they propagate
 		mw.Trace,                          // injects/extracts W3C trace ID (§18.3)
+		s.withInflightLimit,               // bounded concurrent requests; explicit 503 + Retry-After beyond it
 		s.withRequestLog,                  // structured JSON request log line (§18.1); skips probe paths
 		s.withDevCORS,                     // opt-in cross-origin dev shim (§7.2 note above); no-op unless configured
 		s.withAuth,                        // authenticates bearer / device / SSO session
@@ -956,7 +977,7 @@ func (s *Server) writeMetricsBody(ctx context.Context, w io.Writer) error {
 		_, _ = fmt.Fprintf(w, "ubag_gateway_http_request_duration_seconds_sum{service=\"ubag-gateway\",route=\"%s\",method=\"%s\",status_class=\"%s\"} %.6f\n", promLabel(metric.route), promLabel(metric.method), promLabel(metric.statusClass), metric.durationSum)
 		_, _ = fmt.Fprintf(w, "ubag_gateway_http_request_duration_seconds_count{service=\"ubag-gateway\",route=\"%s\",method=\"%s\",status_class=\"%s\"} %d\n", promLabel(metric.route), promLabel(metric.method), promLabel(metric.statusClass), metric.count)
 	}
-	_, _ = fmt.Fprint(w, "ubag_gateway_http_inflight_requests{service=\"ubag-gateway\",route=\"all\",method=\"all\"} 0\n")
+	s.writeOverloadMetrics(w)
 	_, _ = fmt.Fprintf(w, "ubag_jobs_created_total{target_family=\"all\",command_type=\"all\",source=\"gateway\",outcome=\"accepted\"} %d\n", totalJobs)
 	for _, status := range jobstore.LifecycleStatuses() {
 		state := string(status)
@@ -3966,6 +3987,7 @@ func (s *Server) recordMetric(route, method string, status int, duration time.Du
 	defer s.metrics.mu.Unlock()
 	s.metrics.requests[key]++
 	s.metrics.durationSum[key] += duration.Seconds()
+	s.overload.observeLatency(route, duration)
 }
 
 func (s *Server) ObserveQueueWait(duration time.Duration) {
@@ -4621,6 +4643,11 @@ func (s *Server) putJobArtifact(w http.ResponseWriter, r *http.Request, jobID, k
 		return
 	}
 
+	releaseUpload, reserved := s.reserveUploadBytes(w, r, r.ContentLength, false)
+	if !reserved {
+		return
+	}
+	defer releaseUpload()
 	body := http.MaxBytesReader(w, r.Body, uploadCap)
 	payload, err := io.ReadAll(body)
 	if err != nil {
