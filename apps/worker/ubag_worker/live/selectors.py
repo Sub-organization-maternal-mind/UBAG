@@ -171,6 +171,14 @@ class ProviderSelectors:
     # conversation (no context bleed between unrelated Fix requests). Best-effort:
     # a missing/renamed control warns rather than failing the job.
     new_chat: Optional[SelectorGroup] = None
+    # Optional live-voice entry control (voice.release). When set, the voice
+    # runner clicks it to start the provider's two-way voice mode (audio rides
+    # the container's PulseAudio virtual mic / sink monitor, NOT the worker).
+    # Verified 2026-10-05 via the read-only voice-probe: ChatGPT renders
+    # aria-label "Start Voice" in the composer; Gemini renders "Listen".
+    # Like file_input, NOT part of all_groups(): text-only drift baselines
+    # must not depend on the voice control.
+    voice_control: Optional[SelectorGroup] = None
     # Ordered, idempotent UI settings enforced before submit (model pickers, mode
     # pills, reasoning toggles). Empty = submit in whatever mode is current.
     settings: Sequence[ProviderSetting] = field(default_factory=tuple)
@@ -301,6 +309,20 @@ CHATGPT_WEB = ProviderSelectors(
             "a[href='/']:has-text('New chat')",
             "button[aria-label*='New chat']",
         ),
+    ),
+    voice_control=SelectorGroup(
+        "voice_control",
+        (
+            # Verified 2026-10-05 on the live logged-in composer (read-only
+            # voice-probe capture): the full-duplex voice entry renders as
+            # aria-label "Start Voice" next to "Dictate". "Dictate" is
+            # speech-to-text ONLY and must never be clicked by the voice
+            # runner.
+            "[aria-label='Start Voice']",
+            "[aria-label*='Start Voice']",
+            "[aria-label*='Voice mode']",
+        ),
+        baseline_version="2026-10-05-voice-probe",
     ),
     # Verified 2026-07-17 by deleting a UBAG-created throwaway chat on the live
     # account. The row options button carries the conversation id directly
@@ -624,6 +646,19 @@ GEMINI_WEB = ProviderSelectors(
             ".side-nav-sparkle-button",
             "[data-test-id='new-chat-button']",
         ),
+    ),
+    voice_control=SelectorGroup(
+        "voice_control",
+        (
+            # Verified 2026-10-05 on the live logged-in page (read-only
+            # voice-probe capture): Gemini Live's entry renders as
+            # aria-label "Listen" in the navigation rail. "Dictate (^⇧D)"
+            # is speech-to-text ONLY and must never be clicked by the
+            # voice runner.
+            "[aria-label='Listen']",
+            "[aria-label*='Listen']",
+        ),
+        baseline_version="2026-10-05-voice-probe",
     ),
     # Operator default (always-on): "3.8 Flash" with Extended thinking OFF.
     #
