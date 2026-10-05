@@ -8,13 +8,38 @@ import { dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  ACK_FLAG, checkTarget, evaluateThresholds, histogramQuantile, main, metricsDelta, parseArgs, parseDockerStatsLine,
-  parseProm, parseRetryAfterMs, parseSize, percentile, retryDelayMs, run, renderMarkdown, startDockerSampler, summarize,
+  ACK_FLAG, checkTarget, evaluateThresholds, histogramQuantile, main, metricsDelta, parseArgs,
+  parseProm, parseRetryAfterMs, percentile, retryDelayMs, run, renderMarkdown, summarize,
 } from './acceptance.mjs';
+import { evaluatePressure, parseSample, parseTargets, startCgroupSampler, summarizeContainer } from './lib/cgroup.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const KEY = 'test-key-not-secret';
 const KEY_B = 'test-key-b-not-secret';
+const MB = 1024 * 1024;
+
+// ---------------------------------------------------------- cgroup fixtures
+// Text exactly as `docker exec <c> sh -c` prints it (sections introduced by "@@label").
+function v2Fixture({ nrPeriods = 0, nrThrottled = 0, usage = 1_000_000, oomKill = 0, current = 500 * MB, peak = null, memMax = String(1000 * MB), cpuMax = '150000 100000' } = {}) {
+  return [
+    '@@v2_cpu_stat', `usage_usec ${usage}`, 'user_usec 1', 'system_usec 1', `nr_periods ${nrPeriods}`, `nr_throttled ${nrThrottled}`, `throttled_usec ${nrThrottled * 10_000}`,
+    '@@v2_cpu_max', cpuMax, '@@v2_mem_current', String(current), '@@v2_mem_peak', peak == null ? '' : String(peak), '@@v2_mem_max', memMax,
+    '@@v2_mem_events', 'low 0', 'high 0', 'max 0', 'oom 0', `oom_kill ${oomKill}`,
+    '@@v2_cpu_pressure', 'some avg10=1.25 avg60=0.50 avg300=0.10 total=1000', 'full avg10=0.00 avg60=0.00 avg300=0.00 total=0',
+    '@@v2_mem_pressure', 'some avg10=0.75 avg60=0.10 avg300=0.00 total=10', 'full avg10=0.50 avg60=0.00 avg300=0.00 total=5',
+    '@@meminfo', 'MemTotal:       24000000 kB', 'MemFree:         1000000 kB', 'MemAvailable:   12000000 kB',
+    '@@procstat', 'cpu  100 0 100 800 0 0 0 0 0 0', 'cpu0 50 0 50 400 0 0 0 0 0 0', '@@nproc', '8', '',
+  ].join('\n');
+}
+function v1Fixture({ nrPeriods = 0, nrThrottled = 0, oomKill = 0, peak = 400 * MB, limit = String(1000 * MB) } = {}) {
+  return [
+    '@@v1_cpu_stat', `nr_periods ${nrPeriods}`, `nr_throttled ${nrThrottled}`, `throttled_time ${nrThrottled * 5_000_000}`,
+    '@@v1_cpu_quota', '200000', '@@v1_cpu_period', '100000', '@@v1_cpuacct', '5000000000',
+    '@@v1_mem_usage', String(300 * MB), '@@v1_mem_peak', String(peak), '@@v1_mem_limit', limit,
+    '@@v1_oom_control', 'oom_kill_disable 0', 'under_oom 0', `oom_kill ${oomKill}`,
+    '@@meminfo', 'MemTotal:       8000000 kB', 'MemAvailable:   4000000 kB', '@@procstat', 'cpu  10 0 10 80 0 0 0 0', '@@nproc', '2', '',
+  ].join('\n');
+}
 const fakes = [];
 after(() => Promise.all(fakes.map((f) => new Promise((r) => { f.server.closeAllConnections?.(); f.server.close(r); }))));
 
@@ -187,22 +212,68 @@ describe('report aggregation math', () => {
     assert.equal(h.count, 10); assert.equal(h.mean_s, 0.4); assert.equal(h.p50_s, 0.5);
   });
 
-  it('parses docker stats output and sizes', () => {
-    assert.equal(parseSize('512MiB'), 512 * 1024 * 1024);
-    assert.equal(parseSize('1.5GiB / 4GiB'), 1.5 * 1024 ** 3);
-    assert.equal(parseSize('2kB'), 2000);
-    assert.deepEqual(parseDockerStatsLine(JSON.stringify({ CPUPerc: '12.50%', MemUsage: '256MiB / 2GiB' })), { cpu_pct: 12.5, rss_mb: 256 });
+  it('parses cgroup v2 fixtures: throttle, memory headroom, oom_kill, PSI', () => {
+    const a = parseSample(v2Fixture({ nrPeriods: 100, nrThrottled: 0, oomKill: 1, current: 500 * MB }), 0);
+    const b = parseSample(v2Fixture({ nrPeriods: 300, nrThrottled: 60, usage: 3_000_000, oomKill: 3, current: 600 * MB, peak: 800 * MB }), 10_000);
+    assert.equal(a.version, 'v2'); assert.equal(a.cpu.quota_cores, 1.5); assert.equal(a.mem.max, 1000 * MB);
+    const c = summarizeContainer([a, b]);
+    assert.equal(c.cpu_throttled_pct, 30); // 60 of 200 new periods
+    assert.equal(c.cpu_throttled_ms, 600);
+    assert.equal(c.cpu_cores_avg, 0.2);
+    assert.equal(c.memory_headroom_pct, 20); assert.equal(c.oom_kills, 2);
+    assert.equal(c.psi_memory_full_avg10_max, 0.5); assert.equal(c.psi_cpu_some_avg10_max, 1.25);
+    assert.equal(parseSample(v2Fixture({ memMax: 'max', cpuMax: 'max 100000' })).mem.max, null);
   });
 
-  it('samples docker stats and skips gracefully when docker is missing', async () => {
-    const lines = [JSON.stringify({ CPUPerc: '10%', MemUsage: '100MiB / 1GiB' }), JSON.stringify({ CPUPerc: '30%', MemUsage: '300MiB / 1GiB' })];
-    let i = 0;
-    const stop = startDockerSampler('c1', 15, async () => lines[Math.min(i++, 1)]);
-    await new Promise((r) => setTimeout(r, 60));
+  it('parses cgroup v1 fallback fixtures', () => {
+    const a = parseSample(v1Fixture({}), 0); const b = parseSample(v1Fixture({ nrPeriods: 50, nrThrottled: 10, oomKill: 2, peak: 900 * MB }), 1000);
+    assert.equal(a.version, 'v1'); assert.equal(a.cpu.quota_cores, 2); assert.equal(a.pressure.cpu, null);
+    const c = summarizeContainer([a, b]);
+    assert.equal(c.cgroup, 'v1'); assert.equal(c.cpu_throttled_pct, 20); assert.equal(c.oom_kills, 2); assert.equal(c.memory_headroom_pct, 10);
+    assert.equal(parseSample(v1Fixture({ limit: '9223372036854771712' })).mem.max, null); // v1 "unlimited"
+    assert.throws(() => parseSample('@@nproc\n4\n'), /no readable cgroup/);
+  });
+
+  it('evaluates the helper pressure rules as booleans, with the 2-minute recovery window', () => {
+    // rows: [t ms, busy jiffies in this 100-jiffy step (= cpu %), MemAvailable %]
+    const mk = (rows) => { let busy = 0; let total = 0; return rows.map(([t, cpu, avail]) => { total += 100; busy += cpu; return { t, mem_total_kb: 1000, mem_available_kb: avail * 10, cpu: { busy, total } }; }); };
+    const calm = evaluatePressure(mk([[0, 0, 50], [60_000, 30, 50], [120_000, 30, 50]]));
+    assert.equal(calm.pressure_triggered, false); assert.equal(calm.recovered, null); assert.equal(calm.cpu_over_80, false);
+    const spike = evaluatePressure(mk([[0, 0, 50], [30_000, 90, 50], [60_000, 30, 50], [120_000, 30, 50]]));
+    assert.equal(spike.cpu_over_80, true); assert.equal(spike.recovered, false); assert.equal(spike.recovery_observed_ms, 60_000);
+    const healed = evaluatePressure(mk([[0, 0, 50], [30_000, 90, 50], [60_000, 30, 50], [120_000, 30, 50], [180_000, 40, 50]]));
+    assert.equal(healed.recovered, true); assert.equal(healed.recovery_observed_ms, 120_000);
+    const mem = evaluatePressure(mk([[0, 0, 50], [30_000, 10, 15], [60_000, 10, 24], [200_000, 10, 24]]));
+    assert.equal(mem.mem_available_under_20, true); assert.equal(mem.recovered, false); // 24% never exceeds the 25% recovery bar
+    assert.equal(mem.host_mem_available_pct_min, 15);
+    assert.equal(evaluatePressure([]).sampled, false);
+  });
+
+  it('samples every target, reports gateway/browser/worker, and skips a dead container without failing the rest', async () => {
+    const targets = parseTargets('gateway=g,browser=b,worker=w');
+    let n = 0;
+    const exec = async (name) => {
+      if (name === 'w') throw Object.assign(new Error('No such container'), { code: 1 });
+      if (name === 'g') n += 1;
+      return v2Fixture({ nrPeriods: n * 100, nrThrottled: n * 10, current: 400 * MB });
+    };
+    const stop = startCgroupSampler(targets, 15, { exec });
+    await new Promise((r) => setTimeout(r, 50));
     const out = await stop();
-    assert.ok(out.samples >= 2); assert.equal(out.cpu_pct.max, 30); assert.equal(out.rss_mb.max, 300);
-    const missing = await startDockerSampler('c1', 15, async () => { throw Object.assign(new Error('x'), { code: 'ENOENT' }); })();
-    assert.match(missing.skipped, /unavailable/);
+    assert.equal(out.containers.gateway.cgroup, 'v2'); assert.ok(out.containers.gateway.samples >= 2);
+    assert.equal(out.containers.gateway.cpu_throttled_pct, 10);
+    assert.match(out.containers.worker.skipped, /cgroup read failed/);
+    assert.equal(out.summary.memory_headroom_pct, 60); assert.equal(out.summary.oom_kills, 0);
+    assert.equal(out.host_pressure.sampled, true);
+    const none = await startCgroupSampler(targets, 15, { exec: async () => { throw Object.assign(new Error('x'), { code: 'ENOENT' }); } })();
+    assert.match(none.skipped, /unavailable/);
+    assert.equal(none.summary, undefined);
+  });
+
+  it('rejects unsafe container targets', () => {
+    assert.throws(() => parseTargets('gw=--privileged'), /invalid container target/);
+    assert.throws(() => parseTargets('a;b'), /invalid container target/);
+    assert.deepEqual(parseTargets('x, gw=ubag-gateway'), [{ role: 'x', container: 'x' }, { role: 'gw', container: 'ubag-gateway' }]);
   });
 });
 
@@ -278,7 +349,10 @@ describe('host allowlist refusal', () => {
     assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--bogus'], env), /unknown option/);
     const ok = parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--docker-stats-container', 'ubag-gateway'], env);
     assert.equal(ok.scenarios.length, 6); assert.equal(ok.dockerContainer, 'ubag-gateway');
-    assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--docker-stats-container', '--privileged'], env), /requires a value|invalid name/);
+    assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--docker-stats-container', '--privileged'], env), /requires a value|invalid container target/);
+    assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--cgroup-containers', 'gw=a b'], env), /invalid container target/);
+    assert.deepEqual(ok.cgroupTargets, [{ role: 'ubag-gateway', container: 'ubag-gateway' }]);
+    assert.deepEqual(parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--cgroup-containers', 'gateway=g,browser=b,worker=w'], env).cgroupTargets.map((t) => t.role), ['gateway', 'browser', 'worker']);
   });
 
   it('main() exits 2 and sends no request when refused', async () => {
@@ -396,10 +470,10 @@ describe('scenario smoke runs against the in-process fake gateway', () => {
     assert.equal(r2.thresholds.passed, false);
   });
 
-  it('metrics-snapshot: reports deltas of tracked metrics and docker stats when available', async () => {
+  it('metrics-snapshot: reports deltas of tracked metrics and cgroup resource samples when available', async () => {
     const fake = await startFake({ facadeLimit: 2 });
-    const exec = async () => JSON.stringify({ CPUPerc: '5.00%', MemUsage: '64MiB / 1GiB' });
-    const report = await run(cfgFor(fake, ['--scenario', 'overload,metrics-snapshot', '--burst', '20', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '1', '--docker-stats-container', 'fake-gw', '--docker-interval-ms', '10']), { dockerExec: exec });
+    const exec = async () => v2Fixture({ current: 64 * MB });
+    const report = await run(cfgFor(fake, ['--scenario', 'overload,metrics-snapshot', '--burst', '20', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '1', '--cgroup-containers', 'gateway=fake-gw', '--docker-interval-ms', '10']), { dockerExec: exec });
     assert.equal(report.metrics.available, true);
     assert.ok(report.metrics.rejections_by_reason.upload_memory > 0);
     assert.ok(report.metrics.series['ubag_upload_memory_budget_bytes'].after === 268435456);
@@ -407,7 +481,10 @@ describe('scenario smoke runs against the in-process fake gateway', () => {
     assert.ok('ubag_queue_job_wait_duration_seconds{queue="default"}' in report.metrics.histograms);
     assert.ok(report.metrics.series['ubag_admission_tokens_active{kind="tenant"}']);
     assert.ok(report.metrics.series['ubag_db_pool_connections{state="open"}']);
-    assert.ok(report.docker.samples >= 1); assert.equal(report.docker.rss_mb.max, 64);
+    assert.ok(report.resources.containers.gateway.samples >= 2); assert.equal(report.resources.containers.gateway.memory_peak_mb, 64);
+    assert.equal(report.resources.containers.gateway.memory_headroom_pct, 93.6); assert.equal(report.summary.memory_headroom_pct, 93.6);
+    assert.equal(report.resources.containers.gateway.cpu_throttled_pct, 0); assert.equal(report.resources.host_pressure.pressure_triggered, false);
+    assert.match(renderMarkdown(report), /Helper pressure rules/);
     const md = renderMarkdown(report);
     assert.match(md, /Rejections by reason/); assert.match(md, /Resource usage/);
     assert.ok(!JSON.stringify(report).includes(KEY), 'API key must never appear in the report');
@@ -417,7 +494,8 @@ describe('scenario smoke runs against the in-process fake gateway', () => {
     const fake = await startFake();
     const noDocker = async () => { throw Object.assign(new Error('spawn docker ENOENT'), { code: 'ENOENT' }); };
     const report = await run(cfgFor(fake, ['--scenario', 'metrics-snapshot', '--docker-stats-container', 'x']), { dockerExec: noDocker });
-    assert.match(report.docker.skipped, /unavailable/);
+    assert.match(report.resources.skipped, /unavailable/);
+    assert.equal(report.summary.memory_headroom_pct, undefined);
     const noMetrics = await run(cfgFor(fake, ['--scenario', 'metrics-snapshot']), { request: async (method, path) => (path === '/v1/metrics' ? { status: 404, ms: 1 } : { status: 200, ms: 1, json: {} }) });
     assert.equal(noMetrics.metrics.available, false);
     assert.match(renderMarkdown(noMetrics), /unavailable/);
@@ -523,6 +601,7 @@ describe('acceptance integrity gates fail closed', () => {
     const report = await run(cfgFor(fake, [...QUICK, '--require-goals']));
     const unmeasured = report.thresholds.results.filter((r) => !r.ok && /not measured/.test(r.note ?? '')).map((r) => r.name);
     assert.ok(unmeasured.includes('max_steady_create_p95_ms') && unmeasured.includes('max_steady_read_p95_ms'), JSON.stringify(unmeasured));
+    assert.ok(unmeasured.includes('min_memory_headroom_pct') && unmeasured.includes('max_oom_kills'), 'no cgroup sampling => headroom/oom goals fail closed');
     assert.equal(report.thresholds.passed, false);
     assert.equal(report.thresholds.goals_required, true);
     assert.match(renderMarkdown(report), /--require-goals/);
@@ -537,7 +616,8 @@ describe('acceptance integrity gates fail closed', () => {
 
   it('steady-state measures its own create and read p95; a full --require-goals run passes against a healthy fake', async () => {
     const fake = await startFake({ facadeLimit: 3 });
-    const report = await run(cfgFor(fake, ['--scenario', 'all', '--require-goals', '--jobs', '12', '--rate', '5000', '--clients', '8', '--iterations', '2', '--dup-keys', '2', '--dup-concurrency', '5', '--cancel-races', '3', '--burst', '15', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2', '--steady-seconds', '1', '--steady-rate', '5', '--steady-read-rate', '20', '--steady-seed-jobs', '2']));
+    const report = await run(cfgFor(fake, ['--scenario', 'all', '--require-goals', '--jobs', '12', '--rate', '5000', '--clients', '8', '--iterations', '2', '--dup-keys', '2', '--dup-concurrency', '5', '--cancel-races', '3', '--burst', '15', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2', '--steady-seconds', '1', '--steady-rate', '5', '--steady-read-rate', '20', '--steady-seed-jobs', '2', '--cgroup-containers', 'gateway=g,browser=b,worker=w', '--docker-interval-ms', '20']), { dockerExec: async () => v2Fixture({ current: 300 * MB }) });
+    assert.equal(report.summary.memory_headroom_pct, 70); assert.equal(report.summary.oom_kills, 0);
     assert.ok(Number.isFinite(report.summary.steady_create_p95_ms));
     assert.ok(Number.isFinite(report.summary.steady_read_p95_ms));
     assert.ok(report.ops['steady-state/read'].ok.count >= 15);
@@ -548,6 +628,8 @@ describe('acceptance integrity gates fail closed', () => {
     const g = JSON.parse(readFileSync(join(here, 'thresholds.goals.json'), 'utf8'));
     assert.equal(g.max_steady_create_p95_ms, 200);
     assert.equal(g.max_steady_read_p95_ms, 100);
+    assert.equal(g.min_memory_headroom_pct, 20);
+    assert.equal(g.max_oom_kills, 0);
     const t = JSON.parse(readFileSync(join(here, 'thresholds.json'), 'utf8'));
     assert.equal(t.max_create_p95_ms, 2000);
     assert.ok(t.min_overload_rejections >= 1);

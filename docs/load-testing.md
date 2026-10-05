@@ -36,7 +36,7 @@ The harness refuses to run unless all of these hold:
    ```
    UBAG_LOAD_BASE_URL=http://127.0.0.1:8080 UBAG_LOAD_API_KEY=... \
      node tests/load/acceptance.mjs --i-understand-this-is-load \
-     --scenario all --docker-stats-container ubag-gateway
+     --scenario all \n     --cgroup-containers gateway=ubag-gateway,browser=ubag-browser,worker=ubag-worker
    ```
 4. **Only then consider a shared host**, and only with the numbers from step 3 in
    hand: the production VPS shares CPU and memory with other services, so run the
@@ -55,7 +55,7 @@ Select with `--scenario a,b` or `--scenario all` (repeat or comma separate).
 | `duplicates` | `--dup-keys` keys each fired by `--dup-concurrency` concurrent identical requests: exactly one job id per key. Then `--cancel-races` jobs cancelled immediately (same-key pair plus distinct key) and checked to reach a terminal state that does not flip. |
 | `steady-state` | Seeds `--steady-seed-jobs` jobs, then for `--steady-seconds` holds a constant `--steady-rate` creates/s alongside a dedicated GET mix at `--steady-read-rate` reads/s (job, events, list). Latencies land in `steady-state/create` and `steady-state/read`; the goal thresholds gate their p95. Not a burst: keep rates modest. |
 | `overload` | Upload-memory burst (`--burst` x `--burst-body-bytes` facade bodies), an in-flight burst (`--inflight-burst` cheap authenticated GETs), then recovery: health/ready 200 and `--recovery-requests` normal jobs complete. Every 429/503 must carry `Retry-After` and body `retry_after_ms`. |
-| `metrics-snapshot` | `/v1/metrics` is scraped before and after every run (and sampled every `--metrics-interval-ms` for gauge maxima); this scenario adds an optional idle window (`--snapshot-seconds`). `--docker-stats-container <name>` samples `docker stats --no-stream` every `--docker-interval-ms` (default 5 s) and is skipped with a note when docker is missing. |
+| `metrics-snapshot` | `/v1/metrics` is scraped before and after every run (and sampled every `--metrics-interval-ms` for gauge maxima); this scenario adds an optional idle window (`--snapshot-seconds`). `--cgroup-containers role=container,...` (e.g. `gateway=..,browser=..,worker=..`; legacy `--docker-stats-container <name>` is a one-container alias) reads cgroup files with a read-only `docker exec` every `--docker-interval-ms` (default 5 s), plus one closing sample; a container that cannot be read is skipped with a note (see Resource sampling below). |
 
 Notes:
 
@@ -96,7 +96,7 @@ Sections of `summary.md`:
 - **Gateway metrics**: deltas, plus latency and queue-wait quantiles
   (linear-interpolated from histogram buckets), `max sampled` for gauges
   (in-flight requests, upload memory bytes, admission tokens, DB pool).
-- **Resource usage**: docker CPU % and RSS if sampled.
+- **Resource usage**: per container cgroup CPU throttle %, memory peak and headroom %, `oom_kill`, PSI, and the helper pressure booleans, if sampled.
 - **Violation samples**: the first few concrete failures.
 
 Default acceptance (`tests/load/thresholds.json`): no 5xx other than 503 overload
@@ -157,3 +157,28 @@ an in-process fake gateway on `127.0.0.1`, and negative cases that must FAIL
 (wrong/truncated/duplicated result, duplicated terminal event, cross-tenant leak,
 `completed_with_warnings`, facade 400s, zero overload rejections, unmeasured goals). It never touches a real host and is
 deliberately not part of `pnpm check` or `pnpm test:v0:local`.
+
+## Resource sampling (cgroup, throttle, host pressure)
+
+`docker stats` is gone. Per sample the harness runs one read-only
+`docker exec <container> sh -c 'cat ...'` that reads `cpu.stat`, `cpu.max`,
+`memory.current/peak/max/events`, `cpu.pressure`, `memory.pressure`,
+`/proc/meminfo` and `/proc/stat` (cgroup v2), falling back to the v1 files
+(`cpu/cpu.stat`, `cpuacct.usage`, `memory.usage_in_bytes`, `max_usage_in_bytes`,
+`limit_in_bytes`, `oom_control`; PSI is v2 only). The container needs `sh` and
+`cat`. Code: `tests/load/lib/cgroup.mjs`.
+
+`report.json` -> `resources` (and `summary`, which thresholds read):
+
+| field | meaning |
+| --- | --- |
+| `containers.<role>.cpu_throttled_pct` | share of CFS periods in which the cgroup was throttled, over the run (0 without a CPU limit). `summary.cpu_throttled_pct` is the max over containers. |
+| `containers.<role>.memory_headroom_pct` | `(1 - peak / memory.max) * 100`, peak = max(`memory.peak`, sampled `memory.current`). `null` when the container has no memory limit. `summary.memory_headroom_pct` is the minimum over containers; goal `>= 20`. |
+| `containers.<role>.oom_kills` | `oom_kill` delta over the run; `summary.oom_kills` is the sum, goal `0`. |
+| `host_pressure` | booleans for the helper pressure rules: `cpu_over_80`, `mem_available_under_20`, `pressure_triggered`, `recovered` (CPU `< 60%` and MemAvailable `> 25%` for the whole `--pressure-window-ms`, default 120000; `null` if never triggered). Host CPU % comes from `/proc/stat` deltas. |
+
+`--require-goals` fails closed: `min_memory_headroom_pct` / `max_oom_kills` are
+unmeasured (FAIL) unless every sampled container has a memory limit. Throttle %
+and the pressure booleans are reported, not gated. `/proc/*` is the host's (the
+VM's on Docker Desktop) unless the runtime virtualises it. Numbers off the lab host
+are NON-AUTHORITATIVE.

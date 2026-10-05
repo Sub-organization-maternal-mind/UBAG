@@ -15,7 +15,7 @@
  * able to read them; --require-goals additionally loads thresholds.goals.json and
  * treats every unmeasured threshold as a FAILURE.
  */
-import { execFile } from 'node:child_process';
+import { PRESSURE_RULES, parseTargets, startCgroupSampler } from './lib/cgroup.mjs';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { arch, platform } from 'node:os';
@@ -171,18 +171,19 @@ const NUM = { // flag: [cfgKey, default, min, max]
   'snapshot-seconds': ['snapshotSeconds', 0, 0, 3600],
   'metrics-interval-ms': ['metricsIntervalMs', 5000, 10, 600_000],
   'docker-interval-ms': ['dockerIntervalMs', 5000, 10, 600_000],
+  'pressure-window-ms': ['pressureWindowMs', PRESSURE_RULES.recoveryWindowMs, 10, 3_600_000],
   'settle-ms': ['settleMs', 500, 0, 60_000],
   'steady-seconds': ['steadySeconds', 30, 1, 3600], 'steady-rate': ['steadyRate', 5, 1, 200],
   'steady-read-rate': ['steadyReadRate', 20, 1, 1000], 'steady-seed-jobs': ['steadySeedJobs', 10, 1, 1000],
   'tenant-probe-samples': ['tenantProbeSamples', 10, 0, 1000],
 };
-const STR = { target: 'target', 'command-type': 'commandType', 'docker-stats-container': 'dockerContainer', 'out-dir': 'outDir', thresholds: 'thresholds', goals: 'goals' };
+const STR = { target: 'target', 'command-type': 'commandType', 'docker-stats-container': 'dockerContainer', 'cgroup-containers': 'cgroupContainers', 'out-dir': 'outDir', thresholds: 'thresholds', goals: 'goals' };
 const FLAGS = new Set([ACK_FLAG, 'with-upload', 'require-goals']);
 
 export function parseArgs(argv, env = process.env) {
   const cfg = {
     scenarios: [], target: 'mock', commandType: 'chat.prompt', withUpload: false, jitter: 0.1,
-    dockerContainer: undefined, outDir: join(here, 'results'), thresholds: join(here, 'thresholds.json'),
+    dockerContainer: undefined, cgroupContainers: undefined, outDir: join(here, 'results'), thresholds: join(here, 'thresholds.json'),
     goals: join(here, 'thresholds.goals.json'), requireGoals: false,
   };
   for (const [, [key, def]] of Object.entries(NUM)) cfg[key] = def;
@@ -225,7 +226,8 @@ export function parseArgs(argv, env = process.env) {
   // Optional second tenant for the cross-tenant isolation probe; it must be a different credential.
   cfg.apiKeyB = env.UBAG_LOAD_API_KEY_B || undefined;
   if (cfg.apiKeyB && cfg.apiKeyB === cfg.apiKey) throw new Error('UBAG_LOAD_API_KEY_B must differ from UBAG_LOAD_API_KEY (it must belong to a second tenant)');
-  if (cfg.dockerContainer && !/^[A-Za-z0-9][\w.-]*$/.test(cfg.dockerContainer)) throw new Error('--docker-stats-container has an invalid name');
+  // --docker-stats-container <name> is the legacy single-container spelling of --cgroup-containers.
+  try { cfg.cgroupTargets = parseTargets([cfg.cgroupContainers, cfg.dockerContainer].filter(Boolean).join(',')); } catch (e) { throw new Error(`--cgroup-containers: ${e.message}`); }
   return cfg;
 }
 
@@ -430,43 +432,6 @@ export function metricsDelta(before, after, maxSampled = new Map()) {
     if (m) rejections[m[1]] = v.delta;
   }
   return { series, histograms, rejections_by_reason: rejections };
-}
-
-// -------------------------------------------------------------- docker stats
-
-export function parseSize(text) {
-  const m = /([\d.]+)\s*([KMGT]?)(i?)B/i.exec(text ?? '');
-  if (!m) return null;
-  return Number(m[1]) * (m[3] ? 1024 : 1000) ** ('KMGT'.indexOf(m[2].toUpperCase()) + 1);
-}
-
-export function parseDockerStatsLine(line) {
-  const j = JSON.parse(line);
-  const rss = parseSize(String(j.MemUsage ?? '').split('/')[0]);
-  return { cpu_pct: parseFloat(j.CPUPerc), rss_mb: rss == null ? null : r2(rss / (1024 * 1024)) };
-}
-
-const dockerExec = (name) => new Promise((res, rej) => {
-  execFile('docker', ['stats', '--no-stream', '--format', '{{json .}}', name], { timeout: 20_000 }, (err, stdout) => (err ? rej(err) : res(stdout.trim())));
-});
-
-export function startDockerSampler(name, intervalMs, exec = dockerExec) {
-  const samples = []; let skipped = null; let stopped = false; let timer; let inflight = Promise.resolve();
-  const tick = async () => {
-    try { samples.push({ t: new Date().toISOString(), ...parseDockerStatsLine(await exec(name)) }); } catch (e) {
-      if (!samples.length) { skipped = `docker stats unavailable: ${e.code ?? e.message}`; stopped = true; clearInterval(timer); }
-    }
-  };
-  inflight = tick();
-  timer = setInterval(() => { if (!stopped) inflight = tick(); }, intervalMs);
-  timer.unref?.();
-  return async () => {
-    clearInterval(timer); stopped = true; await inflight;
-    if (skipped || !samples.length) return { container: name, skipped: skipped ?? 'no samples collected' };
-    const cpu = samples.map((s) => s.cpu_pct).filter(Number.isFinite); const rss = samples.map((s) => s.rss_mb).filter(Number.isFinite);
-    const avg = (a) => (a.length ? r2(a.reduce((x, y) => x + y, 0) / a.length) : null);
-    return { container: name, samples: samples.length, cpu_pct: { avg: avg(cpu), max: r2(Math.max(...cpu)) }, rss_mb: { avg: avg(rss), max: r2(Math.max(...rss)) }, series: samples };
-  };
 }
 
 // --------------------------------------------------------------- HTTP client
@@ -851,7 +816,7 @@ export async function run(cfg, deps = {}) {
     } catch { /* sampling is best-effort */ }
   }, cfg.metricsIntervalMs);
   sampler.unref?.();
-  const stopDocker = cfg.dockerContainer ? startDockerSampler(cfg.dockerContainer, cfg.dockerIntervalMs, deps.dockerExec) : null;
+  const stopCgroup = cfg.cgroupTargets.length ? startCgroupSampler(cfg.cgroupTargets, cfg.dockerIntervalMs, { exec: deps.dockerExec, rules: { ...PRESSURE_RULES, recoveryWindowMs: cfg.pressureWindowMs } }) : null;
 
   const report = { scenarios: {} }; const extra = {};
   for (const name of cfg.scenarios) {
@@ -870,9 +835,9 @@ export async function run(cfg, deps = {}) {
   if (before) {
     try { metrics = { available: true, ...metricsDelta(before, await scrape(), maxSampled) }; } catch (e) { metrics = { available: false, error: e.message }; }
   }
-  const docker = stopDocker ? await stopDocker() : { skipped: 'not requested (--docker-stats-container)' };
+  const resources = stopCgroup ? await stopCgroup() : { skipped: 'not requested (--cgroup-containers)' };
 
-  const summary = ctx.rec.summary(extra);
+  const summary = { ...ctx.rec.summary(extra), ...resources.summary };
   const thresholds = JSON.parse(readFileSync(cfg.thresholds, 'utf8'));
   if (cfg.requireGoals) Object.assign(thresholds, JSON.parse(readFileSync(cfg.goals, 'utf8'))); // goals tighten/extend the base set
   const verdict = { ...evaluateThresholds(summary, thresholds, { strict: cfg.requireGoals }), goals_required: cfg.requireGoals };
@@ -884,7 +849,7 @@ export async function run(cfg, deps = {}) {
     },
     ...report, summary, ops: ctx.rec.opsTable(), classes: ctx.rec.classes, error_codes: ctx.rec.errorCodes,
     client_rejections_by_reason: ctx.rec.rejections, retry: ctx.rec.retry, violations: ctx.rec.violations,
-    metrics, docker, thresholds: verdict,
+    metrics, resources, thresholds: verdict,
   };
 }
 
@@ -916,9 +881,16 @@ export function renderMarkdown(report) {
     lines.push(table(['histogram', 'count', 'mean s', 'p50 s', 'p95 s', 'p99 s'], Object.entries(report.metrics.histograms).map(([k, h]) => [k, h.count, h.mean_s, h.p50_s, h.p95_s, h.p99_s])), '');
     lines.push(table(['series', 'before', 'after', 'delta', 'max sampled'], Object.entries(report.metrics.series).map(([k, v]) => [k, v.before, v.after, v.delta, v.max_sampled])), '');
   }
-  lines.push('## Resource usage (docker stats)', '');
-  if (report.docker.skipped) lines.push(`skipped: ${report.docker.skipped}`, '');
-  else lines.push(table(['container', 'samples', 'cpu avg %', 'cpu max %', 'rss avg MB', 'rss max MB'], [[report.docker.container, report.docker.samples, report.docker.cpu_pct.avg, report.docker.cpu_pct.max, report.docker.rss_mb.avg, report.docker.rss_mb.max]]), '');
+  lines.push('## Resource usage (cgroup, NON-AUTHORITATIVE off the lab host)', '');
+  const res = report.resources;
+  if (res.skipped) lines.push(`skipped: ${res.skipped}`, '');
+  if (res.containers) {
+    lines.push(table(['role', 'container', 'cgroup', 'samples', 'cpu cores avg', 'throttled %', 'mem peak MB', 'mem limit MB', 'headroom %', 'oom_kill', 'psi cpu/mem avg10 max'],
+      Object.entries(res.containers).map(([role, c]) => (c.skipped ? [role, c.container, `skipped: ${c.skipped}`] : [role, c.container, c.cgroup, c.samples, c.cpu_cores_avg, c.cpu_throttled_pct, c.memory_peak_mb, c.memory_limit_mb ?? 'unlimited', c.memory_headroom_pct, c.oom_kills, `${c.psi_cpu_some_avg10_max ?? '-'}/${c.psi_memory_some_avg10_max ?? '-'}`]))), '');
+    const hp = res.host_pressure;
+    if (hp?.sampled) lines.push(`Helper pressure rules (CPU>${hp.rules.cpuHighPct}%, mem available<${hp.rules.memAvailLowPct}%, recovery <${hp.rules.cpuRecoverPct}%/>${hp.rules.memAvailRecoverPct}% for ${hp.rules.recoveryWindowMs} ms): cpu_over_80=${hp.cpu_over_80}, mem_available_under_20=${hp.mem_available_under_20}, pressure_triggered=${hp.pressure_triggered}, recovered=${hp.recovered}`, '');
+    else lines.push('Helper pressure rules: host CPU/memory not sampled.', '');
+  }
   if (report.violations.length) lines.push('## Violation samples', '', ...report.violations.map((v) => `- [${v.scenario}] ${v.counter}: ${v.detail}`), '');
   return lines.join('\n');
 }
