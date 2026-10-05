@@ -590,6 +590,8 @@ func newDispatcherFromEnv() (executor.Dispatcher, error) {
 			return nil, fmt.Errorf("UBAG_EXECUTOR_SPOOL_DIR is required when UBAG_EXECUTOR_MODE=file")
 		}
 		dispatcher := executor.NewFileSpoolDispatcher(spoolDir)
+		// Default off: legacy file mode leases scheduled jobs immediately.
+		dispatcher.SetHonorNotBefore(envBool("UBAG_FILESPOOL_HONOR_NOT_BEFORE"))
 		// A previous process may have died mid-RunOnce (upgrade, crash, killed
 		// window): its leases are stranded in spool/leased forever unless they
 		// are returned to pending at startup.

@@ -526,3 +526,52 @@ func TestFileSpoolLeaseNextEmptyWhenEveryCandidateLost(t *testing.T) {
 		t.Fatalf("LeaseNext ok=%v err=%v, want empty without error", ok, err)
 	}
 }
+
+func TestFileSpoolLeaseNextHonorsNotBeforeWhenEnabled(t *testing.T) {
+	clock := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	dispatcher.now = func() time.Time { return clock }
+	dispatcher.SetHonorNotBefore(true)
+
+	due := clock.Add(10 * time.Minute)
+	scheduled := sampleJob()
+	scheduled.ID = "job_000000000001"
+	scheduled.Status = jobstore.StatusScheduled
+	scheduled.NotBefore = &due
+	if _, err := dispatcher.EnqueueJob(context.Background(), scheduled); err != nil {
+		t.Fatalf("enqueue scheduled: %v", err)
+	}
+	if _, ok, err := dispatcher.LeaseNext(context.Background()); ok || err != nil {
+		t.Fatalf("scheduled job leased before not_before: ok=%v err=%v", ok, err)
+	}
+
+	// A younger, unscheduled job must not be blocked behind the scheduled one.
+	enqueueSpoolJobs(t, dispatcher, "job_000000000002")
+	lease, ok, err := dispatcher.LeaseNext(context.Background())
+	if err != nil || !ok || lease.JobID != "job_000000000002" {
+		t.Fatalf("LeaseNext = %q ok=%v err=%v, want job_000000000002", lease.JobID, ok, err)
+	}
+
+	clock = due
+	lease, ok, err = dispatcher.LeaseNext(context.Background())
+	if err != nil || !ok || lease.JobID != scheduled.ID {
+		t.Fatalf("LeaseNext after not_before = %q ok=%v err=%v, want %s", lease.JobID, ok, err, scheduled.ID)
+	}
+	if len(dispatcher.notBefore) != 0 {
+		t.Fatalf("not_before cache not cleared: %v", dispatcher.notBefore)
+	}
+}
+
+func TestFileSpoolLeaseNextIgnoresNotBeforeByDefault(t *testing.T) {
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	due := time.Now().Add(time.Hour)
+	job := sampleJob()
+	job.Status = jobstore.StatusScheduled
+	job.NotBefore = &due
+	if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, ok, err := dispatcher.LeaseNext(context.Background()); !ok || err != nil {
+		t.Fatalf("legacy behaviour (flag off) must lease immediately: ok=%v err=%v", ok, err)
+	}
+}

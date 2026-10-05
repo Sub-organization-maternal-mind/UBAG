@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
@@ -54,6 +55,14 @@ type FileSpoolDispatcher struct {
 	retentionMu  sync.Mutex
 	retentionTTL time.Duration
 	retentionMax int
+	// honorNotBefore (UBAG_FILESPOOL_HONOR_NOT_BEFORE, default off) makes
+	// LeaseNext skip pending envelopes whose not_before is still in the future,
+	// matching the NATS consumer's §14.6 scheduling. notBefore caches the
+	// parsed time per pending file so a deferred envelope is read once, not on
+	// every poll.
+	honorNotBefore atomic.Bool
+	notBeforeMu    sync.Mutex
+	notBefore      map[string]time.Time
 	// beforeLease is a test seam called just before a pending envelope is
 	// claimed, so a test can deterministically lose the lease race.
 	beforeLease func(name string)
@@ -69,6 +78,67 @@ func (d *FileSpoolDispatcher) SetRetention(cfg SpoolRetentionConfig) {
 	d.retentionTTL = cfg.TTL
 	d.retentionMax = cfg.MaxCount
 	d.retentionMu.Unlock()
+}
+
+// SetHonorNotBefore turns on not_before scheduling for LeaseNext. Call it at
+// wiring time, before the lease loop starts.
+func (d *FileSpoolDispatcher) SetHonorNotBefore(on bool) {
+	if d != nil {
+		d.honorNotBefore.Store(on)
+	}
+}
+
+// notBeforeDeferred reports whether the pending envelope `name` is scheduled
+// for the future. Unreadable or malformed envelopes are never deferred: the
+// normal lease path owns parking them in failed/.
+func (d *FileSpoolDispatcher) notBeforeDeferred(name string, now time.Time) bool {
+	d.notBeforeMu.Lock()
+	defer d.notBeforeMu.Unlock()
+	if at, ok := d.notBefore[name]; ok {
+		if now.Before(at) {
+			return true
+		}
+		delete(d.notBefore, name)
+		return false
+	}
+	path := filepath.Join(d.pendingDir(), name)
+	if info, err := os.Stat(path); err != nil || info.Size() > maxSpoolEnvelopeBytes {
+		return false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var probe struct {
+		NotBefore *time.Time `json:"not_before"`
+	}
+	if json.Unmarshal(raw, &probe) != nil || probe.NotBefore == nil || !now.Before(*probe.NotBefore) {
+		return false
+	}
+	if d.notBefore == nil {
+		d.notBefore = map[string]time.Time{}
+	}
+	d.notBefore[name] = *probe.NotBefore
+	return true
+}
+
+// pruneNotBefore drops cache entries whose envelope is no longer pending
+// (leased elsewhere, cancelled) so the cache stays bounded by the pending set.
+func (d *FileSpoolDispatcher) pruneNotBefore(pending []string) {
+	d.notBeforeMu.Lock()
+	defer d.notBeforeMu.Unlock()
+	if len(d.notBefore) == 0 {
+		return
+	}
+	live := make(map[string]struct{}, len(pending))
+	for _, name := range pending {
+		live[name] = struct{}{}
+	}
+	for name := range d.notBefore {
+		if _, ok := live[name]; !ok {
+			delete(d.notBefore, name)
+		}
+	}
 }
 
 func (d *FileSpoolDispatcher) retentionBounds() (time.Duration, int) {
@@ -290,9 +360,17 @@ func (d *FileSpoolDispatcher) LeaseNext(ctx context.Context) (FileSpoolLease, bo
 		}
 	}
 	names[0], names[first] = names[first], names[0]
+	honorNotBefore := d.honorNotBefore.Load()
+	if honorNotBefore {
+		d.pruneNotBefore(names)
+	}
+	now := d.now()
 	for i := 0; i < len(names); i++ {
 		if i == 1 {
 			sort.Strings(names[1:])
+		}
+		if honorNotBefore && d.notBeforeDeferred(names[i], now) {
+			continue
 		}
 		lease, ok, err := d.tryLease(names[i])
 		if err != nil || ok {
