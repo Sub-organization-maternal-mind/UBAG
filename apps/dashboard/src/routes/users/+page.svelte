@@ -58,7 +58,7 @@
     usersError = null;
     usersDenied = false;
     scimUsersUnavailable = false;
-    const res = await api.get<ScimUserList>('/v1/scim/users');
+    const res = await api.get<ScimUserList>('/v1/scim/v2/Users');
     usersLoading = false;
     if (res.denied) { usersDenied = true; return; }
     // 404/501 mean SCIM is not implemented on this deployment — friendly message.
@@ -76,7 +76,7 @@
     groupsError = null;
     groupsDenied = false;
     scimGroupsUnavailable = false;
-    const res = await api.get<ScimGroupList>('/v1/scim/groups');
+    const res = await api.get<ScimGroupList>('/v1/scim/v2/Groups');
     groupsLoading = false;
     if (res.denied) { groupsDenied = true; return; }
     if (res.status === 404 || res.status === 501) {
@@ -87,7 +87,7 @@
     groups = res.data?.Resources ?? [];
   }
 
-  // --- Create user dialog (POST /v1/scim/users) ---
+  // --- Create user dialog (POST /v1/scim/v2/Users) ---
   let createUserOpen = $state(false);
   let newUserName = $state('');
   let newDisplayName = $state('');
@@ -103,7 +103,7 @@
     }
     createUserLoading = true;
     createUserError = null;
-    const res = await api.post<ScimUser>('/v1/scim/users', {
+    const res = await api.post<ScimUser>('/v1/scim/v2/Users', {
       userName,
       displayName: newDisplayName.trim() || userName,
       emails: newEmail.trim() ? [{ value: newEmail.trim(), primary: true }] : [],
@@ -121,7 +121,7 @@
     await loadUsers();
   }
 
-  // --- Create group dialog (POST /v1/scim/groups) ---
+  // --- Create group dialog (POST /v1/scim/v2/Groups) ---
   let createGroupOpen = $state(false);
   let newGroupName = $state('');
   let createGroupLoading = $state(false);
@@ -135,7 +135,7 @@
     }
     createGroupLoading = true;
     createGroupError = null;
-    const res = await api.post<ScimGroup>('/v1/scim/groups', { displayName });
+    const res = await api.post<ScimGroup>('/v1/scim/v2/Groups', { displayName });
     createGroupLoading = false;
     if (res.error) {
       createGroupError = `Create failed: ${res.error} (HTTP ${res.status})`;
@@ -242,7 +242,7 @@
     {:else if scimUsersUnavailable}
       <EmptyState
         message="SCIM user provisioning is not enabled on this deployment."
-        hint="The gateway does not expose /v1/scim/users. Contact your administrator to enable SCIM."
+        hint="The gateway does not expose /v1/scim/v2/Users. Contact your administrator to enable SCIM."
       />
     {:else if usersError}
       <ErrorPanel message={usersError} retry={loadUsers} />
@@ -301,7 +301,7 @@
     {:else if scimGroupsUnavailable}
       <EmptyState
         message="SCIM group provisioning is not enabled on this deployment."
-        hint="The gateway does not expose /v1/scim/groups. Contact your administrator to enable SCIM."
+        hint="The gateway does not expose /v1/scim/v2/Groups. Contact your administrator to enable SCIM."
       />
     {:else if groupsError}
       <ErrorPanel message={groupsError} retry={loadGroups} />
