@@ -3761,3 +3761,49 @@ these produce runtime evidence:**
    deployment (shared box: OET + radiology run there).
 8. The same feature branch must NOT be merged until the live voice demo
    evidence exists; main auto-deploys on push.
+
+## 2026-10-05 — Voice audio canary: LIVE verification in Ubuntu Docker (bounded, isolated)
+
+Built and ran the audio-enabled browser image as an ISOLATED canary on the
+production box (185.252.233.186) — separate container `ubag-voice-canary`,
+no published ports, no volumes, 0.5 CPU / 1536 MB caps, default bridge
+network; production containers untouched; container removed after
+verification (image `ubag/vps-browser:voice-canary` kept for reuse).
+
+**Live evidence captured inside the canary (Chrome 154, Ubuntu Docker):**
+- PulseAudio runs; after the entrypoint fix it boots RELIABLY across
+  container restarts.
+- Virtual devices created by the relay itself: source `ubag_virtual_mic`
+  (module-pipe-source, s16le 1ch 48000 Hz, DEFAULT SOURCE — Chrome's
+  getUserMedia picks it up) and sink `ubag_provider_sink` + `.monitor`
+  (DEFAULT SINK — the provider's voice UI plays into the monitored sink).
+- Audio relay listening on 9099 (internal only).
+- END-TO-END ROUND TRIP (framed protocol test): 3 real Opus frames sent
+  over TCP → decoded via libopus → written into the virtual-mic FIFO;
+  3 monitor frames captured → Opus-encoded → received back.
+  `MIC_FRAMES_SENT=3 SPEAKER_FRAMES_RECEIVED=3` on a clean boot.
+
+**Bugs found and fixed through live canary iteration (all committed):**
+1. `pulseaudio --start` silently fails after docker restart (stale /tmp
+   runtime dir survives) → Pulse now runs foreground in a supervised loop
+   with `rm -rf /tmp/pulse-*` before each start.
+2. `module-pipe-source` init fails with no writer holding the FIFO → the
+   relay holds a non-blocking writer fd for its lifetime before loading;
+   module load retries 3x with visible errors.
+3. opus_bridge bound a nonexistent libopus symbol (crashed OpusDecoder
+   construction) and declared PCM args as value types instead of pointers
+   (crashed every decode/encode) → fixed; PCM args are c_void_p.
+4. Device setup raced PulseAudio startup and failures were invisible →
+   `wait_for_pulse` + `run_checked` (fail-visible) +
+   `ensure_devices_forever` (background retry until the mic exists) +
+   sessions wait on the ready event (rejected with a logged reason
+   otherwise).
+5. Media-thread crashes killed sessions silently → both pumps catch and
+   log every exception before stopping the session.
+
+**Still required for the REQUIRED acceptance (not yet demonstrated):** the
+actual provider-side two-way voice demo — voice-runner activation of
+ChatGPT "Start Voice" / Gemini "Listen" in the canary with a real client
+WebRTC connection through the gateway MediaHub, observing the provider's
+own barge-in. The canary + gateway wiring for that run is the next step
+(attach canary to ubag-private, point UBAG_VOICE_AUDIO_RELAY_ADDR at it).

@@ -1189,3 +1189,23 @@ version for the next agent:
   cleanup + cross-session leakage checks, voice metrics registration,
   deploy/small browser audio overlay, SDK hand-written method surfaces,
   VPS headroom measurement. Full list in PROGRESS.md.
+
+## 2026-10-05 voice canary — live Ubuntu Docker evidence
+
+A voice-enabled browser canary ran ISOLATED on the production box
+(separate container, no published ports, no volumes, 0.5 CPU/1.5 GB) and
+produced the first live audio evidence: PulseAudio + `ubag_virtual_mic`
+(default source) + `ubag_provider_sink` monitor (default sink) created by
+the relay, and a verified END-TO-END framed-protocol round trip (3 Opus
+frames in → virtual mic; 3 monitor frames out Opus-encoded). Canary
+removed after verification; image `ubag/vps-browser:voice-canary` kept.
+Five live-found bugs fixed (pulse --start vs stale /tmp runtime after
+docker restart; module-pipe-source FIFO writer-hold; two opus_bridge
+ctypes bugs; device-setup race/fail-visibility; media-thread crash
+containment) — details in PROGRESS.md 2026-10-05.
+
+Next session's acceptance run: attach a fresh canary to `ubag-private`,
+point `UBAG_VOICE_AUDIO_RELAY_ADDR` at it, run the gateway from this
+branch, then voice_runner-activate ChatGPT "Start Voice" / Gemini
+"Listen" and drive a real WebRTC client through MediaHub to demonstrate
+two-way audio + provider barge-in on BOTH providers.
