@@ -397,6 +397,7 @@ export interface UbagBrowserInstance {
   worker_id: string;
   tenant_id: string;
   engine: string;
+  /** Omitted when the gateway runs with UBAG_REDACT_REMOTE_ENDPOINT enabled. */
   remote_endpoint?: string;
   state: string;
   context_count: number;

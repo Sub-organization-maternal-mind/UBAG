@@ -2,6 +2,9 @@ package httpapi
 
 import (
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
 )
@@ -205,17 +208,27 @@ func (s *Server) handleConcurrency(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func redactRemoteEndpoint() bool {
+	on, _ := strconv.ParseBool(strings.TrimSpace(os.Getenv("UBAG_REDACT_REMOTE_ENDPOINT")))
+	return on
+}
+
 func instanceToResponse(instance topology.BrowserInstance) map[string]any {
 	out := map[string]any{
 		"instance_id":     instance.InstanceID,
 		"worker_id":       instance.WorkerID,
 		"tenant_id":       instance.TenantID,
 		"engine":          instance.Engine,
-		"remote_endpoint": instance.RemoteEndpoint,
 		"state":           instance.State,
 		"context_count":   instance.ContextCount,
 		"tab_count":       instance.TabCount,
 		"created_at":      instance.CreatedAt,
+	}
+	// remote_endpoint is the browser's CDP endpoint (full browser control), so
+	// it is withheld from tenant responses when UBAG_REDACT_REMOTE_ENDPOINT is
+	// on. Default off preserves the legacy response shape.
+	if !redactRemoteEndpoint() {
+		out["remote_endpoint"] = instance.RemoteEndpoint
 	}
 	if instance.RSSBytes != nil {
 		out["rss_bytes"] = *instance.RSSBytes

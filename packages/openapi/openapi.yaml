@@ -4456,6 +4456,11 @@ components:
           type: string
         remote_endpoint:
           type: string
+          description: >-
+            Browser DevTools (CDP) endpoint of the instance. Sensitive: it
+            grants control of the browser. Omitted from tenant responses when
+            the gateway runs with UBAG_REDACT_REMOTE_ENDPOINT enabled
+            (default off, legacy behaviour); clients must treat it as optional.
         state:
           type: string
         context_count:

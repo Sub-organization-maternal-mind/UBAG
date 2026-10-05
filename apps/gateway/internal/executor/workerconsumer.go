@@ -798,6 +798,9 @@ func (c *WorkerConsumer) recordTopologyReport(job jobstore.Job, event jobstore.W
 	var tabs []topology.BrowserTab
 	if decodeEventList(event.Data, "tabs", &tabs) {
 		for i := range tabs {
+			// Tenant comes from the trusted job record; AddTab drops tabs whose
+			// context_id is not one of THIS tenant's contexts.
+			tabs[i].TenantID = job.TenantID
 			tabs[i].CreatedAt = createdAt
 			c.Topology.AddTab(tabs[i])
 		}

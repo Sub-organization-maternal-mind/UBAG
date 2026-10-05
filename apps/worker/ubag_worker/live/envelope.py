@@ -104,19 +104,19 @@ def normalize_payload(payload: Mapping[str, Any], provider_id: str) -> Normalize
     context = _manual_context(payload)
     session_id = _safe_session_id(context.get("session_id"), job_id, target)
 
-    user_data_dir = _resolve_user_data_dir(options, context, target)
-    headless_raw = options.get("headless", False)
-    if not isinstance(headless_raw, bool):
-        raise EnvelopeError("options.headless must be a boolean")
-    headless = headless_raw
-
-    account_binding_id = _clean_text(context.get("account_binding_id"), "unbound")
     tenant_id = _string_or_default(
         payload.get("tenant_id")
         or job_payload.get("tenant_id")
         or context.get("tenant_id"),
         "default",
     )
+    user_data_dir = _resolve_user_data_dir(options, context, target, tenant_id)
+    headless_raw = options.get("headless", False)
+    if not isinstance(headless_raw, bool):
+        raise EnvelopeError("options.headless must be a boolean")
+    headless = headless_raw
+
+    account_binding_id = _clean_text(context.get("account_binding_id"), "unbound")
     conversation_id = _optional_string(
         input_payload.get("conversation_id")
         or options.get("conversation_id")
@@ -307,10 +307,34 @@ def _validate_profile_dir_value(value: str, key: str) -> str:
     return value
 
 
+def _profile_options_policy() -> str:
+    """UBAG_PROFILE_OPTIONS_POLICY: ``legacy`` (default) or ``namespaced``."""
+    value = os.environ.get("UBAG_PROFILE_OPTIONS_POLICY", "").strip().lower()
+    return "namespaced" if value == "namespaced" else "legacy"
+
+
+def _tenant_segment(tenant_id: str) -> str:
+    """A filesystem-safe, collision-free directory segment for a tenant id."""
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", tenant_id):
+        return tenant_id
+    return "t_" + digest(tenant_id)[:16]
+
+
 def _resolve_user_data_dir(
-    options: Mapping[str, Any], context: Mapping[str, Any], target: str
+    options: Mapping[str, Any],
+    context: Mapping[str, Any],
+    target: str,
+    tenant_id: str = "default",
 ) -> str:
     profile_root = _profile_root()
+    if _profile_options_policy() == "namespaced":
+        # A job:create caller can otherwise pick ANOTHER tenant's relative
+        # profile directory (cookies/sessions). Under the namespaced policy the
+        # caller-supplied user_data_dir/profile_dir/profile_path are ignored
+        # and the profile lives in a tenant-owned subtree of the profile root.
+        # This moves the default location versus legacy: enable it only with a
+        # profile migration (see docs/perf-fleet/slices/P1.6.md).
+        return os.path.join(profile_root, _tenant_segment(tenant_id), target, "default")
     for source in (options, context):
         for key in ("user_data_dir", "profile_dir", "profile_path"):
             value = source.get(key)

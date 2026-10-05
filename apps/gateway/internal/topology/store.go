@@ -59,6 +59,10 @@ type ProviderContext struct {
 
 // BrowserTab is a single channel tab within a provider context.
 type BrowserTab struct {
+	// TenantID is set by the trusted ingestion path (the reporting job's
+	// tenant), never decoded from a worker payload (json:"-"). It scopes the
+	// parent-context lookup in MemoryStore.AddTab.
+	TenantID       string     `json:"-"`
 	TabID          string     `json:"tab_id"`
 	ContextID      string     `json:"context_id"`
 	State          string     `json:"state"`
@@ -173,17 +177,19 @@ func NewMemoryStore() *MemoryStore {
 
 func (m *MemoryStore) Ready(context.Context) error { return nil }
 
-// AddInstance upserts a browser instance by ID. The workerconsumer feeds every
-// browser.topology_reported snapshot through here, and workers re-report their
-// topology on every heartbeat — append would duplicate each entity per report
-// (and grow the store without bound), so an existing entry with the same ID is
-// replaced in place, keeping the original insertion position for stable
-// ordering.
+// AddInstance upserts a browser instance by (tenant, ID). The workerconsumer
+// feeds every browser.topology_reported snapshot through here, and workers
+// re-report their topology on every heartbeat — append would duplicate each
+// entity per report (and grow the store without bound), so an existing entry
+// is replaced in place, keeping the original insertion position for stable
+// ordering. The key includes the tenant: IDs are worker-chosen, so a global
+// key would let tenant B overwrite (or hijack) tenant A's row by reporting the
+// same ID.
 func (m *MemoryStore) AddInstance(instance BrowserInstance) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range m.instances {
-		if m.instances[i].InstanceID == instance.InstanceID {
+		if m.instances[i].InstanceID == instance.InstanceID && m.instances[i].TenantID == instance.TenantID {
 			m.instances[i] = instance
 			return
 		}
@@ -191,12 +197,12 @@ func (m *MemoryStore) AddInstance(instance BrowserInstance) {
 	m.instances = append(m.instances, instance)
 }
 
-// AddContext upserts a provider context by ID (see AddInstance).
+// AddContext upserts a provider context by (tenant, ID) (see AddInstance).
 func (m *MemoryStore) AddContext(context ProviderContext) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range m.contexts {
-		if m.contexts[i].ContextID == context.ContextID {
+		if m.contexts[i].ContextID == context.ContextID && m.contexts[i].TenantID == context.TenantID {
 			m.contexts[i] = context
 			return
 		}
@@ -204,21 +210,32 @@ func (m *MemoryStore) AddContext(context ProviderContext) {
 	m.contexts = append(m.contexts, context)
 }
 
-// AddTab upserts a tab by ID (see AddInstance). Its tenant is resolved from its
-// parent context so tab queries stay tenant-scoped; tabs whose context is
-// unknown are dropped.
+// AddTab upserts a tab by (tenant, ID) (see AddInstance). The tab's tenant is
+// tab.TenantID (the trusted reporting job's tenant) and its parent context must
+// exist in THAT tenant, so a tenant can never attach a tab to — or overwrite a
+// tab under — another tenant's context; such tabs are dropped. An empty
+// TenantID (tests / legacy callers) falls back to resolving the tenant from the
+// first context with that ID.
 func (m *MemoryStore) AddTab(tab BrowserTab) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	tenantID := ""
+	tenantID := tab.TenantID
+	found := false
 	for _, ctx := range m.contexts {
-		if ctx.ContextID == tab.ContextID {
-			tenantID = ctx.TenantID
+		if ctx.ContextID != tab.ContextID {
+			continue
+		}
+		if tenantID == "" || ctx.TenantID == tenantID {
+			tenantID, found = ctx.TenantID, true
 			break
 		}
 	}
+	if !found {
+		return
+	}
+	tab.TenantID = ""
 	for i := range m.tabs {
-		if m.tabs[i].tab.TabID == tab.TabID {
+		if m.tabs[i].tab.TabID == tab.TabID && m.tabs[i].tenantID == tenantID {
 			m.tabs[i] = memoryTab{tab: tab, tenantID: tenantID}
 			return
 		}
