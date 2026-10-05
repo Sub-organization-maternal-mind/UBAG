@@ -231,6 +231,13 @@ type Config struct {
 	// 240s default. Defaults to UBAG_FACADE_MAX_WAIT_MS when set.
 	FacadeMaxWait time.Duration
 
+	// FacadeMaxBodyBytes bounds the POST /v1/openai/chat/completions body.
+	// It is separate from MaxBodyBytes because inline multimodal content
+	// parts (data-URL images, base64 input_audio) inflate roughly 4/3 over
+	// their decoded bytes and never fit the 1 MiB default JSON limit. Zero
+	// selects the 48 MiB default. Defaults to UBAG_FACADE_MAX_BODY_BYTES.
+	FacadeMaxBodyBytes int64
+
 	// Plugins is the optional WASM plugin host. When nil, no plugin hooks run.
 	Plugins *plugins.Host
 
@@ -263,6 +270,7 @@ type Server struct {
 	antigravityStore *antigravity.Store
 	devCORSOrigin    string
 	maxBody          int64
+	facadeMaxBody    int64
 	jobs             jobstore.Store
 	idempotency      idempotency.Service
 	executor         executor.Dispatcher
@@ -451,6 +459,9 @@ func NewServer(config Config) *Server {
 	if config.FacadeMaxWait <= 0 {
 		config.FacadeMaxWait = defaultFacadeMaxWait
 	}
+	if config.FacadeMaxBodyBytes <= 0 {
+		config.FacadeMaxBodyBytes = parseEnvInt64("UBAG_FACADE_MAX_BODY_BYTES", defaultFacadeMaxBodyBytes)
+	}
 	if config.MaxQueueDepth <= 0 {
 		config.MaxQueueDepth = parseEnvInt("UBAG_MAX_QUEUE_DEPTH", 10000)
 	}
@@ -531,6 +542,7 @@ func NewServer(config Config) *Server {
 		outbox:           config.Outbox,
 		maxQueueDepth:    config.MaxQueueDepth,
 		facadeMaxWait:    config.FacadeMaxWait,
+		facadeMaxBody:    config.FacadeMaxBodyBytes,
 		patStore:         config.PAT,
 		patDefaultTTL:    config.PATDefaultTTL,
 		appJWTPublicKey:  config.AppJWTPublicKey,
@@ -4368,6 +4380,17 @@ func parseEnvInt(key string, fallback int) int {
 		return fallback
 	}
 	if n, err := strconv.Atoi(v); err == nil && n > 0 {
+		return n
+	}
+	return fallback
+}
+
+func parseEnvInt64(key string, fallback int64) int64 {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 		return n
 	}
 	return fallback

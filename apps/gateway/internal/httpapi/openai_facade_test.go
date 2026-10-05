@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -165,7 +166,7 @@ func TestFacadeChoiceModelIDsMatchResolver(t *testing.T) {
 }
 
 func TestFlattenFacadeMessages(t *testing.T) {
-	prompt, ok := flattenFacadeMessages([]openAIFacadeMessage{
+	prompt, inline, ok := flattenFacadeMessages([]openAIFacadeMessage{
 		{Role: "user", Content: "first"},
 		{Role: "system", Content: "be brief"},
 		{Role: "assistant", Content: "ok"},
@@ -174,17 +175,103 @@ func TestFlattenFacadeMessages(t *testing.T) {
 	if !ok {
 		t.Fatal("flatten should succeed")
 	}
+	if len(inline) != 0 {
+		t.Fatalf("text-only history must yield no inline parts, got %v", inline)
+	}
 	if !strings.HasPrefix(prompt, "be brief") {
 		t.Fatalf("system must lead the prompt, got %q", prompt)
 	}
 	if !strings.Contains(prompt, "user: first") || !strings.Contains(prompt, "assistant: ok") || !strings.Contains(prompt, "user: second") {
 		t.Fatalf("turns out of order in %q", prompt)
 	}
-	if _, ok := flattenFacadeMessages(nil); ok {
+	if _, _, ok := flattenFacadeMessages(nil); ok {
 		t.Fatal("empty history must fail")
 	}
-	if _, ok := flattenFacadeMessages([]openAIFacadeMessage{{Role: "user", Content: []any{"multimodal"}}}); ok {
-		t.Fatal("non-string content must fail")
+	if _, _, ok := flattenFacadeMessages([]openAIFacadeMessage{{Role: "user", Content: []any{map[string]any{"type": "mystery"}}}}); ok {
+		t.Fatal("unknown part type must fail")
+	}
+}
+
+func TestFlattenFacadeMultimodalParts(t *testing.T) {
+	png := base64.StdEncoding.EncodeToString([]byte("fake-png-bytes"))
+	wav := base64.StdEncoding.EncodeToString([]byte("fake-wav-bytes"))
+	prompt, inline, ok := flattenFacadeMessages([]openAIFacadeMessage{
+		{Role: "system", Content: []any{
+			map[string]any{"type": "text", "text": "describe files"},
+		}},
+		{Role: "user", Content: []any{
+			map[string]any{"type": "text", "text": "what is in these?"},
+			map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64," + png}},
+			map[string]any{"type": "input_audio", "input_audio": map[string]any{"data": wav, "format": "wav"}},
+		}},
+	})
+	if !ok {
+		t.Fatal("multimodal flatten should succeed")
+	}
+	if !strings.Contains(prompt, "describe files") || !strings.Contains(prompt, "user: what is in these?") {
+		t.Fatalf("text parts missing from prompt %q", prompt)
+	}
+	if len(inline) != 2 {
+		t.Fatalf("inline parts = %d, want 2", len(inline))
+	}
+	if inline[0].Key != "inline-image-1.png" || inline[0].Kind != "image" || inline[0].ContentType != "image/png" {
+		t.Fatalf("image part = %+v", inline[0])
+	}
+	if string(inline[0].Data) != "fake-png-bytes" {
+		t.Fatalf("image data = %q", inline[0].Data)
+	}
+	if inline[1].Key != "inline-audio-2.wav" || inline[1].Kind != "voice" || inline[1].ContentType != "audio/wav" {
+		t.Fatalf("audio part = %+v", inline[1])
+	}
+
+	// Deterministic keys: the same body flattens to the same key set.
+	_, inlineAgain, ok := flattenFacadeMessages([]openAIFacadeMessage{
+		{Role: "user", Content: []any{
+			map[string]any{"type": "text", "text": "what is in these?"},
+			map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64," + png}},
+			map[string]any{"type": "input_audio", "input_audio": map[string]any{"data": wav, "format": "wav"}},
+		}},
+	})
+	if !ok || inlineAgain[0].Key != inline[0].Key || inlineAgain[1].Key != inline[1].Key {
+		t.Fatalf("keys not deterministic: %v vs %v", inline, inlineAgain)
+	}
+}
+
+func TestFlattenFacadeMultimodalRejections(t *testing.T) {
+	cases := []struct {
+		name    string
+		message openAIFacadeMessage
+	}{
+		{"remote image url", openAIFacadeMessage{Role: "user", Content: []any{
+			map[string]any{"type": "text", "text": "hi"},
+			map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/a.png"}},
+		}}},
+		{"unknown image mime", openAIFacadeMessage{Role: "user", Content: []any{
+			map[string]any{"type": "text", "text": "hi"},
+			map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/heic;base64,AAAA"}},
+		}}},
+		{"bad base64", openAIFacadeMessage{Role: "user", Content: []any{
+			map[string]any{"type": "text", "text": "hi"},
+			map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,not!!base64"}},
+		}}},
+		{"unknown audio format", openAIFacadeMessage{Role: "user", Content: []any{
+			map[string]any{"type": "text", "text": "hi"},
+			map[string]any{"type": "input_audio", "input_audio": map[string]any{"data": "AAAA", "format": "flac"}},
+		}}},
+		{"unsupported part type", openAIFacadeMessage{Role: "user", Content: []any{
+			map[string]any{"type": "text", "text": "hi"},
+			map[string]any{"type": "video_url", "video_url": map[string]any{"url": "data:video/mp4;base64,AAAA"}},
+		}}},
+		{"no text anywhere", openAIFacadeMessage{Role: "user", Content: []any{
+			map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:image/png;base64,AAAA"}},
+		}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, _, ok := flattenFacadeMessages([]openAIFacadeMessage{tc.message}); ok {
+				t.Fatalf("%s should fail closed", tc.name)
+			}
+		})
 	}
 }
 
@@ -265,6 +352,112 @@ func TestFacadeAttachmentsHeldJobResolves(t *testing.T) {
 	}
 	if completion.UbagJobID != held.ID {
 		t.Fatalf("job link = %q, want %q", completion.UbagJobID, held.ID)
+	}
+}
+
+func TestFacadeInlineMultimodalStagesAndCompletes(t *testing.T) {
+	srv := NewServer(Config{
+		AppSecret:     "dev-secret",
+		ActorRole:     "service",
+		Executor:      &recordingExecutor{},
+		FacadeMaxWait: 50 * time.Millisecond, // first call times out fast; replay resolves
+	})
+	handler := srv.Handler()
+	png := base64.StdEncoding.EncodeToString([]byte("fake-png-bytes"))
+	body := `{"model":"chatgpt_web","messages":[{"role":"user","content":[{"type":"text","text":"what is in this picture?"},{"type":"image_url","image_url":{"url":"data:image/png;base64,` + png + `"}}]}]}`
+
+	first := doJSON(handler, http.MethodPost, "/v1/openai/chat/completions", body, authHeaders(""))
+	if first.Code != http.StatusGatewayTimeout {
+		t.Fatalf("first call status = %d, want 504 wait_timeout; body=%s", first.Code, first.Body.String())
+	}
+	var timeoutErr openAIFacadeErrorEnvelope
+	if err := json.Unmarshal(first.Body.Bytes(), &timeoutErr); err != nil || timeoutErr.Error.Param == "" {
+		t.Fatalf("timeout envelope = %s (err %v)", first.Body.String(), err)
+	}
+	jobID := timeoutErr.Error.Param
+
+	// The image part must have been staged by the gateway itself.
+	listed, err := handler.ServeHTTP, error(nil)
+	_ = listed
+	arts := doRaw(handler, http.MethodGet, "/v1/jobs/"+jobID+"/artifacts", "", "", authHeaders(""))
+	if arts.Code != http.StatusOK {
+		t.Fatalf("artifact list status = %d; body=%s", arts.Code, arts.Body.String())
+	}
+	if !strings.Contains(arts.Body.String(), "inline-image-1.png") {
+		t.Fatalf("staged artifact missing: %s", arts.Body.String())
+	}
+
+	backing, err := srv.jobs.List(t.Context(), jobstore.ListFilter{})
+	if err != nil || len(backing) != 1 {
+		t.Fatalf("backing jobs = %v, err = %v", backing, err)
+	}
+	held := backing[0]
+	if held.Status != jobstore.StatusAssigned && held.Status != jobstore.StatusQueued && held.Status != jobstore.StatusCompleted {
+		t.Fatalf("after staging the job should have dispatched; status = %q", held.Status)
+	}
+
+	traceID := held.TraceID
+	if traceID == "" {
+		traceID = "trace_facade_inline_test"
+	}
+	if _, _, err := srv.jobs.ApplyWorkerEvent(t.Context(), jobstore.WorkerEvent{
+		EventID:    "evt_facade_inline_completion",
+		JobID:      held.ID,
+		APIVersion: held.APIVersion,
+		Type:       "completed",
+		TraceID:    traceID,
+		Data: map[string]any{
+			"status": "completed",
+			"result": map[string]any{"type": "text", "text": "a red square"},
+		},
+	}); err != nil {
+		t.Fatalf("apply completion event: %v", err)
+	}
+
+	// Same body replays the same finished job and resolves the completion.
+	replay := doJSON(handler, http.MethodPost, "/v1/openai/chat/completions", body, authHeaders(""))
+	if replay.Code != http.StatusOK {
+		t.Fatalf("replay status = %d; body=%s", replay.Code, replay.Body.String())
+	}
+	var completion openAIFacadeCompletion
+	if err := json.Unmarshal(replay.Body.Bytes(), &completion); err != nil {
+		t.Fatalf("decode completion: %v", err)
+	}
+	if completion.Choices[0].Message.Content != "a red square" {
+		t.Fatalf("choice content = %q", completion.Choices[0].Message.Content)
+	}
+	if completion.UbagJobID != held.ID {
+		t.Fatalf("job link = %q, want %q", completion.UbagJobID, held.ID)
+	}
+}
+
+func TestFacadeInlineMixedWithCallerKeysReturnsHeld(t *testing.T) {
+	srv := NewServer(Config{
+		AppSecret:     "dev-secret",
+		ActorRole:     "service",
+		Executor:      &recordingExecutor{},
+		FacadeMaxWait: 50 * time.Millisecond,
+	})
+	handler := srv.Handler()
+	wav := base64.StdEncoding.EncodeToString([]byte("fake-wav-bytes"))
+	body := `{"model":"chatgpt_web","messages":[{"role":"user","content":[{"type":"text","text":"use these"},{"type":"input_audio","input_audio":{"data":"` + wav + `","format":"mp3"}}]}],"ubag_attachments":[{"key":"notes.pdf","content_type":"application/pdf","kind":"document"}]}`
+
+	rec := doJSON(handler, http.MethodPost, "/v1/openai/chat/completions", body, authHeaders(""))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("mixed inline+caller status = %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var accepted openAIFacadeAccepted
+	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil || accepted.UbagJobID == "" {
+		t.Fatalf("accepted = %s (err %v)", rec.Body.String(), err)
+	}
+	// The inline part is staged by the gateway; the caller key is declared
+	// but only exists once the caller PUTs it, so it must NOT be listed yet.
+	arts := doRaw(handler, http.MethodGet, "/v1/jobs/"+accepted.UbagJobID+"/artifacts", "", "", authHeaders(""))
+	if !strings.Contains(arts.Body.String(), "inline-audio-1.mp3") {
+		t.Fatalf("inline part not staged: %s", arts.Body.String())
+	}
+	if strings.Contains(arts.Body.String(), "notes.pdf") {
+		t.Fatalf("declared caller key must not be listed before upload: %s", arts.Body.String())
 	}
 }
 

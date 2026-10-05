@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,9 +42,14 @@ import (
 // back as the chat.completion text.
 //
 // Deliberately unsupported, rejected with OpenAI-shaped 400s: streaming,
-// tools/function calling, multimodal content parts, strict response formats.
-// Token usage is estimated from character counts (browser workers report DOM
-// deltas, not model tokens) and documented as such in the contract.
+// tools/function calling, strict response formats (json_schema enforcement the
+// gateway cannot guarantee). Multimodal message parts ARE supported since the
+// multimodal release: a message's content may be an array of text, image_url
+// (data URL only — remote fetching is out of scope), and input_audio parts;
+// each non-text part becomes an attachment on the backing job via the native
+// attachment storage and validation, so provider capability limits apply
+// unchanged. Token usage is estimated from character counts (browser workers
+// report DOM deltas, not model tokens) and documented as such in the contract.
 //
 // Auth rides the shared withAuth middleware; a missing/invalid credential
 // therefore keeps the gateway UBAG-AUTH-MISSING-001 envelope (the one
@@ -70,6 +76,21 @@ const (
 	// creating a new job). History: v2 added model_settings,
 	// response_format, and ubag_attachments to the fingerprint.
 	facadeIdempotencyVersion = "v2"
+	// maxFacadeInlineParts bounds how many non-text content parts (image_url
+	// + input_audio combined) one facade chat request may carry. The shared
+	// attachment create path caps total declared attachments at 32; inline
+	// parts share that budget with any caller-declared ubag_attachments.
+	maxFacadeInlineParts = 10
+	// maxFacadeInlinePartBytes caps the DECODED byte size of one inline
+	// content part. 24 MiB matches the transcription audio limit so a caller
+	// cannot push more through JSON than the multipart path accepts.
+	maxFacadeInlinePartBytes = 24 << 20
+	// defaultFacadeMaxBodyBytes bounds the POST /v1/openai/chat/completions
+	// body itself. Base64 inflates ~4/3 over decoded bytes, so a 24 MiB part
+	// needs ~32 MiB of JSON; 48 MiB leaves JSON-structure headroom for the
+	// full 10-part budget while every other route keeps the 1 MiB default.
+	// UBAG_FACADE_MAX_BODY_BYTES overrides (0 = default).
+	defaultFacadeMaxBodyBytes = 48 << 20
 )
 
 // Facade outcome labels for ubag_facade_jobs_total.
@@ -387,7 +408,10 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 	// Plain decode (NOT decodeBody): OpenAI clients send fields the facade
 	// ignores (logit_bias, seed, ...), and DisallowUnknownFields would 400
 	// them. Unknown fields are ignored; the rejected subset is checked below.
-	limited := http.MaxBytesReader(w, r.Body, s.maxBody)
+	// The body limit is the facade's own (48 MiB default) because inline
+	// multimodal parts arrive base64-inflated; every other route keeps
+	// MaxBodyBytes.
+	limited := http.MaxBytesReader(w, r.Body, s.facadeMaxBody)
 	raw, err := io.ReadAll(limited)
 	if err != nil {
 		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "request_too_large", "request body exceeds gateway limit")
@@ -439,11 +463,28 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 		outcome = facadeOutcomeRejected
 		return
 	}
-	prompt, ok := flattenFacadeMessages(req.Messages)
+	prompt, inlineParts, ok := flattenFacadeMessages(req.Messages)
 	if !ok {
-		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", "messages must contain at least one text message with a system, user, or assistant role")
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_request", "messages must contain at least one text message with a system, user, or assistant role; multimodal parts accept text, image_url data URLs (png/jpeg/webp/gif), and input_audio (wav/mp3) only")
 		outcome = facadeOutcomeRejected
 		return
+	}
+	// Inline parts ride the same declaration list as caller-declared keys:
+	// the shared create path enforces per-target manifest policy (kind +
+	// content type) and the 32-attachment cap, so provider capability limits
+	// apply unchanged. Caller-declared keys always keep their own names.
+	callerDecls := attachmentDecls
+	if len(inlineParts) > 0 {
+		merged := make([]any, 0, len(callerDecls)+len(inlineParts))
+		merged = append(merged, callerDecls...)
+		for _, inl := range inlineParts {
+			merged = append(merged, map[string]any{
+				"key":          inl.Key,
+				"content_type": inl.ContentType,
+				"kind":         inl.Kind,
+			})
+		}
+		attachmentDecls = merged
 	}
 	// JSON-coercion hint: provider web UIs answer in prose unless the task
 	// explicitly demands JSON. When the OET caller asked for a JSON shape,
@@ -479,23 +520,35 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Held attachment jobs (status created) need their artifact PUTs before the
-	// native wait can resolve. The uploads arrive on separate connections, so
-	// the in-process WaitEvents loop would hold this HTTP connection until the
-	// facade deadline; answer 202 immediately instead so the caller can upload
-	// the keys and then poll the job (or replay this same body to wait on it).
-	// The job ID rides in the payload for machine use.
+	// Held attachment jobs (status created) need their artifact bytes before
+	// the native wait can resolve. Inline multimodal parts are staged by the
+	// gateway right here; only caller-declared keys wait on separate PUT
+	// connections, so only those get the 202 flow. A partial staging failure
+	// cancels the held job so no half-uploaded request ever reaches a
+	// provider.
 	if len(attachmentDecls) > 0 {
 		if held, found, err := s.jobs.Get(r.Context(), jobID); err == nil && found && held.Status == jobstore.StatusCreated {
-			s.writeJSON(w, http.StatusAccepted, openAIFacadeAccepted{
-				Object:    "chat.completion.chunk",
-				Model:     req.Model,
-				UbagJobID: jobID,
-				Status:    string(jobstore.StatusCreated),
-				Message:   fmt.Sprintf("job held for attachment uploads; PUT each declared key to /v1/jobs/%s/artifacts/{key}, then poll GET /v1/jobs/%s or replay this request to wait", jobID, jobID),
-			})
-			outcome = facadeOutcomeCompleted
-			return
+			for _, inl := range inlineParts {
+				if err := s.putFacadeAttachmentBytes(r.Context(), jobID, inl.Key, inl.ContentType, inl.Kind, inl.Data); err != nil {
+					s.cancelFacadeJob(r.Context(), held, "inline multimodal part staging failed")
+					s.writeFacadeError(w, http.StatusInternalServerError, "server_error", "attachment_store_failed", "inline multimodal part could not be stored")
+					outcome = facadeOutcomeError
+					return
+				}
+			}
+			if len(callerDecls) > 0 {
+				s.writeJSON(w, http.StatusAccepted, openAIFacadeAccepted{
+					Object:    "chat.completion.chunk",
+					Model:     req.Model,
+					UbagJobID: jobID,
+					Status:    string(jobstore.StatusCreated),
+					Message:   fmt.Sprintf("job held for attachment uploads; PUT each declared key to /v1/jobs/%s/artifacts/{key}, then poll GET /v1/jobs/%s or replay this request to wait", jobID, jobID),
+				})
+				outcome = facadeOutcomeCompleted
+				return
+			}
+			// Inline-only request: staging the last part dispatched the job,
+			// so fall through to the wait below.
 		}
 	}
 
@@ -633,24 +686,164 @@ func normalizeFacadeAttachments(raw []any) ([]any, bool) {
 	return out, true
 }
 
-// flattenFacadeMessages collapses OpenAI message history into one prompt:
-// system messages first (in order), then user/assistant turns in order.
-// Non-string content (multimodal parts) and unknown roles fail the request.
-func flattenFacadeMessages(messages []openAIFacadeMessage) (string, bool) {
+// facadeInlinePart is one non-text content part decoded out of a multimodal
+// message: bytes to stage into the artifact store plus the attachment
+// declaration the backing job carries.
+type facadeInlinePart struct {
+	Key         string
+	ContentType string
+	Kind        string
+	Data        []byte
+}
+
+// facadeInlineImageMIMEs maps the accepted data-URL image media types to the
+// attachment file extension. Anything else (including remote http(s) URLs —
+// remote media fetching is excluded from this release) is rejected.
+var facadeInlineImageMIMEs = map[string]string{
+	"image/png":  "png",
+	"image/jpeg": "jpg",
+	"image/webp": "webp",
+	"image/gif":  "gif",
+}
+
+// facadeInlineAudioFormats maps OpenAI input_audio formats to their content
+// type and attachment extension.
+var facadeInlineAudioFormats = map[string]struct {
+	ContentType string
+	Ext         string
+}{
+	"wav": {ContentType: "audio/wav", Ext: "wav"},
+	"mp3": {ContentType: "audio/mpeg", Ext: "mp3"},
+}
+
+// parseFacadeDataURLImage decodes a data:image/...;base64,... URL into inline
+// part bytes. Remote URLs are rejected, not fetched.
+func parseFacadeDataURLImage(raw string) (facadeInlinePart, bool) {
+	if !strings.HasPrefix(raw, "data:") {
+		return facadeInlinePart{}, false
+	}
+	rest := raw[len("data:"):]
+	sep := strings.Index(rest, ";base64,")
+	if sep < 0 {
+		return facadeInlinePart{}, false
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(rest[:sep]))
+	ext, ok := facadeInlineImageMIMEs[mimeType]
+	if !ok {
+		return facadeInlinePart{}, false
+	}
+	payload, err := base64.StdEncoding.DecodeString(rest[sep+len(";base64,"):])
+	if err != nil || len(payload) == 0 {
+		return facadeInlinePart{}, false
+	}
+	if len(payload) > maxFacadeInlinePartBytes {
+		return facadeInlinePart{}, false
+	}
+	return facadeInlinePart{Key: "inline-image-" + ext, ContentType: mimeType, Kind: "image", Data: payload}, true
+}
+
+// parseFacadeInputAudio decodes an OpenAI input_audio part
+// ({data: <base64>, format: wav|mp3}).
+func parseFacadeInputAudio(data, format string) (facadeInlinePart, bool) {
+	spec, ok := facadeInlineAudioFormats[strings.ToLower(strings.TrimSpace(format))]
+	if !ok {
+		return facadeInlinePart{}, false
+	}
+	payload, err := base64.StdEncoding.DecodeString(data)
+	if err != nil || len(payload) == 0 {
+		return facadeInlinePart{}, false
+	}
+	if len(payload) > maxFacadeInlinePartBytes {
+		return facadeInlinePart{}, false
+	}
+	return facadeInlinePart{Key: "inline-audio-" + spec.Ext, ContentType: spec.ContentType, Kind: "voice", Data: payload}, true
+}
+
+// flattenFacadeMessages collapses OpenAI message history into one prompt plus
+// the inline multimodal parts found along the way. String content behaves
+// exactly as the pre-multimodal facade did: system messages lead, then
+// user/assistant turns in order. Array content may carry text,
+// text-with-attachments (image_url data URLs, input_audio) per message.
+// Structural violations, unknown part types, over-limit parts, and a request
+// with no text at all fail closed (false) — the caller maps that to a 400.
+// Inline part keys stay deterministic (inline-image-<ext> with a running
+// ordinal) so replaying the same body derives the same idempotency key and
+// the same attachment key set.
+func flattenFacadeMessages(messages []openAIFacadeMessage) (string, []facadeInlinePart, bool) {
 	if len(messages) == 0 {
-		return "", false
+		return "", nil, false
 	}
 	var systems []string
 	var turns []string
+	var inline []facadeInlinePart
+	partCount := 0
+	sawText := false
 	for _, msg := range messages {
-		text, ok := msg.Content.(string)
-		if !ok {
-			return "", false
+		var text string
+		switch content := msg.Content.(type) {
+		case string:
+			text = strings.TrimSpace(content)
+		case []any:
+			var textParts []string
+			for _, rawPart := range content {
+				part, ok := rawPart.(map[string]any)
+				if !ok {
+					return "", nil, false
+				}
+				partType, _ := part["type"].(string)
+				switch partType {
+				case "text", "input_text":
+					partText, _ := part["text"].(string)
+					if strings.TrimSpace(partText) != "" {
+						textParts = append(textParts, strings.TrimSpace(partText))
+					}
+				case "image_url":
+					partCount++
+					if partCount > maxFacadeInlineParts {
+						return "", nil, false
+					}
+					imageURL, _ := part["image_url"].(map[string]any)
+					url, _ := imageURL["url"].(string)
+					inl, ok := parseFacadeDataURLImage(url)
+					if !ok {
+						return "", nil, false
+					}
+					inline = append(inline, facadeInlinePart{
+						Key:         fmt.Sprintf("inline-image-%d.%s", partCount, inl.Key[len("inline-image-"):]),
+						ContentType: inl.ContentType,
+						Kind:        inl.Kind,
+						Data:        inl.Data,
+					})
+				case "input_audio":
+					partCount++
+					if partCount > maxFacadeInlineParts {
+						return "", nil, false
+					}
+					audio, _ := part["input_audio"].(map[string]any)
+					data, _ := audio["data"].(string)
+					format, _ := audio["format"].(string)
+					inl, ok := parseFacadeInputAudio(data, format)
+					if !ok {
+						return "", nil, false
+					}
+					inline = append(inline, facadeInlinePart{
+						Key:         fmt.Sprintf("inline-audio-%d.%s", partCount, inl.Key[len("inline-audio-"):]),
+						ContentType: inl.ContentType,
+						Kind:        inl.Kind,
+						Data:        inl.Data,
+					})
+				default:
+					return "", nil, false
+				}
+			}
+			text = strings.Join(textParts, "\n")
+		default:
+			return "", nil, false
 		}
-		text = strings.TrimSpace(text)
 		if text == "" {
 			continue
 		}
+		sawText = true
 		switch msg.Role {
 		case "system":
 			systems = append(systems, text)
@@ -659,8 +852,11 @@ func flattenFacadeMessages(messages []openAIFacadeMessage) (string, bool) {
 		case "assistant":
 			turns = append(turns, "assistant: "+text)
 		default:
-			return "", false
+			return "", nil, false
 		}
+	}
+	if !sawText {
+		return "", nil, false
 	}
 	var parts []string
 	if len(systems) > 0 {
@@ -669,9 +865,9 @@ func flattenFacadeMessages(messages []openAIFacadeMessage) (string, bool) {
 	parts = append(parts, turns...)
 	prompt := strings.TrimSpace(strings.Join(parts, "\n"))
 	if prompt == "" {
-		return "", false
+		return "", nil, false
 	}
-	return prompt, true
+	return prompt, inline, true
 }
 
 // createFacadeJob runs the shared native create path (validation, authz,
@@ -805,13 +1001,57 @@ func (s *Server) createFacadeJob(r *http.Request, req openAIFacadeRequest, targe
 	return created.JobID, 0, "", "", "", true
 }
 
-// facadeMessageDigest reduces messages to role/content pairs for the replay
-// hash. Content is guaranteed textual by request validation upstream.
-func facadeMessageDigest(messages []openAIFacadeMessage) []map[string]string {
-	out := make([]map[string]string, 0, len(messages))
+// facadeMessageDigest reduces messages to replay-hash entries for the facade
+// idempotency fingerprint. String content (every pre-multimodal body) emits
+// exactly the v2 shape {"role", "content"} — changing it would invalidate
+// every stored text key. Multimodal content adds "parts" entries keyed by the
+// deterministic attachment key plus the decoded bytes' SHA-256, so different
+// inline data derive different keys while the digest stays bounded (never the
+// raw base64).
+func facadeMessageDigest(messages []openAIFacadeMessage) []map[string]any {
+	out := make([]map[string]any, 0, len(messages))
 	for _, msg := range messages {
-		text, _ := msg.Content.(string)
-		out = append(out, map[string]string{"role": msg.Role, "content": text})
+		switch content := msg.Content.(type) {
+		case string:
+			out = append(out, map[string]any{"role": msg.Role, "content": content})
+		case []any:
+			entry := map[string]any{"role": msg.Role, "content": "", "parts": facadePartsDigest(content)}
+			out = append(out, entry)
+		default:
+			out = append(out, map[string]any{"role": msg.Role, "content": ""})
+		}
+	}
+	return out
+}
+
+// facadePartsDigest reduces one multimodal message's content parts to a
+// canonical, bounded description for the replay hash. Text parts contribute
+// their text; media parts contribute key + content type + bytes hash.
+func facadePartsDigest(parts []any) []map[string]any {
+	out := make([]map[string]any, 0, len(parts))
+	for _, rawPart := range parts {
+		part, ok := rawPart.(map[string]any)
+		if !ok {
+			out = append(out, map[string]any{"type": "?"})
+			continue
+		}
+		partType, _ := part["type"].(string)
+		switch partType {
+		case "text", "input_text":
+			text, _ := part["text"].(string)
+			out = append(out, map[string]any{"type": partType, "text": text})
+		case "image_url":
+			imageURL, _ := part["image_url"].(map[string]any)
+			url, _ := imageURL["url"].(string)
+			out = append(out, map[string]any{"type": partType, "url_sha256": hashBytes([]byte(url))})
+		case "input_audio":
+			audio, _ := part["input_audio"].(map[string]any)
+			data, _ := audio["data"].(string)
+			format, _ := audio["format"].(string)
+			out = append(out, map[string]any{"type": partType, "format": format, "data_sha256": hashBytes([]byte(data))})
+		default:
+			out = append(out, map[string]any{"type": partType})
+		}
 	}
 	return out
 }
@@ -1166,7 +1406,7 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 		}
 		return
 	}
-	if err := s.putFacadeAttachmentBytes(r.Context(), jobID, key, strings.ToLower(strings.TrimSpace(audioMIME)), audioBytes); err != nil {
+	if err := s.putFacadeAttachmentBytes(r.Context(), jobID, key, strings.ToLower(strings.TrimSpace(audioMIME)), "voice", audioBytes); err != nil {
 		s.writeFacadeError(w, http.StatusInternalServerError, "server_error", "attachment_store_failed", "transcription audio could not be stored")
 		outcome = facadeOutcomeError
 		return
@@ -1226,7 +1466,7 @@ func transcriptionTargetForModel(model string) string {
 // artifact store for a facade-owned held job, then runs the shared dispatch
 // gate so the job leaves StatusCreated once complete. It mirrors the PUT
 // artifact path's store + dispatch steps without an HTTP round-trip.
-func (s *Server) putFacadeAttachmentBytes(ctx context.Context, jobID, key, contentType string, payload []byte) error {
+func (s *Server) putFacadeAttachmentBytes(ctx context.Context, jobID, key, contentType, kind string, payload []byte) error {
 	job, found, err := s.jobs.Get(ctx, jobID)
 	if err != nil || !found {
 		return fmt.Errorf("load held job: %w", err)
@@ -1236,7 +1476,7 @@ func (s *Server) putFacadeAttachmentBytes(ctx context.Context, jobID, key, conte
 	}
 	s.artifactCaptures.Add(1)
 	s.attachmentsStored.Add(1)
-	s.attachmentOutcomes.add("voice|stored")
+	s.attachmentOutcomes.add(strings.ToLower(strings.TrimSpace(kind)) + "|stored")
 	return s.maybeDispatchAfterArtifact(ctx, job)
 }
 
