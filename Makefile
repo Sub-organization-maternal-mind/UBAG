@@ -1,6 +1,6 @@
 .PHONY: dev dev-edge gateway-build gateway-run gateway-test gateway-vet cover \
 	ubag-build sidecar-build \
-	test test-v0 test-v0-local itest e2e load test-all sdks bench lint release \
+	test test-v0 test-v0-local itest e2e test-all sdks bench lint release \
 	plugins-build obs-check \
 	chaos-smoke backup restore restore-verify \
 	release-snapshot helm-lint tf-validate nginx-validate migrate-tier \
