@@ -54,6 +54,9 @@ type FileSpoolDispatcher struct {
 	retentionMu  sync.Mutex
 	retentionTTL time.Duration
 	retentionMax int
+	// beforeLease is a test seam called just before a pending envelope is
+	// claimed, so a test can deterministically lose the lease race.
+	beforeLease func(name string)
 }
 
 // SetRetention configures the terminal-state retention bounds. Call it before
@@ -266,23 +269,47 @@ func (d *FileSpoolDispatcher) LeaseNext(ctx context.Context) (FileSpoolLease, bo
 	if err != nil {
 		return FileSpoolLease{}, false, err
 	}
-	// Single-pass oldest-first: job files are `<jobID>.json` with zero-padded
-	// sequential IDs (job_%012d), so lexicographic minimum IS the oldest —
-	// no O(n log n) sort on every poll.
-	oldest := ""
+	// Job files are `<jobID>.json` with zero-padded sequential IDs
+	// (job_%012d), so lexicographic order IS oldest-first. The first candidate
+	// is a single-pass minimum (no sort on the common empty/one-winner poll);
+	// the slice is sorted lazily only when the first candidate is lost.
+	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		if oldest == "" || entry.Name() < oldest {
-			oldest = entry.Name()
-		}
+		names = append(names, entry.Name())
 	}
-	if oldest == "" {
+	if len(names) == 0 {
 		return FileSpoolLease{}, false, nil
 	}
+	first := 0
+	for i, name := range names {
+		if name < names[first] {
+			first = i
+		}
+	}
+	names[0], names[first] = names[first], names[0]
+	for i := 0; i < len(names); i++ {
+		if i == 1 {
+			sort.Strings(names[1:])
+		}
+		lease, ok, err := d.tryLease(names[i])
+		if err != nil || ok {
+			return lease, ok, err
+		}
+		// Lost the race for this candidate (another worker or a cancel moved
+		// it first): try the next-oldest instead of reporting an empty queue.
+	}
+	return FileSpoolLease{}, false, nil
+}
 
-	name := oldest
+// tryLease claims one pending envelope. ok=false with a nil error means the
+// candidate vanished underneath us and the caller should try the next one.
+func (d *FileSpoolDispatcher) tryLease(name string) (FileSpoolLease, bool, error) {
+	if d.beforeLease != nil {
+		d.beforeLease(name)
+	}
 	jobID := strings.TrimSuffix(name, ".json")
 	leasedAt := d.now().UTC()
 	leaseID := fmt.Sprintf("%d", leasedAt.UnixNano())
@@ -290,7 +317,6 @@ func (d *FileSpoolDispatcher) LeaseNext(ctx context.Context) (FileSpoolLease, bo
 	destination := filepath.Join(d.leasedDir(), fmt.Sprintf("%s.%s.json", jobID, leaseID))
 	if err := os.Rename(source, destination); err != nil {
 		if os.IsNotExist(err) {
-			// Lost the race with another worker — report empty, not an error.
 			return FileSpoolLease{}, false, nil
 		}
 		return FileSpoolLease{}, false, err

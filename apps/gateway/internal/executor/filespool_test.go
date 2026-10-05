@@ -486,3 +486,43 @@ func TestFileSpoolDispatcherRecoversOrphanLeases(t *testing.T) {
 		t.Fatalf("duplicate lease must be parked in cancelled/, found %d", len(entries))
 	}
 }
+
+func enqueueSpoolJobs(t *testing.T, d *FileSpoolDispatcher, ids ...string) {
+	t.Helper()
+	for _, id := range ids {
+		job := sampleJob()
+		job.ID = id
+		if _, err := d.EnqueueJob(context.Background(), job); err != nil {
+			t.Fatalf("enqueue %s: %v", id, err)
+		}
+	}
+}
+
+func TestFileSpoolLeaseNextTriesNextCandidateAfterLostRace(t *testing.T) {
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	enqueueSpoolJobs(t, dispatcher, "job_000000000001", "job_000000000002", "job_000000000003")
+	// Another worker claims the oldest envelope between ReadDir and Rename.
+	dispatcher.beforeLease = func(name string) {
+		if name == "job_000000000001.json" {
+			_ = os.Remove(filepath.Join(dispatcher.pendingDir(), name))
+		}
+	}
+	lease, ok, err := dispatcher.LeaseNext(context.Background())
+	if err != nil || !ok {
+		t.Fatalf("LeaseNext ok=%v err=%v; a lost race must fall through to the next candidate", ok, err)
+	}
+	if lease.JobID != "job_000000000002" {
+		t.Fatalf("leased %s, want the next-oldest job_000000000002", lease.JobID)
+	}
+}
+
+func TestFileSpoolLeaseNextEmptyWhenEveryCandidateLost(t *testing.T) {
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	enqueueSpoolJobs(t, dispatcher, "job_000000000001", "job_000000000002")
+	dispatcher.beforeLease = func(name string) {
+		_ = os.Remove(filepath.Join(dispatcher.pendingDir(), name))
+	}
+	if _, ok, err := dispatcher.LeaseNext(context.Background()); ok || err != nil {
+		t.Fatalf("LeaseNext ok=%v err=%v, want empty without error", ok, err)
+	}
+}
