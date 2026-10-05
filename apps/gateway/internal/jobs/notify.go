@@ -68,6 +68,13 @@ func (h *eventHub) notify(jobID string) {
 	h.mu.Unlock()
 }
 
+// JobWaker is implemented by stores whose wake hub is on. SubscribeJobWake
+// registers for jobID wakes (subscribe BEFORE the first read; call cancel when
+// done). ok=false means the hub is off and callers keep their legacy poll.
+type JobWaker interface {
+	SubscribeJobWake(jobID string) (wake <-chan struct{}, cancel func(), ok bool)
+}
+
 // jitteredFallback spreads waiter re-reads by up to +20% so idle streams that
 // started together do not poll in lockstep.
 func jitteredFallback(d time.Duration) time.Duration {

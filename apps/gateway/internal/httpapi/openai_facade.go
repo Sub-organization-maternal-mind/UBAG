@@ -1115,6 +1115,9 @@ const (
 // calls whose native job is still held (status created, awaiting artifact
 // PUTs) are answered 202 up front instead, so this loop never has to wait on
 // uploads arriving over other connections.
+// facadeWaitBatch lets one wake drain a burst of events (one Get per batch).
+const facadeWaitBatch = 100
+
 func (s *Server) waitFacadeJob(r *http.Request, jobID string, wait time.Duration) (jobstore.Job, facadeWaitResult) {
 	deadline := time.Now().Add(wait)
 	lastSeq := 0
@@ -1124,7 +1127,7 @@ func (s *Server) waitFacadeJob(r *http.Request, jobID string, wait time.Duration
 			return jobstore.Job{}, facadeWaitTimeout
 		}
 		waitCtx, cancel := context.WithTimeout(r.Context(), remaining)
-		events, found, err := s.jobs.WaitEvents(waitCtx, jobID, lastSeq, 1)
+		events, found, err := s.jobs.WaitEvents(waitCtx, jobID, lastSeq, facadeWaitBatch)
 		cancel()
 		if err != nil {
 			// A store-level error is NOT a client disconnect: surfacing

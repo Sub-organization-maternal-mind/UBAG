@@ -48,6 +48,15 @@ func (s *SQLiteStore) EnableEventNotify(fallback time.Duration) {
 	s.wake, s.wakeFallback = newEventHub(), fallback
 }
 
+// SubscribeJobWake implements JobWaker (ok=false while the hub is off).
+func (s *SQLiteStore) SubscribeJobWake(jobID string) (<-chan struct{}, func(), bool) {
+	if s == nil || s.wake == nil {
+		return nil, nil, false
+	}
+	ch, cancel := s.wake.subscribe(jobID)
+	return ch, cancel, true
+}
+
 func (s *SQLiteStore) Create(ctx context.Context, request CreateRequest) (Job, error) {
 	if s == nil || s.db == nil {
 		return Job{}, fmt.Errorf("sqlite job store is not configured")

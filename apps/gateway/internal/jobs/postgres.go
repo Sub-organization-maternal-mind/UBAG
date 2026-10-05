@@ -38,6 +38,15 @@ func (p *PostgresStore) EnableEventNotify(fallback time.Duration) {
 	p.wake, p.wakeFallback = newEventHub(), fallback
 }
 
+// SubscribeJobWake implements JobWaker (ok=false while the hub is off).
+func (p *PostgresStore) SubscribeJobWake(jobID string) (<-chan struct{}, func(), bool) {
+	if p == nil || p.wake == nil {
+		return nil, nil, false
+	}
+	ch, cancel := p.wake.subscribe(jobID)
+	return ch, cancel, true
+}
+
 func (p *PostgresStore) Create(ctx context.Context, request CreateRequest) (Job, error) {
 	if p == nil || p.db == nil {
 		return Job{}, fmt.Errorf("postgres job store is not configured")
