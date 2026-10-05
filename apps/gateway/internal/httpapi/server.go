@@ -1801,10 +1801,13 @@ func (s *Server) handleJobByID(w http.ResponseWriter, r *http.Request) {
 // clients from declaring an idle stream dead, and the write timeout drops a
 // stalled client instead of letting it block the handler forever.
 const (
-	sseHeartbeatInterval = 15 * time.Second
-	sseConnectionTTL     = 10 * time.Minute
-	sseWriteTimeout      = 10 * time.Second
+	sseConnectionTTL = 10 * time.Minute
+	sseWriteTimeout  = 10 * time.Second
 )
+
+// sseHeartbeatInterval is a var only so tests can shrink it; production code
+// never reassigns it.
+var sseHeartbeatInterval = 15 * time.Second
 
 func (s *Server) handleJobSSE(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
