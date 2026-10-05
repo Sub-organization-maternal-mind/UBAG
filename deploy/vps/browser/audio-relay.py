@@ -216,8 +216,8 @@ def handle_session(conn: socket.socket) -> None:
                             mic_fifo.write(pcm)
                         except (BrokenPipeError, ValueError, OSError):
                             return
-            except (ConnectionError, OSError) as exc:
-                print(f"audio-relay: mic pump ended: {exc}", file=sys.stderr)
+            except Exception as exc:  # a media thread crash must be visible
+                print(f"audio-relay: mic pump ended: {type(exc).__name__}: {exc}", file=sys.stderr)
                 stop.set()
 
         def pump_speaker() -> None:
@@ -235,7 +235,8 @@ def handle_session(conn: socket.socket) -> None:
                     except OpusError:
                         continue
                     write_frame(conn, frame)
-            except (ConnectionError, OSError):
+            except Exception as exc:  # a media thread crash must be visible
+                print(f"audio-relay: speaker pump ended: {type(exc).__name__}: {exc}", file=sys.stderr)
                 stop.set()
 
         threads = [threading.Thread(target=pump_mic, daemon=True),
