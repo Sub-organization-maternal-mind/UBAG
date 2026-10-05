@@ -53,6 +53,7 @@ Select with `--scenario a,b` or `--scenario all` (repeat or comma separate).
 | `queue-1000` | Enqueues `--jobs` (1000) target `mock` jobs with distinct idempotency keys at `--rate` jobs/s, then polls to terminal or `--deadline-ms`. Client backs off per `Retry-After` on 429/503 up to `--max-retries`. |
 | `clients-100` | `--clients` (100) concurrent clients, `--iterations` each, rotating: text job, small-image facade call, malformed JSON / malformed data URL, oversized body (must be 413), and with `--with-upload` an artifact PUT. Malformed/oversized must be 4xx; no 5xx, no hangs. |
 | `duplicates` | `--dup-keys` keys each fired by `--dup-concurrency` concurrent identical requests: exactly one job id per key. Then `--cancel-races` jobs cancelled immediately (same-key pair plus distinct key) and checked to reach a terminal state that does not flip. |
+| `steady-state` | Seeds `--steady-seed-jobs` jobs, then for `--steady-seconds` holds a constant `--steady-rate` creates/s alongside a dedicated GET mix at `--steady-read-rate` reads/s (job, events, list). Latencies land in `steady-state/create` and `steady-state/read`; the goal thresholds gate their p95. Not a burst: keep rates modest. |
 | `overload` | Upload-memory burst (`--burst` x `--burst-body-bytes` facade bodies), an in-flight burst (`--inflight-burst` cheap authenticated GETs), then recovery: health/ready 200 and `--recovery-requests` normal jobs complete. Every 429/503 must carry `Retry-After` and body `retry_after_ms`. |
 | `metrics-snapshot` | `/v1/metrics` is scraped before and after every run (and sampled every `--metrics-interval-ms` for gauge maxima); this scenario adds an optional idle window (`--snapshot-seconds`). `--docker-stats-container <name>` samples `docker stats --no-stream` every `--docker-interval-ms` (default 5 s) and is skipped with a note when docker is missing. |
 
@@ -103,7 +104,46 @@ with Retry-After; every 429/503 has `Retry-After` and `retry_after_ms`; no hangs
 no lost, unfinished, unaccepted or failed jobs; exactly one job per duplicate
 key; malformed/oversized payloads fail with 4xx; cancel races end consistent;
 recovery after overload; create p95 under 2000 ms (provider time excluded, the
-mock target does not hit a provider).
+mock target does not hit a provider). That 2000 ms is the **100-client burst**
+limit; steady-state latency has its own goals (below).
+
+### Integrity gates (fail closed)
+
+Every job that reaches `completed` is re-fetched and verified, so a green run
+means the results were right, not just that the statuses were terminal:
+
+- **Result body**: `GET /v1/jobs/{id}` must return the same `job_id`, status
+  `completed`, and non-empty `result.output.text`. For the `mock` target the text
+  must also name the job, end with the submitted prompt (the idempotency key is
+  appended to every prompt as a nonce) and contain the nonce exactly once, so a
+  wrong, truncated or duplicated result is `result_mismatches`.
+- **Event log**: `GET /v1/jobs/{id}/events` (paged, bounded) must contain exactly
+  one terminal event and no duplicate sequence numbers (`terminal_event_violations`).
+- **Warnings**: `completed_with_warnings` is **not** a success. It is counted in
+  `warning_jobs` (threshold 0), separately from `completed` and `failed`.
+- **Second tenant**: set `UBAG_LOAD_API_KEY_B` to a key of a *different tenant*
+  (it must differ from `UBAG_LOAD_API_KEY`; never written to reports). Up to
+  `--tenant-probe-samples` (10) completed jobs are probed as tenant B on GET job,
+  events, artifacts and the job list: anything but 403/404 on a direct read, or a
+  tenant-A job id in tenant B's list, is `cross_tenant_leaks`; a 401 or other
+  surprise is `tenant_probe_unexpected` (so a bad key can't pass silently).
+- **facade_image**: the OpenAI-facade image request must return 200 with message
+  content; any other final outcome is `facade_image_failures` (threshold 0).
+- **Overload**: when `overload` runs it must produce at least
+  `min_overload_rejections` (1) 429/503 responses; zero means the limits were never
+  reached and is a FAIL, not a note.
+
+### Goal thresholds and `--require-goals`
+
+`tests/load/thresholds.goals.json` holds the perf goals: steady-state create
+p95 <= 200 ms, steady-state read p95 <= 100 ms (the dedicated GET mix of the
+`steady-state` scenario), plus minimum verified results/events/tenant probes.
+Pass `--require-goals` to merge it over `thresholds.json` **and** treat every
+unmeasured threshold as a FAIL. Use it with `--scenario all` and
+`UBAG_LOAD_API_KEY_B` set; omitting a scenario or the second tenant fails the
+run instead of passing silently. Numbers measured on a laptop/Docker stack are
+NON-AUTHORITATIVE (there is no isolated lab host yet); never aim this at the shared
+VPS. 1/2/5/10/20-workload step runs are a separate slice (P7.2).
 
 ## Offline self-tests
 
@@ -112,6 +152,8 @@ pnpm test:load:offline
 ```
 
 Runs `tests/load/acceptance.test.mjs` only: aggregation math, Retry-After
-backoff, host allowlist, thresholds, and a smoke run of every scenario against
-an in-process fake gateway on `127.0.0.1`. It never touches a real host and is
+backoff, host allowlist, thresholds, a smoke run of every scenario against
+an in-process fake gateway on `127.0.0.1`, and negative cases that must FAIL
+(wrong/truncated/duplicated result, duplicated terminal event, cross-tenant leak,
+`completed_with_warnings`, facade 400s, zero overload rejections, unmeasured goals). It never touches a real host and is
 deliberately not part of `pnpm check` or `pnpm test:v0:local`.

@@ -8,7 +8,12 @@
  *   UBAG_LOAD_BASE_URL=http://127.0.0.1:8080 UBAG_LOAD_API_KEY=... \
  *     node tests/load/acceptance.mjs --i-understand-this-is-load --scenario queue-1000
  *
- * Scenarios: queue-1000 | clients-100 | duplicates | overload | metrics-snapshot | all
+ * Scenarios: queue-1000 | clients-100 | duplicates | steady-state | overload | metrics-snapshot | all
+ *
+ * Integrity gates (fail closed): completed jobs have their result body and event
+ * log re-fetched and verified; a second tenant (UBAG_LOAD_API_KEY_B) must not be
+ * able to read them; --require-goals additionally loads thresholds.goals.json and
+ * treats every unmeasured threshold as a FAILURE.
  */
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -20,12 +25,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const API_VERSION = '2026-05-22';
-export const SCENARIOS = ['queue-1000', 'clients-100', 'duplicates', 'overload', 'metrics-snapshot'];
+export const SCENARIOS = ['queue-1000', 'clients-100', 'duplicates', 'steady-state', 'overload', 'metrics-snapshot'];
 export const ACK_FLAG = 'i-understand-this-is-load';
 
-const SUCCESS = new Set(['completed', 'completed_with_warnings']);
-const TERMINAL = new Set([...SUCCESS, 'failed_retryable', 'failed_terminal', 'dead_letter', 'cancelled', 'canceled', 'timed_out']);
+// completed_with_warnings is NOT a success: it is counted separately (warning_jobs) and gated.
+const SUCCESS = new Set(['completed']);
+const WARNED = 'completed_with_warnings';
+const TERMINAL = new Set([...SUCCESS, WARNED, 'failed_retryable', 'failed_terminal', 'dead_letter', 'cancelled', 'canceled', 'timed_out']);
 const PRE_RUN = new Set(['created', 'queued']);
+// Event types that end a job's event log (a leading "job." is stripped before matching).
+const TERMINAL_EVENTS = new Set([...TERMINAL, 'failed', 'blocked']);
 // 1x1 PNG, used as the "small image data URL" multimodal payload.
 const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const REASON_BY_CODE = {
@@ -163,14 +172,18 @@ const NUM = { // flag: [cfgKey, default, min, max]
   'metrics-interval-ms': ['metricsIntervalMs', 5000, 10, 600_000],
   'docker-interval-ms': ['dockerIntervalMs', 5000, 10, 600_000],
   'settle-ms': ['settleMs', 500, 0, 60_000],
+  'steady-seconds': ['steadySeconds', 30, 1, 3600], 'steady-rate': ['steadyRate', 5, 1, 200],
+  'steady-read-rate': ['steadyReadRate', 20, 1, 1000], 'steady-seed-jobs': ['steadySeedJobs', 10, 1, 1000],
+  'tenant-probe-samples': ['tenantProbeSamples', 10, 0, 1000],
 };
-const STR = { target: 'target', 'command-type': 'commandType', 'docker-stats-container': 'dockerContainer', 'out-dir': 'outDir', thresholds: 'thresholds' };
-const FLAGS = new Set([ACK_FLAG, 'with-upload']);
+const STR = { target: 'target', 'command-type': 'commandType', 'docker-stats-container': 'dockerContainer', 'out-dir': 'outDir', thresholds: 'thresholds', goals: 'goals' };
+const FLAGS = new Set([ACK_FLAG, 'with-upload', 'require-goals']);
 
 export function parseArgs(argv, env = process.env) {
   const cfg = {
     scenarios: [], target: 'mock', commandType: 'chat.prompt', withUpload: false, jitter: 0.1,
     dockerContainer: undefined, outDir: join(here, 'results'), thresholds: join(here, 'thresholds.json'),
+    goals: join(here, 'thresholds.goals.json'), requireGoals: false,
   };
   for (const [, [key, def]] of Object.entries(NUM)) cfg[key] = def;
   let acknowledged = false;
@@ -183,6 +196,7 @@ export function parseArgs(argv, env = process.env) {
     if (FLAGS.has(name)) {
       if (name === ACK_FLAG) acknowledged = true;
       if (name === 'with-upload') cfg.withUpload = true;
+      if (name === 'require-goals') cfg.requireGoals = true;
       continue;
     }
     if (!(name in NUM) && !(name in STR) && name !== 'scenario') throw new Error(`unknown option --${name}`);
@@ -208,6 +222,9 @@ export function parseArgs(argv, env = process.env) {
   if (!env.UBAG_LOAD_API_KEY) throw new Error('UBAG_LOAD_API_KEY is required');
   cfg.baseUrl = checkTarget(env.UBAG_LOAD_BASE_URL, env);
   cfg.apiKey = env.UBAG_LOAD_API_KEY;
+  // Optional second tenant for the cross-tenant isolation probe; it must be a different credential.
+  cfg.apiKeyB = env.UBAG_LOAD_API_KEY_B || undefined;
+  if (cfg.apiKeyB && cfg.apiKeyB === cfg.apiKey) throw new Error('UBAG_LOAD_API_KEY_B must differ from UBAG_LOAD_API_KEY (it must belong to a second tenant)');
   if (cfg.dockerContainer && !/^[A-Za-z0-9][\w.-]*$/.test(cfg.dockerContainer)) throw new Error('--docker-stats-container has an invalid name');
   return cfg;
 }
@@ -290,7 +307,9 @@ export class Recorder {
 
   /** Flat metrics that thresholds.json is evaluated against. */
   summary(extra = {}) {
-    const createOk = [...this.ops.entries()].filter(([k]) => k.endsWith('/create')).flatMap(([, e]) => e.ok);
+    // Burst create p95 excludes the steady-state scenario, which has its own (tighter) goal threshold.
+    const createOk = [...this.ops.entries()].filter(([k]) => k.endsWith('/create') && !k.startsWith('steady-state/')).flatMap(([, e]) => e.ok);
+    const p95Of = (key) => { const ok = this.ops.get(key)?.ok; return ok?.length ? summarize(ok).p95 : undefined; };
     const c = (n) => this.counters[n] ?? 0;
     return {
       server_errors_non_overload: c('server_errors_non_overload'),
@@ -302,7 +321,12 @@ export class Recorder {
       dup_violations: c('dup_violations'), dup_replay_flag_mismatch: c('dup_replay_flag_mismatch'),
       unsafe_payload_outcomes: c('unsafe_payload_outcomes'), cancel_inconsistencies: c('cancel_inconsistencies'),
       unrecovered: c('unrecovered'), scenario_errors: c('scenario_errors'),
+      warning_jobs: c('warning_jobs'), result_mismatches: c('result_mismatches'), results_verified: c('results_verified'),
+      terminal_event_violations: c('terminal_event_violations'), events_verified: c('events_verified'),
+      cross_tenant_leaks: c('cross_tenant_leaks'), tenant_probe_unexpected: c('tenant_probe_unexpected'), tenant_probe_requests: c('tenant_probe_requests'),
+      facade_image_failures: c('facade_image_failures'),
       create_p95_ms: createOk.length ? summarize(createOk).p95 : undefined,
+      steady_create_p95_ms: p95Of('steady-state/create'), steady_read_p95_ms: p95Of('steady-state/read'),
       ...extra,
     };
   }
@@ -310,15 +334,22 @@ export class Recorder {
 
 // ---------------------------------------------------------------- thresholds
 
-/** `max_<key>` => summary[key] <= limit; `min_<key>` => summary[key] >= limit. Missing keys are skipped. */
-export function evaluateThresholds(summary, thresholds) {
+/**
+ * `max_<key>` => summary[key] <= limit; `min_<key>` => summary[key] >= limit.
+ * An unmeasured key is skipped, unless `strict` (--require-goals): then it FAILS,
+ * so a goal can never pass because the scenario that measures it did not run.
+ */
+export function evaluateThresholds(summary, thresholds, { strict = false } = {}) {
   const results = [];
   for (const [name, limit] of Object.entries(thresholds)) {
     if (name.startsWith('_')) continue;
     const m = /^(max|min)_(.+)$/.exec(name);
     if (!m || typeof limit !== 'number') { results.push({ name, limit, actual: null, ok: false, note: 'malformed threshold' }); continue; }
     const actual = summary[m[2]];
-    if (actual === undefined || actual === null) { results.push({ name, limit, actual: null, ok: true, note: 'not measured (scenario not run)' }); continue; }
+    if (actual === undefined || actual === null || (typeof actual === 'number' && !Number.isFinite(actual))) {
+      results.push(strict ? { name, limit, actual: null, ok: false, note: 'not measured (required by --require-goals)' } : { name, limit, actual: null, ok: true, note: 'not measured (scenario not run)' });
+      continue;
+    }
     results.push({ name, limit, actual, ok: m[1] === 'max' ? actual <= limit : actual >= limit });
   }
   return { passed: results.every((r) => r.ok), results };
@@ -488,13 +519,16 @@ async function callWithRetry(ctx, op, fn, { retryStatuses = [429, 503], observeO
   }
 }
 
-async function createJob(ctx, key, { prompt = 'load job', retryStatuses } = {}) {
+// The idempotency key doubles as the job's nonce: it is appended to the prompt (identical across
+// duplicate requests for one key, unique per job) so the result body can be checked against it.
+async function createJob(ctx, key, { prompt = 'load job', retryStatuses, op = 'create' } = {}) {
   const t0 = now();
-  const body = JSON.stringify(jobPayload(ctx.cfg, key, prompt));
-  const { res, attempts } = await callWithRetry(ctx, 'create', () => ctx.request('POST', '/v1/jobs', { body, headers: { 'Idempotency-Key': key } }), { retryStatuses });
+  const fullPrompt = `${prompt} [${key}]`;
+  const body = JSON.stringify(jobPayload(ctx.cfg, key, fullPrompt));
+  const { res, attempts } = await callWithRetry(ctx, op, () => ctx.request('POST', '/v1/jobs', { body, headers: { 'Idempotency-Key': key } }), { retryStatuses });
   const ok = (res.status === 200 || res.status === 202) && typeof res.json?.job_id === 'string';
-  if (ok) ctx.rec.latency('create_incl_retries', now() - t0);
-  return { ok, status: res.status, jobId: res.json?.job_id, replay: res.json?.idempotent_replay === true, attempts, key, acceptedAt: now(), res };
+  if (ok) { ctx.rec.latency(`${op}_incl_retries`, now() - t0); ctx.jobIds.add(res.json.job_id); }
+  return { ok, status: res.status, jobId: res.json?.job_id, replay: res.json?.idempotent_replay === true, attempts, key, prompt: fullPrompt, acceptedAt: now(), res };
 }
 
 /** Poll many jobs with bounded concurrency until terminal / lost / deadline. */
@@ -523,19 +557,87 @@ async function pollMany(ctx, jobs, deadlineAt) {
   return states;
 }
 
-async function settleJobs(ctx, jobs, { count = true } = {}) {
+async function settleJobs(ctx, jobs, { count = true, verify = true } = {}) {
   const states = await pollMany(ctx, jobs, now() + ctx.cfg.deadlineMs);
-  const out = { completed: 0, failed: 0, lost: 0, unfinished: 0, byStatus: {} };
+  const out = { completed: 0, warned: 0, failed: 0, lost: 0, unfinished: 0, byStatus: {} };
   for (const s of states) {
     const label = s.lost ? 'lost(404)' : s.terminalAt ? s.status : `unfinished(${s.status ?? 'unknown'})`;
     out.byStatus[label] = (out.byStatus[label] ?? 0) + 1;
-    if (s.lost) { out.lost += 1; if (count) ctx.rec.count('lost_jobs'); } else if (!s.terminalAt) { out.unfinished += 1; if (count) ctx.rec.count('unfinished_jobs'); } else if (!SUCCESS.has(s.status)) { out.failed += 1; if (count) ctx.rec.count('failed_jobs'); } else {
+    if (s.lost) { out.lost += 1; if (count) ctx.rec.count('lost_jobs'); } else if (!s.terminalAt) { out.unfinished += 1; if (count) ctx.rec.count('unfinished_jobs'); } else if (s.status === WARNED) { out.warned += 1; if (count) ctx.rec.count('warning_jobs'); } else if (!SUCCESS.has(s.status)) { out.failed += 1; if (count) ctx.rec.count('failed_jobs'); } else {
       out.completed += 1;
       ctx.rec.latency('completion', s.terminalAt - s.acceptedAt);
       if (s.firstRunAt) ctx.rec.latency('queue_wait_observed', s.firstRunAt - s.acceptedAt);
     }
   }
+  if (verify) await pool(states.filter((s) => s.terminalAt && SUCCESS.has(s.status)), ctx.cfg.pollConcurrency, (s) => verifyJob(ctx, s));
   return { out, states };
+}
+
+// ------------------------------------------------- result / event / tenant integrity
+
+const countOf = (text, needle) => (needle ? text.split(needle).length - 1 : 0);
+
+/** Re-fetch a completed job and check the result body, the event log and (optionally) tenant isolation. */
+async function verifyJob(ctx, s) {
+  const { rec, cfg } = ctx;
+  const res = await ctx.request('GET', `/v1/jobs/${encodeURIComponent(s.jobId)}`);
+  rec.observe('result_fetch', res);
+  const bad = (why) => rec.violation('result_mismatches', `${s.jobId}: ${why}`);
+  if (res.status !== 200) bad(`result fetch returned HTTP ${res.status || res.error}`);
+  else if (res.json?.job_id !== s.jobId) bad(`result carries job_id ${res.json?.job_id}`);
+  else if (!SUCCESS.has(res.json?.status)) bad(`status changed to ${res.json?.status} after it was observed terminal`);
+  else {
+    const out = res.json?.result?.output;
+    const text = out?.text ?? out?.markdown ?? out?.plain_text;
+    if (typeof text !== 'string' || !text.trim()) bad('empty result text');
+    else if (cfg.target === 'mock') { // the mock adapter echoes "...(<job_id>): <prompt>"; the nonce ends the prompt
+      if (!text.includes(s.jobId)) bad('result text does not name this job (wrong result)');
+      else if (!text.endsWith(s.prompt)) bad('result text does not end with the submitted prompt (truncated or wrong result)');
+      else if (countOf(text, s.key) !== 1) bad(`nonce appears ${countOf(text, s.key)} times in the result (duplicated result)`);
+      else rec.count('results_verified');
+    } else rec.count('results_verified');
+  }
+  await verifyEvents(ctx, s);
+  if (cfg.apiKeyB && ctx.tenantBudget > 0) { ctx.tenantBudget -= 1; await probeTenant(ctx, s.jobId); }
+}
+
+async function verifyEvents(ctx, s) {
+  const { rec } = ctx; const events = []; let cursor = null;
+  const bad = (why) => rec.violation('terminal_event_violations', `${s.jobId}: ${why}`);
+  for (let page = 0; page < 20; page += 1) { // bounded: 20 pages x 100 events
+    const res = await ctx.request('GET', `/v1/jobs/${encodeURIComponent(s.jobId)}/events?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+    rec.observe('events_fetch', res);
+    if (res.status !== 200 || !Array.isArray(res.json?.events)) return bad(`events fetch returned HTTP ${res.status || res.error}`);
+    events.push(...res.json.events);
+    cursor = res.json.next_cursor ?? null;
+    if (!cursor) break;
+  }
+  if (cursor) return bad('event log exceeds 2000 events (not fully read)');
+  if (events.some((e) => e?.job_id !== undefined && e.job_id !== s.jobId)) return bad("event log contains another job's events");
+  const seqs = events.map((e) => e?.sequence).filter(Number.isFinite);
+  if (new Set(seqs).size !== seqs.length) return bad('duplicate event sequence numbers');
+  const terminal = events.filter((e) => TERMINAL_EVENTS.has(String(e?.type ?? '').replace(/^job\./, '')));
+  if (terminal.length !== 1) return bad(`${terminal.length} terminal events (expected exactly 1)`);
+  rec.count('events_verified');
+}
+
+/** Tenant B must get 403/404 on tenant A's job (GET, events, artifacts) and must not see it in its list. */
+async function probeTenant(ctx, jobId) {
+  const { rec, cfg } = ctx; const as = { headers: { Authorization: `Bearer ${cfg.apiKeyB}` } };
+  const id = encodeURIComponent(jobId);
+  for (const [op, path] of [['tenant_get', `/v1/jobs/${id}`], ['tenant_events', `/v1/jobs/${id}/events`], ['tenant_artifacts', `/v1/jobs/${id}/artifacts`]]) {
+    const { res } = await callWithRetry(ctx, op, () => ctx.request('GET', path, as));
+    if (res.status === 429 || res.status === 503 || res.status === 0) { rec.count('tenant_probe_inconclusive'); continue; }
+    rec.count('tenant_probe_requests');
+    if (res.status >= 200 && res.status < 300) rec.violation('cross_tenant_leaks', `${op}: tenant B read tenant A job ${jobId} (HTTP ${res.status})`);
+    else if (res.status !== 403 && res.status !== 404) rec.violation('tenant_probe_unexpected', `${op}: expected 403/404, got HTTP ${res.status}`);
+  }
+  const { res } = await callWithRetry(ctx, 'tenant_list', () => ctx.request('GET', '/v1/jobs?limit=100', as));
+  if (res.status === 429 || res.status === 503 || res.status === 0) return rec.count('tenant_probe_inconclusive');
+  rec.count('tenant_probe_requests');
+  if (res.status !== 200) return rec.violation('tenant_probe_unexpected', `tenant_list: expected 200, got HTTP ${res.status}`);
+  const leaked = (res.json?.jobs ?? []).filter((j) => ctx.jobIds.has(j?.job_id));
+  if (leaked.length) rec.violation('cross_tenant_leaks', `tenant_list: tenant B listing contains ${leaked.length} of tenant A's jobs`);
 }
 
 const statusesOf = (ctx, op) => ({ ...(ctx.rec.entry(op).statuses) });
@@ -579,7 +681,9 @@ async function runKind(ctx, kind, c, it) {
     await settleJobs(ctx, [job]);
   } else if (kind === 'facade_image') {
     const body = JSON.stringify({ model: cfg.target, stream: false, messages: [{ role: 'user', content: [{ type: 'text', text: 'describe the image' }, { type: 'image_url', image_url: { url: PNG_DATA_URL } }] }] });
-    await callWithRetry(ctx, 'facade_image', () => ctx.request('POST', '/v1/openai/chat/completions', { body, timeoutMs: cfg.facadeTimeoutMs }));
+    const { res } = await callWithRetry(ctx, 'facade_image', () => ctx.request('POST', '/v1/openai/chat/completions', { body, timeoutMs: cfg.facadeTimeoutMs }));
+    const content = res.json?.choices?.[0]?.message?.content;
+    if (res.status !== 200 || typeof content !== 'string' || !content) rec.violation('facade_image_failures', `valid image request: HTTP ${res.status || res.error}`);
   } else if (kind === 'malformed') {
     const key = idemKey(ctx, 'm', tag);
     const bad = await ctx.request('POST', '/v1/jobs', { body: '{"job": {', headers: { 'Idempotency-Key': key } });
@@ -635,14 +739,14 @@ async function duplicates(ctx) {
     job.cancelAccepted = results.some((r) => r.res.status === 200 || r.res.status === 202);
     jobs.push(job);
   });
-  const { states } = await settleJobs(ctx, jobs, { count: false });
+  const { states } = await settleJobs(ctx, jobs, { count: false, verify: false });
   await ctx.sleep(cfg.settleMs);
   await pool(states, 10, async (s) => {
     if (s.lost || !s.terminalAt) return rec.violation('cancel_inconsistencies', `${s.jobId}: ${s.lost ? 'job vanished' : `not terminal after cancel (status ${s.status})`}`);
     const again = await ctx.request('GET', `/v1/jobs/${s.jobId}`); rec.observe('cancel_recheck', again);
     if (again.status === 200 && again.json?.status !== s.status) { cancelResults.flipped += 1; return rec.violation('cancel_inconsistencies', `${s.jobId}: terminal state flipped ${s.status} -> ${again.json?.status}`); }
     if (s.status === 'cancelled' || s.status === 'canceled') cancelResults.cancelled += 1;
-    else if (SUCCESS.has(s.status)) cancelResults.raced_to_completed += 1;
+    else if (SUCCESS.has(s.status) || s.status === WARNED) cancelResults.raced_to_completed += 1;
     else cancelResults.other_terminal += 1;
     if (s.cancelAccepted === false && (s.status === 'cancelled' || s.status === 'canceled')) rec.violation('cancel_inconsistencies', `${s.jobId}: cancelled without an accepted cancel`);
   });
@@ -679,6 +783,7 @@ async function overload(ctx) {
   const okJobs = recovery.filter((j) => j.ok);
   if (okJobs.length) await settleJobs(ctx, okJobs);
   return {
+    _summary: { overload_rejections: rejected },
     burst_upload: { requests: cfg.burst, body_bytes: big.length, statuses: statusesOf(ctx, 'burst_upload') },
     burst_inflight: { requests: cfg.inflightBurst, statuses: statusesOf(ctx, 'burst_inflight') },
     rejected_responses: rejected, rejected_any: rejected > 0, recovered: healthy && okJobs.length === recovery.length,
@@ -686,18 +791,49 @@ async function overload(ctx) {
   };
 }
 
+/**
+ * Steady-state: a modest, constant create rate plus a dedicated GET mix (job, events, list) for
+ * --steady-seconds. Latencies land in steady-state/create and steady-state/read; the goal
+ * thresholds (thresholds.goals.json) gate their p95, separate from the 100-client burst limit.
+ */
+async function steadyState(ctx) {
+  const { cfg, rec } = ctx;
+  const seeds = (await pool(range(cfg.steadySeedJobs), 5, (i) => createJob(ctx, idemKey(ctx, 's', i), { prompt: `steady seed ${i}`, op: 'seed_create' }))).filter((j) => j.ok);
+  if (!seeds.length) throw new Error('steady-state: no seed job was accepted, nothing to read');
+  const t0 = now(); const accepted = [];
+  const nCreate = cfg.steadySeconds * cfg.steadyRate; const nRead = cfg.steadySeconds * cfg.steadyReadRate;
+  const paced = (n, perSec, concurrency, fn) => pool(range(n), concurrency, async (i) => {
+    const wait = t0 + (i * 1000) / perSec - now();
+    if (wait > 0) await ctx.sleep(wait);
+    return fn(i);
+  });
+  const readPaths = (id) => [`/v1/jobs/${encodeURIComponent(id)}`, `/v1/jobs/${encodeURIComponent(id)}/events?limit=100`, '/v1/jobs?limit=20'];
+  await Promise.all([
+    paced(nCreate, cfg.steadyRate, cfg.createConcurrency, async (i) => {
+      const r = await createJob(ctx, idemKey(ctx, 'w', i), { prompt: `steady job ${i}`, retryStatuses: [] });
+      if (r.ok) accepted.push(r); else rec.count('unaccepted_jobs');
+    }),
+    paced(nRead, cfg.steadyReadRate, cfg.pollConcurrency, async (i) => {
+      const paths = readPaths(seeds[i % seeds.length].jobId);
+      rec.observe('read', await ctx.request('GET', paths[i % paths.length]));
+    }),
+  ]);
+  const { out } = await settleJobs(ctx, [...seeds, ...accepted]);
+  return { seconds: cfg.steadySeconds, create_rate: cfg.steadyRate, read_rate: cfg.steadyReadRate, creates: nCreate, accepted: accepted.length, reads: nRead, final: out.byStatus };
+}
+
 async function snapshotScenario(ctx) {
   if (ctx.cfg.snapshotSeconds > 0) await ctx.sleep(ctx.cfg.snapshotSeconds * 1000);
   return { idle_window_seconds: ctx.cfg.snapshotSeconds };
 }
 
-const RUNNERS = { 'queue-1000': queue1000, 'clients-100': clients100, duplicates, overload, 'metrics-snapshot': snapshotScenario };
+const RUNNERS = { 'queue-1000': queue1000, 'clients-100': clients100, duplicates, 'steady-state': steadyState, overload, 'metrics-snapshot': snapshotScenario };
 
 // -------------------------------------------------------------------- driver
 
 export async function run(cfg, deps = {}) {
   const request = deps.request ?? makeRequest(cfg);
-  const ctx = { cfg, request, rec: new Recorder(), sleep: deps.sleep ?? defaultSleep, runId: randomBytes(6).toString('hex') };
+  const ctx = { cfg, request, rec: new Recorder(), sleep: deps.sleep ?? defaultSleep, runId: randomBytes(6).toString('hex'), jobIds: new Set(), tenantBudget: cfg.apiKeyB ? cfg.tenantProbeSamples : 0 };
   const started = new Date();
   const scrape = async () => {
     const res = await request('GET', '/v1/metrics', { headers: { Accept: 'text/plain' } });
@@ -738,12 +874,13 @@ export async function run(cfg, deps = {}) {
 
   const summary = ctx.rec.summary(extra);
   const thresholds = JSON.parse(readFileSync(cfg.thresholds, 'utf8'));
-  const verdict = evaluateThresholds(summary, thresholds);
+  if (cfg.requireGoals) Object.assign(thresholds, JSON.parse(readFileSync(cfg.goals, 'utf8'))); // goals tighten/extend the base set
+  const verdict = { ...evaluateThresholds(summary, thresholds, { strict: cfg.requireGoals }), goals_required: cfg.requireGoals };
   return {
     meta: {
       run_id: ctx.runId, started_at: started.toISOString(), finished_at: new Date().toISOString(),
       target_origin: new URL(cfg.baseUrl).origin, node: process.version, platform: `${platform()}-${arch()}`,
-      scenarios: cfg.scenarios, config: Object.fromEntries(Object.entries(cfg).filter(([k]) => !['apiKey', 'baseUrl', 'scenarios'].includes(k))),
+      scenarios: cfg.scenarios, config: Object.fromEntries(Object.entries(cfg).filter(([k]) => !['apiKey', 'apiKeyB', 'baseUrl', 'scenarios'].includes(k))),
     },
     ...report, summary, ops: ctx.rec.opsTable(), classes: ctx.rec.classes, error_codes: ctx.rec.errorCodes,
     client_rejections_by_reason: ctx.rec.rejections, retry: ctx.rec.retry, violations: ctx.rec.violations,
@@ -758,7 +895,7 @@ const table = (head, rows) => [`| ${head.join(' | ')} |`, `| ${head.map(() => '-
 
 export function renderMarkdown(report) {
   const m = report.meta; const lines = [];
-  lines.push(`# UBAG acceptance load report`, '', `- run: \`${m.run_id}\` (${m.started_at} -> ${m.finished_at})`, `- target: ${m.target_origin}`, `- scenarios: ${m.scenarios.join(', ')}`, `- verdict: **${report.thresholds.passed ? 'PASS' : 'FAIL'}**`, '');
+  lines.push(`# UBAG acceptance load report`, '', `- run: \`${m.run_id}\` (${m.started_at} -> ${m.finished_at})`, `- target: ${m.target_origin}`, `- scenarios: ${m.scenarios.join(', ')}`, `- verdict: **${report.thresholds.passed ? 'PASS' : 'FAIL'}**${report.thresholds.goals_required ? ' (--require-goals: unmeasured = FAIL)' : ''}`, '');
   lines.push('## Thresholds', '', table(['threshold', 'limit', 'actual', 'result'], report.thresholds.results.map((r) => [r.name, r.limit, r.actual, r.ok ? `ok${r.note ? ` (${r.note})` : ''}` : 'VIOLATED'])), '');
   lines.push('## Latency by operation (ms)', '', table(['scenario/op', 'attempts', 'ok n', 'ok p50', 'ok p95', 'ok p99', 'all p95', 'max', 'statuses'],
     Object.entries(report.ops).map(([k, v]) => [k, v.all.count, v.ok.count, v.ok.p50, v.ok.p95, v.ok.p99, v.all.p95, v.all.max, JSON.stringify(v.statuses)])), '');
@@ -769,6 +906,8 @@ export function renderMarkdown(report) {
   if (q && !q.error) lines.push('## queue-1000', '', `requested ${q.requested}, accepted ${q.accepted}, enqueue took ${q.enqueue_ms} ms`, `create attempt statuses: \`${JSON.stringify(q.create_attempt_statuses)}\``, `final states: \`${JSON.stringify(q.final)}\``, '');
   const d = report.scenarios.duplicates;
   if (d && !d.error) lines.push('## duplicates', '', table(['key', 'responses', 'accepted', 'distinct jobs', 'original', 'replays'], d.per_key.map((p) => [p.key, p.responses, p.accepted, p.distinct_jobs, p.non_replay, p.replays])), '', `cancel outcomes: \`${JSON.stringify(d.cancel_outcomes)}\``, '');
+  const st = report.scenarios['steady-state'];
+  if (st && !st.error) lines.push('## steady-state', '', `${st.seconds}s at ${st.create_rate} creates/s and ${st.read_rate} reads/s; accepted ${st.accepted}/${st.creates}; final states: \`${JSON.stringify(st.final)}\``, '');
   const o = report.scenarios.overload;
   if (o && !o.error) lines.push('## overload', '', `rejected responses: ${o.rejected_responses}; recovered: ${o.recovered}`, o.note ? `note: ${o.note}` : '', '');
   lines.push('## Gateway metrics (before -> after)', '');
