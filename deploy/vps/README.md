@@ -60,11 +60,15 @@ add a **Proxy Host**:
 
 | service         | cpus | mem_limit |
 |------------------|------|-----------|
-| gateway          | 1.00 | 1300m     |
+| gateway          | 1.00 | 1300m (GOMAXPROCS=1, GOMEMLIMIT=950MiB) |
 | nginx-dashboard  | 0.15 | 96m       |
-| browser          | 1.00 | 1900m     |
+| browser          | 2.00 | 4096m (pids_limit 1024) |
 | chat-reaper      | 0.10 | 256m      |
-| **total**        | **2.25** | **~3.5G** |
+| **total**        | **3.25** | **5748m (~5.6 GiB)** |
+
+Host context: 8 cores / 24 GiB shared with other stacks. Source defaults:
+`UBAG_WORKER_CONCURRENCY=1`, `UBAG_WORKER_DAEMON=false`, `UBAG_EXECUTOR_MODE=file`,
+`UBAG_GATEWAY_STORE=postgres` (asserted by `tools/check-small-deployment.mjs`).
 
 (Postgres is shared platform capacity at `/opt/platform`, not part of this
 budget.)
