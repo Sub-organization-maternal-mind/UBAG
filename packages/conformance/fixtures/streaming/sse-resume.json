@@ -1,0 +1,25 @@
+{
+  "suite": "ubag.streaming.sse-resume.v1",
+  "scenario": "streaming.sse-ordered-events",
+  "description": "Resume and close semantics of GET /v1/sse/jobs/{job_id} (and the StreamJobEvents RPC cursor): strictly increasing per-job sequence, at-least-once delivery deduped by event id, resume via Last-Event-ID or after_sequence (larger cursor wins), HTTP 204 once the cursor is at or past the terminal event. A case lists the frames (event ids in order) a conformant gateway sends; ends_with_terminal means the last frame is the terminal event, after which a gateway running with UBAG_SSE_CLOSE_ON_TERMINAL closes the stream (with it off the stream may stay open until the TTL).",
+  "events": [
+    { "event_id": "evt_a1", "job_id": "job_01HXSSERESUME", "api_version": "2026-05-22", "type": "created", "created_at": "2026-10-06T12:00:00.000Z", "sequence": 1, "data": {}, "trace_id": "t1" },
+    { "event_id": "evt_a2", "job_id": "job_01HXSSERESUME", "api_version": "2026-05-22", "type": "running", "created_at": "2026-10-06T12:00:01.000Z", "sequence": 2, "data": {}, "trace_id": "t1" },
+    { "event_id": "evt_a3", "job_id": "job_01HXSSERESUME", "api_version": "2026-05-22", "type": "token", "created_at": "2026-10-06T12:00:02.000Z", "sequence": 3, "data": { "delta": "Par" }, "trace_id": "t1" },
+    { "event_id": "evt_a5", "job_id": "job_01HXSSERESUME", "api_version": "2026-05-22", "type": "token", "created_at": "2026-10-06T12:00:03.000Z", "sequence": 5, "data": { "delta": "is" }, "trace_id": "t1" },
+    { "event_id": "evt_a6", "job_id": "job_01HXSSERESUME", "api_version": "2026-05-22", "type": "completed", "created_at": "2026-10-06T12:00:04.000Z", "sequence": 6, "data": { "result": { "text": "Paris" } }, "trace_id": "t1" }
+  ],
+  "cases": [
+    { "id": "no-cursor-replays-all", "request": {}, "expect": { "status": 200, "frames": ["evt_a1", "evt_a2", "evt_a3", "evt_a5", "evt_a6"], "ends_with_terminal": true } },
+    { "id": "after-sequence-skips-seen", "request": { "after_sequence": 2 }, "expect": { "status": 200, "frames": ["evt_a3", "evt_a5", "evt_a6"], "ends_with_terminal": true } },
+    { "id": "last-event-id-skips-seen", "request": { "last_event_id": "evt_a3" }, "expect": { "status": 200, "frames": ["evt_a5", "evt_a6"], "ends_with_terminal": true } },
+    { "id": "larger-cursor-wins-header", "request": { "after_sequence": 1, "last_event_id": "evt_a5" }, "expect": { "status": 200, "frames": ["evt_a6"], "ends_with_terminal": true } },
+    { "id": "larger-cursor-wins-query", "request": { "after_sequence": 5, "last_event_id": "evt_a2" }, "expect": { "status": 200, "frames": ["evt_a6"], "ends_with_terminal": true } },
+    { "id": "gap-in-sequence-is-allowed", "request": { "after_sequence": 4 }, "expect": { "status": 200, "frames": ["evt_a5", "evt_a6"], "ends_with_terminal": true } },
+    { "id": "unknown-last-event-id-replays-all", "request": { "last_event_id": "evt_zzz" }, "expect": { "status": 200, "frames": ["evt_a1", "evt_a2", "evt_a3", "evt_a5", "evt_a6"], "ends_with_terminal": true } },
+    { "id": "cursor-at-terminal-gives-204", "request": { "after_sequence": 6 }, "expect": { "status": 204, "frames": [] } },
+    { "id": "last-event-id-terminal-gives-204", "request": { "last_event_id": "evt_a6" }, "expect": { "status": 204, "frames": [] } },
+    { "id": "cursor-past-terminal-gives-204", "request": { "after_sequence": 99 }, "expect": { "status": 204, "frames": [] } },
+    { "id": "negative-after-sequence-is-400", "request": { "after_sequence": -1 }, "expect": { "status": 400, "frames": [] } }
+  ]
+}

@@ -260,6 +260,7 @@ function schemaErrors(schema, value) {
 }
 
 await validateWorkerDaemonFixture();
+await validateSseResumeFixture();
 await validateNodeAllocationFixture();
 await validateBodiesAgainstOpenApi();
 
@@ -277,6 +278,53 @@ function requireString(value, field) {
 }
 
 // Node allocation consumer schema (P2.4): every fixture verdict must match the schema.
+// SSE/gRPC resume and close semantics (P2.7): the events are valid JobEvents
+// with strictly increasing sequence, and a reference resolver of the documented
+// rules (cursor = max(after_sequence, sequence of Last-Event-ID); 204 at or past
+// the terminal event; unknown Last-Event-ID ignored; negative cursor 400)
+// reproduces every case.
+async function validateSseResumeFixture() {
+  const schemaDir = join(currentDir, "..", "..", "shared-schemas", "schemas");
+  const eventSchema = JSON.parse(await readFile(join(schemaDir, "job-event.schema.json"), "utf8"));
+  const ajv = new Ajv2020({ strict: false, allErrors: true });
+  addFormats(ajv);
+  const validateEvent = ajv.compile(eventSchema);
+  const fx = JSON.parse(await readFile(join(currentDir, "..", "fixtures", "streaming", "sse-resume.json"), "utf8"));
+  if (fx.suite !== "ubag.streaming.sse-resume.v1") errors.push("sse-resume fixture must be suite ubag.streaming.sse-resume.v1");
+  const terminal = new Set(["completed", "completed_with_warnings", "failed_retryable", "failed_terminal", "dead_letter", "cancelled", "timed_out"]);
+  const events = fx.events ?? [];
+  let prev = 0;
+  const ids = new Set();
+  for (const e of events) {
+    if (!validateEvent(e)) errors.push(`sse-resume event ${e.event_id} violates job-event schema`);
+    if (e.sequence <= prev) errors.push(`sse-resume event ${e.event_id}: sequence must be strictly increasing`);
+    if (ids.has(e.event_id)) errors.push(`sse-resume duplicate event_id ${e.event_id}`);
+    prev = e.sequence;
+    ids.add(e.event_id);
+  }
+  const terminalSeq = events.find((e) => terminal.has(e.type))?.sequence ?? Infinity;
+  const resolve = ({ after_sequence, last_event_id }) => {
+    if (after_sequence !== undefined && (!Number.isInteger(after_sequence) || after_sequence < 0)) return { status: 400, frames: [] };
+    const headerSeq = events.find((e) => e.event_id === last_event_id)?.sequence ?? 0;
+    const cursor = Math.max(after_sequence ?? 0, headerSeq);
+    if (cursor >= terminalSeq) return { status: 204, frames: [] };
+    return { status: 200, frames: events.filter((e) => e.sequence > cursor).map((e) => e.event_id) };
+  };
+  const seen = new Set();
+  for (const c of fx.cases ?? []) {
+    if (seen.has(c.id)) errors.push(`sse-resume case ${c.id} duplicated`);
+    seen.add(c.id);
+    const got = resolve(c.request ?? {});
+    if (got.status !== c.expect.status || JSON.stringify(got.frames) !== JSON.stringify(c.expect.frames)) {
+      errors.push(`sse-resume case ${c.id}: reference resolver gave ${JSON.stringify(got)}, fixture expects ${JSON.stringify(c.expect)}`);
+    }
+    if (c.expect.ends_with_terminal && events.find((e) => e.event_id === c.expect.frames.at(-1))?.sequence !== terminalSeq) {
+      errors.push(`sse-resume case ${c.id}: ends_with_terminal but last frame is not the terminal event`);
+    }
+  }
+  if (!seen.size) errors.push("sse-resume fixture has no cases");
+}
+
 async function validateNodeAllocationFixture() {
   const schemaDir = join(currentDir, "..", "..", "shared-schemas", "schemas");
   const schema = JSON.parse(await readFile(join(schemaDir, "node-allocation.schema.json"), "utf8"));

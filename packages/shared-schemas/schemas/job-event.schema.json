@@ -54,7 +54,7 @@
     "sequence": {
       "type": "integer",
       "minimum": 1,
-      "description": "Monotonic sequence number within a job."
+      "description": "Gateway-assigned sequence number within a job: starts at 1 and is strictly increasing in delivery order (gaps allowed). It is the resume cursor (after_sequence, or the sequence of the Last-Event-ID event) for the event log, SSE and gRPC streams. Delivery is at-least-once, so consumers dedupe by event_id."
     },
     "data": {
       "type": "object",

@@ -11,6 +11,20 @@ service JobService {
   rpc CancelJob(JobMutationRequest) returns (JobResponse);
   rpc RetryJob(JobMutationRequest) returns (JobResponse);
   rpc ListJobEvents(ListJobEventsRequest) returns (ListJobEventsResponse);
+  // StreamJobEvents is the gRPC twin of GET /v1/sse/jobs/{job_id}.
+  // - Ordering: events of one job arrive with strictly increasing sequence.
+  // - At-least-once: a stream can end or be cut at any time; after reconnecting
+  //   (after_sequence = last processed sequence) an event can arrive again, so
+  //   consumers dedupe by JobEvent.event_id.
+  // - Resume: only events with sequence > after_sequence are sent; a negative
+  //   value is INVALID_ARGUMENT. There is no Last-Event-ID; use the cursor.
+  // - Terminal: the stream completes with OK right after the first terminal
+  //   event (type is a terminal job status). Reconnecting with after_sequence at
+  //   or past the terminal event's sequence completes OK with no messages (the
+  //   gRPC analogue of HTTP 204 on the SSE route).
+  // - token / token_streaming events are provisional (live view of one attempt,
+  //   discardable if the attempt is abandoned); the job result comes only from a
+  //   terminal event. See the JobEvent JSON schema for data semantics.
   rpc StreamJobEvents(ListJobEventsRequest) returns (stream JobEvent);
 }
 
@@ -73,6 +87,7 @@ message JobMutationRequest {
 message ListJobEventsRequest {
   string job_id = 1;
   string api_version = 2;
+  // Return/stream only events with sequence greater than this value (0 = from the start).
   int32 after_sequence = 3;
   int32 limit = 4;
 }
@@ -103,6 +118,7 @@ message JobEvent {
   string api_version = 3;
   string type = 4;
   string created_at = 5;
+  // Per-job, gateway-assigned, starts at 1, strictly increasing; the resume cursor.
   int32 sequence = 6;
   string data_json = 7;
   string trace_id = 8;

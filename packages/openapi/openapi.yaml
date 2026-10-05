@@ -1626,7 +1626,7 @@ paths:
       tags: [Jobs]
       operationId: listJobEvents
       summary: List historical events for a job.
-      description: Returns a cursor-paginated event log. Live SSE streaming is a separate transport surface.
+      description: Returns a cursor-paginated event log in strictly increasing sequence order. Live SSE streaming is a separate transport surface (see streamJobEventsSse for the resume and terminal semantics).
       parameters:
         - $ref: "#/components/parameters/UbagApiVersion"
         - $ref: "#/components/parameters/JobId"
@@ -1906,10 +1906,63 @@ paths:
       description: |
         Streams newline-delimited Server-Sent Events from the durable job event log.
         v0 emits gateway lifecycle events; workers append token, artifact, and terminal
-        events through the same event envelope.
+        events through the same event envelope. Each frame is
+        `id: <event_id>`, `event: job.<type>`, `data: <JobEvent JSON>`; `: ping`
+        comment lines are heartbeats.
+
+        Delivery semantics (additive; a request that sends no cursor behaves as before):
+
+        - Ordering: within one job the `sequence` of delivered events is strictly
+          increasing (gateway-assigned, starting at 1; gaps are allowed, repeats within
+          one connection are not). Ordering across jobs is undefined.
+        - At-least-once: a connection can end at any time (per-connection TTL, deploy,
+          network). After a reconnect an event may be delivered again, so consumers MUST
+          dedupe by `event_id` (the frame `id`) and may use `sequence` to detect gaps.
+        - Resume: send `Last-Event-ID` (what EventSource sends automatically on
+          reconnect) and/or `after_sequence`. Only events with `sequence` greater than
+          the effective cursor are sent. The effective cursor is the larger of
+          `after_sequence` and the sequence of the event named by `Last-Event-ID`; a
+          `Last-Event-ID` that is not an event of this job is ignored (replay from the
+          start, which at-least-once makes safe). A malformed `after_sequence` is a 400.
+        - Terminal: the first event whose type is a terminal job status ends the job's
+          event log. A gateway configured to close on terminal
+          (`UBAG_SSE_CLOSE_ON_TERMINAL`, default off) ends the stream right after
+          sending it; otherwise the stream stays open until the TTL. Either way a client
+          that reconnects with a cursor at or past the terminal event's `sequence`
+          receives HTTP 204 with no body, which is the one response that makes
+          EventSource stop reconnecting.
+        - Provisional tokens: `token` and `token_streaming` events are a live view of
+          one attempt and may be discarded if that attempt is abandoned; the job result
+          comes only from a terminal event (see the JobEvent schema). Do not build the
+          result by concatenating token events.
+
+        Until the gateway implements resume (roadmap slice P3.13) it ignores
+        `Last-Event-ID` and `after_sequence` on this route and replays from the start;
+        that remains conformant for clients that dedupe by `event_id`.
       parameters:
         - $ref: "#/components/parameters/UbagApiVersion"
         - $ref: "#/components/parameters/JobId"
+        - name: after_sequence
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+          description: Resume cursor; only events with a greater sequence are sent. Combined with Last-Event-ID by taking the larger resolved cursor.
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema:
+            type: string
+            pattern: "^evt_[A-Za-z0-9]+$"
+            maxLength: 128
+          description: event_id of the last event the client processed (sent by EventSource on reconnect).
+        - name: snapshot
+          in: query
+          required: false
+          schema:
+            type: boolean
+          description: When true, send the events currently in the log (after the cursor) and close instead of waiting for new ones.
       responses:
         "200":
           description: SSE event stream opened.
@@ -1917,6 +1970,10 @@ paths:
             text/event-stream:
               schema:
                 type: string
+        "204":
+          description: The cursor is at or past the job's terminal event; nothing more will be sent. EventSource treats this as "do not reconnect".
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "404":
