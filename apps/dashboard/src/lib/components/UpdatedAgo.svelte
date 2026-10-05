@@ -1,16 +1,13 @@
 <script lang="ts">
+  import { pollWhileVisible } from '$lib/poll';
   let { at }: { at: Date | null } = $props();
   let now = $state(Date.now());
-  let timer: ReturnType<typeof setInterval> | undefined;
 
   $effect(() => {
     if (at === null) return;
     now = Date.now();
-    const tick = () => {
-      if (!document.hidden) now = Date.now();
-    };
-    timer = setInterval(tick, 10_000);
-    return () => clearInterval(timer);
+    // Visibility-aware: no timer while hidden, refresh on becoming visible.
+    return pollWhileVisible(() => { now = Date.now(); }, 10_000, { immediate: false });
   });
 
   const label = $derived.by(() => {

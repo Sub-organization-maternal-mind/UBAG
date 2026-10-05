@@ -39,10 +39,11 @@
     }
     const res = await api.get<JobsResponse>('/v1/jobs?limit=100');
     if (!silent) loading = false;
-    if (res.denied) { denied = true; return; }
-    if (res.error) { error = res.error; return; }
+    if (res.denied) { denied = true; return res; }
+    if (res.error) { error = res.error; return res; }
     allJobs = normalizeJobs(res.data?.jobs);
     lastUpdated = new Date();
+    return res;
   }
 
   // Requeue retries the failed job itself (POST /v1/jobs/{id}/retry) instead
@@ -82,7 +83,7 @@
 
   onMount(() => {
     load();
-    const stopPolling = pollWhileVisible(() => load(true), 45_000);
+    const stopPolling = pollWhileVisible(() => load(true), 45_000, { immediate: false });
     return stopPolling;
   });
 </script>
