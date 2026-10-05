@@ -81,6 +81,31 @@ def run_checked(*args: str) -> None:
               f"{(result.stderr or result.stdout or '').strip()}", file=sys.stderr)
 
 
+_fifo_writer_fd = None
+
+def hold_fifo_writer() -> None:
+    """Keep one write end of the mic FIFO open for the process lifetime.
+
+    module-pipe-source needs a writer to initialize and to avoid EOF on the
+    reader side; a held fd also makes the setup order-independent (the
+    module can load before or after the first session opens). Non-blocking
+    open fails with ENXIO until a reader exists, hence the retry.
+    """
+    global _fifo_writer_fd
+    if _fifo_writer_fd is not None:
+        return
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
+        try:
+            _fifo_writer_fd = os.open(MIC_PIPE, os.O_WRONLY | os.O_NONBLOCK)
+            print("audio-relay: holding mic FIFO writer open", file=sys.stderr)
+            return
+        except OSError:
+            time.sleep(0.5)
+    print("audio-relay: no reader on the mic FIFO yet; sessions will open it "
+          "themselves", file=sys.stderr)
+
+
 def wait_for_pulse(timeout_s: float = 15.0) -> bool:
     """Poll until the PulseAudio server answers so device setup never races
     daemon startup (observed: a sink could load while a later module call
@@ -122,15 +147,32 @@ def ensure_audio_devices() -> None:
                     "sink_properties=device.description=UBAG_Provider_Voice")
     if MIC_SOURCE not in sources:
         # module-pipe-source exposes a FIFO as a capture device; the relay's
-        # mic pump writes decoded client PCM into that FIFO.
+        # mic pump writes decoded client PCM into that FIFO. The module's
+        # init fails when no writer holds the FIFO open, so hold a non-
+        # blocking write end FIRST (retrying until the reader exists) and
+        # only then load the module.
         try:
             if not os.path.exists(MIC_PIPE):
                 os.mkfifo(MIC_PIPE, 0o600)
         except OSError as exc:
             print(f"audio-relay: mkfifo {MIC_PIPE} failed: {exc}", file=sys.stderr)
-        run_checked("pactl", "load-module", "module-pipe-source",
-                    f"source_name={MIC_SOURCE}", f"file={MIC_PIPE}",
-                    "format=s16le", f"rate={SAMPLE_RATE}", f"channels={CHANNELS}")
+        hold_fifo_writer()
+        loaded = False
+        for attempt in range(3):
+            result = subprocess.run(
+                ["pactl", "load-module", "module-pipe-source",
+                 f"source_name={MIC_SOURCE}", f"file={MIC_PIPE}",
+                 "format=s16le", f"rate={SAMPLE_RATE}", f"channels={CHANNELS}"],
+                capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                loaded = True
+                break
+            print(f"audio-relay: module-pipe-source attempt {attempt + 1} failed: "
+                  f"{(result.stderr or result.stdout or '').strip()}", file=sys.stderr)
+            time.sleep(2)
+        if not loaded:
+            print("audio-relay: virtual microphone NOT available; sessions will "
+                  "have no mic direction", file=sys.stderr)
     run_checked("pactl", "set-default-source", MIC_SOURCE)
     run_checked("pactl", "set-default-sink", SPEAKER_SINK)
 

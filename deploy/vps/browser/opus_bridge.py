@@ -43,8 +43,6 @@ def _load_libopus() -> ctypes.CDLL:
         ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int32,
         ctypes.c_int16, ctypes.c_int32, ctypes.c_int,
     ]
-    lib.opus_decoder_get_last_packet_duration.restype = ctypes.c_int
-    lib.opus_decoder_get_last_packet_duration.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int32)]
     lib.opus_encoder_create.restype = ctypes.c_void_p
     lib.opus_encoder_create.argtypes = [ctypes.c_int32, ctypes.c_int32, ctypes.c_int32, ctypes.POINTER(ctypes.c_int)]
     lib.opus_encode.restype = ctypes.c_int
