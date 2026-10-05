@@ -15,6 +15,8 @@ type PostgresStore struct {
 	db           *sql.DB
 	now          func() time.Time
 	waitInterval time.Duration
+	wake         *eventHub     // nil = legacy fixed-interval poll (UBAG_EVENT_NOTIFY=off)
+	wakeFallback time.Duration // fallback poll cadence while wake != nil
 }
 
 func NewPostgresStore(db *sql.DB) *PostgresStore {
@@ -23,6 +25,17 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 		now:          time.Now,
 		waitInterval: defaultWaitEventsInterval,
 	}
+}
+
+// EnableEventNotify turns on the in-process per-job wake hub: WaitEvents then
+// re-reads on a commit notification and otherwise only every fallback. The hub
+// only sees this process's writes, so the fallback also covers other gateways
+// sharing the database. Call once at startup, before the store serves requests.
+func (p *PostgresStore) EnableEventNotify(fallback time.Duration) {
+	if fallback <= 0 {
+		fallback = DefaultEventFallbackInterval
+	}
+	p.wake, p.wakeFallback = newEventHub(), fallback
 }
 
 func (p *PostgresStore) Create(ctx context.Context, request CreateRequest) (Job, error) {
@@ -124,6 +137,7 @@ INSERT INTO gateway_jobs (
 	if err := tx.Commit(); err != nil {
 		return Job{}, err
 	}
+	p.wake.notify(job.ID)
 	return job, nil
 }
 
@@ -194,6 +208,7 @@ func (p *PostgresStore) TransitionStatus(ctx context.Context, id string, from St
 	if err := tx.Commit(); err != nil {
 		return Job{}, false, err
 	}
+	p.wake.notify(job.ID)
 	return job, true, nil
 }
 
@@ -331,19 +346,9 @@ func (p *PostgresStore) WaitEvents(ctx context.Context, jobID string, afterSeque
 	if interval <= 0 {
 		interval = defaultWaitEventsInterval
 	}
-	for {
-		events, found, err := p.listEvents(ctx, jobID, afterSequence, limit)
-		if err != nil || !found || len(events) > 0 {
-			return events, found, err
-		}
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, true, ctx.Err()
-		case <-timer.C:
-		}
-	}
+	return waitEventsLoop(ctx, p.wake, p.wakeFallback, interval, jobID, func() ([]Event, bool, error) {
+		return p.listEvents(ctx, jobID, afterSequence, limit)
+	})
 }
 
 func (p *PostgresStore) UpdateStatus(ctx context.Context, id string, status Status) (Job, bool, error) {
@@ -395,6 +400,7 @@ func (p *PostgresStore) UpdateStatus(ctx context.Context, id string, status Stat
 	if err := tx.Commit(); err != nil {
 		return Job{}, false, err
 	}
+	p.wake.notify(job.ID)
 	return job, true, nil
 }
 
@@ -501,6 +507,7 @@ RETURNING event_key`, job.ID, eventKey, p.now().UTC()).Scan(&insertedKey)
 	if err := tx.Commit(); err != nil {
 		return Job{}, false, err
 	}
+	p.wake.notify(job.ID)
 	return job, true, nil
 }
 
