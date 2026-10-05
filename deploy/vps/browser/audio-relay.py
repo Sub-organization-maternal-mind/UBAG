@@ -32,6 +32,7 @@ import struct
 import subprocess
 import sys
 import threading
+import time
 
 from opus_bridge import OpusDecoder, OpusEncoder, OpusError
 
@@ -71,8 +72,29 @@ def write_frame(sock: socket.socket, frame: bytes) -> None:
     sock.sendall(FRAME_HEADER.pack(len(frame)) + frame)
 
 
-def run_quiet(*args: str) -> None:
-    subprocess.run(list(args), capture_output=True, timeout=5)
+def run_checked(*args: str) -> None:
+    """Run a pactl command and FAIL VISIBLE on error (startup races and
+    unknown modules must surface in the log, not vanish)."""
+    result = subprocess.run(list(args), capture_output=True, text=True, timeout=5)
+    if result.returncode != 0:
+        print(f"audio-relay: {' '.join(args)} failed rc={result.returncode}: "
+              f"{(result.stderr or result.stdout or '').strip()}", file=sys.stderr)
+
+
+def wait_for_pulse(timeout_s: float = 15.0) -> bool:
+    """Poll until the PulseAudio server answers so device setup never races
+    daemon startup (observed: a sink could load while a later module call
+    still failed)."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            result = subprocess.run(["pactl", "info"], capture_output=True, timeout=3)
+            if result.returncode == 0:
+                return True
+        except (OSError, subprocess.SubprocessError):
+            pass
+        time.sleep(0.5)
+    return False
 
 
 def ensure_audio_devices() -> None:
@@ -83,6 +105,9 @@ def ensure_audio_devices() -> None:
     the DEFAULT SOURCE (getUserMedia picks it up without per-site device
     selection).
     """
+    if not wait_for_pulse():
+        print("audio-relay: PulseAudio did not answer; audio devices NOT configured", file=sys.stderr)
+        return
     try:
         sources = subprocess.run(["pactl", "list", "short", "sources"],
                                  capture_output=True, text=True, timeout=5).stdout
@@ -92,22 +117,22 @@ def ensure_audio_devices() -> None:
         print(f"audio-relay: pactl unavailable ({exc}); audio devices not configured", file=sys.stderr)
         return
     if SPEAKER_SINK not in sinks:
-        run_quiet("pactl", "load-module", "module-null-sink",
-                  f"sink_name={SPEAKER_SINK}",
-                  "sink_properties=device.description=UBAG_Provider_Voice")
+        run_checked("pactl", "load-module", "module-null-sink",
+                    f"sink_name={SPEAKER_SINK}",
+                    "sink_properties=device.description=UBAG_Provider_Voice")
     if MIC_SOURCE not in sources:
         # module-pipe-source exposes a FIFO as a capture device; the relay's
         # mic pump writes decoded client PCM into that FIFO.
         try:
             if not os.path.exists(MIC_PIPE):
                 os.mkfifo(MIC_PIPE, 0o600)
-        except OSError:
-            pass
-        run_quiet("pactl", "load-module", "module-pipe-source",
-                  f"source_name={MIC_SOURCE}", f"file={MIC_PIPE}",
-                  "format=s16le", f"rate={SAMPLE_RATE}", f"channels={CHANNELS}")
-    run_quiet("pactl", "set-default-source", MIC_SOURCE)
-    run_quiet("pactl", "set-default-sink", SPEAKER_SINK)
+        except OSError as exc:
+            print(f"audio-relay: mkfifo {MIC_PIPE} failed: {exc}", file=sys.stderr)
+        run_checked("pactl", "load-module", "module-pipe-source",
+                    f"source_name={MIC_SOURCE}", f"file={MIC_PIPE}",
+                    "format=s16le", f"rate={SAMPLE_RATE}", f"channels={CHANNELS}")
+    run_checked("pactl", "set-default-source", MIC_SOURCE)
+    run_checked("pactl", "set-default-sink", SPEAKER_SINK)
 
 
 def handle_session(conn: socket.socket) -> None:
@@ -119,12 +144,6 @@ def handle_session(conn: socket.socket) -> None:
         decoder = OpusDecoder(SAMPLE_RATE, CHANNELS)
         encoder = OpusEncoder(SAMPLE_RATE, CHANNELS)
 
-        mic_proc = subprocess.Popen(
-            ["pacat", "--raw", "--format=s16le", f"--rate={SAMPLE_RATE}",
-             f"--channels={CHANNELS}", f"--device={MIC_SOURCE}",
-             "--latency-msec=20", "--stream-name=ubag-voice-client"],
-            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        procs.append(mic_proc)
         monitor_proc = subprocess.Popen(
             ["parec", "--raw", "--format=s16le", f"--rate={SAMPLE_RATE}",
              f"--channels={CHANNELS}", f"--device={SPEAKER_MONITOR}",
@@ -135,17 +154,28 @@ def handle_session(conn: socket.socket) -> None:
         stop = threading.Event()
 
         def pump_mic() -> None:
-            """Gateway Opus frames → decoded PCM → virtual microphone."""
+            """Gateway Opus frames → decoded PCM → the module-pipe-source FIFO.
+
+            The FIFO IS the virtual microphone: module-pipe-source holds the
+            read end, so this write end opens once the source exists (and the
+            open blocks politely until then). No pacat here — pacat plays to
+            SINKS; the mic direction must feed the SOURCE device.
+            """
             try:
-                while not stop.is_set():
-                    frame = read_frame(conn)
-                    pcm = decoder.decode(frame, FRAME_SAMPLES)
-                    try:
-                        mic_proc.stdin.write(pcm)
-                        mic_proc.stdin.flush()
-                    except (BrokenPipeError, ValueError, OSError):
-                        return
-            except (ConnectionError, OSError, OpusError):
+                with open(MIC_PIPE, "wb", buffering=0) as mic_fifo:
+                    while not stop.is_set():
+                        frame = read_frame(conn)
+                        try:
+                            pcm = decoder.decode(frame, FRAME_SAMPLES)
+                        except OpusError as exc:
+                            print(f"audio-relay: mic frame decode failed: {exc}", file=sys.stderr)
+                            continue
+                        try:
+                            mic_fifo.write(pcm)
+                        except (BrokenPipeError, ValueError, OSError):
+                            return
+            except (ConnectionError, OSError) as exc:
+                print(f"audio-relay: mic pump ended: {exc}", file=sys.stderr)
                 stop.set()
 
         def pump_speaker() -> None:
@@ -173,6 +203,7 @@ def handle_session(conn: socket.socket) -> None:
         for thread in threads:
             thread.join()
     finally:
+        stop.set()
         for proc in procs:
             if proc.poll() is None:
                 proc.terminate()
