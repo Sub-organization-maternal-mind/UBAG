@@ -16,6 +16,7 @@ import {
   type UbagBrowserTopologySummary,
   type UbagCacheStatusResponse,
   type UbagCollectionResponse,
+  type UbagCreateVoiceSessionRequest,
   type UbagConcurrencyListResponse,
   type UbagConversationListResponse,
   type UbagCreateJobRequest,
@@ -45,7 +46,12 @@ import {
   type UbagSsoLogoutRequest,
   type UbagVersionResponse,
   type UbagWebhookReplayRequest,
-  type UbagWebhookReplayResponse
+  type UbagWebhookReplayResponse,
+  type UbagVoiceCapability,
+  type UbagVoiceControlResponse,
+  type UbagVoiceSession,
+  type UbagVoiceSessionConnectResponse,
+  type UbagVoiceSessionResponse
 } from "./types.js";
 
 export type UbagFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -246,6 +252,55 @@ export class UbagClient {
 
   async listTargets(params: UbagListEventsParams = {}, options: UbagRequestOptions = {}): Promise<UbagCollectionResponse> {
     return this.request("GET", `/v1/targets${buildListQuery(params)}`, options);
+  }
+
+  // ── Capabilities (media + voice discovery) ──────────────────────────────
+
+  async listCapabilities(options: UbagRequestOptions = {}): Promise<UbagCollectionResponse> {
+    return this.request("GET", "/v1/capabilities", options);
+  }
+
+  // ── Voice sessions ──────────────────────────────────────────────────────
+
+  async createVoiceSession(
+    request: UbagCreateVoiceSessionRequest,
+    options: UbagRequestOptions = {}
+  ): Promise<UbagVoiceSessionResponse> {
+    return this.request("POST", "/v1/voice/sessions", { ...options, body: request });
+  }
+
+  async listVoiceSessions(params: UbagListEventsParams & { target?: string } = {}, options: UbagRequestOptions = {}): Promise<UbagCollectionResponse> {
+    return this.request("GET", `/v1/voice/sessions${buildListQuery(params)}`, options);
+  }
+
+  async getVoiceSession(sessionId: string, options: UbagRequestOptions = {}): Promise<UbagVoiceSessionResponse> {
+    return this.request("GET", `/v1/voice/sessions/${encodeURIComponent(sessionId)}`, options);
+  }
+
+  async connectVoiceSession(
+    sessionId: string,
+    sdpOffer: string,
+    options: UbagRequestOptions = {}
+  ): Promise<UbagVoiceSessionConnectResponse> {
+    return this.request("POST", `/v1/voice/sessions/${encodeURIComponent(sessionId)}/connect`, {
+      ...options,
+      body: { sdp_offer: sdpOffer },
+    });
+  }
+
+  async muteVoiceSession(sessionId: string, muted: boolean, options: UbagRequestOptions = {}): Promise<UbagVoiceControlResponse> {
+    return this.request("POST", `/v1/voice/sessions/${encodeURIComponent(sessionId)}/mute`, {
+      ...options,
+      body: { muted },
+    });
+  }
+
+  async renewVoiceSessionLease(sessionId: string, options: UbagRequestOptions = {}): Promise<UbagVoiceControlResponse> {
+    return this.request("POST", `/v1/voice/sessions/${encodeURIComponent(sessionId)}/renew`, options);
+  }
+
+  async terminateVoiceSession(sessionId: string, options: UbagRequestOptions = {}): Promise<UbagVoiceSessionResponse> {
+    return this.request("POST", `/v1/voice/sessions/${encodeURIComponent(sessionId)}/terminate`, options);
   }
 
   async listAdapters(params: UbagListEventsParams = {}, options: UbagRequestOptions = {}): Promise<UbagCollectionResponse> {

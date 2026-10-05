@@ -235,6 +235,50 @@ func (client *Client) ListTargets(ctx context.Context, params ListParams, option
 	return client.request(ctx, http.MethodGet, "/v1/targets"+buildListQuery(params), nil, client.resolveOptions(options...))
 }
 
+// ListCapabilities returns per-target media and voice support
+// (GET /v1/capabilities).
+func (client *Client) ListCapabilities(ctx context.Context, options ...RequestOption) (JSON, error) {
+	return client.request(ctx, http.MethodGet, "/v1/capabilities", nil, client.resolveOptions(options...))
+}
+
+// CreateVoiceSession reserves a voice session (POST /v1/voice/sessions).
+// body: {target, identity_ref?, ttl_seconds?, mode?: "live"|"utterance"}.
+func (client *Client) CreateVoiceSession(ctx context.Context, body JSON, options ...RequestOption) (JSON, error) {
+	return client.request(ctx, http.MethodPost, "/v1/voice/sessions", body, client.resolveOptions(options...))
+}
+
+// ListVoiceSessions returns the tenant's voice sessions (GET /v1/voice/sessions).
+func (client *Client) ListVoiceSessions(ctx context.Context, params ListParams, options ...RequestOption) (JSON, error) {
+	return client.request(ctx, http.MethodGet, "/v1/voice/sessions"+buildListQuery(params), nil, client.resolveOptions(options...))
+}
+
+// GetVoiceSession reads one session's status (GET /v1/voice/sessions/{id}).
+func (client *Client) GetVoiceSession(ctx context.Context, sessionID string, options ...RequestOption) (JSON, error) {
+	return client.request(ctx, http.MethodGet, "/v1/voice/sessions/"+url.PathEscape(sessionID), nil, client.resolveOptions(options...))
+}
+
+// ConnectVoiceSession negotiates the WebRTC media connection
+// (POST /v1/voice/sessions/{id}/connect). body: {sdp_offer}.
+func (client *Client) ConnectVoiceSession(ctx context.Context, sessionID string, body JSON, options ...RequestOption) (JSON, error) {
+	return client.request(ctx, http.MethodPost, "/v1/voice/sessions/"+url.PathEscape(sessionID)+"/connect", body, client.resolveOptions(options...))
+}
+
+// MuteVoiceSession sets the session's mic direction (POST .../mute). body: {muted}.
+func (client *Client) MuteVoiceSession(ctx context.Context, sessionID string, muted bool, options ...RequestOption) (JSON, error) {
+	return client.request(ctx, http.MethodPost, "/v1/voice/sessions/"+url.PathEscape(sessionID)+"/mute", JSON{"muted": muted}, client.resolveOptions(options...))
+}
+
+// RenewVoiceSessionLease extends the lease window (POST .../renew).
+func (client *Client) RenewVoiceSessionLease(ctx context.Context, sessionID string, options ...RequestOption) (JSON, error) {
+	return client.request(ctx, http.MethodPost, "/v1/voice/sessions/"+url.PathEscape(sessionID)+"/renew", nil, client.resolveOptions(options...))
+}
+
+// TerminateVoiceSession terminates the session and releases its leases
+// (POST .../terminate).
+func (client *Client) TerminateVoiceSession(ctx context.Context, sessionID string, options ...RequestOption) (JSON, error) {
+	return client.request(ctx, http.MethodPost, "/v1/voice/sessions/"+url.PathEscape(sessionID)+"/terminate", nil, client.resolveOptions(options...))
+}
+
 func (client *Client) ListAdapters(ctx context.Context, params ListParams, options ...RequestOption) (JSON, error) {
 	return client.request(ctx, http.MethodGet, "/v1/adapters"+buildListQuery(params), nil, client.resolveOptions(options...))
 }

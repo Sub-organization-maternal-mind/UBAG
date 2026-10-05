@@ -23,6 +23,8 @@ export type {
   UbagAuditExportStats,
   UbagAuditRecord,
   UbagBrowserInstance,
+  UbagCapability,
+  UbagCreateVoiceSessionRequest,
   UbagBrowserInstanceListResponse,
   UbagBrowserTab,
   UbagBrowserTabListResponse,

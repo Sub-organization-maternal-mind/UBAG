@@ -606,3 +606,78 @@ export interface UbagErrorDetails {
 export interface UbagErrorEnvelope {
   error: UbagErrorDetails;
 }
+
+// ── Capabilities + voice sessions (multimodal release) ─────────────────────
+
+export interface UbagVoiceCapability {
+  live: boolean;
+  utterance_jobs: boolean;
+  live_entry_control?: string;
+  verified?: string;
+  available_accounts: number;
+}
+
+export interface UbagCapability {
+  target: string;
+  display_name: string;
+  kind: string;
+  safe_mode: boolean;
+  manual_login_required: boolean;
+  attachments: {
+    max_files: number;
+    max_file_bytes: number;
+    accepted: Array<{ kind: string; content_types: string[] }>;
+  };
+  inline_message_parts: {
+    image_url: string[];
+    input_audio: string[];
+    remote_urls: false;
+  };
+  voice: UbagVoiceCapability;
+}
+
+export interface UbagCreateVoiceSessionRequest {
+  target: string;
+  identity_ref?: string;
+  ttl_seconds?: number;
+  /** "live" (default) or "utterance" — utterance creates a transcription job and never holds live-voice leases. */
+  mode?: "live" | "utterance";
+}
+
+export interface UbagVoiceSession {
+  session_id: string;
+  tenant_id: string;
+  app_id: string;
+  target: string;
+  mode: string;
+  job_id?: string;
+  status: "queued" | "connecting" | "connected" | "terminated";
+  muted: boolean;
+  identity_ref?: string;
+  instance_ref?: string;
+  last_error?: string;
+  created_at: string;
+  updated_at: string;
+  lease_expires_at?: string;
+  terminated_at?: string;
+}
+
+export interface UbagVoiceSessionResponse {
+  kind: "voice_session";
+  session: UbagVoiceSession;
+}
+
+export interface UbagVoiceSessionConnectResponse {
+  kind: "voice_session_connection";
+  session_id: string;
+  status: string;
+  sdp_answer?: string;
+  media_credential?: string;
+  media_credential_expires_ms?: number;
+}
+
+export interface UbagVoiceControlResponse {
+  session_id: string;
+  kind: string;
+  [key: string]: unknown;
+}
