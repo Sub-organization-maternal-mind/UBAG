@@ -1,0 +1,38 @@
+{
+  "id": "gemini_web",
+  "captured_at": "2026-10-05T03:44:17.991Z",
+  "url": "https://gemini.google.com/app",
+  "title": "Google Gemini",
+  "composer": {
+    "tag": "div",
+    "aria_label": "Enter a prompt for Gemini",
+    "testid": null,
+    "title": null,
+    "text": "",
+    "visible": true,
+    "rect": {
+      "x": 514,
+      "y": 345,
+      "w": 433,
+      "h": 24
+    }
+  },
+  "composer_buttons": [],
+  "voiceish_controls": [
+    {
+      "tag": "button",
+      "aria_label": "Dictate (^⇧D)",
+      "testid": null,
+      "title": null,
+      "text": "",
+      "visible": true,
+      "rect": {
+        "x": 1066,
+        "y": 341,
+        "w": 32,
+        "h": 32
+      }
+    }
+  ],
+  "media_devices_probe": "skipped (requires permission gesture; read-only probe never triggers it)"
+}

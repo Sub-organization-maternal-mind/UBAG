@@ -1,0 +1,123 @@
+{
+  "id": "chatgpt_web",
+  "captured_at": "2026-10-05T03:43:50.934Z",
+  "url": "https://chatgpt.com/",
+  "title": "ChatGPT",
+  "composer": {
+    "tag": "div",
+    "aria_label": "Ask ChatGPT",
+    "testid": null,
+    "title": null,
+    "text": "",
+    "visible": true,
+    "rect": {
+      "x": 334,
+      "y": 436,
+      "w": 508,
+      "h": 26
+    }
+  },
+  "composer_buttons": [
+    {
+      "tag": "button",
+      "aria_label": "Add files and more",
+      "testid": null,
+      "title": null,
+      "text": "",
+      "visible": true,
+      "rect": {
+        "x": 290,
+        "y": 431,
+        "w": 36,
+        "h": 36
+      }
+    },
+    {
+      "tag": "button",
+      "aria_label": "Select ChatGPT model",
+      "testid": null,
+      "title": null,
+      "text": "Thinking effortMedium",
+      "visible": true,
+      "rect": {
+        "x": 850,
+        "y": 431,
+        "w": 112,
+        "h": 36
+      }
+    },
+    {
+      "tag": "button",
+      "aria_label": "Dictate",
+      "testid": null,
+      "title": null,
+      "text": "",
+      "visible": true,
+      "rect": {
+        "x": 962,
+        "y": 431,
+        "w": 36,
+        "h": 36
+      }
+    },
+    {
+      "tag": "button",
+      "aria_label": "Start Voice",
+      "testid": null,
+      "title": null,
+      "text": "",
+      "visible": true,
+      "rect": {
+        "x": 1006,
+        "y": 431,
+        "w": 36,
+        "h": 36
+      }
+    }
+  ],
+  "voiceish_controls": [
+    {
+      "tag": "button",
+      "aria_label": null,
+      "testid": null,
+      "title": null,
+      "text": "Speaking PRs #319/#320 diverged. Reconcile them safely.",
+      "visible": true,
+      "rect": {
+        "x": 282,
+        "y": 603,
+        "w": 768,
+        "h": 52
+      }
+    },
+    {
+      "tag": "button",
+      "aria_label": "Dictate",
+      "testid": null,
+      "title": null,
+      "text": "",
+      "visible": true,
+      "rect": {
+        "x": 962,
+        "y": 431,
+        "w": 36,
+        "h": 36
+      }
+    },
+    {
+      "tag": "button",
+      "aria_label": "Start Voice",
+      "testid": null,
+      "title": null,
+      "text": "",
+      "visible": true,
+      "rect": {
+        "x": 1006,
+        "y": 431,
+        "w": 36,
+        "h": 36
+      }
+    }
+  ],
+  "media_devices_probe": "skipped (requires permission gesture; read-only probe never triggers it)"
+}

@@ -19,6 +19,15 @@ type ManifestJobStatus struct {
 }
 
 var UbagEndpoints = map[string]ManifestEndpoint{
+	"GET /v1/capabilities": {Method: "GET", Path: "/v1/capabilities"},
+	"GET /v1/voice/sessions": {Method: "GET", Path: "/v1/voice/sessions"},
+	"POST /v1/voice/sessions": {Method: "POST", Path: "/v1/voice/sessions"},
+	"GET /v1/voice/sessions/{session_id}": {Method: "GET", Path: "/v1/voice/sessions/{session_id}"},
+	"DELETE /v1/voice/sessions/{session_id}": {Method: "DELETE", Path: "/v1/voice/sessions/{session_id}"},
+	"POST /v1/voice/sessions/{session_id}/connect": {Method: "POST", Path: "/v1/voice/sessions/{session_id}/connect"},
+	"POST /v1/voice/sessions/{session_id}/mute": {Method: "POST", Path: "/v1/voice/sessions/{session_id}/mute"},
+	"POST /v1/voice/sessions/{session_id}/renew": {Method: "POST", Path: "/v1/voice/sessions/{session_id}/renew"},
+	"POST /v1/voice/sessions/{session_id}/terminate": {Method: "POST", Path: "/v1/voice/sessions/{session_id}/terminate"},
 	"GET /v1/health": {Method: "GET", Path: "/v1/health"},
 	"GET /v1/ready": {Method: "GET", Path: "/v1/ready"},
 	"GET /v1/version": {Method: "GET", Path: "/v1/version"},
@@ -250,6 +259,13 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 	"UBAG-INTERNAL-DB-003": {Category: "internal", Retryable: true, RetryAfterMs: 0},
 	"UBAG-INTERNAL-QUEUE-004": {Category: "internal", Retryable: true, RetryAfterMs: 0},
 	"UBAG-INTERNAL-CRYPTO-005": {Category: "internal", Retryable: true, RetryAfterMs: 0},
+	"UBAG-VOICE-UNSUPPORTED-001": {Category: "voice", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VOICE-NOT-CONFIGURED-002": {Category: "voice", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VOICE-SESSION-LIMIT-003": {Category: "voice", Retryable: true, RetryAfterMs: 0},
+	"UBAG-VOICE-QUEUE-FULL-004": {Category: "voice", Retryable: true, RetryAfterMs: 0},
+	"UBAG-VOICE-SESSION-STATE-005": {Category: "voice", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VOICE-SESSION-NOT-FOUND-006": {Category: "voice", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VOICE-MEDIA-UNAVAILABLE-007": {Category: "voice", Retryable: true, RetryAfterMs: 0},
 }
 
 var UbagJobStatuses = map[string]ManifestJobStatus{

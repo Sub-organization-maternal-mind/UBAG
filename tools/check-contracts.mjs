@@ -152,7 +152,14 @@ const gatewayWildcardToOpenApiPaths = {
     '/v1/alerts/{alert_id}/acknowledge',
     '/v1/alerts/{alert_id}/resolve'
   ],
-  '/v1/sse/jobs/*': ['/v1/sse/jobs/{job_id}']
+  '/v1/sse/jobs/*': ['/v1/sse/jobs/{job_id}'],
+  '/v1/voice/sessions/*': [
+    '/v1/voice/sessions/{session_id}',
+    '/v1/voice/sessions/{session_id}/connect',
+    '/v1/voice/sessions/{session_id}/mute',
+    '/v1/voice/sessions/{session_id}/renew',
+    '/v1/voice/sessions/{session_id}/terminate'
+  ]
 };
 
 // The YAML key for a path may be quoted (e.g. "/v1/webhooks/secret:rotate" —

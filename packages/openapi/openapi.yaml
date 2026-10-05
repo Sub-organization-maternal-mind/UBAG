@@ -66,6 +66,337 @@ tags:
 security:
   - bearerAuth: []
 paths:
+  /v1/capabilities:
+    get:
+      tags: [Capabilities]
+      operationId: listCapabilities
+      summary: Discover per-target media and voice support.
+      description: >-
+        Publishes, per target, the attachment policy (same shape as
+        /v1/adapters), the OpenAI-facade inline message-part formats
+        intersected with that policy, live-voice support (from each adapter
+        manifest's voice block), and the number of available voice accounts
+        (topology contexts whose last worker-detected login state is
+        authenticated). Advertisement is not a login guarantee:
+        manual_login_required stays authoritative. Requires the job:read
+        action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "200":
+          description: Capability records returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/voice/sessions:
+    get:
+      tags: [Voice]
+      operationId: listVoiceSessions
+      summary: List this tenant's voice sessions.
+      description: >-
+        Returns voice sessions scoped to the authenticated tenant, newest
+        first. Requires the job:read action. 501 when voice sessions are
+        not configured on this gateway (UBAG_VOICE_STORE disabled).
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - $ref: "#/components/parameters/Limit"
+        - name: target
+          in: query
+          required: false
+          description: Filter by live target key.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Voice sessions returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    post:
+      tags: [Voice]
+      operationId: createVoiceSession
+      summary: Create (reserve) a voice session.
+      description: >-
+        Reserves a voice session for a live-voice target. Each active session
+        holds an EXCLUSIVE provider-account lease and an EXCLUSIVE
+        browser/audio-environment lease (shared, atomic reservations - one
+        live session per tenant+target+identity and per tenant browser
+        instance). When no account+environment combination is free the
+        session is created QUEUED (202) with no leases held; promote it via
+        the connect action. Requires the job:create action; tenant and app
+        scope come from the authenticated principal. Budgets: active
+        sessions and the queued backlog are capped per tenant with explicit
+        429 overload responses carrying retry guidance.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceSessionCreateRequest"
+      responses:
+        "201":
+          description: Session created with leases claimed (connecting).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceSessionResponse"
+        "202":
+          description: Session created QUEUED (no leases held).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceSessionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          description: Voice-session budget reached (UBAG-VOICE-SESSION-LIMIT-003 or UBAG-VOICE-QUEUE-FULL-004).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/voice/sessions/{session_id}:
+    get:
+      tags: [Voice]
+      operationId: getVoiceSession
+      summary: Read one voice session's status.
+      description: >-
+        Tenant-scoped: a session from another tenant is indistinguishable
+        from a nonexistent one (404). Requires the job:read action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Voice session returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceSessionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    delete:
+      tags: [Voice]
+      operationId: terminateVoiceSession
+      summary: Terminate a voice session and release its leases.
+      description: >-
+        Idempotent termination: releases the provider-account and
+        browser-environment leases immediately and drops the media path (no
+        wait for ICE). Requires the job:create action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session terminated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceSessionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/voice/sessions/{session_id}/connect:
+    post:
+      tags: [Voice]
+      operationId: connectVoiceSession
+      summary: Negotiate the WebRTC media connection.
+      description: >-
+        Claims leases first when the session is queued (409 with retry
+        guidance when nothing is free), hands the SDP offer to the gateway's
+        media plane, and returns the answer with every ICE candidate
+        embedded (HTTP-only signaling) plus a short-lived session-scoped
+        media credential. Requires the job:create action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VoiceSessionConnectRequest"
+      responses:
+        "200":
+          description: Answer and media credential returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceSessionConnectResponse"
+        "409":
+          description: Session cannot connect (state or no free leases).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+        "503":
+          description: Media plane cannot accept the connection (UBAG-VOICE-MEDIA-UNAVAILABLE-007).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/voice/sessions/{session_id}/mute:
+    post:
+      tags: [Voice]
+      operationId: muteVoiceSession
+      summary: Mute or unmute the session's microphone.
+      description: >-
+        Control channel for the session's mic direction; the provider still
+        speaks while muted. Requires the job:create action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [muted]
+              properties:
+                muted:
+                  type: boolean
+      responses:
+        "200":
+          description: Mute state applied.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/voice/sessions/{session_id}/renew:
+    post:
+      tags: [Voice]
+      operationId: renewVoiceSessionLease
+      summary: Renew the session lease (client heartbeat).
+      description: >-
+        Extends the lease window so the sweeper does not reap a live
+        session. A client that stops heart-beating without terminating
+        cannot pin a provider account longer than the TTL. Requires the
+        job:create action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Lease renewed.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/voice/sessions/{session_id}/terminate:
+    post:
+      tags: [Voice]
+      operationId: terminateVoiceSessionPost
+      summary: Terminate a voice session (POST form of DELETE).
+      description: >-
+        Idempotent termination identical to DELETE the session for clients
+        that cannot issue DELETE. Requires the job:create action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Session terminated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceSessionResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+
   /v1/health:
     get:
       tags: [System]
@@ -3733,6 +4064,65 @@ components:
       $ref: ../shared-schemas/schemas/error.schema.json
     JobEvent:
       $ref: ../shared-schemas/schemas/job-event.schema.json
+    VoiceSessionCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [target]
+      properties:
+        target:
+          type: string
+          minLength: 1
+          maxLength: 64
+        identity_ref:
+          description: Preferred provider account (topology identity ref). The claim stays tenant-scoped.
+          type: string
+          maxLength: 256
+        ttl_seconds:
+          description: Lease window between renewals (30..3600).
+          type: integer
+          minimum: 30
+          maximum: 3600
+    VoiceSessionResponse:
+      type: object
+      additionalProperties: false
+      required: [kind, session]
+      properties:
+        kind:
+          type: string
+          enum: [voice_session]
+        session:
+          type: object
+          additionalProperties: true
+    VoiceSessionConnectRequest:
+      type: object
+      additionalProperties: false
+      required: [sdp_offer]
+      properties:
+        sdp_offer:
+          type: string
+          minLength: 1
+          maxLength: 131072
+    VoiceSessionConnectResponse:
+      type: object
+      additionalProperties: false
+      required: [kind, session_id, status]
+      properties:
+        kind:
+          type: string
+          enum: [voice_session_connection]
+        session_id:
+          type: string
+          minLength: 1
+        status:
+          type: string
+        sdp_answer:
+          type: string
+        media_credential:
+          description: Short-lived HMAC credential scoped to this session's media path.
+          type: string
+        media_credential_expires_ms:
+          type: integer
+          format: int64
     CollectionResponse:
       type: object
       additionalProperties: false
@@ -3753,6 +4143,8 @@ components:
             - devices
             - webhooks
             - audit
+            - capabilities
+            - voice_sessions
         data:
           type: array
           items:
