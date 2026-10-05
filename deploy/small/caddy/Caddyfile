@@ -1,0 +1,55 @@
+# UBAG small profile - authenticated HTTPS edge (compose profile "tls").
+#
+# Stock caddy:2 image, configured only through env (see docker-compose.small.yml):
+#   UBAG_PUBLIC_DOMAIN          site address; automatic HTTPS (Let's Encrypt/ZeroSSL)
+#                               needs public DNS -> this host and 80/443 reachable.
+#   UBAG_FACADE_MAX_BODY_BYTES  request-body ceiling (default 50331648 = 48 MiB,
+#                               the gateway's facade limit).
+#
+# Authentication is the gateway's own: clients send `Authorization: Bearer <token>`
+# and the gateway validates it. This edge never injects, rewrites or stores a
+# token. Only /v1/* and /healthz are routed - noVNC, CDP, the audio relay, the
+# dashboard and the backing services are unreachable through here by design.
+# The Host header is passed through untouched, which the gateway's same-origin
+# check on /v1/voice/* relies on (add browser origins via UBAG_ALLOWED_ORIGINS).
+{
+	# No admin API listener at all.
+	admin off
+}
+
+{$UBAG_PUBLIC_DOMAIN} {
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "DENY"
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
+		-Server
+	}
+
+	request_body {
+		max_size {$UBAG_FACADE_MAX_BODY_BYTES:50331648}
+	}
+
+	# Edge liveness (the gateway itself has no /healthz).
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	# Operational endpoints stay internal.
+	@internal path /v1/metrics* /v1/ready*
+	handle @internal {
+		respond "not found" 404
+	}
+
+	handle /v1/* {
+		# flush_interval -1: stream SSE / long-poll responses immediately.
+		reverse_proxy gateway:8080 {
+			flush_interval -1
+		}
+	}
+
+	handle {
+		respond "not found" 404
+	}
+}

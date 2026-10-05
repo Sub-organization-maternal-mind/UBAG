@@ -178,7 +178,7 @@ function Invoke-SmallCompose {
   }
 }
 
-$AllowedProfiles = @("observability", "queue", "smoke", "migrate")
+$AllowedProfiles = @("observability", "queue", "smoke", "migrate", "live-browser", "tls", "turn")
 $ResolvedProfiles = @()
 foreach ($profileValue in $Profile) {
   foreach ($profileName in ($profileValue -split ",")) {

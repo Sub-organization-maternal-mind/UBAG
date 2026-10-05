@@ -1,0 +1,23 @@
+# Opt-in overlay: publish the gateway's WebRTC media UDP range.
+#
+#   docker compose --env-file deploy/small/env.local \
+#     -f docker-compose.small.yml -f deploy/small/compose.voice-media.yml up -d
+#
+# The base file never publishes media ports. Keep the range SMALL (one UDP port
+# per concurrent session plus headroom; each published port costs a docker-proxy
+# process) and open exactly this range - UDP only - in the host firewall.
+# Set UBAG_VOICE_NAT_1TO1_IP to the address clients can reach (public IP, or the
+# LAN IP for a private deployment). Add --profile turn for the optional TURN relay.
+services:
+  gateway:
+    environment:
+      UBAG_VOICE_MEDIA_PORT_MIN: ${UBAG_VOICE_MEDIA_PORT_MIN:-50000}
+      UBAG_VOICE_MEDIA_PORT_MAX: ${UBAG_VOICE_MEDIA_PORT_MAX:-50039}
+    ports:
+      - "${UBAG_VOICE_MEDIA_BIND_HOST:-0.0.0.0}:${UBAG_VOICE_MEDIA_PORT_MIN:-50000}-${UBAG_VOICE_MEDIA_PORT_MAX:-50039}:${UBAG_VOICE_MEDIA_PORT_MIN:-50000}-${UBAG_VOICE_MEDIA_PORT_MAX:-50039}/udp"
+    # ubag-private is internal-only: Docker does not forward published ports for
+    # a container that is attached to nothing else, so also join the routable
+    # network (also gives the gateway egress for STUN/TURN).
+    networks:
+      - ubag-private
+      - ubag-public

@@ -91,6 +91,45 @@ services:
       UBAG_WEBHOOK_ALLOW_PRIVATE_HOSTS: ${UBAG_WEBHOOK_ALLOW_PRIVATE_HOSTS:-false}
       UBAG_WEBHOOK_ALLOWED_HOSTS: ${UBAG_WEBHOOK_ALLOWED_HOSTS:-}
       UBAG_WEBHOOK_ALLOW_ANY_PUBLIC_HOST: ${UBAG_WEBHOOK_ALLOW_ANY_PUBLIC_HOST:-false}
+      # Browser origins allowed on /v1/voice/* (comma list of exact origins,
+      # e.g. https://app.example.com). Empty = same-origin only; "*" is never
+      # honoured. Server-to-server clients send no Origin and are unaffected.
+      UBAG_ALLOWED_ORIGINS: ${UBAG_ALLOWED_ORIGINS:-}
+      # Overload / admission limits. Empty keeps the gateway's built-in defaults
+      # (0 = unlimited for the admission lanes).
+      UBAG_ADMISSION_MAX_INFLIGHT_PER_APP: ${UBAG_ADMISSION_MAX_INFLIGHT_PER_APP:-}
+      UBAG_ADMISSION_MAX_INFLIGHT_PER_TENANT: ${UBAG_ADMISSION_MAX_INFLIGHT_PER_TENANT:-}
+      UBAG_ADMISSION_MAX_INFLIGHT_GLOBAL: ${UBAG_ADMISSION_MAX_INFLIGHT_GLOBAL:-}
+      UBAG_GATEWAY_MAX_INFLIGHT_REQUESTS: ${UBAG_GATEWAY_MAX_INFLIGHT_REQUESTS:-}
+      UBAG_GATEWAY_UPLOAD_MEMORY_BYTES: ${UBAG_GATEWAY_UPLOAD_MEMORY_BYTES:-}
+      UBAG_FACADE_MAX_BODY_BYTES: ${UBAG_FACADE_MAX_BODY_BYTES:-}
+      # ── Voice (read by the GATEWAY and by the worker it spawns) ────────────
+      # The session store follows the gateway store by default so voice always
+      # shares the same durable store (postgres here) instead of a private
+      # in-memory copy. Voice stays inert until UBAG_VOICE_AUDIO_ENABLED=1 on
+      # the live-browser profile turns the browser's audio stack on.
+      UBAG_VOICE_STORE: ${UBAG_VOICE_STORE:-${UBAG_GATEWAY_STORE:-memory}}
+      UBAG_VOICE_AUDIO_RELAY_ADDR: ${UBAG_VOICE_AUDIO_RELAY_ADDR:-browser-viewer:9099}
+      UBAG_VOICE_MAX_SESSIONS_PER_TENANT: ${UBAG_VOICE_MAX_SESSIONS_PER_TENANT:-4}
+      UBAG_VOICE_MAX_QUEUED_PER_TENANT: ${UBAG_VOICE_MAX_QUEUED_PER_TENANT:-32}
+      UBAG_VOICE_SESSION_TTL_SECONDS: ${UBAG_VOICE_SESSION_TTL_SECONDS:-600}
+      UBAG_VOICE_PROVIDER_ACTIVATION: ${UBAG_VOICE_PROVIDER_ACTIVATION:-1}
+      # Shared secret authenticating media sessions to the browser audio relay
+      # (same value as on browser-viewer; the relay refuses every session when
+      # it is empty). Generate with: openssl rand -hex 32
+      UBAG_VOICE_RELAY_SECRET: ${UBAG_VOICE_RELAY_SECRET:-}
+      # The worker is embedded in this container, so its voice-job CDP host
+      # allowlist lives here. Voice jobs fail closed when it is empty.
+      UBAG_VOICE_CDP_ALLOWED_HOSTS: ${UBAG_VOICE_CDP_ALLOWED_HOSTS:-${UBAG_BROWSER_PRIVATE_IP:-172.31.0.5},browser-viewer}
+      # NAT traversal (all optional; see deploy/small/README.md "Remote/HTTPS +
+      # voice"). The media UDP range is only PUBLISHED by the opt-in overlay
+      # deploy/small/compose.voice-media.yml.
+      UBAG_VOICE_STUN_URLS: ${UBAG_VOICE_STUN_URLS:-}
+      UBAG_VOICE_TURN_URLS: ${UBAG_VOICE_TURN_URLS:-}
+      UBAG_VOICE_TURN_SECRET: ${UBAG_VOICE_TURN_SECRET:-}
+      UBAG_VOICE_NAT_1TO1_IP: ${UBAG_VOICE_NAT_1TO1_IP:-}
+      UBAG_VOICE_MEDIA_PORT_MIN: ${UBAG_VOICE_MEDIA_PORT_MIN:-}
+      UBAG_VOICE_MEDIA_PORT_MAX: ${UBAG_VOICE_MEDIA_PORT_MAX:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -138,6 +177,74 @@ services:
       retries: 3
       start_period: 5s
 
+  # Authenticated-HTTPS edge (opt-in: --profile tls). Stock caddy:2 image, no
+  # custom build: automatic HTTPS for UBAG_PUBLIC_DOMAIN, /v1/* proxied to the
+  # gateway, which authenticates the caller's own bearer token (Caddy never
+  # injects or stores a token). Only 80/443 are published. noVNC, CDP, the audio
+  # relay and the operator dashboard are NOT routed here. See deploy/small/caddy/Caddyfile.
+  caddy:
+    image: ${UBAG_CADDY_IMAGE:-caddy:2}
+    restart: unless-stopped
+    profiles: ["tls"]
+    mem_limit: 256m
+    depends_on:
+      gateway:
+        condition: service_healthy
+    environment:
+      UBAG_PUBLIC_DOMAIN: ${UBAG_PUBLIC_DOMAIN:-}
+      UBAG_FACADE_MAX_BODY_BYTES: ${UBAG_FACADE_MAX_BODY_BYTES:-50331648}
+    ports:
+      - "${UBAG_TLS_BIND_HOST:-0.0.0.0}:${UBAG_TLS_HTTP_PORT:-80}:80"
+      - "${UBAG_TLS_BIND_HOST:-0.0.0.0}:${UBAG_TLS_HTTPS_PORT:-443}:443"
+    volumes:
+      - "./deploy/small/caddy/Caddyfile:/etc/caddy/Caddyfile:ro"
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - ubag-public
+      - ubag-private
+
+  # Optional TURN relay for voice clients behind restrictive NAT (opt-in:
+  # --profile turn). Time-limited credentials only (use-auth-secret): the
+  # gateway derives them from UBAG_VOICE_TURN_SECRET, which must be the same
+  # value here. Static options live in deploy/small/coturn/turnserver.conf; the
+  # secret, realm and addresses come from env (never written to a file). The
+  # relay port range is bounded and published; peers inside private ranges are
+  # denied except the gateway media address. Requires UBAG_VOICE_NAT_1TO1_IP.
+  coturn:
+    image: ${UBAG_COTURN_IMAGE:-coturn/coturn:4.6.3}
+    restart: unless-stopped
+    profiles: ["turn"]
+    mem_limit: 256m
+    environment:
+      UBAG_VOICE_TURN_SECRET: ${UBAG_VOICE_TURN_SECRET:-}
+      UBAG_PUBLIC_DOMAIN: ${UBAG_PUBLIC_DOMAIN:-}
+      UBAG_VOICE_NAT_1TO1_IP: ${UBAG_VOICE_NAT_1TO1_IP:-}
+      UBAG_TURN_EXTERNAL_IP: ${UBAG_TURN_EXTERNAL_IP:-}
+      UBAG_TURN_RELAY_PORT_MIN: ${UBAG_TURN_RELAY_PORT_MIN:-49160}
+      UBAG_TURN_RELAY_PORT_MAX: ${UBAG_TURN_RELAY_PORT_MAX:-49199}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        : "$${UBAG_VOICE_TURN_SECRET:?set UBAG_VOICE_TURN_SECRET (same value as the gateway)}"
+        : "$${UBAG_PUBLIC_DOMAIN:?set UBAG_PUBLIC_DOMAIN (TURN realm)}"
+        : "$${UBAG_VOICE_NAT_1TO1_IP:?set UBAG_VOICE_NAT_1TO1_IP (the gateway media address)}"
+        exec turnserver -c /etc/coturn/turnserver.conf \
+          --static-auth-secret="$${UBAG_VOICE_TURN_SECRET}" \
+          --realm="$${UBAG_PUBLIC_DOMAIN}" \
+          --external-ip="$${UBAG_TURN_EXTERNAL_IP:-$${UBAG_VOICE_NAT_1TO1_IP}}" \
+          --allowed-peer-ip="$${UBAG_VOICE_NAT_1TO1_IP}" \
+          --min-port="$${UBAG_TURN_RELAY_PORT_MIN}" \
+          --max-port="$${UBAG_TURN_RELAY_PORT_MAX}"
+    ports:
+      - "${UBAG_TURN_BIND_HOST:-0.0.0.0}:${UBAG_TURN_PORT:-3478}:3478/udp"
+      - "${UBAG_TURN_BIND_HOST:-0.0.0.0}:${UBAG_TURN_PORT:-3478}:3478/tcp"
+      - "${UBAG_TURN_BIND_HOST:-0.0.0.0}:${UBAG_TURN_RELAY_PORT_MIN:-49160}-${UBAG_TURN_RELAY_PORT_MAX:-49199}:${UBAG_TURN_RELAY_PORT_MIN:-49160}-${UBAG_TURN_RELAY_PORT_MAX:-49199}/udp"
+    volumes:
+      - "./deploy/small/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro"
+    networks:
+      - ubag-public
+
   # Live-browser viewer: real persistent Chromium on a virtual display, streamed
   # to the operator over noVNC for ToS-safe MANUAL login (no credential capture,
   # no CAPTCHA bypass). The worker attaches to this Chromium over CDP so live
@@ -157,19 +264,15 @@ services:
       UBAG_BROWSER_GEOMETRY: ${UBAG_BROWSER_GEOMETRY:-1280x800x24}
       UBAG_BROWSER_PROFILE_DIR: ${UBAG_BROWSER_PROFILE_DIR:-/profiles/default}
       UBAG_BROWSER_CDP_PORT: ${UBAG_BROWSER_CDP_PORT:-9222}
-      # Voice sessions (see /v1/voice/sessions + /v1/capabilities). The relay
-      # address is the browser-viewer's internal-only audio-relay port.
-      UBAG_VOICE_STORE: ${UBAG_VOICE_STORE:-memory}
-      UBAG_VOICE_AUDIO_RELAY_ADDR: ${UBAG_VOICE_AUDIO_RELAY_ADDR:-browser-viewer:9099}
-      UBAG_VOICE_MAX_SESSIONS_PER_TENANT: ${UBAG_VOICE_MAX_SESSIONS_PER_TENANT:-4}
-      UBAG_VOICE_MAX_QUEUED_PER_TENANT: ${UBAG_VOICE_MAX_QUEUED_PER_TENANT:-32}
-      UBAG_VOICE_SESSION_TTL_SECONDS: ${UBAG_VOICE_SESSION_TTL_SECONDS:-600}
       UBAG_BROWSER_CDP_PROXY_PORT: ${UBAG_BROWSER_CDP_PROXY_PORT:-9223}
       UBAG_BROWSER_VNC_PORT: ${UBAG_BROWSER_VNC_PORT:-5900}
       UBAG_BROWSER_NOVNC_PORT: ${UBAG_BROWSER_NOVNC_PORT:-6080}
       UBAG_BROWSER_START_URL: ${UBAG_BROWSER_START_URL:-about:blank}
-      # Voice media plane (opt-in via env.local): same semantics as the VPS
-      # profile. Inert until UBAG_VOICE_AUDIO_ENABLED=1.
+      # Voice audio stack (opt-in via env.local): PulseAudio + the audio relay
+      # (port 9099, internal only, never published). The gateway-side voice
+      # settings live on the gateway service. Inert until
+      # UBAG_VOICE_AUDIO_ENABLED=1; the relay refuses all sessions without a
+      # UBAG_VOICE_RELAY_SECRET (same value as on the gateway).
       UBAG_VOICE_AUDIO_ENABLED: ${UBAG_VOICE_AUDIO_ENABLED:-0}
       UBAG_VOICE_RELAY_ADDR: ${UBAG_VOICE_RELAY_ADDR:-0.0.0.0:9099}
       UBAG_VOICE_RELAY_SECRET: ${UBAG_VOICE_RELAY_SECRET:-}
@@ -182,8 +285,13 @@ services:
     volumes:
       - browser_profiles:/profiles
     networks:
-      - ubag-public
-      - ubag-private
+      ubag-public:
+      ubag-private:
+        # Chrome's DevTools HTTP server rejects any Host header that is not an
+        # IP or localhost, so the CDP endpoint (and the instance RemoteEndpoint
+        # the voice relay resolver derives its host from) must be an IP, not a
+        # DNS name. Pinned inside the ubag-private ipam subnet below.
+        ipv4_address: ${UBAG_BROWSER_PRIVATE_IP:-172.31.0.5}
     # Health now reflects BOTH surfaces: the noVNC operator UI AND Chromium's CDP
     # endpoint (the proxy the worker attaches through). The old check probed only
     # noVNC, so a crashed/wedged Chromium stayed "healthy" and was never noticed.
@@ -214,7 +322,7 @@ services:
       UBAG_TOPOLOGY_INSTANCE_ID: ${UBAG_TOPOLOGY_INSTANCE_ID:-br_prod_browser_viewer}
       UBAG_TOPOLOGY_WORKER_ID: ${UBAG_TOPOLOGY_WORKER_ID:-browser-viewer}
       UBAG_BROWSER_PRIVATE_IP: ${UBAG_BROWSER_PRIVATE_IP:-172.31.0.5}
-      UBAG_REMOTE_BROWSER_ENDPOINT: ${UBAG_REMOTE_BROWSER_ENDPOINT:-http://172.31.0.5:9223}
+      UBAG_REMOTE_BROWSER_ENDPOINT: ${UBAG_REMOTE_BROWSER_ENDPOINT:-http://${UBAG_BROWSER_PRIVATE_IP:-172.31.0.5}:9223}
     volumes:
       - ./deploy/small/register-browser-topology.sh:/scripts/register-browser-topology.sh:ro
     entrypoint: ["/bin/sh", "/scripts/register-browser-topology.sh"]
@@ -239,7 +347,7 @@ services:
       UBAG_TOPOLOGY_INSTANCE_ID: ${UBAG_TOPOLOGY_INSTANCE_ID:-br_prod_browser_viewer}
       UBAG_TOPOLOGY_WORKER_ID: ${UBAG_TOPOLOGY_WORKER_ID:-browser-viewer}
       UBAG_BROWSER_PRIVATE_IP: ${UBAG_BROWSER_PRIVATE_IP:-172.31.0.5}
-      UBAG_REMOTE_BROWSER_ENDPOINT: ${UBAG_REMOTE_BROWSER_ENDPOINT:-http://172.31.0.5:9223}
+      UBAG_REMOTE_BROWSER_ENDPOINT: ${UBAG_REMOTE_BROWSER_ENDPOINT:-http://${UBAG_BROWSER_PRIVATE_IP:-172.31.0.5}:9223}
       UBAG_TOPOLOGY_SYNC_INTERVAL_SECONDS: ${UBAG_TOPOLOGY_SYNC_INTERVAL_SECONDS:-60}
     volumes:
       - ./deploy/small/register-browser-topology.sh:/scripts/register-browser-topology.sh:ro
@@ -283,6 +391,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-ubag}
       POSTGRES_USER: ${POSTGRES_USER:-ubag}
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/small/env.local}
+      UBAG_ALLOW_OPTIONAL_MIGRATIONS: ${UBAG_ALLOW_OPTIONAL_MIGRATIONS:-0}
     command:
       - sh
       - -ec
@@ -293,7 +402,14 @@ services:
         # instead of interleaving DDL. ON_ERROR_STOP=1 rolls the run back on
         # the first error instead of committing a half-applied schema.
         set --
+        # Every file is applied (0001-0021, including the voice + admission
+        # tables 0019-0021) except 0008, which needs pgvector + pg_partman and
+        # stays opt-in exactly like deploy/small/gateway-entrypoint.sh.
         for migration in /migrations/*.sql; do
+          if [ "$${migration##*/}" = "0008_blueprint_schema.sql" ] && [ "$${UBAG_ALLOW_OPTIONAL_MIGRATIONS}" != "1" ]; then
+            echo "Skipping optional $${migration} (set UBAG_ALLOW_OPTIONAL_MIGRATIONS=1 after installing pgvector + pg_partman)"
+            continue
+          fi
           echo "Staging $${migration}"
           set -- "$$@" -f "$${migration}"
         done
@@ -535,12 +651,24 @@ networks:
   ubag-public:
   ubag-private:
     internal: true
+    # Explicit subnet so browser-viewer can hold a static IP (see its
+    # ipv4_address). ip_range keeps Docker's dynamic allocation in the upper half
+    # so it can never hand the pinned address to another container. Pick any free
+    # range on your host (docker network ls / inspect) and keep all three
+    # UBAG_PRIVATE_SUBNET / UBAG_PRIVATE_IP_RANGE / UBAG_BROWSER_PRIVATE_IP
+    # consistent.
+    ipam:
+      config:
+        - subnet: ${UBAG_PRIVATE_SUBNET:-172.31.0.0/24}
+          ip_range: ${UBAG_PRIVATE_IP_RANGE:-172.31.0.128/25}
 
 volumes:
   postgres_data:
   minio_data:
   prometheus_data:
   grafana_data:
+  caddy_data:
+  caddy_config:
   nats_data:
   executor_spool:
   browser_profiles:

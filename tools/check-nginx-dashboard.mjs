@@ -34,6 +34,8 @@ const REQUIRED = [
   { label: 'metrics/ready blocked',   pattern: /metrics|ready/                   },
   { label: 'Basic Auth gate',        pattern: /auth_basic\s+"UBAG/              },
   { label: 'server-side Bearer inject', pattern: /Bearer \$\{UBAG_GATEWAY_SECRET\}/ },
+  { label: 'strict default body limit', pattern: /client_max_body_size\s+1m;/ },
+  { label: '/v1/ body limit aligned with 48 MiB facade', pattern: /client_max_body_size\s+48m;/ },
 ];
 
 let passed = true;

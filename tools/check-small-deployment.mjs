@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 const failures = [];
 
@@ -209,6 +209,149 @@ for (const compose of [
     failures.push(`${compose} must pass UBAG_ALLOW_OPTIONAL_MIGRATIONS to the gateway service`);
   }
 }
+
+if (failures.length > 0) {
+  console.error(failures.join('\n'));
+  process.exit(1);
+}
+
+// ── Portable remote/HTTPS + voice profile ───────────────────────────────────
+// The small profile must work on any host: no VPS-only networks/domains, no
+// published browser-control ports, voice env on the service that reads it.
+const smallCompose = read('docker-compose.small.yml');
+const voiceOverlay = read('deploy/small/compose.voice-media.yml');
+
+function serviceBlock(name) {
+  const lines = smallCompose.split('\n');
+  const start = lines.findIndex((line) => line === `  ${name}:`);
+  if (start === -1) return '';
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^ {2}[A-Za-z0-9_-]+:\s*$/.test(lines[i]) || /^\S/.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  return lines.slice(start, end).join('\n');
+}
+
+const gatewayBlock = serviceBlock('gateway');
+const viewerBlock = serviceBlock('browser-viewer');
+const caddyBlock = serviceBlock('caddy');
+const coturnBlock = serviceBlock('coturn');
+
+// 1. No published browser-control ports (CDP, CDP proxy, VNC, audio relay).
+const forbiddenPublished = new Set(['9222', '9223', '5900', '9099']);
+for (const [file, content] of [
+  ['docker-compose.small.yml', smallCompose],
+  ['deploy/small/compose.voice-media.yml', voiceOverlay]
+]) {
+  for (const line of content.split('\n')) {
+    const match = line.match(/^\s*-\s*"([^"]+)"\s*$/);
+    if (!match || !/^[^"]*:\d/.test(match[1])) continue;
+    const spec = match[1].replace(/\/(tcp|udp)$/, '');
+    const ports = spec.split(/[:-]/).filter((part) => /^\d+$/.test(part));
+    if (ports.some((port) => forbiddenPublished.has(port))) {
+      failures.push(`${file} publishes a browser-control port: ${line.trim()}`);
+    }
+  }
+}
+
+// 2. Voice settings live on the gateway (which reads them), not browser-viewer.
+for (const name of [
+  'UBAG_VOICE_STORE', 'UBAG_VOICE_AUDIO_RELAY_ADDR', 'UBAG_VOICE_MAX_SESSIONS_PER_TENANT',
+  'UBAG_VOICE_MAX_QUEUED_PER_TENANT', 'UBAG_VOICE_SESSION_TTL_SECONDS', 'UBAG_VOICE_PROVIDER_ACTIVATION',
+  'UBAG_VOICE_CDP_ALLOWED_HOSTS', 'UBAG_VOICE_STUN_URLS', 'UBAG_VOICE_TURN_URLS', 'UBAG_VOICE_TURN_SECRET',
+  'UBAG_VOICE_NAT_1TO1_IP', 'UBAG_VOICE_MEDIA_PORT_MIN', 'UBAG_VOICE_MEDIA_PORT_MAX', 'UBAG_ALLOWED_ORIGINS',
+  'UBAG_ADMISSION_MAX_INFLIGHT_PER_APP', 'UBAG_ADMISSION_MAX_INFLIGHT_PER_TENANT',
+  'UBAG_ADMISSION_MAX_INFLIGHT_GLOBAL', 'UBAG_GATEWAY_MAX_INFLIGHT_REQUESTS', 'UBAG_GATEWAY_UPLOAD_MEMORY_BYTES'
+]) {
+  if (!gatewayBlock.includes(`${name}:`)) failures.push(`gateway service must set ${name}`);
+  if (viewerBlock.includes(`${name}:`)) failures.push(`browser-viewer must not set ${name} (the gateway reads it)`);
+}
+if (!/UBAG_VOICE_STORE:\s*\$\{UBAG_VOICE_STORE:-\$\{UBAG_GATEWAY_STORE:-memory\}\}/.test(gatewayBlock)) {
+  failures.push('gateway UBAG_VOICE_STORE must default to UBAG_GATEWAY_STORE (shared store)');
+}
+for (const name of ['UBAG_VOICE_AUDIO_ENABLED', 'UBAG_VOICE_RELAY_ADDR']) {
+  if (!viewerBlock.includes(`${name}:`)) failures.push(`browser-viewer must set ${name}`);
+}
+for (const [label, block] of [['gateway', gatewayBlock], ['browser-viewer', viewerBlock]]) {
+  if (!block.includes('UBAG_VOICE_RELAY_SECRET:')) failures.push(`${label} must receive UBAG_VOICE_RELAY_SECRET`);
+}
+
+// 3. The static browser IP is actually assigned (subnet + ipv4_address).
+if (!/ipv4_address:\s*\$\{UBAG_BROWSER_PRIVATE_IP/.test(viewerBlock)) {
+  failures.push('browser-viewer must pin ipv4_address to UBAG_BROWSER_PRIVATE_IP');
+}
+if (!/ipam:[\s\S]*subnet:\s*\$\{UBAG_PRIVATE_SUBNET/.test(smallCompose)) {
+  failures.push('ubag-private must declare an ipam subnet (UBAG_PRIVATE_SUBNET)');
+}
+if (/172\.28\.|nginx-proxy-manager|external:\s*true|\/opt\/platform|\/opt\/docker/.test(smallCompose)) {
+  failures.push('docker-compose.small.yml must not depend on VPS-only networks, paths, or external networks');
+}
+
+// 4. Optional edges: caddy (tls) and coturn (turn), stock images, bounded ports.
+if (
+  !/profiles:\s*\["tls"\]/.test(caddyBlock) ||
+  !/image:\s*\$\{UBAG_CADDY_IMAGE:-caddy:2\}/.test(caddyBlock) ||
+  /build:/.test(caddyBlock)
+) {
+  failures.push('caddy must be a stock caddy:2 service under profile "tls" (no build)');
+}
+if (
+  !/:80"/.test(caddyBlock) ||
+  !/:443"/.test(caddyBlock) ||
+  (caddyBlock.match(/^\s*-\s*"[^"]*:\d+"\s*$/gm) || []).length !== 2
+) {
+  failures.push('caddy must publish exactly 80 and 443');
+}
+if (!/profiles:\s*\["turn"\]/.test(coturnBlock) || !/coturn\/coturn/.test(coturnBlock)) {
+  failures.push('coturn must be a coturn/coturn service under profile "turn"');
+}
+requireTerms('deploy/small/caddy/Caddyfile', [
+  '{$UBAG_PUBLIC_DOMAIN}', 'Strict-Transport-Security', 'request_body', 'max_size',
+  'reverse_proxy gateway:8080', 'handle /healthz', '/v1/metrics*', 'admin off'
+]);
+if (/Authorization|header_up/i.test(read('deploy/small/caddy/Caddyfile').replace(/^\s*#.*$/gm, ''))) {
+  failures.push('deploy/small/caddy/Caddyfile must not inject or rewrite tokens');
+}
+requireTerms('deploy/small/coturn/turnserver.conf', [
+  'use-auth-secret', 'no-cli', 'fingerprint', 'denied-peer-ip=10.0.0.0-10.255.255.255',
+  'denied-peer-ip=172.16.0.0-172.31.255.255', 'denied-peer-ip=192.168.0.0-192.168.255.255'
+]);
+requireTerms('docker-compose.small.yml', [
+  '--static-auth-secret', '--allowed-peer-ip', '--min-port', '--max-port', '--realm'
+]);
+requireTerms('deploy/small/compose.voice-media.yml', [
+  'UBAG_VOICE_MEDIA_PORT_MIN', 'UBAG_VOICE_MEDIA_PORT_MAX', '/udp"', 'gateway:'
+]);
+
+// 5. Migrations 0019-0021 (voice + admission) reach Postgres: the gateway
+// entrypoint and the migrate profile both apply the whole directory.
+for (const prefix of ['0019_voice_sessions', '0020_voice_instance_global', '0021_admission_tokens']) {
+  if (!existsSync(`migrations/postgres/${prefix}.sql`)) failures.push(`migrations/postgres/${prefix}.sql missing`);
+}
+if (!entrypoint.includes('/app/migrations/postgres/*.sql')) {
+  failures.push('gateway-entrypoint.sh must apply every migrations/postgres/*.sql');
+}
+if (!read('deploy/small/gateway.Dockerfile').includes('COPY migrations/postgres /app/migrations/postgres')) {
+  failures.push('gateway.Dockerfile must copy the full migrations/postgres directory');
+}
+if (!serviceBlock('postgres-migrate').includes('/migrations/*.sql')) {
+  failures.push('postgres-migrate must apply every migration (0001-0021)');
+}
+
+requireTerms('deploy/small/env.example', [
+  'UBAG_VOICE_RELAY_SECRET=', 'openssl rand -hex 32', 'UBAG_ALLOWED_ORIGINS=', 'UBAG_VOICE_NAT_1TO1_IP=',
+  'UBAG_VOICE_TURN_SECRET=', 'UBAG_PRIVATE_SUBNET=', 'UBAG_ADMISSION_MAX_INFLIGHT_GLOBAL='
+]);
+requireTerms('deploy/small/README.md', [
+  'Remote/HTTPS + voice', '--profile tls', '--profile turn', 'compose.voice-media.yml',
+  '0019_voice_sessions.sql', 'Private-network mode'
+]);
+requireTerms('deploy/small/nginx-dashboard/default.conf.template', [
+  'client_max_body_size 1m;', 'client_max_body_size 48m;'
+]);
 
 if (failures.length > 0) {
   console.error(failures.join('\n'));

@@ -37,6 +37,9 @@ before enabling it in shared small-profile environments.
 - `docker-compose.small.yml`: root Compose file for the small stack.
 - `deploy/small/env.example`: placeholder environment template with no secrets.
 - `deploy/small/small.ps1`: PowerShell helper for config, up, down, logs, and smoke checks.
+- `deploy/small/caddy/Caddyfile`: HTTPS edge for the `tls` profile.
+- `deploy/small/coturn/turnserver.conf`: static coturn options for the `turn` profile.
+- `deploy/small/compose.voice-media.yml`: opt-in overlay publishing the gateway media UDP range.
 - `deploy/small/nginx-dashboard/default.conf.template`: local nginx ingress for `/dashboard/*`, `/v1/*`, and `/novnc/*`.
 - `deploy/small/prometheus/prometheus.yml`: Prometheus and gateway `/v1/metrics` scrape config.
 - `deploy/small/grafana/provisioning`: Grafana datasource provisioning.
@@ -110,6 +113,13 @@ explicitly before enabling `UBAG_ARTIFACT_STORE=minio` with Postgres metadata,
 and the third migration before enabling `UBAG_WEBHOOK_OUTBOX=postgres` or the
 webhook worker. The `migrate` action runs the same migration files against the
 current Postgres service with `ON_ERROR_STOP=1`.
+
+Fresh volumes only auto-load `0001`-`0003`. Everything else, including the voice
+and admission tables (`0019_voice_sessions.sql`, `0020_voice_instance_global.sql`,
+`0021_admission_tokens.sql`), is applied by the gateway entrypoint on every start
+whenever `UBAG_POSTGRES_DSN` is set (idempotent, one transaction, advisory lock),
+and by the `migrate` action. `0008_blueprint_schema.sql` (needs pgvector +
+pg_partman) is skipped by both unless `UBAG_ALLOW_OPTIONAL_MIGRATIONS=1`.
 
 Enable NATS dispatch:
 
@@ -197,17 +207,9 @@ firewall review explicitly approves public backing-service ports. For public
 deployments, bind only the edge ingress externally and keep backing services
 private.
 
-For public-domain TLS, terminate HTTPS at an external reverse proxy or replace
-the edge service with the standard Caddy profile after the public-domain Caddy
-configuration is wired for the target host. Keep backing service ports on
-loopback and bind only the edge ingress externally:
-
-```powershell
-# in deploy\small\env.local
-UBAG_EDGE_BIND_HOST=0.0.0.0
-UBAG_NGINX_HTTP_PORT=80
-UBAG_PUBLIC_DOMAIN=ubag.example.com
-```
+For public-domain TLS use the built-in `tls` profile (stock `caddy:2`, see
+"Remote/HTTPS + voice" below) or terminate HTTPS at an external reverse proxy.
+Keep backing service ports on loopback and publish only the edge externally.
 
 Start the optional NATS JetStream service:
 
@@ -227,7 +229,8 @@ machine only attaches to the already-logged-in profile over CDP to run jobs.
 ```powershell
 # in deploy\small\env.local
 UBAG_BROWSER_VNC_PASSWORD=choose-a-strong-vnc-password
-UBAG_REMOTE_BROWSER_ENDPOINT=http://browser-viewer:9222
+UBAG_REMOTE_BROWSER_ENDPOINT=http://172.31.0.5:9223
+UBAG_BROWSER_PRIVATE_IP=172.31.0.5
 UBAG_NOVNC_BASE_URL=http://127.0.0.1:7900
 UBAG_TOPOLOGY_SYNC_INTERVAL_SECONDS=60
 ```
@@ -241,8 +244,13 @@ Security posture:
 - noVNC is published to loopback only (`UBAG_NOVNC_PORT`, default `7900`) and is
   password-gated by `UBAG_BROWSER_VNC_PASSWORD`. Reach it over an SSH tunnel or
   through the edge route `/novnc/` (the dashboard's **Take control** button).
-- Chromium DevTools/CDP (`9222`) stays on the internal `ubag-private` network and
-  is never published to a host port.
+- Chromium DevTools/CDP (`9222`, proxied on `9223`) stays on the internal
+  `ubag-private` network and is never published to a host port. The CDP endpoint
+  is an IP because Chrome rejects non-IP `Host` headers: browser-viewer is pinned
+  to `UBAG_BROWSER_PRIVATE_IP` inside `UBAG_PRIVATE_SUBNET` (default
+  `172.31.0.0/24`; change all of `UBAG_PRIVATE_SUBNET`, `UBAG_PRIVATE_IP_RANGE`,
+  `UBAG_BROWSER_PRIVATE_IP`, `UBAG_REMOTE_BROWSER_ENDPOINT` together if that range
+  clashes with another Docker network on the host).
 - The browser profile persists on the `browser_profiles` volume so manual logins
   survive restarts. Place that volume on an encrypted disk for shared hosts.
 - The gateway only forwards `novnc_url` values that are loopback URLs, so keep
@@ -250,6 +258,69 @@ Security posture:
 - `browser-topology-sync` reruns the idempotent browser topology registration on
   an interval, so the Browser Sessions page repopulates after gateway, database,
   or browser-viewer restarts without a manual registration command.
+
+### Remote/HTTPS + voice
+
+The stack has no dependency on any host-specific domain, network, or shared
+service. Pick one access mode:
+
+**1. Private-network mode (default, no TLS).** Nothing but loopback ports are
+published. A client container on the same Docker network calls
+`http://gateway:8080/v1/...` with `Authorization: Bearer <token>`. Attach an
+existing container with `docker network connect ubag-small_ubag-private <name>`
+(the network is `internal`, so give your app a second network for internet
+egress), or declare `ubag-small_ubag-private` as an `external` network in the
+client's own Compose file.
+
+**2. Authenticated HTTPS (`tls` profile).** Set `UBAG_PUBLIC_DOMAIN` to a name
+that resolves to this host (80/443 reachable for automatic certificates), then:
+
+```bash
+docker compose --env-file deploy/small/env.local -f docker-compose.small.yml --profile tls up -d --build
+```
+
+Caddy (`deploy/small/caddy/Caddyfile`, stock image) terminates TLS with HSTS and
+security headers, limits request bodies to `UBAG_FACADE_MAX_BODY_BYTES` (48 MiB),
+answers `/healthz`, hides `/v1/metrics` and `/v1/ready`, and proxies `/v1/*` to
+the gateway. The gateway still validates each caller's own bearer token; Caddy
+never injects one. noVNC, CDP, the audio relay and the dashboard are not routed
+through it. Browser clients on another origin must be listed in
+`UBAG_ALLOWED_ORIGINS` (exact origins, comma separated; empty = same-origin
+only) or `/v1/voice/*` answers 403; server-to-server clients are unaffected.
+
+**3. Voice media (WebRTC).** Signalling is plain `/v1/voice/*` over the modes
+above. Audio is UDP and is opt-in; the base file never publishes media ports:
+
+```bash
+# env.local: UBAG_VOICE_AUDIO_ENABLED=1, UBAG_VOICE_RELAY_SECRET=$(openssl rand -hex 32),
+# UBAG_VOICE_NAT_1TO1_IP=<address clients reach>, UBAG_VOICE_MEDIA_PORT_MIN/MAX
+docker compose --env-file deploy/small/env.local -f docker-compose.small.yml   -f deploy/small/compose.voice-media.yml --profile live-browser up -d --build
+```
+
+Add `--profile turn` for coturn when clients sit behind restrictive NAT (also set
+`UBAG_VOICE_TURN_URLS` such as `turn:ubag.example.com:3478?transport=udp`, and
+`UBAG_VOICE_TURN_SECRET`; the one variable feeds both the gateway, which mints
+time-limited credentials, and coturn, which verifies them). coturn denies relaying to
+private/loopback/link-local ranges (`deploy/small/coturn/turnserver.conf`) except
+`UBAG_VOICE_NAT_1TO1_IP` (`--allowed-peer-ip`), the gateway's media address; if
+that is a private LAN address it is allowed explicitly, and nothing else
+private is. This coturn has no TLS listener (`turn:` URLs only, no `turns:`).
+
+| Port | Proto | Published | When |
+| --- | --- | --- | --- |
+| 80, 443 (`UBAG_TLS_*`) | TCP | `UBAG_TLS_BIND_HOST` (default all) | `tls` profile |
+| 3478 (`UBAG_TURN_PORT`) | UDP+TCP | `UBAG_TURN_BIND_HOST` | `turn` profile |
+| `UBAG_TURN_RELAY_PORT_MIN-MAX` (49160-49199) | UDP | `UBAG_TURN_BIND_HOST` | `turn` profile |
+| `UBAG_VOICE_MEDIA_PORT_MIN-MAX` (50000-50039) | UDP | `UBAG_VOICE_MEDIA_BIND_HOST` | `compose.voice-media.yml` overlay |
+| gateway 8080, nginx 8083, noVNC 7900, Postgres, MinIO, Grafana, Prometheus, NATS | TCP | loopback only | base file |
+| CDP 9222/9223, VNC 5900, audio relay 9099 | TCP | **never** | internal network only |
+
+Security notes: the CDP endpoint grants full control of the logged-in browser,
+the relay carries live audio, and VNC is the operator display, so none of them is
+ever published or routed by an edge; keep `UBAG_VOICE_RELAY_SECRET` and
+`UBAG_VOICE_TURN_SECRET` random and private; open only the ports in the table that
+you enabled. The embedded worker's voice jobs attach only to hosts in
+`UBAG_VOICE_CDP_ALLOWED_HOSTS` (default: the browser-viewer IP and name).
 
 Run raw Compose commands without the helper:
 
