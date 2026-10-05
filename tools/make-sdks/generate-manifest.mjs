@@ -3,6 +3,7 @@
 // Run: node tools/make-sdks/generate-manifest.mjs [--check]
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -120,7 +121,7 @@ const outputs = [
   },
   {
     path: "packages/sdk-go/generated_contract_manifest.go",
-    text: renderGo(manifest),
+    text: formatGo(renderGo(manifest)),
   },
 ];
 
@@ -156,6 +157,14 @@ export const UBAG_JOB_EVENT_TYPES = ${JSON.stringify(m.jobEventTypes)} as const;
 export const UBAG_TERMINAL_JOB_STATUSES = ${JSON.stringify(m.jobEventTypes ? Object.entries(m.jobStatuses).filter(([, v]) => v.terminal).map(([k]) => k) : [])} as const;
 export const UBAG_SCHEMA_FINGERPRINTS = ${JSON.stringify(m.fingerprints, null, 2)} as const;
 `;
+}
+
+// The Go manifest must already be gofmt-clean (CI runs gofmt over every .go
+// file). Formatting happens here so regenerating never leaves a gofmt diff; if
+// gofmt is unavailable the raw text is kept.
+function formatGo(text) {
+  const result = spawnSync("gofmt", [], { input: text, encoding: "utf8" });
+  return result.status === 0 && result.stdout ? result.stdout : text;
 }
 
 function renderGo(m) {

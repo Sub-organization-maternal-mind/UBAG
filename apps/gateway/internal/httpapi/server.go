@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"database/sql"
 	"bufio"
 	"bytes"
 	"context"
@@ -9,6 +8,7 @@ import (
 	crypto_rsa "crypto/rsa"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -636,7 +636,7 @@ func NewServer(config Config) *Server {
 		mfaSvc:                    config.MFA,
 		jitAdmin:                  config.JITAdmin,
 
-		overload: newOverloadState(config),
+		overload:       newOverloadState(config),
 		allowedOrigins: config.AllowedOrigins,
 
 		metrics: &metricState{

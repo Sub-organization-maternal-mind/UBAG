@@ -32,8 +32,8 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/grpcapi"
 	"github.com/ubag/ubag/apps/gateway/internal/httpapi"
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
-	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	"github.com/ubag/ubag/apps/gateway/internal/jitadmin"
+	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/mfa"
 	"github.com/ubag/ubag/apps/gateway/internal/obs"
@@ -1735,9 +1735,9 @@ func resolveWorkerScriptPath(value string) (string, error) {
 // replicas reusing the gateway's pool). The media hub dials the browser
 // container's audio relay over TCP (UBAG_VOICE_AUDIO_RELAY_ADDR).
 const (
-	voiceSweepInterval         = 30 * time.Second
-	voiceReconcileInterval     = 2 * time.Second
-	admissionSweepInterval     = 30 * time.Second
+	voiceSweepInterval     = 30 * time.Second
+	voiceReconcileInterval = 2 * time.Second
+	admissionSweepInterval = 30 * time.Second
 )
 
 func newVoiceComponentsFromEnv(ctx context.Context, storeKind string, db *sql.DB, topo topology.Store) (voice.Store, httpapi.MediaNegotiator, func(), error) {
