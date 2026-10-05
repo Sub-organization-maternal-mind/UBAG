@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ubag.dev/v1/voice/voice-relay-control.schema.json",
+  "title": "UBAG Voice Relay Control Frame (protocol v2)",
+  "description": "JSON payload of a type 0x02 control frame on the gateway/relay TCP link (see deploy/vps/browser/audio-relay.py). Frames are compact UTF-8 JSON (no insignificant whitespace). Key order is NOT significant: Go emits sorted keys, Python emits insertion order, and every consumer MUST parse by key. Unknown ops are logged and ignored by receivers, so they are intentionally outside this schema.",
+  "oneOf": [
+    {
+      "title": "hello (gateway to relay, first frame)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "session_id", "exp", "token"],
+      "properties": {
+        "op": { "const": "hello" },
+        "session_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "exp": { "type": "integer", "description": "Unix seconds; the relay refuses exp in the past or more than 300 s ahead." },
+        "token": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "hex(HMAC-SHA256(secret, \"voice-relay|<session_id>|<exp>\"))" }
+      }
+    },
+    {
+      "title": "ready (relay to gateway)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op"],
+      "properties": { "op": { "const": "ready" } }
+    },
+    {
+      "title": "error (relay to gateway; the relay closes after a handshake error)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "reason"],
+      "properties": {
+        "op": { "const": "error" },
+        "reason": {
+          "type": "string",
+          "enum": [
+            "busy", "unconfigured", "bad_hello", "hello_timeout", "expired", "unauthorized",
+            "devices_unavailable", "codec_unavailable", "mic_unavailable", "monitor_unavailable", "internal",
+            "devices_lost", "monitor_exited", "mic_closed"
+          ]
+        }
+      }
+    },
+    {
+      "title": "mute (gateway to relay)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["op", "muted"],
+      "properties": {
+        "op": { "const": "mute" },
+        "muted": { "type": "boolean" }
+      }
+    }
+  ]
+}

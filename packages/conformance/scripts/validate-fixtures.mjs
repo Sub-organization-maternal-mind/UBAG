@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -175,6 +176,84 @@ for (const scenario of fixture.scenarios ?? []) {
       errors.push(`${scenario.id} must not expose a storage_state_uri`);
     }
   }
+}
+
+// Voice relay protocol v2 shared vectors (P2.8). The same fixture is asserted
+// by the Python relay tests and the Go gateway tests; here we check its shape,
+// recompute the token vectors, and validate control frames against the schema.
+{
+  const relay = JSON.parse(await readFile(join(currentDir, "..", "fixtures", "voice-relay", "v2.json"), "utf8"));
+  const schema = JSON.parse(
+    await readFile(join(currentDir, "..", "..", "shared-schemas", "schemas", "voice-relay-control.schema.json"), "utf8")
+  );
+  if (relay.suite !== "ubag.voice-relay.v2" || relay.protocol_version !== 2) {
+    errors.push("voice-relay fixture must be suite ubag.voice-relay.v2, protocol_version 2");
+  }
+  const max = relay.constants?.max_frame_bytes;
+  const framingIds = new Set();
+  for (const c of relay.framing ?? []) {
+    const where = `voice-relay framing ${c.id}`;
+    if (framingIds.has(c.id)) errors.push(`${where} duplicated`);
+    framingIds.add(c.id);
+    if (c.outcome !== "frame" && c.outcome !== "violation") errors.push(`${where}: bad outcome`);
+    const payloadLen = c.payload_hex !== undefined ? c.payload_hex.length / 2 : c.payload_len;
+    if (c.outcome === "frame") {
+      if (!Number.isInteger(payloadLen) || c.length !== payloadLen + 1) errors.push(`${where}: length must be payload+1`);
+      if (c.length < 1 || c.length > max) errors.push(`${where}: valid frame length out of 1..max`);
+      if (![1, 2].includes(c.type)) errors.push(`${where}: valid frame type must be 1 or 2`);
+    } else if (c.length >= 1 && c.length <= max && [1, 2].includes(c.type)) {
+      errors.push(`${where}: violation case is actually valid`);
+    }
+  }
+  for (const v of relay.token_vectors ?? []) {
+    const want = createHmac("sha256", v.secret).update(`voice-relay|${v.session_id}|${v.exp}`).digest("hex");
+    if (want !== v.token) errors.push(`voice-relay token vector ${v.session_id}/${v.exp} does not match HMAC-SHA256`);
+  }
+  const reasons = [...(relay.reply_reasons?.handshake ?? []), ...(relay.reply_reasons?.session ?? [])];
+  const schemaReasons = schema.oneOf.find((s) => s.properties?.op?.const === "error").properties.reason.enum;
+  if (JSON.stringify([...reasons].sort()) !== JSON.stringify([...schemaReasons].sort())) {
+    errors.push("voice-relay reply_reasons must equal the control schema error.reason enum");
+  }
+  const helloIds = new Set();
+  for (const c of relay.hello_validation ?? []) {
+    if (helloIds.has(c.id)) errors.push(`voice-relay hello case ${c.id} duplicated`);
+    helloIds.add(c.id);
+    if (c.outcome !== "ok" && !reasons.includes(c.outcome)) errors.push(`voice-relay hello case ${c.id}: unknown outcome`);
+  }
+  for (const c of relay.control_frames ?? []) {
+    const matches = schema.oneOf.filter((branch) => schemaErrors(branch, c.json).length === 0).length;
+    if ((matches === 1) !== c.valid) errors.push(`voice-relay control frame ${c.id}: schema verdict != valid:${c.valid}`);
+  }
+}
+
+// Minimal JSON Schema subset (type/const/enum/required/properties/
+// additionalProperties/min-maxLength/pattern) so this script needs no ajv.
+function schemaErrors(schema, value) {
+  const out = [];
+  if (schema.const !== undefined && value !== schema.const) out.push("const");
+  if (schema.enum && !schema.enum.includes(value)) out.push("enum");
+  if (schema.type) {
+    const ok =
+      schema.type === "object" ? value !== null && typeof value === "object" && !Array.isArray(value)
+      : schema.type === "integer" ? Number.isInteger(value)
+      : typeof value === schema.type;
+    if (!ok) return [...out, "type"];
+  }
+  if (typeof value === "string") {
+    if (schema.minLength !== undefined && value.length < schema.minLength) out.push("minLength");
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) out.push("maxLength");
+    if (schema.pattern && !new RegExp(schema.pattern).test(value)) out.push("pattern");
+  }
+  if (schema.type === "object") {
+    for (const key of schema.required ?? []) if (!(key in value)) out.push(`required:${key}`);
+    for (const [key, sub] of Object.entries(schema.properties ?? {})) {
+      if (key in value) out.push(...schemaErrors(sub, value[key]).map((e) => `${key}.${e}`));
+    }
+    if (schema.additionalProperties === false) {
+      for (const key of Object.keys(value)) if (!(key in (schema.properties ?? {}))) out.push(`extra:${key}`);
+    }
+  }
+  return out;
 }
 
 if (errors.length > 0) {
