@@ -272,6 +272,13 @@ for (const name of [
 if (!/UBAG_VOICE_STORE:\s*\$\{UBAG_VOICE_STORE:-\$\{UBAG_GATEWAY_STORE:-memory\}\}/.test(gatewayBlock)) {
   failures.push('gateway UBAG_VOICE_STORE must default to UBAG_GATEWAY_STORE (shared store)');
 }
+if (!/UBAG_VOICE_RECONCILER_FAIL_CLOSED:\s*\$\{UBAG_VOICE_RECONCILER_FAIL_CLOSED:-\}/.test(gatewayBlock)) {
+  failures.push('gateway must pass UBAG_VOICE_RECONCILER_FAIL_CLOSED with an inert (empty) default');
+}
+// The VPS profile keeps its deliberate memory voice-store default (P0.14).
+if (!/UBAG_VOICE_STORE:\s*\$\{UBAG_VOICE_STORE:-memory\}/.test(read('docker-compose.vps.yml'))) {
+  failures.push('docker-compose.vps.yml UBAG_VOICE_STORE default must stay memory (see docs/perf-fleet/slices/P0.14.md)');
+}
 for (const name of ['UBAG_VOICE_AUDIO_ENABLED', 'UBAG_VOICE_RELAY_ADDR']) {
   if (!viewerBlock.includes(`${name}:`)) failures.push(`browser-viewer must set ${name}`);
 }

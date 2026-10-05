@@ -97,7 +97,12 @@ services:
       # UBAG_GATEWAY_STORE says otherwise); the relay address is the browser
       # container's internal-only audio-relay port. Voice stays INERT until
       # UBAG_VOICE_AUDIO_ENABLED=1 also turns the browser's audio stack on.
+      # The VPS default stays memory on purpose (P0.14: no live default change;
+      # the gateway warns at startup on memory + SQL gateway). Containment:
+      # UBAG_VOICE_STORE=disabled makes the voice routes return 501.
       UBAG_VOICE_STORE: ${UBAG_VOICE_STORE:-memory}
+      # 1/true = stop media after 5 consecutive store errors (default off = fail open).
+      UBAG_VOICE_RECONCILER_FAIL_CLOSED: ${UBAG_VOICE_RECONCILER_FAIL_CLOSED:-}
       UBAG_VOICE_AUDIO_RELAY_ADDR: ${UBAG_VOICE_AUDIO_RELAY_ADDR:-browser:9099}
       UBAG_VOICE_MAX_SESSIONS_PER_TENANT: ${UBAG_VOICE_MAX_SESSIONS_PER_TENANT:-4}
       UBAG_VOICE_MAX_QUEUED_PER_TENANT: ${UBAG_VOICE_MAX_QUEUED_PER_TENANT:-32}

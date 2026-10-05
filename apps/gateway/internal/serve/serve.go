@@ -1759,6 +1759,9 @@ func newVoiceComponentsFromEnv(ctx context.Context, storeKind string, db *sql.DB
 	}
 	switch mode {
 	case "", "memory", "in_memory":
+		if storeKind != "memory" && storeKind != "" {
+			slog.Warn("UBAG_VOICE_STORE is memory while the gateway store is SQL-backed: voice sessions are per-process and lost on restart; set UBAG_VOICE_STORE to follow UBAG_GATEWAY_STORE before enabling live voice", "gateway_store", storeKind)
+		}
 		store := voice.NewMemoryStore()
 		return store, newVoiceMediaHub(store, topo), func() {}, nil
 	case "postgres", "postgresql":
@@ -1913,8 +1916,14 @@ func voiceRelayResolver(topo topology.Store) func(voice.Session) (string, error)
 // reconcileVoiceMedia ends any media connection whose session is no longer
 // live in the shared store — terminated or swept by ANY replica, or gone — so
 // stale audio can never survive resource reassignment even when the replica
-// that owns the connection did not perform the termination.
-func reconcileVoiceMedia(ctx context.Context, hub *voice.MediaHub, store voice.Store) {
+// that owns the connection did not perform the termination. It also mirrors
+// the stored Muted flag onto the live media path. Store errors keep media
+// alive (fail open) unless UBAG_VOICE_RECONCILER_FAIL_CLOSED is set, in which
+// case a session whose store lookups fail voiceReconcileMaxStoreErrors times
+// in a row is disconnected.
+func reconcileVoiceMedia(ctx context.Context, hub voiceMediaPeer, store voice.Store) {
+	r := &voiceReconciler{hub: hub, store: store, failClosed: envBool("UBAG_VOICE_RECONCILER_FAIL_CLOSED"),
+		errs: map[string]int{}, muted: map[string]bool{}}
 	ticker := time.NewTicker(voiceReconcileInterval)
 	defer ticker.Stop()
 	for {
@@ -1922,15 +1931,69 @@ func reconcileVoiceMedia(ctx context.Context, hub *voice.MediaHub, store voice.S
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			for _, session := range hub.Sessions() {
-				current, found, err := store.Get(ctx, session.TenantID, session.ID)
-				if err != nil {
-					continue // store trouble is not evidence the session ended
-				}
-				if !found || !current.Status.Active() || (!current.LeaseExpires.IsZero() && current.LeaseExpires.Before(time.Now().UTC())) {
-					hub.Disconnect(session.ID)
-				}
+			r.step(ctx, time.Now().UTC())
+		}
+	}
+}
+
+// voiceReconcileMaxStoreErrors is the number of consecutive store errors for
+// one session after which a fail-closed reconciler stops that session's media
+// (about 10s at voiceReconcileInterval).
+const voiceReconcileMaxStoreErrors = 5
+
+// voiceMediaPeer is the slice of *voice.MediaHub the reconciler drives.
+type voiceMediaPeer interface {
+	Sessions() []voice.Session
+	Disconnect(sessionID string)
+	SetMuted(sessionID string, muted bool) bool
+}
+
+// voiceReconciler compares this replica's media paths with the shared store.
+type voiceReconciler struct {
+	hub        voiceMediaPeer
+	store      voice.Store
+	failClosed bool // UBAG_VOICE_RECONCILER_FAIL_CLOSED
+	errs       map[string]int
+	muted      map[string]bool // mute state last applied to the hub
+}
+
+func (r *voiceReconciler) step(ctx context.Context, now time.Time) {
+	live := map[string]bool{}
+	for _, session := range r.hub.Sessions() {
+		live[session.ID] = true
+		current, found, err := r.store.Get(ctx, session.TenantID, session.ID)
+		if err != nil {
+			// Store trouble is not evidence the session ended: fail open
+			// unless the operator opted into fail-closed.
+			r.errs[session.ID]++
+			if r.failClosed && r.errs[session.ID] >= voiceReconcileMaxStoreErrors {
+				slog.Error("voice reconciler: store unavailable, disconnecting media", "session_id", session.ID, "consecutive_errors", r.errs[session.ID])
+				r.hub.Disconnect(session.ID)
 			}
+			continue
+		}
+		delete(r.errs, session.ID)
+		if !found || !current.Status.Active() || (!current.LeaseExpires.IsZero() && current.LeaseExpires.Before(now)) {
+			r.hub.Disconnect(session.ID)
+			continue
+		}
+		known, seen := r.muted[session.ID]
+		if !seen {
+			known = session.Muted
+		}
+		if current.Muted != known {
+			r.hub.SetMuted(session.ID, current.Muted)
+		}
+		r.muted[session.ID] = current.Muted
+	}
+	for id := range r.errs {
+		if !live[id] {
+			delete(r.errs, id)
+		}
+	}
+	for id := range r.muted {
+		if !live[id] {
+			delete(r.muted, id)
 		}
 	}
 }
