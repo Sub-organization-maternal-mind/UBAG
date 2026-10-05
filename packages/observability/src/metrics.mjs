@@ -37,11 +37,28 @@ export const METRIC_LABEL_CARDINALITY_BUDGET = Object.freeze({
   source: "bounded",
   worker_pool: "bounded",
   adapter_family: "bounded",
+  stage: "fixed",
+  method_class: "fixed",
   terminal_state: "fixed",
   endpoint_kind: "bounded",
   error_class: "bounded",
   artifact_type: "bounded"
 });
+
+// Closed stage set; mirrors job-event.schema.json data.timings_ms keys.
+export const JOB_STAGES = Object.freeze([
+  "worker_start",
+  "browser_prep",
+  "auth_check",
+  "attachment_materialize",
+  "provider_submit",
+  "first_token",
+  "provider_stream",
+  "extraction"
+]);
+
+// Bounded HTTP method class for the route latency histogram (read vs write); additive label.
+export const METHOD_CLASSES = Object.freeze(["read", "write", "other"]);
 
 export const OBSERVABILITY_METRICS = Object.freeze([
   metric({
@@ -57,8 +74,8 @@ export const OBSERVABILITY_METRICS = Object.freeze([
     type: "histogram",
     owner: "gateway",
     unit: "seconds",
-    labels: ["service", "route", "method", "status_class"],
-    description: "Gateway request latency by normalized route and status class."
+    labels: ["service", "route", "method", "status_class", "method_class"],
+    description: "Gateway request latency by normalized route, status class, and read/write method class."
   }),
   metric({
     name: "ubag_gateway_http_inflight_requests",
@@ -155,6 +172,14 @@ export const OBSERVABILITY_METRICS = Object.freeze([
     unit: "seconds",
     labels: ["worker_pool", "adapter_family", "outcome"],
     description: "Worker result ingestion duration by worker pool, adapter family, and outcome."
+  }),
+  metric({
+    name: "ubag_job_stage_duration_seconds",
+    type: "histogram",
+    owner: "gateway",
+    unit: "seconds",
+    labels: ["stage", "adapter_family"],
+    description: "Per-stage job duration parsed from worker data.timings_ms; stage is the closed JOB_STAGES set."
   }),
   metric({
     name: "ubag_adapter_requests_total",

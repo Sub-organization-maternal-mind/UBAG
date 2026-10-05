@@ -58,8 +58,25 @@
     },
     "data": {
       "type": "object",
-      "description": "Event-specific payload. Token events carry token deltas; terminal events carry status, result, or error summaries.",
-      "additionalProperties": true
+      "description": "Event-specific payload. Token events carry token deltas; terminal events carry status, result, or error summaries. Stage timings, when present, ride in the optional timings_ms object (not in JobResponse.metadata).",
+      "additionalProperties": true,
+      "properties": {
+        "timings_ms": {
+          "type": "object",
+          "description": "Optional worker-side stage durations in milliseconds, measured with a monotonic clock (not derived from event created_at, which can be replayed after the run). Closed key set; every key is optional so a stage that did not run is simply absent.",
+          "additionalProperties": false,
+          "properties": {
+            "worker_start": { "type": "number", "minimum": 0, "description": "Worker/runner startup before job work begins." },
+            "browser_prep": { "type": "number", "minimum": 0, "description": "Browser/page/session preparation." },
+            "auth_check": { "type": "number", "minimum": 0, "description": "Read-only signed-in-state check (safe-mode: never logs in)." },
+            "attachment_materialize": { "type": "number", "minimum": 0, "description": "Staging attachments for upload." },
+            "provider_submit": { "type": "number", "minimum": 0, "description": "Prompt entry and submit on the provider page." },
+            "first_token": { "type": "number", "minimum": 0, "description": "Submit to first response token." },
+            "provider_stream": { "type": "number", "minimum": 0, "description": "First token to end of provider stream." },
+            "extraction": { "type": "number", "minimum": 0, "description": "Response extraction and normalization after the stream." }
+          }
+        }
+      }
     },
     "trace_id": {
       "type": "string",
