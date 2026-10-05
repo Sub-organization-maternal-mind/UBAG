@@ -1,0 +1,568 @@
+{
+  "suite": "ubag.worker-daemon.v2",
+  "protocol_version": 2,
+  "description": "Shared vectors for the warm worker daemon stdin/stdout protocol v2 (P2.2). Validated by packages/conformance/scripts/validate-fixtures.mjs against packages/shared-schemas/schemas/worker-daemon-request.schema.json, worker-daemon-job-end.schema.json and job-event.schema.json. Event ids use the reference derivation evt_ + sha256(job_id:attempt_id:sequence)[0:16]. Contract only: no runtime emits v2 yet (P3.4 / P3.7 implement it behind flags).",
+  "requests": [
+    {
+      "id": "v1_job_line",
+      "valid": true,
+      "json": {
+        "job_id": "job_01HXPERFSTREAMED",
+        "payload": {},
+        "deadline_s": 420
+      }
+    },
+    {
+      "id": "v2_job_line",
+      "valid": true,
+      "json": {
+        "job_id": "job_01HXPERFSTREAMED",
+        "payload": {},
+        "proto": 2,
+        "slot_id": 1,
+        "attempt": {
+          "id": "att_01HXPERFATTEMPT1",
+          "lease_generation": 3
+        }
+      }
+    },
+    {
+      "id": "v2_hello",
+      "valid": true,
+      "json": {
+        "__ubag_control__": "hello",
+        "proto": 2
+      }
+    },
+    {
+      "id": "v2_probe",
+      "valid": true,
+      "json": {
+        "__ubag_control__": "probe",
+        "proto": 2
+      }
+    },
+    {
+      "id": "unknown_proto",
+      "valid": false,
+      "json": {
+        "job_id": "job_01HXPERFSTREAMED",
+        "payload": {},
+        "proto": 3
+      }
+    },
+    {
+      "id": "attempt_without_generation",
+      "valid": false,
+      "json": {
+        "job_id": "job_01HXPERFSTREAMED",
+        "payload": {},
+        "proto": 2,
+        "attempt": {
+          "id": "att_01HXPERFATTEMPT1"
+        }
+      }
+    },
+    {
+      "id": "control_without_proto",
+      "valid": false,
+      "json": {
+        "__ubag_control__": "hello"
+      }
+    },
+    {
+      "id": "unknown_control",
+      "valid": false,
+      "json": {
+        "__ubag_control__": "restart",
+        "proto": 2
+      }
+    }
+  ],
+  "job_ends": [
+    {
+      "id": "v1_completed",
+      "valid": true,
+      "json": {
+        "__ubag_job_end__": true,
+        "job_id": "job_01HXPERFSTREAMED",
+        "status": "completed"
+      }
+    },
+    {
+      "id": "v1_failed",
+      "valid": true,
+      "json": {
+        "__ubag_job_end__": true,
+        "job_id": "job_01HXPERFSTREAMED",
+        "status": "failed",
+        "error": "boom"
+      }
+    },
+    {
+      "id": "v2_full",
+      "valid": true,
+      "json": {
+        "__ubag_job_end__": true,
+        "job_id": "job_01HXPERFSTREAMED",
+        "status": "completed",
+        "proto": 2,
+        "attempt_id": "att_01HXPERFATTEMPT1",
+        "slot_id": 0,
+        "pid": 4242,
+        "warm_key": "9f2b6c1d4e7a3b58",
+        "outcome_signal": "none",
+        "submitted": true
+      }
+    },
+    {
+      "id": "v2_timed_out",
+      "valid": true,
+      "json": {
+        "__ubag_job_end__": true,
+        "job_id": "job_01HXPERFSTREAMED",
+        "status": "timed_out",
+        "proto": 2,
+        "reason": "worker_deadline_exceeded",
+        "outcome_signal": "timeout"
+      }
+    },
+    {
+      "id": "raw_profile_path_as_warm_key",
+      "valid": false,
+      "json": {
+        "__ubag_job_end__": true,
+        "job_id": "job_01HXPERFSTREAMED",
+        "status": "completed",
+        "proto": 2,
+        "warm_key": "/home/u/.config/chrome/Profile 1"
+      }
+    },
+    {
+      "id": "unknown_outcome_signal",
+      "valid": false,
+      "json": {
+        "__ubag_job_end__": true,
+        "job_id": "job_01HXPERFSTREAMED",
+        "status": "failed",
+        "outcome_signal": "login_required"
+      }
+    },
+    {
+      "id": "unknown_field",
+      "valid": false,
+      "json": {
+        "__ubag_job_end__": true,
+        "job_id": "job_01HXPERFSTREAMED",
+        "status": "completed",
+        "profile_path": "/x"
+      }
+    }
+  ],
+  "control_replies": [
+    {
+      "id": "hello_reply",
+      "valid": true,
+      "json": {
+        "__ubag_control__": "hello",
+        "proto": 2,
+        "slot_id": 0,
+        "pid": 4242,
+        "features": [
+          "attempt",
+          "outcome_signal"
+        ]
+      }
+    },
+    {
+      "id": "probe_reply",
+      "valid": true,
+      "json": {
+        "__ubag_control__": "probe",
+        "proto": 2,
+        "state": "idle"
+      }
+    },
+    {
+      "id": "unknown_feature",
+      "valid": false,
+      "json": {
+        "__ubag_control__": "hello",
+        "proto": 2,
+        "features": [
+          "login"
+        ]
+      }
+    },
+    {
+      "id": "bad_state",
+      "valid": false,
+      "json": {
+        "__ubag_control__": "probe",
+        "proto": 2,
+        "state": "sleeping"
+      }
+    }
+  ],
+  "streamed_job": {
+    "id": "streamed_job",
+    "description": "Protocol v2 job: pre-submit events, provisional token events, one terminal carrying the result, then JOB_END.",
+    "request_line": {
+      "job_id": "job_01HXPERFSTREAMED",
+      "deadline_s": 420,
+      "proto": 2,
+      "slot_id": 0,
+      "attempt": {
+        "id": "att_01HXPERFATTEMPT1",
+        "lease_generation": 1,
+        "expires_at": "2026-10-06T12:02:00.000Z"
+      },
+      "payload": {
+        "job_id": "job_01HXPERFSTREAMED",
+        "note": "DispatchEnvelope elided in fixture"
+      }
+    },
+    "stdout_lines": [
+      {
+        "api_version": "2026-05-22",
+        "event_id": "evt_2613142023ff1943",
+        "job_id": "job_01HXPERFSTREAMED",
+        "trace_id": "trace-job_01HXPERFSTREAMED",
+        "type": "running",
+        "sequence": 1,
+        "created_at": "2026-10-06T12:00:00.000Z",
+        "data": {
+          "attempt_id": "att_01HXPERFATTEMPT1"
+        }
+      },
+      {
+        "api_version": "2026-05-22",
+        "event_id": "evt_cfb5b1e64660f30e",
+        "job_id": "job_01HXPERFSTREAMED",
+        "trace_id": "trace-job_01HXPERFSTREAMED",
+        "type": "prompt_submitted",
+        "sequence": 2,
+        "created_at": "2026-10-06T12:00:00.250Z",
+        "data": {
+          "attempt_id": "att_01HXPERFATTEMPT1"
+        }
+      },
+      {
+        "api_version": "2026-05-22",
+        "event_id": "evt_b18cb9c0105e19ed",
+        "job_id": "job_01HXPERFSTREAMED",
+        "trace_id": "trace-job_01HXPERFSTREAMED",
+        "type": "token",
+        "sequence": 3,
+        "created_at": "2026-10-06T12:00:00.500Z",
+        "data": {
+          "attempt_id": "att_01HXPERFATTEMPT1",
+          "delta": "Hel"
+        }
+      },
+      {
+        "api_version": "2026-05-22",
+        "event_id": "evt_b1a9fb6e16d8bf1e",
+        "job_id": "job_01HXPERFSTREAMED",
+        "trace_id": "trace-job_01HXPERFSTREAMED",
+        "type": "token",
+        "sequence": 4,
+        "created_at": "2026-10-06T12:00:00.750Z",
+        "data": {
+          "attempt_id": "att_01HXPERFATTEMPT1",
+          "delta": "lo"
+        }
+      },
+      {
+        "api_version": "2026-05-22",
+        "event_id": "evt_ad7f571e9e231afa",
+        "job_id": "job_01HXPERFSTREAMED",
+        "trace_id": "trace-job_01HXPERFSTREAMED",
+        "type": "completed",
+        "sequence": 5,
+        "created_at": "2026-10-06T12:00:01.000Z",
+        "data": {
+          "attempt_id": "att_01HXPERFATTEMPT1",
+          "status": "completed",
+          "result": {
+            "text": "Hello"
+          },
+          "stream_end_reason": "provider_done"
+        }
+      },
+      {
+        "__ubag_job_end__": true,
+        "job_id": "job_01HXPERFSTREAMED",
+        "status": "completed",
+        "proto": 2,
+        "attempt_id": "att_01HXPERFATTEMPT1",
+        "slot_id": 0,
+        "pid": 4242,
+        "warm_key": "9f2b6c1d4e7a3b58",
+        "outcome_signal": "none",
+        "submitted": true
+      }
+    ],
+    "expect": {
+      "outcome": "committed",
+      "result_from_sequence": 5,
+      "provisional_sequences": [
+        3,
+        4
+      ]
+    }
+  },
+  "abandoned_attempt": {
+    "id": "abandoned_attempt",
+    "description": "Attempt 1 streams tokens and then dies without a terminal event or JOB_END (abandoned: its tokens are discarded, nothing is committed). Attempt 2 reuses the same sequence numbers; attempt-scoped event ids keep both sets distinct, and only attempt 2's terminal produces the result.",
+    "attempts": [
+      {
+        "attempt_id": "att_01HXPERFATTEMPT1",
+        "lease_generation": 1,
+        "stdout_lines": [
+          {
+            "api_version": "2026-05-22",
+            "event_id": "evt_2613142023ff1943",
+            "job_id": "job_01HXPERFSTREAMED",
+            "trace_id": "trace-job_01HXPERFSTREAMED",
+            "type": "running",
+            "sequence": 1,
+            "created_at": "2026-10-06T12:00:00.000Z",
+            "data": {
+              "attempt_id": "att_01HXPERFATTEMPT1"
+            }
+          },
+          {
+            "api_version": "2026-05-22",
+            "event_id": "evt_cfb5b1e64660f30e",
+            "job_id": "job_01HXPERFSTREAMED",
+            "trace_id": "trace-job_01HXPERFSTREAMED",
+            "type": "prompt_submitted",
+            "sequence": 2,
+            "created_at": "2026-10-06T12:00:00.250Z",
+            "data": {
+              "attempt_id": "att_01HXPERFATTEMPT1"
+            }
+          },
+          {
+            "api_version": "2026-05-22",
+            "event_id": "evt_b18cb9c0105e19ed",
+            "job_id": "job_01HXPERFSTREAMED",
+            "trace_id": "trace-job_01HXPERFSTREAMED",
+            "type": "token",
+            "sequence": 3,
+            "created_at": "2026-10-06T12:00:00.500Z",
+            "data": {
+              "attempt_id": "att_01HXPERFATTEMPT1",
+              "delta": "Par"
+            }
+          }
+        ],
+        "expect": {
+          "outcome": "abandoned",
+          "reason": "no_job_end_marker"
+        }
+      },
+      {
+        "attempt_id": "att_01HXPERFATTEMPT2",
+        "lease_generation": 2,
+        "stdout_lines": [
+          {
+            "api_version": "2026-05-22",
+            "event_id": "evt_37752cc8dec6907f",
+            "job_id": "job_01HXPERFSTREAMED",
+            "trace_id": "trace-job_01HXPERFSTREAMED",
+            "type": "running",
+            "sequence": 1,
+            "created_at": "2026-10-06T12:00:00.000Z",
+            "data": {
+              "attempt_id": "att_01HXPERFATTEMPT2"
+            }
+          },
+          {
+            "api_version": "2026-05-22",
+            "event_id": "evt_48477f8a22e7b541",
+            "job_id": "job_01HXPERFSTREAMED",
+            "trace_id": "trace-job_01HXPERFSTREAMED",
+            "type": "prompt_submitted",
+            "sequence": 2,
+            "created_at": "2026-10-06T12:00:00.250Z",
+            "data": {
+              "attempt_id": "att_01HXPERFATTEMPT2"
+            }
+          },
+          {
+            "api_version": "2026-05-22",
+            "event_id": "evt_6c2996e0743a5641",
+            "job_id": "job_01HXPERFSTREAMED",
+            "trace_id": "trace-job_01HXPERFSTREAMED",
+            "type": "token",
+            "sequence": 3,
+            "created_at": "2026-10-06T12:00:00.500Z",
+            "data": {
+              "attempt_id": "att_01HXPERFATTEMPT2",
+              "delta": "Done"
+            }
+          },
+          {
+            "api_version": "2026-05-22",
+            "event_id": "evt_b8205aceba19f867",
+            "job_id": "job_01HXPERFSTREAMED",
+            "trace_id": "trace-job_01HXPERFSTREAMED",
+            "type": "completed",
+            "sequence": 4,
+            "created_at": "2026-10-06T12:00:00.750Z",
+            "data": {
+              "attempt_id": "att_01HXPERFATTEMPT2",
+              "status": "completed",
+              "result": {
+                "text": "Done"
+              },
+              "stream_end_reason": "provider_done"
+            }
+          },
+          {
+            "__ubag_job_end__": true,
+            "job_id": "job_01HXPERFSTREAMED",
+            "status": "completed",
+            "proto": 2,
+            "attempt_id": "att_01HXPERFATTEMPT2",
+            "slot_id": 0,
+            "submitted": true
+          }
+        ],
+        "expect": {
+          "outcome": "committed",
+          "result_from_sequence": 4
+        }
+      }
+    ]
+  },
+  "failure_semantics": [
+    {
+      "id": "deadline_cut_timed_out",
+      "description": "Deadline cut mid-stream (D4): timed_out with data.partial, never completed, no text in result.",
+      "stdout_lines": [
+        {
+          "api_version": "2026-05-22",
+          "event_id": "evt_2613142023ff1943",
+          "job_id": "job_01HXPERFSTREAMED",
+          "trace_id": "trace-job_01HXPERFSTREAMED",
+          "type": "running",
+          "sequence": 1,
+          "created_at": "2026-10-06T12:00:00.000Z",
+          "data": {
+            "attempt_id": "att_01HXPERFATTEMPT1"
+          }
+        },
+        {
+          "api_version": "2026-05-22",
+          "event_id": "evt_cfb5b1e64660f30e",
+          "job_id": "job_01HXPERFSTREAMED",
+          "trace_id": "trace-job_01HXPERFSTREAMED",
+          "type": "prompt_submitted",
+          "sequence": 2,
+          "created_at": "2026-10-06T12:00:00.250Z",
+          "data": {
+            "attempt_id": "att_01HXPERFATTEMPT1"
+          }
+        },
+        {
+          "api_version": "2026-05-22",
+          "event_id": "evt_b18cb9c0105e19ed",
+          "job_id": "job_01HXPERFSTREAMED",
+          "trace_id": "trace-job_01HXPERFSTREAMED",
+          "type": "token",
+          "sequence": 3,
+          "created_at": "2026-10-06T12:00:00.500Z",
+          "data": {
+            "attempt_id": "att_01HXPERFATTEMPT1",
+            "delta": "Half an ans"
+          }
+        },
+        {
+          "api_version": "2026-05-22",
+          "event_id": "evt_b1a9fb6e16d8bf1e",
+          "job_id": "job_01HXPERFSTREAMED",
+          "trace_id": "trace-job_01HXPERFSTREAMED",
+          "type": "timed_out",
+          "sequence": 4,
+          "created_at": "2026-10-06T12:00:00.750Z",
+          "data": {
+            "attempt_id": "att_01HXPERFATTEMPT1",
+            "stream_end_reason": "deadline",
+            "submitted": true,
+            "partial": {
+              "text": "Half an ans",
+              "token_events": 1
+            }
+          }
+        },
+        {
+          "__ubag_job_end__": true,
+          "job_id": "job_01HXPERFSTREAMED",
+          "status": "timed_out",
+          "proto": 2,
+          "attempt_id": "att_01HXPERFATTEMPT1",
+          "reason": "worker_deadline_exceeded",
+          "outcome_signal": "timeout",
+          "submitted": true
+        }
+      ]
+    },
+    {
+      "id": "post_submit_ambiguity",
+      "description": "Ambiguous failure after prompt submission (D4): failed_terminal with submitted=true and reconcile_required; never retryable.",
+      "stdout_lines": [
+        {
+          "api_version": "2026-05-22",
+          "event_id": "evt_2613142023ff1943",
+          "job_id": "job_01HXPERFSTREAMED",
+          "trace_id": "trace-job_01HXPERFSTREAMED",
+          "type": "running",
+          "sequence": 1,
+          "created_at": "2026-10-06T12:00:00.000Z",
+          "data": {
+            "attempt_id": "att_01HXPERFATTEMPT1"
+          }
+        },
+        {
+          "api_version": "2026-05-22",
+          "event_id": "evt_cfb5b1e64660f30e",
+          "job_id": "job_01HXPERFSTREAMED",
+          "trace_id": "trace-job_01HXPERFSTREAMED",
+          "type": "prompt_submitted",
+          "sequence": 2,
+          "created_at": "2026-10-06T12:00:00.250Z",
+          "data": {
+            "attempt_id": "att_01HXPERFATTEMPT1"
+          }
+        },
+        {
+          "api_version": "2026-05-22",
+          "event_id": "evt_b18cb9c0105e19ed",
+          "job_id": "job_01HXPERFSTREAMED",
+          "trace_id": "trace-job_01HXPERFSTREAMED",
+          "type": "failed_terminal",
+          "sequence": 3,
+          "created_at": "2026-10-06T12:00:00.500Z",
+          "data": {
+            "attempt_id": "att_01HXPERFATTEMPT1",
+            "submitted": true,
+            "reconcile_required": true,
+            "stream_end_reason": "error"
+          }
+        },
+        {
+          "__ubag_job_end__": true,
+          "job_id": "job_01HXPERFSTREAMED",
+          "status": "failed",
+          "proto": 2,
+          "attempt_id": "att_01HXPERFATTEMPT1",
+          "error": "provider stream error after submit",
+          "submitted": true
+        }
+      ]
+    }
+  ]
+}

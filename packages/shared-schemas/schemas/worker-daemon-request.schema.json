@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ubag.dev/v1/worker/worker-daemon-request.schema.json",
+  "title": "UBAG Worker Daemon Request Line (protocol v1 + opt-in v2)",
+  "description": "One JSON object per line on the warm worker daemon's stdin (Go gateway to Python worker; see apps/worker/ubag_worker/live/daemon_protocol.py and apps/gateway/internal/executor/daemonrunner.go). Protocol v1 is the legacy {job_id, payload, deadline_s} line and stays valid unchanged. Protocol v2 is strictly opt-in: a sender asks for it by adding proto:2 to a job line or by sending a control line. Compatibility rules: (1) a v2 job line sent to a v1 daemon is safe, because v1 daemons read only job_id/payload/deadline_s and ignore the rest, so they answer with a v1 JOB_END; (2) a v1 job line sent to a v2 daemon MUST get a v1-shaped reply (no v2-only fields, no control lines); (3) control lines (hello, probe) MUST only be sent on explicit request, because a v1 daemon answers an unknown line with a failed JOB_END carrying an empty job_id and an unprompted control reply would corrupt a v1 reader; a sender treats that failed reply (or no reply within its handshake timeout) as 'daemon speaks v1'. The daemon never emits an unsolicited line outside a job or a control reply.",
+  "oneOf": [
+    { "$ref": "#/$defs/job_request" },
+    { "$ref": "#/$defs/control_request" }
+  ],
+  "$defs": {
+    "job_request": {
+      "title": "job line",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "payload"],
+      "properties": {
+        "job_id": { "type": "string", "pattern": "^job_[A-Za-z0-9]+$" },
+        "payload": {
+          "type": "object",
+          "description": "The DispatchEnvelope (opaque to this schema; see the executor contract)."
+        },
+        "deadline_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Hard per-job deadline in seconds enforced by the daemon."
+        },
+        "proto": {
+          "const": 2,
+          "description": "Opts this job into protocol v2 replies: the JOB_END echoes proto/attempt_id/slot_id and may carry pid, warm_key, outcome_signal, submitted, and status timed_out. Absent means v1."
+        },
+        "attempt": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "lease_generation"],
+          "description": "Attempt identity for this run (ADR-0007). Only meaningful with proto:2. When present the daemon MUST stamp attempt_id into data of every event it emits and derive event_id from it (see job-event.schema.json), so a retried attempt's events never collide with an earlier attempt's.",
+          "properties": {
+            "id": { "$ref": "#/$defs/attempt_id" },
+            "lease_generation": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Fencing generation of the attempt lease. Echoed by the daemon; the gateway rejects results carrying an older generation."
+            },
+            "expires_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Attempt lease expiry (informational for the daemon; it never extends the per-job deadline_s)."
+            }
+          }
+        },
+        "slot_id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Pool slot this daemon process serves (UBAG_WORKER_POOL_SIZE). Echoed in JOB_END; one daemon process is still one job at a time."
+        }
+      }
+    },
+    "control_request": {
+      "title": "control line (opt-in)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["__ubag_control__", "proto"],
+      "properties": {
+        "__ubag_control__": {
+          "enum": ["hello", "probe"],
+          "description": "hello: negotiate the protocol version and learn capabilities. probe: read-only liveness/readiness query; MUST NOT touch the browser, type, or submit, and MUST NOT be sent while an operator login or viewer session is active."
+        },
+        "proto": { "const": 2 }
+      }
+    },
+    "attempt_id": {
+      "type": "string",
+      "pattern": "^att_[A-Za-z0-9]+$",
+      "maxLength": 128,
+      "examples": ["att_01HXY5ZS3KAFQ3PZ8NQ8C7H1AV"]
+    }
+  }
+}

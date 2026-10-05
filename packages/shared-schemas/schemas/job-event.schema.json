@@ -58,9 +58,38 @@
     },
     "data": {
       "type": "object",
-      "description": "Event-specific payload. Token events carry token deltas; terminal events carry status, result, or error summaries. Stage timings, when present, ride in the optional timings_ms object (not in JobResponse.metadata).",
+      "description": "Event-specific payload. Token events carry token deltas and are provisional (see attempt_id); terminal events carry status, result, or error summaries, and only a terminal event of the current attempt produces the job result. Stage timings, when present, ride in the optional timings_ms object (not in JobResponse.metadata).",
       "additionalProperties": true,
+      "if": { "required": ["reconcile_required"], "properties": { "reconcile_required": { "const": true } } },
+      "then": { "required": ["submitted"], "properties": { "submitted": { "const": true } } },
       "properties": {
+        "attempt_id": {
+          "type": "string",
+          "pattern": "^att_[A-Za-z0-9]+$",
+          "maxLength": 128,
+          "description": "Attempt that produced this event (worker daemon protocol v2). It lives inside data because the event envelope is closed. When present, event_id MUST be derived from it so a retried attempt's events never collide with an earlier attempt's: the reference derivation is evt_ + the first 16 hex chars of sha256(job_id:attempt_id:sequence); without attempt_id it stays sha256(job_id:sequence). Events of one job may mix both forms across a deploy. Semantics: token and token_streaming events are PROVISIONAL, a live view of one attempt that a consumer may discard if that attempt is abandoned (no terminal event, daemon died, lease fenced); the job result comes only from a terminal event of the current attempt, never from concatenated token events."
+        },
+        "stream_end_reason": {
+          "enum": ["provider_done", "deadline", "stalled", "cancelled", "error"],
+          "description": "Why the provider stream stopped, on the terminal event of a streamed job. Anything other than provider_done means the text is not a complete answer: a deadline cut ends the job timed_out (never completed), with the text under data.partial and not in the result (decision D4)."
+        },
+        "partial": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "On a timed_out terminal event: what was received before the cut. Informational only; it is never the job result.",
+          "properties": {
+            "text": { "type": "string", "maxLength": 1048576 },
+            "token_events": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "submitted": {
+          "type": "boolean",
+          "description": "On a failed_retryable/failed_terminal/timed_out event: true when the prompt had already been submitted to the provider, so the attempt MUST NOT be blindly resubmitted."
+        },
+        "reconcile_required": {
+          "type": "boolean",
+          "description": "On a failed_terminal event after an ambiguous post-submit failure (decision D4): the provider thread must be reconciled by a read-only check before anyone retries. Only valid together with submitted:true."
+        },
         "timings_ms": {
           "type": "object",
           "description": "Optional worker-side stage durations in milliseconds, measured with a monotonic clock (not derived from event created_at, which can be replayed after the run). Closed key set; every key is optional so a stage that did not run is simply absent.",

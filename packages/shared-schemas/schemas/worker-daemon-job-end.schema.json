@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.ubag.dev/v1/worker/worker-daemon-job-end.schema.json",
+  "title": "UBAG Worker Daemon Job-End Marker (protocol v1 + opt-in v2)",
+  "description": "The single terminal control line a warm worker daemon writes to stdout after a job (mirrors JOB_END in daemon_protocol.py and daemonJobEndKey in daemonrunner.go). Every job emits exactly one marker. The v1 fields (__ubag_job_end__, job_id, status completed|failed, error, reason) are unchanged. Every field added by protocol v2 is optional and is only emitted when the request line carried proto:2; a daemon replying to a v1 request MUST NOT emit them. The marker is control, not an event: events stay verbatim job-event objects and the marker never reaches the job event log. A stream that ends without a marker means the daemon died and the job failed; a consumer never treats the events collected so far as a complete result. The control_reply definition below is the opt-in answer to one control line (see worker-daemon-request.schema.json).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["__ubag_job_end__", "job_id", "status"],
+  "properties": {
+    "__ubag_job_end__": { "const": true },
+    "job_id": { "type": "string" },
+    "status": {
+      "enum": ["completed", "failed", "timed_out"],
+      "description": "timed_out is v2-only (decision D4: a deadline-cut stream ends timed_out with data.partial on the terminal event, never completed). A v1 request still gets failed + reason worker_deadline_exceeded."
+    },
+    "error": { "type": "string", "maxLength": 2048, "description": "Human-readable failure summary; never raw provider output or secrets." },
+    "reason": { "type": "string", "maxLength": 128, "description": "Machine-readable failure reason (for example worker_deadline_exceeded)." },
+    "proto": { "const": 2, "description": "Echo of the request's proto." },
+    "attempt_id": { "type": "string", "pattern": "^att_[A-Za-z0-9]+$", "maxLength": 128 },
+    "slot_id": { "type": "integer", "minimum": 0 },
+    "pid": { "type": "integer", "minimum": 1, "description": "Daemon process id, for supervisor correlation only." },
+    "warm_key": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{16,64}$",
+      "description": "Lowercase hex hash of the warm-page key (provider + physical session identity). It MUST be a one-way hash: never a raw profile path, user_data_dir, CDP endpoint, or identity_ref."
+    },
+    "outcome_signal": {
+      "enum": ["drift", "manual_action", "captcha", "timeout", "none"],
+      "description": "Coarse health signal for the supervisor and readiness logic: drift (selector baseline no longer matches), manual_action (provider needs a human), captcha (challenge shown; safe-mode never solves it), timeout, none. Detection only; it never triggers automated login or CAPTCHA solving."
+    },
+    "submitted": {
+      "type": "boolean",
+      "description": "True once the prompt was submitted to the provider. Once true the attempt MUST NOT be blindly resubmitted: a failure after submission is failed with reconcile_required on the terminal event (ADR-0007)."
+    }
+  },
+  "$defs": {
+    "control_reply": {
+      "title": "control reply (opt-in, answers one control line)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["__ubag_control__", "proto"],
+      "properties": {
+        "__ubag_control__": { "enum": ["hello", "probe"] },
+        "proto": { "const": 2 },
+        "slot_id": { "type": "integer", "minimum": 0 },
+        "pid": { "type": "integer", "minimum": 1 },
+        "features": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["attempt", "stream_events", "outcome_signal", "strict_stream_end", "strict_submit"] },
+          "description": "hello only: capabilities this daemon implements. A sender must not rely on a feature that is not listed."
+        },
+        "state": {
+          "enum": ["idle", "busy", "draining"],
+          "description": "probe only: whether the daemon is between jobs."
+        }
+      }
+    }
+  }
+}
