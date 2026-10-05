@@ -2,6 +2,8 @@ package grpcapi
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -30,14 +32,23 @@ const (
 
 func newTestClient(t *testing.T) ubagv1.JobServiceClient {
 	t.Helper()
+	client, _ := newTestClientWithStore(t)
+	return client
+}
 
+// newTestClientWithStore also returns the backing job store so tests can land
+// worker events the way the worker consumer does.
+func newTestClientWithStore(t *testing.T) (ubagv1.JobServiceClient, jobstore.Store) {
+	t.Helper()
+
+	store := jobstore.NewMemoryStore()
 	server := NewServer(Config{
 		APIVersion:  testAPIVersion,
 		AppSecret:   testSecret,
 		TenantID:    testTenantID,
 		AppID:       testAppID,
 		ActorRole:   "developer",
-		Jobs:        jobstore.NewMemoryStore(),
+		Jobs:        store,
 		Idempotency: idempotency.NewMemoryStore(time.Hour),
 		Executor:    executor.NewNoopDispatcher(),
 	})
@@ -66,7 +77,7 @@ func newTestClient(t *testing.T) ubagv1.JobServiceClient {
 		_ = listener.Close()
 	})
 
-	return ubagv1.NewJobServiceClient(conn)
+	return ubagv1.NewJobServiceClient(conn), store
 }
 
 func authContext(ctx context.Context, token string) context.Context {
@@ -217,4 +228,167 @@ func TestCreateJobIdempotentReplay(t *testing.T) {
 	if !second.GetIdempotentReplay() {
 		t.Fatal("replay response should set idempotent_replay")
 	}
+}
+
+// --- StreamJobEvents characterization (zero behaviour change) -----------------
+
+func createStreamTestJob(t *testing.T, client ubagv1.JobServiceClient, ctx context.Context, key string) *ubagv1.JobResponse {
+	t.Helper()
+	created, err := client.CreateJob(ctx, validCreateRequest(key))
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	return created
+}
+
+func applyStreamTestEvent(t *testing.T, store jobstore.Store, jobID, eventID, eventType string, sequence int, data map[string]any) {
+	t.Helper()
+	job, found, err := store.Get(context.Background(), jobID)
+	if err != nil || !found {
+		t.Fatalf("Get job found=%v err=%v", found, err)
+	}
+	if _, found, err := store.ApplyWorkerEvent(context.Background(), jobstore.WorkerEvent{
+		EventID: eventID, JobID: jobID, APIVersion: job.APIVersion, Type: eventType,
+		Sequence: sequence, TraceID: job.TraceID, Data: data,
+	}); err != nil || !found {
+		t.Fatalf("ApplyWorkerEvent %s found=%v err=%v", eventID, found, err)
+	}
+}
+
+func completedStreamData() map[string]any {
+	return map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "done"}}
+}
+
+// recvTypes drains the stream until it ends and returns the event types plus
+// the terminating error (io.EOF for a clean close).
+func recvTypes(t *testing.T, stream ubagv1.JobService_StreamJobEventsClient) ([]string, error) {
+	t.Helper()
+	var types []string
+	for {
+		event, err := stream.Recv()
+		if err != nil {
+			return types, err
+		}
+		types = append(types, event.GetType())
+	}
+}
+
+func TestStreamJobEventsReplaysHistoryAndClosesCleanlyOnTerminalEvent(t *testing.T) {
+	client, store := newTestClientWithStore(t)
+	ctx, cancel := context.WithTimeout(authContext(context.Background(), testSecret), 10*time.Second)
+	defer cancel()
+	created := createStreamTestJob(t, client, ctx, "idem-key-stream-0001")
+	applyStreamTestEvent(t, store, created.GetJobId(), "stream_evt_running", "running", 2, map[string]any{"status": "running"})
+	applyStreamTestEvent(t, store, created.GetJobId(), "stream_evt_done", "completed", 3, completedStreamData())
+
+	stream, err := client.StreamJobEvents(ctx, &ubagv1.ListJobEventsRequest{JobId: created.GetJobId()})
+	if err != nil {
+		t.Fatalf("StreamJobEvents: %v", err)
+	}
+	types, err := recvTypes(t, stream)
+	if !errors.Is(err, io.EOF) {
+		t.Fatalf("stream ended with %v, want clean io.EOF after the terminal event", err)
+	}
+	want := []string{"queued", "running", "completed"}
+	if len(types) != len(want) {
+		t.Fatalf("event types = %v, want %v", types, want)
+	}
+	for i := range want {
+		if types[i] != want[i] {
+			t.Fatalf("event types = %v, want %v", types, want)
+		}
+	}
+}
+
+func TestStreamJobEventsHonorsAfterSequence(t *testing.T) {
+	client, store := newTestClientWithStore(t)
+	ctx, cancel := context.WithTimeout(authContext(context.Background(), testSecret), 10*time.Second)
+	defer cancel()
+	created := createStreamTestJob(t, client, ctx, "idem-key-stream-0002")
+	applyStreamTestEvent(t, store, created.GetJobId(), "stream_evt_after_done", "completed", 2, completedStreamData())
+
+	stream, err := client.StreamJobEvents(ctx, &ubagv1.ListJobEventsRequest{JobId: created.GetJobId(), AfterSequence: 1})
+	if err != nil {
+		t.Fatalf("StreamJobEvents: %v", err)
+	}
+	types, err := recvTypes(t, stream)
+	if !errors.Is(err, io.EOF) || len(types) != 1 || types[0] != "completed" {
+		t.Fatalf("after_sequence=1 got types=%v err=%v, want only the completed event then io.EOF", types, err)
+	}
+}
+
+func TestStreamJobEventsWaitsForLiveEventsThenClosesOnTerminal(t *testing.T) {
+	client, store := newTestClientWithStore(t)
+	ctx, cancel := context.WithTimeout(authContext(context.Background(), testSecret), 10*time.Second)
+	defer cancel()
+	created := createStreamTestJob(t, client, ctx, "idem-key-stream-0003")
+
+	stream, err := client.StreamJobEvents(ctx, &ubagv1.ListJobEventsRequest{JobId: created.GetJobId()})
+	if err != nil {
+		t.Fatalf("StreamJobEvents: %v", err)
+	}
+	first, err := stream.Recv()
+	if err != nil || first.GetType() != "queued" {
+		t.Fatalf("first event = %v err=%v, want queued", first, err)
+	}
+	applyStreamTestEvent(t, store, created.GetJobId(), "stream_live_running", "running", 2, map[string]any{"status": "running"})
+	running, err := stream.Recv()
+	if err != nil || running.GetType() != "running" {
+		t.Fatalf("live event = %v err=%v, want running", running, err)
+	}
+	applyStreamTestEvent(t, store, created.GetJobId(), "stream_live_done", "completed", 3, completedStreamData())
+	done, err := stream.Recv()
+	if err != nil || done.GetType() != "completed" {
+		t.Fatalf("terminal event = %v err=%v, want completed", done, err)
+	}
+	if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
+		t.Fatalf("after terminal event stream returned %v, want io.EOF", err)
+	}
+}
+
+func TestStreamJobEventsStaysOpenWithoutTerminalUntilContextEnds(t *testing.T) {
+	client, store := newTestClientWithStore(t)
+	base := authContext(context.Background(), testSecret)
+	created := createStreamTestJob(t, client, base, "idem-key-stream-0004")
+	applyStreamTestEvent(t, store, created.GetJobId(), "stream_open_running", "running", 2, map[string]any{"status": "running"})
+
+	ctx, cancel := context.WithTimeout(base, 300*time.Millisecond)
+	defer cancel()
+	stream, err := client.StreamJobEvents(ctx, &ubagv1.ListJobEventsRequest{JobId: created.GetJobId()})
+	if err != nil {
+		t.Fatalf("StreamJobEvents: %v", err)
+	}
+	types, err := recvTypes(t, stream)
+	if errors.Is(err, io.EOF) {
+		t.Fatalf("stream closed cleanly without a terminal event (types=%v)", types)
+	}
+	if code := status.Code(err); code != codes.DeadlineExceeded {
+		t.Fatalf("stream ended with code %v (%v), want DeadlineExceeded from the client context", code, err)
+	}
+	if len(types) != 2 || types[0] != "queued" || types[1] != "running" {
+		t.Fatalf("event types = %v, want [queued running] before the deadline", types)
+	}
+}
+
+func TestStreamJobEventsRejectsBadRequests(t *testing.T) {
+	client := newTestClient(t)
+	authed := authContext(context.Background(), testSecret)
+	created := createStreamTestJob(t, client, authed, "idem-key-stream-0005")
+
+	expect := func(name string, ctx context.Context, req *ubagv1.ListJobEventsRequest, want codes.Code) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		stream, err := client.StreamJobEvents(ctx, req)
+		if err == nil {
+			_, err = stream.Recv()
+		}
+		if status.Code(err) != want {
+			t.Fatalf("%s: code = %v (%v), want %v", name, status.Code(err), err, want)
+		}
+	}
+	expect("missing auth", context.Background(), &ubagv1.ListJobEventsRequest{JobId: created.GetJobId()}, codes.Unauthenticated)
+	expect("missing job", authed, &ubagv1.ListJobEventsRequest{JobId: "job_missing_stream"}, codes.NotFound)
+	expect("empty job id", authed, &ubagv1.ListJobEventsRequest{}, codes.InvalidArgument)
+	expect("negative after_sequence", authed, &ubagv1.ListJobEventsRequest{JobId: created.GetJobId(), AfterSequence: -1}, codes.InvalidArgument)
 }
