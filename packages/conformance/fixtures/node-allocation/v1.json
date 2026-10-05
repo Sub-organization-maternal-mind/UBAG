@@ -1,0 +1,487 @@
+{
+  "suite": "ubag.node-allocation.v1",
+  "schema_version": 1,
+  "note": "Illustrative values only (RFC 5737 / example hosts). Validity verdicts are against node-allocation.schema.json; consumer-side rules (stale generation, valid_until, reservation unknown) are in the schema description and enforced by the helper plane slices.",
+  "allocations": [
+    {
+      "id": "active-non-voice",
+      "valid": true,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": false,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7
+      }
+    },
+    {
+      "id": "active-voice-capable",
+      "valid": true,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-02",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-02"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": true,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7,
+        "udp_port_range": {
+          "min": 40000,
+          "max": 40099
+        },
+        "nat_ip": "203.0.113.10"
+      }
+    },
+    {
+      "id": "draining",
+      "valid": true,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "draining",
+        "max_browser_workloads": 3,
+        "voice_capable": false,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7
+      }
+    },
+    {
+      "id": "revoked",
+      "valid": true,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "revoked",
+        "max_browser_workloads": 0,
+        "voice_capable": false,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7
+      }
+    },
+    {
+      "id": "reservation-unknown",
+      "valid": true,
+      "note": "schema-valid; the consumer authorises no new placements",
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "unknown",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": false,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7
+      }
+    },
+    {
+      "id": "missing-generation",
+      "valid": false,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": false,
+        "valid_until": "2026-10-07T12:00:00Z"
+      }
+    },
+    {
+      "id": "voice-without-udp-range",
+      "valid": false,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-02",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-02"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": true,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7,
+        "nat_ip": "203.0.113.10"
+      }
+    },
+    {
+      "id": "voice-without-nat-ip",
+      "valid": false,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-02",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-02"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": true,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7,
+        "udp_port_range": {
+          "min": 40000,
+          "max": 40099
+        }
+      }
+    },
+    {
+      "id": "unknown-state",
+      "valid": false,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "paused",
+        "max_browser_workloads": 3,
+        "voice_capable": false,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7
+      }
+    },
+    {
+      "id": "unknown-reservation-state",
+      "valid": false,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "maybe",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": false,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7
+      }
+    },
+    {
+      "id": "negative-cpu",
+      "valid": false,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "cpu_millis": -1,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": false,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7
+      }
+    },
+    {
+      "id": "fractional-memory",
+      "valid": false,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 1.5,
+        "reservation_state": "known",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": false,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7
+      }
+    },
+    {
+      "id": "bad-endpoint",
+      "valid": false,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "no-port",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": false,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7
+      }
+    },
+    {
+      "id": "bad-spki-pin",
+      "valid": false,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "XYZ"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": false,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7
+      }
+    },
+    {
+      "id": "extra-field-rejected",
+      "valid": false,
+      "note": "no tenant or job ids cross this interface",
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": false,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7,
+        "tenant_id": "t1"
+      }
+    },
+    {
+      "id": "schema-version-2",
+      "valid": false,
+      "json": {
+        "schema_version": 2,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": false,
+        "valid_until": "2026-10-07T12:00:00Z",
+        "generation": 7
+      }
+    },
+    {
+      "id": "bad-valid-until",
+      "valid": false,
+      "json": {
+        "schema_version": 1,
+        "node_id": "helper-eu-01",
+        "region": "eu-west",
+        "endpoint": "10.20.0.7:8443",
+        "cert_identity": {
+          "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+          "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "cpu_millis": 1500,
+        "memory_bytes": 2684354560,
+        "reservation_state": "known",
+        "state": "active",
+        "max_browser_workloads": 3,
+        "voice_capable": false,
+        "valid_until": "tomorrow",
+        "generation": 7
+      }
+    }
+  ],
+  "lists": [
+    {
+      "id": "list-two-nodes",
+      "valid": true,
+      "json": {
+        "schema_version": 1,
+        "generated_at": "2026-10-06T12:00:00Z",
+        "allocations": [
+          {
+            "schema_version": 1,
+            "node_id": "helper-eu-01",
+            "region": "eu-west",
+            "endpoint": "10.20.0.7:8443",
+            "cert_identity": {
+              "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+              "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "cpu_millis": 1500,
+            "memory_bytes": 2684354560,
+            "reservation_state": "known",
+            "state": "active",
+            "max_browser_workloads": 3,
+            "voice_capable": false,
+            "valid_until": "2026-10-07T12:00:00Z",
+            "generation": 7
+          },
+          {
+            "schema_version": 1,
+            "node_id": "helper-eu-02",
+            "region": "eu-west",
+            "endpoint": "10.20.0.7:8443",
+            "cert_identity": {
+              "uri_san": "spiffe://fleet.example/node/helper-eu-02"
+            },
+            "cpu_millis": 1500,
+            "memory_bytes": 2684354560,
+            "reservation_state": "known",
+            "state": "active",
+            "max_browser_workloads": 3,
+            "voice_capable": true,
+            "valid_until": "2026-10-07T12:00:00Z",
+            "generation": 7,
+            "udp_port_range": {
+              "min": 40000,
+              "max": 40099
+            },
+            "nat_ip": "203.0.113.10"
+          }
+        ]
+      }
+    },
+    {
+      "id": "list-empty",
+      "valid": true,
+      "json": {
+        "schema_version": 1,
+        "generated_at": "2026-10-06T12:00:00Z",
+        "allocations": []
+      }
+    },
+    {
+      "id": "list-bad-member",
+      "valid": false,
+      "json": {
+        "schema_version": 1,
+        "generated_at": "2026-10-06T12:00:00Z",
+        "allocations": [
+          {
+            "schema_version": 1,
+            "node_id": "helper-eu-01",
+            "region": "eu-west",
+            "endpoint": "10.20.0.7:8443",
+            "cert_identity": {
+              "uri_san": "spiffe://fleet.example/node/helper-eu-01",
+              "spki_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            },
+            "cpu_millis": 1500,
+            "memory_bytes": 2684354560,
+            "reservation_state": "known",
+            "state": "paused",
+            "max_browser_workloads": 3,
+            "voice_capable": false,
+            "valid_until": "2026-10-07T12:00:00Z",
+            "generation": 7
+          }
+        ]
+      }
+    },
+    {
+      "id": "list-missing-generated-at",
+      "valid": false,
+      "json": {
+        "schema_version": 1,
+        "allocations": []
+      }
+    }
+  ]
+}

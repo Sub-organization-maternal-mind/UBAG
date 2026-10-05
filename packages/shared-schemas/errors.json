@@ -163,7 +163,8 @@
           { "code": "UBAG-WORKER-UNAVAILABLE-001", "message": "No worker available to accept the job",         "retryable": true },
           { "code": "UBAG-WORKER-OOM-002",          "message": "Worker ran out of memory; job requeued",        "retryable": true },
           { "code": "UBAG-WORKER-TIMEOUT-003",      "message": "Worker did not complete job within timeout",    "retryable": true },
-          { "code": "UBAG-WORKER-CRASHED-004",      "message": "Worker process crashed; job requeued",          "retryable": true }
+          { "code": "UBAG-WORKER-CRASHED-004",      "message": "Worker process crashed; job requeued",          "retryable": true },
+          { "code": "UBAG-WORKER-NODE-FENCED-005",  "message": "Helper node generation was fenced; result rejected", "retryable": false }
         ]
       },
       {

@@ -288,6 +288,30 @@ if (jobEventSchema) {
   }
 }
 
+// Helper node allocation consumer schema (P2.4): the grant fields the primary relies on
+// must stay present and required, and the fencing code must exist and stay non-retryable.
+const nodeAllocation = parseJson('packages/shared-schemas/schemas/node-allocation.schema.json');
+if (nodeAllocation) {
+  if (nodeAllocation.$schema !== 'https://json-schema.org/draft/2020-12/schema') {
+    failures.push('node-allocation.schema.json must use JSON Schema Draft 2020-12');
+  }
+  if (nodeAllocation.additionalProperties !== false) {
+    failures.push('node-allocation.schema.json must stay additionalProperties:false (no tenant or job ids cross this interface)');
+  }
+  for (const field of [
+    'schema_version', 'node_id', 'region', 'endpoint', 'cert_identity', 'cpu_millis', 'memory_bytes',
+    'reservation_state', 'state', 'max_browser_workloads', 'voice_capable', 'valid_until', 'generation'
+  ]) {
+    if (!nodeAllocation.properties?.[field]) failures.push(`node-allocation.schema.json missing ${field}`);
+    if (!nodeAllocation.required?.includes(field)) failures.push(`node-allocation.schema.json must require ${field}`);
+  }
+}
+const errorCatalog = parseJson('packages/shared-schemas/errors.json');
+const fencedCode = errorCatalog?.['x-catalog']?.namespaces?.flatMap((n) => n.codes).find((c) => c.code === 'UBAG-WORKER-NODE-FENCED-005');
+if (errorCatalog && (!fencedCode || fencedCode.retryable !== false)) {
+  failures.push('errors.json must define UBAG-WORKER-NODE-FENCED-005 as non-retryable');
+}
+
 const jobProto = requireFile('packages/proto/proto/ubag/v1/jobs.proto');
 if (jobProto) {
   for (const rpc of ['CreateJob', 'ListJobs', 'GetJob', 'CancelJob', 'RetryJob', 'ListJobEvents', 'StreamJobEvents']) {

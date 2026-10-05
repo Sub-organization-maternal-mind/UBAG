@@ -18,4 +18,10 @@ The `schemas/` directory holds the initial REST/OpenAPI-facing v1 baseline schem
 
 Shared vectors: `packages/conformance/fixtures/worker-daemon/v2.json`.
 
+## Helper node allocation (consumer schema, `$id` under `/v1/fleet/`)
+
+- `schemas/node-allocation.schema.json`: one capacity grant per Helper Node (cpu/memory net of manager reservations, `reservation_state`, `state`, `generation`, `valid_until`, voice UDP range and NAT ip). `$defs/allocation_list` is the polled response body. UBAG consumes it; the external Fleet Manager produces it (ADR-0006). Error `UBAG-WORKER-NODE-FENCED-005` (non-retryable) rejects results from a fenced generation.
+
+Shared vectors: `packages/conformance/fixtures/node-allocation/v1.json`.
+
 These files define public wire contracts only. They do not contain product runtime code.

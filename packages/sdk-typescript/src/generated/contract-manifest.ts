@@ -743,6 +743,10 @@ export const UBAG_ERROR_CODES = {
     "category": "worker",
     "retryable": true
   },
+  "UBAG-WORKER-NODE-FENCED-005": {
+    "category": "worker",
+    "retryable": false
+  },
   "UBAG-BROWSER-TOPOLOGY-READY-001": {
     "category": "browser",
     "retryable": true

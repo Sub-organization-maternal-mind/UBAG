@@ -207,6 +207,7 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 	"UBAG-WORKER-OOM-002":                          {Category: "worker", Retryable: true, RetryAfterMs: 0},
 	"UBAG-WORKER-TIMEOUT-003":                      {Category: "worker", Retryable: true, RetryAfterMs: 0},
 	"UBAG-WORKER-CRASHED-004":                      {Category: "worker", Retryable: true, RetryAfterMs: 0},
+	"UBAG-WORKER-NODE-FENCED-005":                  {Category: "worker", Retryable: false, RetryAfterMs: 0},
 	"UBAG-BROWSER-TOPOLOGY-READY-001":              {Category: "browser", Retryable: true, RetryAfterMs: 0},
 	"UBAG-BROWSER-SPAWN-001":                       {Category: "browser", Retryable: true, RetryAfterMs: 0},
 	"UBAG-BROWSER-CRASH-002":                       {Category: "browser", Retryable: true, RetryAfterMs: 0},
