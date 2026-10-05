@@ -63,6 +63,7 @@ var UbagEndpoints = map[string]ManifestEndpoint{
 	"POST /v1/sso/logout":                            {Method: "POST", Path: "/v1/sso/logout"},
 	"GET /v1/jobs":                                   {Method: "GET", Path: "/v1/jobs"},
 	"POST /v1/jobs":                                  {Method: "POST", Path: "/v1/jobs"},
+	"GET /v1/jobs/summary":                           {Method: "GET", Path: "/v1/jobs/summary"},
 	"GET /v1/jobs/{job_id}":                          {Method: "GET", Path: "/v1/jobs/{job_id}"},
 	"GET /v1/jobs/{job_id}/events":                   {Method: "GET", Path: "/v1/jobs/{job_id}/events"},
 	"GET /v1/jobs/{job_id}/artifacts":                {Method: "GET", Path: "/v1/jobs/{job_id}/artifacts"},

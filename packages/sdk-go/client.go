@@ -386,6 +386,10 @@ func (client *Client) ListBrowserTabs(ctx context.Context, params ListBrowserTab
 	return client.request(ctx, http.MethodGet, "/v1/browser/tabs"+encodeQueryPairs(pairs), nil, client.resolveOptions(options...))
 }
 
+func (client *Client) GetJobsSummary(ctx context.Context, options ...RequestOption) (JSON, error) {
+	return client.request(ctx, http.MethodGet, "/v1/jobs/summary", nil, client.resolveOptions(options...))
+}
+
 func (client *Client) GetBrowserTopologySummary(ctx context.Context, options ...RequestOption) (JSON, error) {
 	return client.request(ctx, http.MethodGet, "/v1/browser/summary", nil, client.resolveOptions(options...))
 }

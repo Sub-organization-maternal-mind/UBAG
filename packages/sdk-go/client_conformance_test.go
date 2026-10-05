@@ -235,6 +235,8 @@ func invokeScenario(t *testing.T, client *Client, scenario fixtureScenario) (JSO
 		return JSON{"body": body}, err
 	case request.Method == http.MethodGet && parsed.Path == "/v1/jobs":
 		return client.ListJobs(ctx, listJobsParamsFromQuery(parsed.Query()), options...)
+	case request.Method == http.MethodGet && parsed.Path == "/v1/jobs/summary":
+		return client.GetJobsSummary(ctx, options...)
 	case request.Method == http.MethodGet && strings.HasPrefix(parsed.Path, "/v1/jobs/") && strings.HasSuffix(parsed.Path, "/events"):
 		jobID := strings.TrimSuffix(strings.TrimPrefix(parsed.Path, "/v1/jobs/"), "/events")
 		return client.ListJobEvents(ctx, jobID, listJobEventsParamsFromQuery(parsed.Query()), options...)

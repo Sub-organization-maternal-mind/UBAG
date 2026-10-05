@@ -177,6 +177,10 @@ export const UBAG_ENDPOINTS = {
     "method": "POST",
     "path": "/v1/jobs"
   },
+  "GET /v1/jobs/summary": {
+    "method": "GET",
+    "path": "/v1/jobs/summary"
+  },
   "GET /v1/jobs/{job_id}": {
     "method": "GET",
     "path": "/v1/jobs/{job_id}"

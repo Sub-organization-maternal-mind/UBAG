@@ -269,11 +269,20 @@ export interface AuditEntry {
   prev_hash?: string;
 }
 
+// JobsSummary — GET /v1/jobs/summary (uncapped counts; never derive totals from a list page)
+export interface JobsSummary {
+  total: number;
+  counts_by_status: Record<string, number>;
+  queued_by_reason: Record<string, number>;
+  oldest_queued_at: string | null;
+}
+
 // Metrics
 export interface MetricsResponse {
   jobs_total?: number;
   jobs_active?: number;
   jobs_failed?: number;
+  jobs_queued?: number;
   targets_total?: number;
   browser_instances?: number;
   [key: string]: unknown;

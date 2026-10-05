@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { base } from '$app/paths';
   import { api } from '$lib/api/client';
-  import { normalizeJobs } from '$lib/api/jobs';
+  import { failedCount, normalizeJobs, parseJobsSummary } from '$lib/api/jobs';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
@@ -45,10 +45,11 @@
     metricsError = null;
     metricsDenied = false;
 
-    const [jobsRes, targetsRes, browserRes] = await Promise.all([
+    const [jobsRes, targetsRes, browserRes, summaryRes] = await Promise.all([
       jobsResponse ?? api.get<{ jobs?: Job[]; total?: number }>('/v1/jobs?limit=100'),
       api.get('/v1/targets'),
       api.get('/v1/browser/summary'),
+      api.get('/v1/jobs/summary'),
     ]);
 
     metricsLoading = false;
@@ -58,6 +59,7 @@
     if (jobsRes.unauthorized) { metricsError = 'Not authenticated — check your gateway login.'; return; }
 
     const jobs = jobsRes.data?.jobs ?? [];
+    const summary = parseJobsSummary(summaryRes.data);
     // targets uses real {data:[...]} envelope
     const targetsData = targetsRes.data as Record<string, unknown> | null;
     const targets = (Array.isArray(targetsData?.['data']) ? targetsData!['data'] : []) as unknown[];
@@ -66,8 +68,13 @@
     const browserInstances = (browserSummary?.['total_instances'] ?? browserSummary?.['instances'] ?? 0) as number;
 
     metrics = {
-      jobs_total: jobsRes.data?.total ?? jobs.length,
-      jobs_failed: jobs.filter((j) => FAILED_STATES.has((j.status ?? '').toLowerCase())).length,
+      // /v1/jobs/summary carries true counts; the list page is capped at 100 rows,
+      // so it is only a fallback for gateways that predate the summary route.
+      jobs_total: summary?.total ?? jobsRes.data?.total ?? jobs.length,
+      jobs_failed: summary
+        ? failedCount(summary)
+        : jobs.filter((j) => FAILED_STATES.has((j.status ?? '').toLowerCase())).length,
+      jobs_queued: summary?.counts_by_status['queued'],
       targets_total: targets.length,
       browser_instances: browserInstances,
     };
