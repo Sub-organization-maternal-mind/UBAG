@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS gateway_voice_sessions (
 	tenant_id        TEXT NOT NULL,
 	app_id           TEXT NOT NULL DEFAULT '',
 	target           TEXT NOT NULL,
+	mode             TEXT NOT NULL DEFAULT 'live',
+	job_id           TEXT NOT NULL DEFAULT '',
 	status           TEXT NOT NULL DEFAULT 'queued',
 	muted            BOOLEAN NOT NULL DEFAULT FALSE,
 	identity_ref     TEXT NOT NULL DEFAULT '',

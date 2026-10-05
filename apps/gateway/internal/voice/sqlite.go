@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS gateway_voice_sessions (
 	tenant_id        TEXT NOT NULL,
 	app_id           TEXT NOT NULL DEFAULT '',
 	target           TEXT NOT NULL,
+	mode             TEXT NOT NULL DEFAULT 'live',
+	job_id           TEXT NOT NULL DEFAULT '',
 	status           TEXT NOT NULL DEFAULT 'queued',
 	muted            INTEGER NOT NULL DEFAULT 0,
 	identity_ref     TEXT NOT NULL DEFAULT '',
@@ -83,17 +85,18 @@ func (s *SQLiteStore) Ready(ctx context.Context) error {
 	return nil
 }
 
-const sqliteVoiceColumns = `session_id, tenant_id, app_id, target, status, muted,
-identity_ref, instance_ref, last_error, created_at, updated_at, lease_expires_at, terminated_at`
+const sqliteVoiceColumns = `session_id, tenant_id, app_id, target, mode, job_id,
+status, muted, identity_ref, instance_ref, last_error, created_at, updated_at,
+lease_expires_at, terminated_at`
 
 func scanSQLiteVoiceSession(row interface{ Scan(...any) error }) (Session, error) {
 	var s Session
 	var muted int
 	var createdAt, updatedAt string
 	var leaseExpires, terminatedAt string
-	if err := row.Scan(&s.ID, &s.TenantID, &s.AppID, &s.Target, &s.Status, &muted,
-		&s.IdentityRef, &s.InstanceRef, &s.LastError, &createdAt, &updatedAt,
-		&leaseExpires, &terminatedAt); err != nil {
+	if err := row.Scan(&s.ID, &s.TenantID, &s.AppID, &s.Target, &s.Mode, &s.JobID,
+		&s.Status, &muted, &s.IdentityRef, &s.InstanceRef, &s.LastError,
+		&createdAt, &updatedAt, &leaseExpires, &terminatedAt); err != nil {
 		return Session{}, err
 	}
 	s.Muted = muted != 0
@@ -189,9 +192,9 @@ WHERE tenant_id = ? AND instance_ref = ? AND status IN ('connecting','connected'
 	}
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO gateway_voice_sessions (`+sqliteVoiceColumns+`)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.SessionID, req.TenantID, req.AppID, req.Target, string(status), 0,
-		identity, instance, "",
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.SessionID, req.TenantID, req.AppID, req.Target, req.Mode, req.JobID,
+		string(status), 0, identity, instance, "",
 		formatSQLiteTime(now), formatSQLiteTime(now),
 		formatSQLiteTime(now.Add(req.LeaseTTL)), "",
 	)

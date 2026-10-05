@@ -70,6 +70,13 @@ type voiceSessionCreateRequest struct {
 	Target      string `json:"target"`
 	IdentityRef string `json:"identity_ref,omitempty"`
 	TTLSeconds  *int   `json:"ttl_seconds,omitempty"`
+	// Mode selects the session kind: "live" (default) is a two-way voice
+	// session holding exclusive leases; "utterance" is the separately
+	// selectable audio-in/text-out mode backed by a transcription-style job
+	// (the response carries job_id; upload the audio to
+	// /v1/jobs/{job_id}/artifacts/{key}). A live session is NEVER silently
+	// substituted with an utterance job — unknown modes are rejected.
+	Mode string `json:"mode,omitempty"`
 }
 
 type voiceSessionMuteRequest struct {
@@ -229,9 +236,66 @@ func (s *Server) handleVoiceSessionCreate(w http.ResponseWriter, r *http.Request
 			"ttl_seconds must be between 30 and 3600", false, nil)
 		return
 	}
+	mode := strings.TrimSpace(req.Mode)
+	if mode == "" {
+		mode = voice.ModeLive
+	}
+	if mode != voice.ModeLive && mode != voice.ModeUtterance {
+		s.voiceError(w, r, http.StatusBadRequest, "UBAG-VOICE-SESSION-STATE-005",
+			"mode must be \"live\" or \"utterance\"; live voice is never substituted with utterance jobs", false, nil)
+		return
+	}
 	tenantID, appID := requestScope(r)
 	ctx := r.Context()
 	now := time.Now().UTC()
+
+	// Utterance mode: the session's resource is a transcription-style JOB,
+	// not an exclusive live-voice appointment. No account or environment
+	// lease is claimed (they stay free for live sessions); the caller
+	// uploads the audio to the job and polls it like any transcription.
+	if mode == voice.ModeUtterance {
+		utteranceTarget := target
+		policy := resolveAttachmentPolicy(target)
+		if !attachmentKindsAllowAudio(policy) {
+			utteranceTarget = defaultTranscriptionTarget
+		}
+		prompt := "Transcribe the attached audio verbatim. Return plain text only, no commentary."
+		decls := []any{map[string]any{
+			"key":          "utterance.wav",
+			"content_type": "audio/wav",
+			"kind":         "voice",
+		}}
+		jobID, status, errType, code, message, ok := s.createFacadeJob(r, openAIFacadeRequest{Model: utteranceTarget}, utteranceTarget, nil, prompt, decls, "")
+		if !ok {
+			s.writeError(w, r, status, apiError{Code: code, Category: "voice", Message: message, Retryable: status >= 500})
+			_ = errType
+			return
+		}
+		reserved, err := s.voice.Reserve(ctx, voice.ReserveRequest{
+			SessionID: newVoiceSessionID(now),
+			TenantID:  tenantID,
+			AppID:     appID,
+			Target:    utteranceTarget,
+			Mode:      voice.ModeUtterance,
+			JobID:     jobID,
+			LeaseTTL:  ttl,
+			Now:       now,
+		})
+		if s.mapVoiceStoreError(w, r, err) {
+			return
+		}
+		s.writeJSON(w, http.StatusCreated, map[string]any{
+			"kind":       "voice_session",
+			"session_id": reserved.ID,
+			"target":     reserved.Target,
+			"mode":       voice.ModeUtterance,
+			"job_id":     jobID,
+			"status":     string(reserved.Status),
+			"session":    reserved,
+			"next":       fmt.Sprintf("PUT the audio to /v1/jobs/%s/artifacts/utterance.wav, then poll GET /v1/jobs/%s; delete the session when done", jobID, jobID),
+		})
+		return
+	}
 
 	// Budgets, enforced BEFORE the reservation with the same accounting the
 	// sweeper and store use: a tenant may hold voiceMaxSessionsPerTenant

@@ -47,15 +47,16 @@ func (s *PostgresStore) Ready(ctx context.Context) error {
 	return nil
 }
 
-const postgresVoiceColumns = `session_id, tenant_id, app_id, target, status, muted,
-identity_ref, instance_ref, last_error, created_at, updated_at, lease_expires_at, terminated_at`
+const postgresVoiceColumns = `session_id, tenant_id, app_id, target, mode, job_id,
+status, muted, identity_ref, instance_ref, last_error, created_at, updated_at,
+lease_expires_at, terminated_at`
 
 func scanPostgresVoiceSession(row interface{ Scan(...any) error }) (Session, error) {
 	var s Session
 	var muted bool
-	if err := row.Scan(&s.ID, &s.TenantID, &s.AppID, &s.Target, &s.Status, &muted,
-		&s.IdentityRef, &s.InstanceRef, &s.LastError, &s.CreatedAt, &s.UpdatedAt,
-		&s.LeaseExpires, &s.TerminatedAt); err != nil {
+	if err := row.Scan(&s.ID, &s.TenantID, &s.AppID, &s.Target, &s.Mode, &s.JobID,
+		&s.Status, &muted, &s.IdentityRef, &s.InstanceRef, &s.LastError,
+		&s.CreatedAt, &s.UpdatedAt, &s.LeaseExpires, &s.TerminatedAt); err != nil {
 		return Session{}, err
 	}
 	s.Muted = muted
@@ -137,8 +138,9 @@ WHERE tenant_id = $1 AND instance_ref = $2 AND status IN ('connecting','connecte
 	}
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO gateway_voice_sessions (`+postgresVoiceColumns+`)
-VALUES ($1, $2, $3, $4, $5, FALSE, $6, $7, '', $8, $8, $9, $9)`,
-		req.SessionID, req.TenantID, req.AppID, req.Target, string(status),
+VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, $8, $9, '', $10, $10, $11, $11)`,
+		req.SessionID, req.TenantID, req.AppID, req.Target,
+		req.Mode, req.JobID, string(status),
 		identity, instance, now,
 		now.Add(req.LeaseTTL),
 	)

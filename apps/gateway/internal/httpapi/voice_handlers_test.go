@@ -236,6 +236,45 @@ func TestVoiceConnectNegotiatesAndIssuesCredential(t *testing.T) {
 	}
 }
 
+func TestVoiceUtteranceModeSelectable(t *testing.T) {
+	_, handler, media := voiceTestServer(t, nil)
+	// utterance mode creates a transcription-style job and claims NO leases.
+	rec := doJSON(handler, http.MethodPost, "/v1/voice/sessions",
+		`{"target":"chatgpt_web","mode":"utterance"}`, authHeaders(""))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("utterance create = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		Session   voice.Session `json:"session"`
+		JobID     string        `json:"job_id"`
+		SessionID string        `json:"session_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.Session.Mode != voice.ModeUtterance || created.JobID == "" {
+		t.Fatalf("session = %+v job=%q", created.Session, created.JobID)
+	}
+	if created.Session.IdentityRef != "" || created.Session.InstanceRef != "" {
+		t.Fatalf("utterance sessions must never hold leases: %+v", created.Session)
+	}
+	if len(media.offers) != 0 {
+		t.Fatal("media plane must not be engaged for utterance mode")
+	}
+	// Unknown modes are rejected (never silently substituted).
+	rec = doJSON(handler, http.MethodPost, "/v1/voice/sessions",
+		`{"target":"chatgpt_web","mode":"whisper"}`, authHeaders(""))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "never substituted") {
+		t.Fatalf("unknown mode = %d; body=%s", rec.Code, rec.Body.String())
+	}
+	// Explicit live mode works as before.
+	rec = doJSON(handler, http.MethodPost, "/v1/voice/sessions",
+		`{"target":"chatgpt_web","mode":"live"}`, authHeaders(""))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("explicit live = %d; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestVoiceConnectWithoutMediaPlane(t *testing.T) {
 	_, handler, _ := voiceTestServer(t, func(c *Config) { c.VoiceMedia = nil })
 	rec := doJSON(handler, http.MethodPost, "/v1/voice/sessions", voiceBody("chatgpt_web"), authHeaders(""))

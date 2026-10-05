@@ -50,13 +50,26 @@ func (s Status) Active() bool {
 	return s == StatusQueued || s == StatusConnecting || s == StatusConnected
 }
 
+// Session mode: "live" is a two-way voice session holding exclusive leases;
+// "utterance" is the separately selectable audio-in/text-out mode backed by a
+// transcription-style job. A live session is NEVER substituted with an
+// utterance job — the mode is chosen explicitly by the caller and stored on
+// the record.
+const (
+	ModeLive      = "live"
+	ModeUtterance = "utterance"
+)
+
 // Session is one voice-session record. IdentityRef and InstanceRef are empty
-// while queued (no leases held).
+// while queued (no leases held); JobID is set only for utterance-mode
+// sessions, whose lifecycle is the backing transcription job's.
 type Session struct {
 	ID           string    `json:"session_id"`
 	TenantID     string    `json:"tenant_id"`
 	AppID        string    `json:"app_id"`
 	Target       string    `json:"target"`
+	Mode         string    `json:"mode"`
+	JobID        string    `json:"job_id,omitempty"`
 	Status       Status    `json:"status"`
 	Muted        bool      `json:"muted"`
 	IdentityRef  string    `json:"identity_ref,omitempty"`
@@ -74,6 +87,10 @@ type ReserveRequest struct {
 	TenantID  string
 	AppID     string
 	Target    string
+	// Mode selects live (default) or utterance. Utterance sessions never
+	// claim leases and carry JobID.
+	Mode  string
+	JobID string
 	// IdentityCandidates are the provider accounts to try claiming, most
 	// preferred first (the caller derives them from topology). Each is
 	// attempted atomically; the first claim wins. Empty means the caller has
@@ -216,11 +233,17 @@ func (m *MemoryStore) Reserve(ctx context.Context, req ReserveRequest) (Session,
 	if identity != "" {
 		status = StatusConnecting
 	}
+	mode := req.Mode
+	if strings.TrimSpace(mode) == "" {
+		mode = ModeLive
+	}
 	session := &Session{
 		ID:           req.SessionID,
 		TenantID:     req.TenantID,
 		AppID:        req.AppID,
 		Target:       req.Target,
+		Mode:         mode,
+		JobID:        req.JobID,
 		Status:       status,
 		IdentityRef:  identity,
 		InstanceRef:  instance,
