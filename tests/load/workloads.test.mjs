@@ -4,7 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { loadWorkload, multipartBody, sha256Hex, syntheticWav, validateSchema, validateWorkload, wavSize } from './workloads.mjs';
+import { loadWorkload, multipartBody, sha256Hex, syntheticWav, validateSchema, validateWorkload, wavSize, workloadSha256 } from './workloads.mjs';
 
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'workloads');
 const clone = (x) => JSON.parse(JSON.stringify(x));
@@ -28,6 +28,35 @@ describe('workload manifests', () => {
     assert.match(mutate((m) => { m.fixture.content_type = 'audio/ogg'; }), /content_type is not listed/);
     assert.match(mutate((m) => { m.fixture.profiles.short.duration_s = 0; }), /below 1/);
     assert.throws(() => loadWorkload('../etc'), /invalid workload name/);
+  });
+
+  it('ships the five recorded workloads, named after their file and kind', () => {
+    const names = ['attachment', 'audio-upload', 'mixed', 'text', 'voice'];
+    assert.deepEqual(readdirSync(dir).filter((f) => f !== 'workload.schema.json').map((f) => f.replace(/\.json$/, '')).sort(), names);
+    for (const n of names) { const m = loadWorkload(n); assert.equal(m.name, n); assert.equal(m.kind, n); }
+    assert.equal(loadWorkload('voice').provider_scenario.requires_live_media, true);
+  });
+
+  it('rejects broken mix, ladder and kind rules', () => {
+    const mutate = (name, fn) => { const m = clone(loadWorkload(name)); fn(m); return validateWorkload(m).join('\n'); };
+    assert.match(mutate('mixed', (m) => { m.mix[0].weight = 60; }), /sum to 100/);
+    assert.match(mutate('mixed', (m) => { m.mix[0].kind = 'video'; }), /one of/);
+    assert.match(mutate('mixed', (m) => { delete m.ladder_steps; }), /missing required "ladder_steps"/);
+    assert.match(mutate('mixed', (m) => { m.mix[0].payload_bytes = { min: 9, max: 1 }; }), /min > max/);
+    assert.match(mutate('mixed', (m) => { m.think_time_ms = { min: 9, max: 1 }; }), /think_time_ms: min > max/);
+    assert.match(mutate('mixed', (m) => { m.ladder_steps = [5, 5]; }), /ascending/);
+    assert.match(mutate('mixed', (m) => { m.schema_version = 2; }), /must equal 1/);
+    assert.match(mutate('mixed', (m) => { m.name = 'Bad Name'; }), /does not match/);
+    assert.match(mutate('mixed', (m) => { m.mix = []; }), /fewer than 1/);
+    assert.match(mutate('mixed', (m) => { m.fixture = clone(loadWorkload('audio-upload').fixture); }), /only valid for kind audio-upload/);
+    assert.match(mutate('audio-upload', (m) => { delete m.prompt; }), /missing required "prompt"/);
+    assert.match(mutate('voice', (m) => { m.harness_support = 'implemented'; }), /live-media/);
+  });
+
+  it('hashes manifests independent of line endings', () => {
+    assert.match(workloadSha256('text'), /^[0-9a-f]{64}$/);
+    assert.notEqual(workloadSha256('text'), workloadSha256('mixed'));
+    assert.equal(workloadSha256('text'), sha256Hex(Buffer.from(readFileSync(join(dir, 'text.json'), 'utf8').replace(/\r\n/g, '\n'))));
   });
 
   it('the checker covers the keywords it claims to', () => {

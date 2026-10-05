@@ -215,3 +215,13 @@ unmeasured (FAIL) unless every sampled container has a memory limit. Throttle %
 and the pressure booleans are reported, not gated. `/proc/*` is the host's (the
 VM's on Docker Desktop) unless the runtime virtualises it. Numbers off the lab host
 are NON-AUTHORITATIVE.
+
+## Workload manifests and run provenance
+
+`--workload <name>` (`text`, `attachment`, `audio-upload`, `mixed`, `voice`; files in `tests/load/workloads/`,
+schema `tests/load/workloads/workload.schema.json`) validates a manifest before any load is generated and records its
+name, SHA-256 and body in `report.json` -> `meta.provenance.workload`. It does not change the traffic: that is still
+selected with `--scenario`. Every report also carries `meta.provenance`: gateway commit (from `ubag_gateway_info`),
+harness git sha (+ `dirty`), harness host spec, allowlisted env knobs (harness process and, with `--cgroup-containers`,
+each container via read-only `docker exec <c> env`) and container CPU/memory limits. Only allowlisted names are ever
+copied (`tests/load/lib/provenance.mjs`). Publishing rules: `docs/benchmarks/README.md`.

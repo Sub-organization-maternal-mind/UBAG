@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "name": "voice",
+  "kind": "voice",
+  "description": "Voice sessions. Needs live media (relay secret and a real browser), so it can only run supervised in a lab environment; recorded as a contract only. command_type is a label for the voice session API, not a job command.",
+  "harness_support": "planned",
+  "provider_scenario": { "target": "mock", "command_type": "voice.session", "live_provider": false, "requires_live_media": true },
+  "mix": [{ "kind": "voice_session", "weight": 100, "payload_bytes": { "min": 0, "max": 0 }, "session_seconds": 30 }],
+  "think_time_ms": { "min": 1000, "max": 5000 },
+  "ladder_steps": [1, 2, 5]
+}

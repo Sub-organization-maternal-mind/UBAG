@@ -12,6 +12,8 @@ import {
   ACK_FLAG, checkTarget, clockBounds, evaluateThresholds, histogramQuantile, main, metricsDelta, parseArgs, parsePgStatements,
   parseProm, parseRetryAfterMs, percentile, pgDelta, retryDelayMs, run, renderMarkdown, splitSse, summarize,
 } from './acceptance.mjs';
+import { containerLimits, gatewayInfoFrom, parseEnvText, pickEnv } from './lib/provenance.mjs';
+import { workloadSha256 } from './workloads.mjs';
 import { evaluatePressure, parseSample, parseTargets, startCgroupSampler, summarizeContainer } from './lib/cgroup.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -82,6 +84,7 @@ async function startFake(opts = {}) {
     if (path === '/v1/metrics') {
       req.resume(); res.writeHead(200, { 'Content-Type': 'text/plain' });
       return res.end([
+        'ubag_gateway_info{version="9.9.9",api_version="v1",commit="deadbeefcafe"} 1',
         '# TYPE ubag_gateway_http_inflight_requests gauge',
         `ubag_gateway_http_inflight_requests{service="ubag-gateway",route="all",method="all"} ${st.inflight}`,
         `ubag_admission_rejections_total{reason="inflight_requests"} ${st.rejections.inflight_requests}`,
@@ -844,5 +847,62 @@ describe('events-latency scenario', () => {
     assert.match(broken.scenarios['events-latency'].pg_stat_statements.skipped, /unavailable/);
     assert.equal(broken.thresholds.passed, true);
     assert.throws(() => cfgFor(fake, [...EV, '--pg-stat-container', 'x;rm -rf /']), /invalid name/);
+  });
+});
+
+// ------------------------------------------------------------ run provenance
+
+describe('run provenance', () => {
+  it('pickEnv copies only allowlisted names and never an odd-looking value', () => {
+    const got = pickEnv({
+      UBAG_WORKER_CONCURRENCY: '1', UBAG_WORKER_DAEMON: 'true', UBAG_ADMISSION_MAX_UPLOAD_MEMORY_BYTES: '268435456', UBAG_GATEWAY_STORE: 'postgres',
+      UBAG_GATEWAY_DATABASE_URL: 'postgres://u:pw@h/db', UBAG_LOAD_API_KEY: 'secret', UBAG_VOICE_RELAY_SECRET: 'secret', UBAG_EXECUTOR_MODE: 'postgres://u:pw@h/db',
+    });
+    assert.deepEqual(got, { UBAG_ADMISSION_MAX_UPLOAD_MEMORY_BYTES: '268435456', UBAG_EXECUTOR_MODE: '[withheld: unexpected value shape]', UBAG_GATEWAY_STORE: 'postgres', UBAG_WORKER_CONCURRENCY: '1', UBAG_WORKER_DAEMON: 'true' });
+    assert.deepEqual(parseEnvText('A=1\nB=x=y\r\nnoequals\n'), { A: '1', B: 'x=y' });
+  });
+
+  it('gatewayInfoFrom and containerLimits read what the harness already scraped', () => {
+    assert.deepEqual(gatewayInfoFrom(parseProm('ubag_gateway_info{version="1.0",api_version="v1",commit="abc"} 1\n')), { version: '1.0', api_version: 'v1', commit: 'abc' });
+    assert.equal(gatewayInfoFrom(parseProm('other 1\n')), null);
+    assert.equal(gatewayInfoFrom(null), null);
+    assert.deepEqual(containerLimits({ containers: { gateway: { container: 'g', cpu_limit_cores: 1, memory_limit_mb: 1300 }, worker: { container: 'w', skipped: 'x' } } }), { gateway: { container: 'g', cpu_cores: 1, memory_mb: 1300 }, worker: { container: 'w', skipped: 'x' } });
+  });
+
+  it('report.meta.provenance carries commit, env allowlist, host, container limits, harness sha and manifest hash', async () => {
+    const fake = await startFake();
+    const env = { ...fake.env, UBAG_WORKER_CONCURRENCY: '3', UBAG_ADMISSION_MAX_INFLIGHT: '7', UBAG_VOICE_RELAY_SECRET: 'must-not-leak' };
+    const cfg = parseArgs([`--${ACK_FLAG}`, ...FAST, '--scenario', 'metrics-snapshot', '--workload', 'mixed', '--cgroup-containers', 'gateway=g,worker=w', '--docker-interval-ms', '20'], env);
+    const report = await run(cfg, {
+      dockerExec: async () => v2Fixture({ current: 300 * MB, cpuMax: '100000 100000' }),
+      dockerEnv: async (c) => { if (c === 'w') throw new Error('gone'); return 'UBAG_GATEWAY_STORE=postgres\nUBAG_ADMISSION_X=2\nSECRET_TOKEN=tok-xyz\nUBAG_WORKER_DAEMON=true\n'; },
+      harnessGit: () => ({ sha: '0123456789abcdef', dirty: false }),
+    }, env);
+    const pv = report.meta.provenance;
+    assert.deepEqual(pv.gateway, { version: '9.9.9', api_version: 'v1', commit: 'deadbeefcafe' });
+    assert.deepEqual(pv.harness, { sha: '0123456789abcdef', dirty: false });
+    assert.deepEqual(pv.harness_env, { UBAG_ADMISSION_MAX_INFLIGHT: '7', UBAG_WORKER_CONCURRENCY: '3' });
+    assert.deepEqual(pv.stack_env.gateway, { UBAG_ADMISSION_X: '2', UBAG_GATEWAY_STORE: 'postgres', UBAG_WORKER_DAEMON: 'true' });
+    assert.match(pv.stack_env.worker.skipped, /env read failed/);
+    assert.deepEqual(pv.container_limits.gateway, { container: 'g', cpu_cores: 1, memory_mb: 1000 });
+    assert.ok(pv.harness_host.cpu_count >= 1 && pv.harness_host.mem_total_mb > 0);
+    assert.equal(pv.workload.name, 'mixed');
+    assert.equal(pv.workload.sha256, workloadSha256('mixed'));
+    assert.match(pv.workload.sha256, /^[0-9a-f]{64}$/);
+    assert.equal(pv.workload.manifest.mix.length, 3);
+    const md = renderMarkdown(report);
+    const text = JSON.stringify(report) + md;
+    assert.ok(!text.includes('must-not-leak') && !text.includes('tok-xyz') && !text.includes('SECRET_TOKEN'));
+    assert.match(md, /## Provenance[\s\S]*deadbeefcafe[\s\S]*mixed sha256/);
+  });
+
+  it('--workload refuses an unknown manifest before any load is generated; no --workload records null', async () => {
+    const fake = await startFake();
+    assert.throws(() => cfgFor(fake, ['--scenario', 'metrics-snapshot', '--workload', 'does-not-exist']));
+    assert.throws(() => cfgFor(fake, ['--scenario', 'metrics-snapshot', '--workload', '../etc']), /invalid workload name/);
+    const report = await run(cfgFor(fake, ['--scenario', 'metrics-snapshot']), { harnessGit: () => ({ sha: null, dirty: null }) });
+    assert.equal(report.meta.provenance.workload, null);
+    assert.equal(report.meta.provenance.stack_env.skipped, 'no --cgroup-containers');
+    assert.equal(report.meta.config.workloadInfo, undefined);
   });
 });
