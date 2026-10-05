@@ -1,0 +1,414 @@
+// Offline self-tests for tests/load/acceptance.mjs. Never touches a real host:
+// every network scenario runs against an in-process fake gateway on 127.0.0.1.
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { mkdtempSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { after, describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import {
+  ACK_FLAG, checkTarget, evaluateThresholds, histogramQuantile, main, metricsDelta, parseArgs, parseDockerStatsLine,
+  parseProm, parseRetryAfterMs, parseSize, percentile, retryDelayMs, run, renderMarkdown, startDockerSampler, summarize,
+} from './acceptance.mjs';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const KEY = 'test-key-not-secret';
+const fakes = [];
+after(() => Promise.all(fakes.map((f) => new Promise((r) => { f.server.closeAllConnections?.(); f.server.close(r); }))));
+
+// ------------------------------------------------------------- fake gateway
+
+async function startFake(opts = {}) {
+  const o = { maxBody: 4096, rejectFirstCreates: 0, facadeLimit: Infinity, maxInflight: Infinity, omitRetryAfter: false, dupBug: false, facadeNoBodyMs: false, ...opts };
+  const st = { requests: 0, jobs: new Map(), byKey: new Map(), seq: 0, inflight: 0, facadeInflight: 0, creates: 0, completed: 0, rejections: { inflight_requests: 0, upload_memory: 0 }, uploadBytes: 0 };
+  const json = (res, status, body, headers = {}) => { res.writeHead(status, { 'Content-Type': 'application/json', ...headers }); res.end(JSON.stringify(body)); };
+  const overload = (res, reason, facade = false) => {
+    st.rejections[reason] += 1;
+    const headers = o.omitRetryAfter ? {} : { 'Retry-After': '0' };
+    const error = facade ? { message: 'overloaded', type: 'server_error', code: 'overloaded' } : { code: reason === 'upload_memory' ? 'UBAG-OVERLOAD-UPLOAD-001' : 'UBAG-OVERLOAD-REQUESTS-001', category: 'overload', message: 'retry', retryable: true };
+    if (!(facade && o.facadeNoBodyMs)) error.retry_after_ms = 15;
+    json(res, 503, { error }, headers);
+  };
+  const readBody = (req, cb) => { const chunks = []; let size = 0; req.on('data', (c) => { size += c.length; if (size <= o.maxBody + 1) chunks.push(c); }); req.on('end', () => cb(Buffer.concat(chunks).toString('utf8'), size)); };
+  const server = createServer((req, res) => {
+    st.requests += 1;
+    const url = new URL(req.url, 'http://x'); const path = url.pathname;
+    if (req.headers.authorization !== `Bearer ${KEY}`) { req.resume(); return json(res, 401, { error: { code: 'UBAG-AUTH-MISSING-001' } }); }
+    if (path === '/v1/health' || path === '/v1/ready') { req.resume(); return json(res, 200, { status: 'ok' }); }
+    if (path === '/v1/metrics') {
+      req.resume(); res.writeHead(200, { 'Content-Type': 'text/plain' });
+      return res.end([
+        '# TYPE ubag_gateway_http_inflight_requests gauge',
+        `ubag_gateway_http_inflight_requests{service="ubag-gateway",route="all",method="all"} ${st.inflight}`,
+        `ubag_admission_rejections_total{reason="inflight_requests"} ${st.rejections.inflight_requests}`,
+        `ubag_admission_rejections_total{reason="upload_memory"} ${st.rejections.upload_memory}`,
+        `ubag_upload_memory_inflight_bytes ${st.facadeInflight * 1024}`, 'ubag_upload_memory_budget_bytes 268435456',
+        `ubag_gateway_request_latency_seconds_bucket{route="/v1/jobs",le="0.1"} ${st.creates}`,
+        `ubag_gateway_request_latency_seconds_bucket{route="/v1/jobs",le="+Inf"} ${st.creates}`,
+        `ubag_gateway_request_latency_seconds_sum{route="/v1/jobs"} ${st.creates * 0.01}`,
+        `ubag_gateway_request_latency_seconds_count{route="/v1/jobs"} ${st.creates}`,
+        `ubag_queue_job_wait_duration_seconds_bucket{queue="default",le="0.5"} ${st.completed}`,
+        `ubag_queue_job_wait_duration_seconds_bucket{queue="default",le="+Inf"} ${st.completed}`,
+        `ubag_queue_job_wait_duration_seconds_sum{queue="default"} ${st.completed * 0.2}`,
+        `ubag_queue_job_wait_duration_seconds_count{queue="default"} ${st.completed}`,
+        'ubag_admission_tokens_active{kind="tenant"} 1', 'ubag_db_pool_connections{state="open"} 2', 'ubag_voice_sessions_connected_total 0', 'ubag_unrelated_total 9', '',
+      ].join('\n'));
+    }
+    st.inflight += 1; res.on('close', () => { st.inflight -= 1; });
+    if (st.inflight > o.maxInflight) { req.resume(); return overload(res, 'inflight_requests'); }
+
+    if (path === '/v1/jobs' && req.method === 'POST') {
+      if (Number(req.headers['content-length'] ?? 0) > o.maxBody) { req.resume(); return json(res, 413, { error: { code: 'UBAG-VALIDATION-BODY-TOO-LARGE-001' } }); }
+      return readBody(req, (text) => {
+        let body; try { body = JSON.parse(text); } catch { return json(res, 400, { error: { code: 'UBAG-VALIDATION-JSON-001' } }); }
+        const key = req.headers['idempotency-key'];
+        if (!/^[\w.:-]{16,128}$/.test(key ?? '')) return json(res, 400, { error: { code: 'UBAG-VALIDATION-IDEMPOTENCY-KEY-001' } });
+        if (st.rejectedCreates === undefined) st.rejectedCreates = 0;
+        if (st.rejectedCreates < o.rejectFirstCreates) {
+          st.rejectedCreates += 1;
+          return json(res, 429, { error: { code: 'UBAG-RATE-APP-001', retryable: true, retry_after_ms: 15 } }, { 'Retry-After': '2' });
+        }
+        if (!o.dupBug && st.byKey.has(key)) return json(res, 200, { job_id: st.byKey.get(key), status: st.jobs.get(st.byKey.get(key)).status, idempotent_replay: true });
+        const id = `job_${++st.seq}`; st.creates += 1;
+        st.jobs.set(id, { status: 'queued', polls: 0, target: body.job?.target }); st.byKey.set(key, id);
+        json(res, 202, { job_id: id, status: 'queued', idempotent_replay: false });
+      });
+    }
+    const m = /^\/v1\/jobs\/([^/]+)(?:\/(cancel|artifacts\/.+))?$/.exec(path);
+    if (m && !(m[2]) && req.method === 'GET') {
+      req.resume();
+      return setTimeout(() => {
+        const job = st.jobs.get(m[1]);
+        if (!job) return json(res, 404, { error: { code: 'UBAG-JOB-NOT-FOUND-001' } });
+        job.polls += 1;
+        if (job.status !== 'cancelled') job.status = job.polls === 1 ? 'queued' : job.polls === 2 ? 'running' : 'completed';
+        if (job.status === 'completed' && !job.counted) { job.counted = true; st.completed += 1; }
+        json(res, 200, { job_id: m[1], status: job.status });
+      }, 5);
+    }
+    if (m && m[2] === 'cancel' && req.method === 'POST') {
+      return readBody(req, () => {
+        if (!/^[\w.:-]{16,128}$/.test(req.headers['idempotency-key'] ?? '')) return json(res, 400, { error: { code: 'UBAG-VALIDATION-IDEMPOTENCY-KEY-001' } });
+        const job = st.jobs.get(m[1]);
+        if (!job) return json(res, 404, { error: { code: 'UBAG-JOB-NOT-FOUND-001' } });
+        if (job.status !== 'completed') job.status = 'cancelled';
+        json(res, 202, { job_id: m[1], status: job.status, idempotent_replay: false });
+      });
+    }
+    if (m && m[2]?.startsWith('artifacts/') && req.method === 'PUT') { req.resume(); return json(res, 400, { error: { code: 'UBAG-VALIDATION-ARTIFACT-NOT-DECLARED-001' } }); }
+    if (path === '/v1/openai/chat/completions' && req.method === 'POST') {
+      if (st.facadeInflight >= o.facadeLimit) { req.resume(); return overload(res, 'upload_memory', true); }
+      st.facadeInflight += 1;
+      return readBody(req, (text, size) => {
+        setTimeout(() => {
+          st.facadeInflight -= 1;
+          let body; try { body = JSON.parse(text); } catch { return json(res, size > o.maxBody ? 413 : 400, { error: { code: 'invalid_request' } }); }
+          const parts = (body.messages ?? []).flatMap((x) => (Array.isArray(x.content) ? x.content : []));
+          for (const p of parts) if (p.type === 'image_url' && !/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(p.image_url?.url ?? '')) return json(res, 400, { error: { code: 'invalid_request' } });
+          json(res, 200, { choices: [{ message: { role: 'assistant', content: 'ok' } }] });
+        }, 30);
+      });
+    }
+    req.resume(); json(res, 404, { error: { code: 'UBAG-NOT-FOUND-001' } });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const fake = { server, st, port: server.address().port, env: { UBAG_LOAD_BASE_URL: `http://127.0.0.1:${server.address().port}`, UBAG_LOAD_API_KEY: KEY } };
+  fakes.push(fake);
+  return fake;
+}
+
+const FAST = ['--poll-interval-ms', '10', '--settle-ms', '0', '--metrics-interval-ms', '10', '--max-body-bytes', '4096', '--recovery-ms', '2000'];
+const cfgFor = (fake, extra, env = {}) => parseArgs([`--${ACK_FLAG}`, ...FAST, ...extra], { ...fake.env, ...env });
+const outDir = () => mkdtempSync(join(tmpdir(), 'ubag-load-'));
+
+// --------------------------------------------------------------- pure logic
+
+describe('report aggregation math', () => {
+  it('computes nearest-rank percentiles and summary stats', () => {
+    const values = Array.from({ length: 100 }, (_, i) => 100 - i); // unsorted 100..1
+    assert.deepEqual(summarize(values), { count: 100, min: 1, max: 100, mean: 50.5, p50: 50, p95: 95, p99: 99 });
+    assert.equal(percentile([5], 99), 5);
+    assert.equal(percentile([], 50), null);
+    assert.equal(summarize([]).p95, null);
+    assert.equal(summarize([1, 2, 3, 4]).p50, 2);
+  });
+
+  it('computes histogram quantiles and metric deltas over tracked series only', () => {
+    const buckets = [{ le: 1, count: 50 }, { le: 2, count: 100 }, { le: Infinity, count: 100 }];
+    assert.equal(histogramQuantile(0.5, buckets), 1);
+    assert.equal(histogramQuantile(0.75, buckets), 1.5);
+    assert.equal(histogramQuantile(0.5, [{ le: 1, count: 0 }]), null);
+    const before = parseProm([
+      'ubag_admission_rejections_total{reason="upload_memory"} 2', 'ubag_gateway_http_inflight_requests{service="x"} 1', 'other_metric 5',
+      'ubag_queue_job_wait_duration_seconds_bucket{queue="q",le="1"} 0', 'ubag_queue_job_wait_duration_seconds_bucket{queue="q",le="+Inf"} 0',
+      'ubag_queue_job_wait_duration_seconds_sum{queue="q"} 0', 'ubag_queue_job_wait_duration_seconds_count{queue="q"} 0',
+    ].join('\n'));
+    const after = parseProm([
+      'ubag_admission_rejections_total{reason="upload_memory"} 7', 'ubag_gateway_http_inflight_requests{service="x"} 0', 'other_metric 9',
+      'ubag_queue_job_wait_duration_seconds_bucket{queue="q",le="1"} 10', 'ubag_queue_job_wait_duration_seconds_bucket{queue="q",le="+Inf"} 10',
+      'ubag_queue_job_wait_duration_seconds_sum{queue="q"} 4', 'ubag_queue_job_wait_duration_seconds_count{queue="q"} 10',
+    ].join('\n'));
+    const d = metricsDelta(before, after, new Map([['ubag_gateway_http_inflight_requests{service="x"}', 40]]));
+    assert.equal(d.rejections_by_reason.upload_memory, 5);
+    assert.equal(d.series['ubag_gateway_http_inflight_requests{service="x"}'].max_sampled, 40);
+    assert.equal(d.series.other_metric, undefined);
+    const h = d.histograms['ubag_queue_job_wait_duration_seconds{queue="q"}'];
+    assert.equal(h.count, 10); assert.equal(h.mean_s, 0.4); assert.equal(h.p50_s, 0.5);
+  });
+
+  it('parses docker stats output and sizes', () => {
+    assert.equal(parseSize('512MiB'), 512 * 1024 * 1024);
+    assert.equal(parseSize('1.5GiB / 4GiB'), 1.5 * 1024 ** 3);
+    assert.equal(parseSize('2kB'), 2000);
+    assert.deepEqual(parseDockerStatsLine(JSON.stringify({ CPUPerc: '12.50%', MemUsage: '256MiB / 2GiB' })), { cpu_pct: 12.5, rss_mb: 256 });
+  });
+
+  it('samples docker stats and skips gracefully when docker is missing', async () => {
+    const lines = [JSON.stringify({ CPUPerc: '10%', MemUsage: '100MiB / 1GiB' }), JSON.stringify({ CPUPerc: '30%', MemUsage: '300MiB / 1GiB' })];
+    let i = 0;
+    const stop = startDockerSampler('c1', 15, async () => lines[Math.min(i++, 1)]);
+    await new Promise((r) => setTimeout(r, 60));
+    const out = await stop();
+    assert.ok(out.samples >= 2); assert.equal(out.cpu_pct.max, 30); assert.equal(out.rss_mb.max, 300);
+    const missing = await startDockerSampler('c1', 15, async () => { throw Object.assign(new Error('x'), { code: 'ENOENT' }); })();
+    assert.match(missing.skipped, /unavailable/);
+  });
+});
+
+describe('Retry-After backoff logic', () => {
+  it('prefers the larger of header and body hint, supports HTTP-date', () => {
+    const h = (v) => new Headers(v == null ? {} : { 'Retry-After': v });
+    assert.equal(parseRetryAfterMs(h('2'), undefined), 2000);
+    assert.equal(parseRetryAfterMs(h('1'), { error: { retry_after_ms: 1500 } }), 1500);
+    assert.equal(parseRetryAfterMs(h('3'), { error: { retry_after_ms: 1500 } }), 3000);
+    assert.equal(parseRetryAfterMs(h(null), { error: { retry_after_ms: 250 } }), 250);
+    assert.equal(parseRetryAfterMs(h(null), {}), null);
+    assert.equal(parseRetryAfterMs(h('garbage'), {}), null);
+    const at = new Date(1_000_000 + 5000).toUTCString();
+    assert.equal(parseRetryAfterMs(h(at), {}, Math.floor(1_000_000 / 1000) * 1000), Date.parse(at) - Math.floor(1_000_000 / 1000) * 1000);
+  });
+
+  it('honors the hint, caps it, adds jitter only upward, and falls back to exponential', () => {
+    assert.equal(retryDelayMs({ attempt: 3, retryAfterMs: 1000 }), 1000);
+    assert.equal(retryDelayMs({ attempt: 0, retryAfterMs: 90_000, capMs: 60_000 }), 60_000);
+    assert.equal(retryDelayMs({ attempt: 0, retryAfterMs: 1000, jitter: 0.5, rand: () => 0 }), 1000);
+    assert.equal(retryDelayMs({ attempt: 0, retryAfterMs: 1000, jitter: 0.5, rand: () => 1 }), 1500);
+    assert.deepEqual([0, 1, 2, 3].map((attempt) => retryDelayMs({ attempt })), [250, 500, 1000, 2000]);
+    assert.equal(retryDelayMs({ attempt: 20, capMs: 5000 }), 5000);
+  });
+
+  it('the scenario client really backs off per the server hint and retries (bounded)', async () => {
+    const fake = await startFake({ rejectFirstCreates: 3 });
+    const delays = [];
+    const cfg = cfgFor(fake, ['--scenario', 'queue-1000', '--jobs', '5', '--rate', '5000', '--max-retries', '5']);
+    const report = await run(cfg, { sleep: (ms) => { delays.push(ms); return new Promise((r) => setTimeout(r, Math.min(ms, 5))); } });
+    assert.equal(report.retry.retries, 3);
+    assert.equal(report.retry.honored, 3);
+    // hint = max(header "2" => 2000ms, body 15ms); jitter only adds, so every backoff >= 2000ms
+    assert.equal(delays.filter((d) => d >= 2000).length, 3);
+    assert.equal(report.summary.unaccepted_jobs, 0);
+    // bounded: with max-retries 1 and 3 rejections, some job gives up and is counted
+    const fake2 = await startFake({ rejectFirstCreates: 100 });
+    const r2 = await run(cfgFor(fake2, ['--scenario', 'queue-1000', '--jobs', '2', '--rate', '5000', '--max-retries', '1']), { sleep: async () => {} });
+    assert.equal(r2.summary.unaccepted_jobs, 2);
+    assert.equal(r2.retry.exhausted, 2);
+  });
+});
+
+describe('host allowlist refusal', () => {
+  it('accepts loopback and private ranges without an allowlist', () => {
+    for (const u of ['http://127.0.0.1:8080', 'http://localhost:8080/', 'http://[::1]:8080', 'http://10.1.2.3', 'http://172.16.0.5', 'http://172.31.255.1', 'http://192.168.1.9:3000', 'http://gw.localhost:80']) {
+      assert.doesNotThrow(() => checkTarget(u, {}), u);
+    }
+  });
+
+  it('refuses public/unlisted hosts and honors the explicit allowlist', () => {
+    for (const u of ['https://vps.example.com', 'http://8.8.8.8', 'http://172.32.0.1', 'http://172.15.0.1', 'http://11.0.0.1', 'http://gateway:8080']) {
+      assert.throws(() => checkTarget(u, {}), /not loopback\/private/, u);
+    }
+    assert.throws(() => checkTarget('https://vps.example.com', { UBAG_LOAD_ALLOWED_HOSTS: '*' }), /not loopback\/private/);
+    assert.throws(() => checkTarget('https://vps.example.com', { UBAG_LOAD_ALLOWED_HOSTS: 'other.example.com' }), /not loopback\/private/);
+    assert.equal(checkTarget('https://Vps.Example.com/api/', { UBAG_LOAD_ALLOWED_HOSTS: ' a.com, vps.example.com ' }), 'https://vps.example.com/api');
+    assert.equal(checkTarget('https://vps.example.com:8443', { UBAG_LOAD_ALLOWED_HOSTS: 'vps.example.com:8443' }), 'https://vps.example.com:8443');
+    assert.throws(() => checkTarget('ftp://127.0.0.1', {}), /http or https/);
+    assert.throws(() => checkTarget('http://user:pw@127.0.0.1', {}), /credentials/);
+  });
+
+  it('refuses to start without the acknowledgement flag, scenario, key, or an allowed host', () => {
+    const env = { UBAG_LOAD_BASE_URL: 'http://127.0.0.1:1', UBAG_LOAD_API_KEY: 'k' };
+    assert.throws(() => parseArgs(['--scenario', 'queue-1000'], env), /--i-understand-this-is-load/);
+    assert.throws(() => parseArgs(['--scenario', 'queue-1000'], {}), /--i-understand-this-is-load/); // ack checked first
+    assert.throws(() => parseArgs([`--${ACK_FLAG}`], env), /--scenario is required/);
+    assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'nope'], env), /unknown scenario/);
+    assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all'], { ...env, UBAG_LOAD_API_KEY: '' }), /UBAG_LOAD_API_KEY/);
+    assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all'], { UBAG_LOAD_API_KEY: 'k' }), /UBAG_LOAD_BASE_URL/);
+    assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all'], { ...env, UBAG_LOAD_BASE_URL: 'https://prod.example.com' }), /UBAG_LOAD_ALLOWED_HOSTS/);
+    assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--jobs', '0'], env), /--jobs/);
+    assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--bogus'], env), /unknown option/);
+    const ok = parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--docker-stats-container', 'ubag-gateway'], env);
+    assert.equal(ok.scenarios.length, 5); assert.equal(ok.dockerContainer, 'ubag-gateway');
+    assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--docker-stats-container', '--privileged'], env), /requires a value|invalid name/);
+  });
+
+  it('main() exits 2 and sends no request when refused', async () => {
+    const fake = await startFake();
+    assert.equal(await main(['--scenario', 'queue-1000'], fake.env), 2);
+    assert.equal(await main([`--${ACK_FLAG}`, '--scenario', 'queue-1000'], { ...fake.env, UBAG_LOAD_BASE_URL: 'https://prod.example.com' }), 2);
+    assert.equal(fake.st.requests, 0);
+  });
+});
+
+describe('threshold evaluation', () => {
+  it('applies max_/min_ rules, skips unmeasured keys, flags malformed ones', () => {
+    const t = { max_a: 0, max_p95: 2000, min_dup: 1, max_missing: 0, _comment: 'x' };
+    assert.deepEqual(evaluateThresholds({ a: 0, p95: 2000, dup: 1 }, t).passed, true);
+    const bad = evaluateThresholds({ a: 1, p95: 2001, dup: 0 }, t);
+    assert.equal(bad.passed, false);
+    assert.deepEqual(bad.results.filter((r) => !r.ok).map((r) => r.name).sort(), ['max_a', 'max_p95', 'min_dup']);
+    assert.equal(bad.results.find((r) => r.name === 'max_missing').ok, true);
+    assert.equal(evaluateThresholds({}, { weird: 3 }).passed, false);
+  });
+
+  it('ships sensible defaults in thresholds.json', () => {
+    const t = JSON.parse(readFileSync(join(here, 'thresholds.json'), 'utf8'));
+    assert.equal(t.max_server_errors_non_overload, 0);
+    assert.equal(t.max_lost_jobs, 0);
+    assert.equal(t.min_dup_jobs_per_key_min, 1);
+    assert.equal(t.max_dup_jobs_per_key_max, 1);
+    assert.equal(t.max_create_p95_ms, 2000);
+  });
+});
+
+// ----------------------------------------------------- scenario smoke tests
+
+describe('scenario smoke runs against the in-process fake gateway', () => {
+  it('queue-1000 (scaled down): every distinct key enqueues and completes', async () => {
+    const fake = await startFake();
+    const report = await run(cfgFor(fake, ['--scenario', 'queue-1000', '--jobs', '60', '--rate', '5000']));
+    const q = report.scenarios['queue-1000'];
+    assert.equal(q.requested, 60); assert.equal(q.accepted, 60);
+    assert.deepEqual(q.final, { completed: 60 });
+    assert.equal(q.create_attempt_statuses['202'], 60);
+    assert.equal(fake.st.creates, 60);
+    assert.equal(report.summary.lost_jobs, 0); assert.equal(report.summary.unfinished_jobs, 0);
+    assert.ok(report.ops['queue-1000/completion'].ok.count === 60);
+    assert.ok(report.ops['queue-1000/queue_wait_observed'].ok.count > 0);
+    assert.equal(report.thresholds.passed, true);
+  });
+
+  it('clients-100 (scaled): mixed payloads; malformed/oversized fail safely with 4xx', async () => {
+    const fake = await startFake();
+    const report = await run(cfgFor(fake, ['--scenario', 'clients-100', '--clients', '16', '--iterations', '3', '--with-upload']));
+    const c = report.scenarios['clients-100'];
+    assert.equal(Object.keys(c.requests_by_kind).sort().join(), 'facade_image,malformed,oversized,text,upload');
+    assert.equal(report.summary.unsafe_payload_outcomes, 0, JSON.stringify(report.violations));
+    assert.equal(report.summary.server_errors_non_overload, 0);
+    assert.equal(report.summary.hangs, 0);
+    assert.ok((report.ops['clients-100/oversized'].statuses['413'] ?? 0) + (report.ops['clients-100/oversized'].statuses.network ?? 0) > 0);
+    assert.equal(report.ops['clients-100/malformed_json'].statuses['400'] > 0, true);
+    assert.equal(report.ops['clients-100/malformed_file'].statuses['400'] > 0, true);
+    assert.equal(report.thresholds.passed, true, JSON.stringify(report.thresholds.results.filter((r) => !r.ok)));
+  });
+
+  it('clients-100 flags an oversized request the gateway accepts', async () => {
+    const fake = await startFake({ maxBody: 10 * 1024 * 1024 }); // gateway limit far above what the harness assumes
+    const report = await run(cfgFor(fake, ['--scenario', 'clients-100', '--clients', '4', '--iterations', '1']));
+    assert.ok(report.summary.unsafe_payload_outcomes >= 1);
+    assert.equal(report.thresholds.passed, false);
+  });
+
+  it('duplicates: one job per key under concurrent identical requests, consistent cancel races', async () => {
+    const fake = await startFake();
+    const report = await run(cfgFor(fake, ['--scenario', 'duplicates', '--dup-keys', '3', '--dup-concurrency', '10', '--cancel-races', '6']));
+    const d = report.scenarios.duplicates;
+    assert.equal(d.per_key.length, 3);
+    for (const p of d.per_key) { assert.equal(p.distinct_jobs, 1); assert.equal(p.non_replay, 1); assert.equal(p.replays, 9); }
+    assert.equal(report.summary.dup_jobs_per_key_max, 1); assert.equal(report.summary.dup_jobs_per_key_min, 1);
+    assert.equal(d.cancel_outcomes.cancelled, 6);
+    assert.equal(report.summary.cancel_inconsistencies, 0, JSON.stringify(report.violations));
+    assert.equal(fake.st.creates, 3 + 6);
+    assert.equal(report.thresholds.passed, true);
+  });
+
+  it('duplicates detects a gateway that creates a job per duplicate request', async () => {
+    const fake = await startFake({ dupBug: true });
+    const report = await run(cfgFor(fake, ['--scenario', 'duplicates', '--dup-keys', '2', '--dup-concurrency', '4', '--cancel-races', '0']));
+    assert.equal(report.summary.dup_violations, 2);
+    assert.equal(report.summary.dup_jobs_per_key_max, 4);
+    assert.equal(report.thresholds.passed, false);
+  });
+
+  it('overload: every 429/503 carries Retry-After + retry_after_ms and the gateway recovers', async () => {
+    const fake = await startFake({ facadeLimit: 3, maxInflight: 25 });
+    const report = await run(cfgFor(fake, ['--scenario', 'overload', '--burst', '30', '--burst-body-bytes', '1024', '--inflight-burst', '60', '--recovery-requests', '4']));
+    const o = report.scenarios.overload;
+    assert.ok(o.rejected_responses > 0, 'the fake must have rejected something');
+    assert.equal(o.recovered, true);
+    assert.equal(report.summary.overload_missing_retry_after, 0);
+    assert.equal(report.summary.overload_missing_retry_after_ms_body, 0);
+    assert.equal(report.summary.server_errors_non_overload, 0);
+    assert.equal(report.summary.unrecovered, 0);
+    assert.ok(Object.keys(report.client_rejections_by_reason).length > 0);
+    assert.equal(report.thresholds.passed, true, JSON.stringify(report.thresholds.results.filter((r) => !r.ok)));
+  });
+
+  it('overload fails the run when a 503 lacks Retry-After, and notes missing body hints separately', async () => {
+    const bad = await startFake({ facadeLimit: 2, omitRetryAfter: true });
+    const r1 = await run(cfgFor(bad, ['--scenario', 'overload', '--burst', '20', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2']));
+    assert.ok(r1.summary.overload_missing_retry_after > 0);
+    assert.ok(r1.summary.server_errors_non_overload > 0);
+    assert.equal(r1.thresholds.passed, false);
+    const noBody = await startFake({ facadeLimit: 2, facadeNoBodyMs: true });
+    const r2 = await run(cfgFor(noBody, ['--scenario', 'overload', '--burst', '20', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2']));
+    assert.equal(r2.summary.overload_missing_retry_after, 0);
+    assert.ok(r2.summary.overload_missing_retry_after_ms_body > 0);
+    assert.equal(r2.thresholds.passed, false);
+  });
+
+  it('metrics-snapshot: reports deltas of tracked metrics and docker stats when available', async () => {
+    const fake = await startFake({ facadeLimit: 2 });
+    const exec = async () => JSON.stringify({ CPUPerc: '5.00%', MemUsage: '64MiB / 1GiB' });
+    const report = await run(cfgFor(fake, ['--scenario', 'overload,metrics-snapshot', '--burst', '20', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '1', '--docker-stats-container', 'fake-gw', '--docker-interval-ms', '10']), { dockerExec: exec });
+    assert.equal(report.metrics.available, true);
+    assert.ok(report.metrics.rejections_by_reason.upload_memory > 0);
+    assert.ok(report.metrics.series['ubag_upload_memory_budget_bytes'].after === 268435456);
+    assert.ok('ubag_gateway_request_latency_seconds{route="/v1/jobs"}' in report.metrics.histograms);
+    assert.ok('ubag_queue_job_wait_duration_seconds{queue="default"}' in report.metrics.histograms);
+    assert.ok(report.metrics.series['ubag_admission_tokens_active{kind="tenant"}']);
+    assert.ok(report.metrics.series['ubag_db_pool_connections{state="open"}']);
+    assert.ok(report.docker.samples >= 1); assert.equal(report.docker.rss_mb.max, 64);
+    const md = renderMarkdown(report);
+    assert.match(md, /Rejections by reason/); assert.match(md, /Resource usage/);
+    assert.ok(!JSON.stringify(report).includes(KEY), 'API key must never appear in the report');
+  });
+
+  it('metrics-snapshot degrades gracefully without docker or /v1/metrics', async () => {
+    const fake = await startFake();
+    const noDocker = async () => { throw Object.assign(new Error('spawn docker ENOENT'), { code: 'ENOENT' }); };
+    const report = await run(cfgFor(fake, ['--scenario', 'metrics-snapshot', '--docker-stats-container', 'x']), { dockerExec: noDocker });
+    assert.match(report.docker.skipped, /unavailable/);
+    const noMetrics = await run(cfgFor(fake, ['--scenario', 'metrics-snapshot']), { request: async (method, path) => (path === '/v1/metrics' ? { status: 404, ms: 1 } : { status: 200, ms: 1, json: {} }) });
+    assert.equal(noMetrics.metrics.available, false);
+    assert.match(renderMarkdown(noMetrics), /unavailable/);
+  });
+
+  it('main(): all scenarios write report.json + summary.md and exit 0; bad gateway exits 1', async () => {
+    const fake = await startFake({ facadeLimit: 3 });
+    const dir = outDir();
+    const args = [`--${ACK_FLAG}`, ...FAST, '--scenario', 'all', '--jobs', '20', '--rate', '5000', '--clients', '8', '--iterations', '2', '--dup-keys', '2', '--dup-concurrency', '5', '--cancel-races', '3', '--burst', '15', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2', '--out-dir', dir];
+    const logs = []; const orig = console.log; console.log = (...a) => logs.push(a.join(' '));
+    let code; try { code = await main(args, fake.env); } finally { console.log = orig; }
+    assert.equal(code, 0, logs.join('\n'));
+    const [stamp] = readdirSync(dir);
+    assert.ok(existsSync(join(dir, stamp, 'report.json')) && existsSync(join(dir, stamp, 'summary.md')));
+    const report = JSON.parse(readFileSync(join(dir, stamp, 'report.json'), 'utf8'));
+    assert.equal(Object.keys(report.scenarios).length, 5);
+    assert.match(readFileSync(join(dir, stamp, 'summary.md'), 'utf8'), /verdict: \*\*PASS\*\*/);
+
+    const broken = await startFake({ dupBug: true });
+    const origErr = console.log; console.log = () => {};
+    let code2; try { code2 = await main([`--${ACK_FLAG}`, ...FAST, '--scenario', 'duplicates', '--dup-keys', '1', '--dup-concurrency', '3', '--cancel-races', '0', '--out-dir', outDir()], broken.env); } finally { console.log = origErr; }
+    assert.equal(code2, 1);
+  });
+});

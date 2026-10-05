@@ -131,3 +131,6 @@ apps/gateway/_gw_run.py
 apps/*/_wip/
 _wip/
 .playwright-mcp/
+
+# Load-test run output (tests/load/acceptance.mjs)
+tests/load/results/
