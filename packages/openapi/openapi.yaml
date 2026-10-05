@@ -1559,6 +1559,40 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
+  /v1/jobs/summary:
+    get:
+      tags: [Jobs]
+      operationId: getJobsSummary
+      summary: Aggregate job counts for the caller's scope.
+      description: >-
+        Returns true (uncapped) per-status job counts for the caller's tenant/app
+        scope, so dashboards never derive queue depth from a paginated list page.
+        `queued_by_reason` groups queued jobs by queue reason and stays empty until
+        the gateway computes a queue reason. `oldest_queued_at` is the creation time
+        of the oldest job still in `queued`, or null when none is queued.
+        Requires the job:read action.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      responses:
+        "200":
+          description: Jobs summary returned.
+          headers:
+            Ubag-Api-Version-Used:
+              $ref: "#/components/headers/UbagApiVersionUsed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobsSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
   /v1/jobs/{job_id}:
     get:
       tags: [Jobs]
@@ -5188,6 +5222,36 @@ components:
             $ref: "#/components/schemas/JobResponse"
         next_cursor:
           type: ["string", "null"]
+        trace_id:
+          type: string
+          minLength: 1
+    JobsSummary:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, total, counts_by_status, queued_by_reason, oldest_queued_at, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        kind:
+          type: string
+          const: jobs_summary
+        total:
+          type: integer
+          minimum: 0
+        counts_by_status:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        queued_by_reason:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 0
+        oldest_queued_at:
+          type: ["string", "null"]
+          format: date-time
         trace_id:
           type: string
           minLength: 1

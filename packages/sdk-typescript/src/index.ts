@@ -42,6 +42,7 @@ export type {
   UbagBrowserTab,
   UbagBrowserTabListResponse,
   UbagBrowserTopologySummary,
+  UbagJobsSummary,
   UbagCacheStatusResponse,
   UbagCachePolicy,
   UbagClientMetadata,

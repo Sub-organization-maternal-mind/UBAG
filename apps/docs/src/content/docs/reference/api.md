@@ -18,6 +18,7 @@ The full UBAG Gateway REST API reference is available in machine-readable OpenAP
 |--------|------|-------------|
 | GET | /v1/health | Health check |
 | POST | /v1/jobs | Create a job |
+| GET | /v1/jobs/summary | True per-status job counts, oldest queued job |
 | GET | /v1/jobs/{id} | Get job by ID |
 | POST | /v1/jobs/{id}/cancel | Cancel a job |
 | POST | /v1/jobs/{id}/retry | Retry a failed job |

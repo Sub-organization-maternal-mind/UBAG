@@ -14,6 +14,7 @@ import {
   type UbagBrowserInstanceListResponse,
   type UbagBrowserTabListResponse,
   type UbagBrowserTopologySummary,
+  type UbagJobsSummary,
   type UbagCacheStatusResponse,
   type UbagCollectionResponse,
   type UbagCreateVoiceSessionRequest,
@@ -547,6 +548,10 @@ export class UbagClient {
     addOptionalQuery(query, "state", params.state);
     const suffix = query.size > 0 ? `?${query.toString()}` : "";
     return this.request("GET", `/v1/browser/tabs${suffix}`, options);
+  }
+
+  async getJobsSummary(options: UbagRequestOptions = {}): Promise<UbagJobsSummary> {
+    return this.request("GET", "/v1/jobs/summary", options);
   }
 
   async getBrowserTopologySummary(options: UbagRequestOptions = {}): Promise<UbagBrowserTopologySummary> {

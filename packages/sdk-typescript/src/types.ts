@@ -506,6 +506,16 @@ export interface UbagConcurrencyListResponse {
   trace_id: string;
 }
 
+export interface UbagJobsSummary {
+  api_version: string;
+  kind: "jobs_summary" | (string & {});
+  total: number;
+  counts_by_status: Record<string, number>;
+  queued_by_reason: Record<string, number>;
+  oldest_queued_at: string | null;
+  trace_id: string;
+}
+
 export interface UbagBrowserTopologySummary {
   api_version: string;
   kind: "browser_topology_summary" | (string & {});

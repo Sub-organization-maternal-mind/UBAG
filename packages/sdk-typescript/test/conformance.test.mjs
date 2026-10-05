@@ -146,6 +146,9 @@ async function invokeScenario(client, scenario) {
       sort: parsed.searchParams.get('sort') ?? undefined
     }, options);
   }
+  if (request.method === 'GET' && route === '/v1/jobs/summary') {
+    return client.getJobsSummary(options);
+  }
   if (request.method === 'GET' && route.endsWith('/events') && route.startsWith('/v1/jobs/')) {
     const jobId = route.slice('/v1/jobs/'.length, -'/events'.length);
     return client.listJobEvents(jobId, {

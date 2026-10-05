@@ -4210,6 +4210,41 @@
       }
     },
     {
+      "id": "jobs.summary.ok",
+      "category": "jobs",
+      "title": "Jobs summary returns true per-status counts and the oldest queued job",
+      "request": {
+        "method": "GET",
+        "path": "/v1/jobs/summary",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "jobs_summary",
+          "total": 242,
+          "counts_by_status": {
+            "queued": 130,
+            "running": 2,
+            "completed": 108,
+            "failed_terminal": 2
+          },
+          "queued_by_reason": {},
+          "oldest_queued_at": "2026-05-22T10:00:00Z",
+          "trace_id": "trace_jobs_summary"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "jobs_summary",
+        "body.total": 242
+      }
+    },
+    {
       "id": "browser.instances.ok",
       "category": "browser",
       "title": "Browser instances list exposes worker, engine, state and tab counts",
