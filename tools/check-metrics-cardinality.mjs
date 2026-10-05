@@ -115,9 +115,11 @@ function validate(lines) {
 
     seenMetrics.add(baseName);
 
-    // Rule 1: name must start with ubag_.
-    if (!baseName.startsWith('ubag_')) {
-      failures.push(`metric "${metricName}" does not start with "ubag_"`);
+    // Rule 1: name must start with ubag_, except the standard Go runtime and
+    // process collector series (go_*, process_*) whose names Prometheus
+    // tooling expects verbatim.
+    if (!/^(ubag|go|process)_/.test(baseName)) {
+      failures.push(`metric "${metricName}" does not start with "ubag_", "go_" or "process_"`);
       continue;
     }
 
