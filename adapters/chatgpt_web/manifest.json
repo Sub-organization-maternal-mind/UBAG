@@ -100,6 +100,12 @@
       }
     ]
   },
+  "voice": {
+    "live": true,
+    "utterance_jobs": true,
+    "live_entry_control": "Start Voice",
+    "verified": "2026-10-05: 'Start Voice' composer control present on logged-in chatgpt.com via read-only CDP probe (Chrome 154, Ubuntu Docker); two-way audio behavior still pending live acceptance"
+  },
   "selector_strategy": {
     "type": "provider_specific",
     "drift_baseline_required": true

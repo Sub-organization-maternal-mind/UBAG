@@ -92,6 +92,12 @@
       }
     ]
   },
+  "voice": {
+    "live": true,
+    "utterance_jobs": true,
+    "live_entry_control": "Listen",
+    "verified": "2026-10-05: 'Listen' (Live) and 'Dictate' controls present on logged-in gemini.google.com via read-only CDP probe (Chrome 154, Ubuntu Docker); two-way audio behavior still pending live acceptance"
+  },
   "selector_strategy": {
     "type": "provider_specific",
     "drift_baseline_required": true
