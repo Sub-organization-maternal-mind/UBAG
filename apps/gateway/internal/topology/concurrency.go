@@ -1,6 +1,8 @@
 package topology
 
 import (
+	"context"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -56,6 +58,49 @@ type ConcurrencyRegistry struct {
 	// releasing them is a safe no-op — this is what keeps the shared lane count
 	// balanced and immune to double-release across cancel / worker / reaper.
 	held map[string]heldToken // [jobID]lane
+
+	// backend, when set, makes admission shared: tokens live in a database so
+	// every gateway replica admits against one authority (see TokenBackend).
+	// The process-local inFlight/held maps are then unused.
+	// backend and limits are set once, by UseBackend, before the registry
+	// serves traffic (they are read without r.mu afterwards).
+	backend TokenBackend
+	limits  LaneLimits
+	pmu     sync.Mutex // guards pending
+	// pending holds this process's unassociated token ids per lane, FIFO.
+	// Tokens on one lane are interchangeable, so pairing the oldest pending
+	// token with the next created job is safe.
+	pending map[string][]string
+}
+
+// LaneLimits are the optional shared budgets layered over the per-lane
+// ceiling (0 disables one): per (tenant, app), per tenant, and global
+// in-flight jobs.
+type LaneLimits struct {
+	App    int
+	Tenant int
+	Global int
+}
+
+const (
+	// unassociatedTokenTTL bounds how long an acquired-but-unassociated token
+	// survives: a gateway that dies between Acquire and job creation cannot
+	// leak capacity longer than this.
+	unassociatedTokenTTL = 2 * time.Minute
+	backendTimeout       = 5 * time.Second
+)
+
+// UseBackend switches the registry to shared, database-backed admission.
+func (r *ConcurrencyRegistry) UseBackend(backend TokenBackend, limits LaneLimits) {
+	if r == nil {
+		return
+	}
+	r.backend, r.limits = backend, limits
+	r.pending = map[string][]string{}
+}
+
+func laneKeyFor(tenantID, target, identityRef string) string {
+	return "lane:" + tenantID + "|" + concurrencyKey(target, identityRef)
 }
 
 // heldToken is the lane a job's in-flight token belongs to.
@@ -105,6 +150,13 @@ func (r *ConcurrencyRegistry) Report(tenantID string, view ConcurrencyView) {
 		r.byTenant[tenantID] = tenant
 	}
 	tenant[concurrencyKey(view.Target, view.IdentityRef)] = view
+	if r.backend != nil && view.CurrentCap > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), backendTimeout)
+		defer cancel()
+		if err := r.backend.PutLaneCap(ctx, laneKeyFor(tenantID, view.Target, view.IdentityRef), view.CurrentCap, time.Now().UTC()); err != nil {
+			slog.Warn("admission: persisting lane cap failed", "error", err)
+		}
+	}
 }
 
 // List returns the ceilings reported for a tenant, ordered by target then
@@ -143,15 +195,14 @@ func (r *ConcurrencyRegistry) Acquire(tenantID, target, identityRef string) bool
 	target = strings.TrimSpace(target)
 	identityRef = strings.TrimSpace(identityRef)
 
+	if r.backend != nil {
+		return r.acquireShared(tenantID, target, identityRef)
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	cap := defaultConcurrencyCap
-	if tenant, ok := r.byTenant[tenantID]; ok {
-		if view, ok := tenant[concurrencyKey(target, identityRef)]; ok && view.CurrentCap > 0 {
-			cap = view.CurrentCap
-		}
-	}
+	cap := r.laneCapLocked(tenantID, target, identityRef)
 
 	if r.inFlight == nil {
 		r.inFlight = map[string]map[string]int{}
@@ -165,6 +216,72 @@ func (r *ConcurrencyRegistry) Acquire(tenantID, target, identityRef string) bool
 	}
 	r.inFlight[tenantID][key]++
 	return true
+}
+
+// laneCapLocked is the worker-reported ceiling for the lane, or the
+// permissive bootstrap default. Callers hold r.mu (read or write).
+func (r *ConcurrencyRegistry) laneCapLocked(tenantID, target, identityRef string) int {
+	if tenant, ok := r.byTenant[tenantID]; ok {
+		if view, ok := tenant[concurrencyKey(target, identityRef)]; ok && view.CurrentCap > 0 {
+			return view.CurrentCap
+		}
+	}
+	return defaultConcurrencyCap
+}
+
+// acquireShared admits against the shared backend: the lane ceiling plus any
+// configured app / tenant / global budgets, all-or-nothing. A backend failure
+// denies admission (fail closed) rather than guessing. The backend path never
+// holds r.mu across database IO, so concurrent admissions are not serialized
+// behind one process-wide lock.
+func (r *ConcurrencyRegistry) acquireShared(tenantID, target, identityRef string) bool {
+	r.mu.RLock()
+	cap := r.laneCapLocked(tenantID, target, identityRef)
+	r.mu.RUnlock()
+	lanes := []Lane{{Key: laneKeyFor(tenantID, target, identityRef), Cap: cap, Dynamic: true}}
+	if r.limits.App > 0 {
+		lanes = append(lanes, Lane{Key: "app:" + tenantID + "|" + identityRef, Cap: r.limits.App})
+	}
+	if r.limits.Tenant > 0 {
+		lanes = append(lanes, Lane{Key: "tenant:" + tenantID, Cap: r.limits.Tenant})
+	}
+	if r.limits.Global > 0 {
+		lanes = append(lanes, Lane{Key: "global:all", Cap: r.limits.Global})
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), backendTimeout)
+	defer cancel()
+	id, ok, err := r.backend.AcquireToken(ctx, lanes, unassociatedTokenTTL, time.Now().UTC())
+	if err != nil {
+		slog.Error("admission: shared token acquire failed", "error", err)
+		return false
+	}
+	if !ok {
+		return false
+	}
+	key := tenantID + "|" + concurrencyKey(target, identityRef)
+	r.pmu.Lock()
+	r.pending[key] = append(r.pending[key], id)
+	r.pmu.Unlock()
+	return true
+}
+
+// popPending returns this process's oldest unassociated token for the lane,
+// if any.
+func (r *ConcurrencyRegistry) popPending(tenantID, target, identityRef string) (string, bool) {
+	r.pmu.Lock()
+	defer r.pmu.Unlock()
+	key := tenantID + "|" + concurrencyKey(target, identityRef)
+	queue := r.pending[key]
+	if len(queue) == 0 {
+		return "", false
+	}
+	id := queue[0]
+	if len(queue) == 1 {
+		delete(r.pending, key)
+	} else {
+		r.pending[key] = queue[1:]
+	}
+	return id, true
 }
 
 // Release decrements the in-flight count for a (tenant, target, identityRef)
@@ -182,6 +299,16 @@ func (r *ConcurrencyRegistry) Release(tenantID, target, identityRef string) {
 	target = strings.TrimSpace(target)
 	identityRef = strings.TrimSpace(identityRef)
 
+	if r.backend != nil {
+		if id, ok := r.popPending(tenantID, target, identityRef); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), backendTimeout)
+			defer cancel()
+			if err := r.backend.ReleaseToken(ctx, id); err != nil {
+				slog.Warn("admission: releasing token failed (it will expire)", "error", err)
+			}
+		}
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.decrementLocked(tenantID, concurrencyKey(target, identityRef))
@@ -210,6 +337,16 @@ func (r *ConcurrencyRegistry) MarkAcquired(jobID, tenantID, target, identityRef 
 	if jobID == "" {
 		return
 	}
+	if r.backend != nil {
+		if id, ok := r.popPending(strings.TrimSpace(tenantID), strings.TrimSpace(target), strings.TrimSpace(identityRef)); ok {
+			ctx, cancel := context.WithTimeout(context.Background(), backendTimeout)
+			defer cancel()
+			if err := r.backend.AssociateToken(ctx, id, jobID); err != nil {
+				slog.Warn("admission: associating token with job failed (it will expire)", "job_id", jobID, "error", err)
+			}
+		}
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.held == nil {
@@ -234,6 +371,16 @@ func (r *ConcurrencyRegistry) ReleaseForJob(jobID string) {
 	}
 	jobID = strings.TrimSpace(jobID)
 	if jobID == "" {
+		return
+	}
+	if r.backend != nil {
+		// The database is authoritative, so a terminal path running on ANY
+		// replica releases the token regardless of which one admitted it.
+		ctx, cancel := context.WithTimeout(context.Background(), backendTimeout)
+		defer cancel()
+		if err := r.backend.ReleaseJobToken(ctx, jobID); err != nil {
+			slog.Error("admission: releasing job token failed", "job_id", jobID, "error", err)
+		}
 		return
 	}
 	r.mu.Lock()

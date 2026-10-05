@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 )
 
 type errorEnvelope struct {
@@ -25,6 +26,19 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, status int, 
 	err.TraceID = traceIDFromContext(r.Context())
 	if err.DocURL == "" {
 		err.DocURL = fmt.Sprintf("https://docs.ubag.dev/errors/%s", err.Code)
+	}
+
+	// Every overload answer (429/503) carries explicit retry guidance in BOTH
+	// the header and the structured body, whichever path produced it: a
+	// retryable error without a hint would invite retry storms.
+	if (status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable) && w.Header().Get("Retry-After") == "" {
+		retryAfterMS := 1000
+		if err.RetryAfterMS != nil && *err.RetryAfterMS > 0 {
+			retryAfterMS = *err.RetryAfterMS
+		} else if status == http.StatusTooManyRequests || err.Retryable {
+			err.RetryAfterMS = &retryAfterMS
+		}
+		w.Header().Set("Retry-After", strconv.Itoa((retryAfterMS+999)/1000))
 	}
 
 	w.Header().Set("Content-Type", "application/json")

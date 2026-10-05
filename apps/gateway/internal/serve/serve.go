@@ -738,6 +738,7 @@ type enterpriseStores struct {
 	alerts           *alerts.Manager
 	topology         topology.Store
 	concurrency      *topology.ConcurrencyRegistry
+	admission        *topology.SQLTokenBackend
 	conversations    *conversations.Manager
 
 	// abacEnforcer is nil unless an operator supplies UBAG_ABAC_BUNDLE. Nil means
@@ -1093,6 +1094,40 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 	// The concurrency registry is always available; it is populated by the
 	// worker-event ingestion path and never mutated via HTTP.
 	out.concurrency = topology.NewConcurrencyRegistry()
+	// Shared admission: with a SQL store, in-flight tokens live in the
+	// database so every replica admits against one authority (memory mode
+	// keeps the process-local counters, which is correct for one process).
+	if db != nil && (storeKind == "sqlite" || storeKind == "postgres") {
+		backend := topology.NewSQLiteTokenBackend(db)
+		if storeKind == "postgres" {
+			backend = topology.NewPostgresTokenBackend(db)
+		}
+		if err := backend.Ready(ctx); err != nil {
+			return enterpriseStores{}, fmt.Errorf("admission token store: %w", err)
+		}
+		out.concurrency.UseBackend(backend, topology.LaneLimits{
+			App:    envPositiveInt("UBAG_ADMISSION_MAX_INFLIGHT_PER_APP"),
+			Tenant: envPositiveInt("UBAG_ADMISSION_MAX_INFLIGHT_PER_TENANT"),
+			Global: envPositiveInt("UBAG_ADMISSION_MAX_INFLIGHT_GLOBAL"),
+		})
+		out.admission = backend
+		go func() {
+			ticker := time.NewTicker(admissionSweepInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if n, err := backend.SweepExpired(ctx, time.Now().UTC()); err != nil {
+						slog.Error("admission token sweep failed", "error", err)
+					} else if n > 0 {
+						slog.Warn("expired unassociated admission tokens released", "count", n)
+					}
+				}
+			}
+		}()
+	}
 
 	// ABAC policy bundle (opt-in). The enforcer stays nil unless an operator
 	// supplies a bundle, so activating this machinery cannot deny any request
@@ -1668,6 +1703,7 @@ func resolveWorkerScriptPath(value string) (string, error) {
 const (
 	voiceSweepInterval         = 30 * time.Second
 	voiceReconcileInterval     = 2 * time.Second
+	admissionSweepInterval     = 30 * time.Second
 )
 
 func newVoiceComponentsFromEnv(ctx context.Context, storeKind string, db *sql.DB, topo topology.Store) (voice.Store, httpapi.MediaNegotiator, func(), error) {
@@ -1807,4 +1843,14 @@ func reconcileVoiceMedia(ctx context.Context, hub *voice.MediaHub, store voice.S
 			}
 		}
 	}
+}
+
+// envPositiveInt reads a positive integer env var; unset, invalid or
+// non-positive values mean 0 (the limit is disabled).
+func envPositiveInt(key string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
