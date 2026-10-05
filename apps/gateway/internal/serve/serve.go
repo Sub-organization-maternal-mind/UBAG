@@ -1117,6 +1117,7 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 	// The concurrency registry is always available; it is populated by the
 	// worker-event ingestion path and never mutated via HTTP.
 	out.concurrency = topology.NewConcurrencyRegistry()
+	out.concurrency.SetDefaultLaneCap(envPositiveInt("UBAG_ADMISSION_DEFAULT_LANE_CAP"))
 	// Shared admission: with a SQL store, in-flight tokens live in the
 	// database so every replica admits against one authority (memory mode
 	// keeps the process-local counters, which is correct for one process).

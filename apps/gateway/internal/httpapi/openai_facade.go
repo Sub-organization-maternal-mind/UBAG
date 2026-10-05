@@ -252,6 +252,9 @@ type openAIFacadeError struct {
 	Type    string `json:"type"`
 	Code    string `json:"code"`
 	Param   string `json:"param,omitempty"`
+	// RetryAfterMS is an extension on overload answers (mirrors the Retry-After
+	// header) so clients can back off without parsing headers.
+	RetryAfterMS int `json:"retry_after_ms,omitempty"`
 }
 
 type openAIFacadeErrorEnvelope struct {

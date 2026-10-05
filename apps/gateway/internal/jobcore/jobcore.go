@@ -100,6 +100,13 @@ func IsReservedCommandType(commandType string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(commandType)), ReservedCommandPrefix)
 }
 
+// MaxDispatchPayloadBytes bounds a job's serialized payload. The dispatch
+// queues (file spool, NATS) refuse envelopes above 256 KiB, so a larger job
+// would be ACCEPTED at create and then never run — it would wait forever. The
+// limit sits below that bound, leaving room for the envelope's own metadata.
+// Large content belongs in attachments/artifacts, not in job.input.
+const MaxDispatchPayloadBytes = 240 * 1024
+
 func ValidatePayload(client Client, spec Spec) error {
 	if IsReservedCommandType(spec.CommandType) {
 		return fmt.Errorf("job.command_type %q is reserved for gateway-internal use", strings.TrimSpace(spec.CommandType))
@@ -119,6 +126,9 @@ func ValidatePayload(client Client, spec Spec) error {
 			"context":         spec.Context,
 			"model_settings":  spec.ModelSettings,
 		},
+	}
+	if raw, err := json.Marshal(payload); err == nil && len(raw) > MaxDispatchPayloadBytes {
+		return fmt.Errorf("job payload is %d bytes, above the %d-byte dispatch limit; send large content as attachments or artifacts instead of job.input", len(raw), MaxDispatchPayloadBytes)
 	}
 	return payloadpolicy.Validate(payload)
 }

@@ -167,7 +167,9 @@ func (s *Server) reserveUploadBytes(w http.ResponseWriter, r *http.Request, n in
 	s.overload.reject("upload_memory")
 	w.Header().Set("Retry-After", "2")
 	if facade {
-		s.writeFacadeError(w, http.StatusServiceUnavailable, "server_error", "overloaded", "the gateway is holding its maximum upload memory; retry shortly")
+		s.writeJSON(w, http.StatusServiceUnavailable, openAIFacadeErrorEnvelope{Error: openAIFacadeError{
+			Message: "the gateway is holding its maximum upload memory; retry shortly", Type: "server_error", Code: "overloaded", RetryAfterMS: 2000,
+		}})
 		return nil, false
 	}
 	s.writeError(w, r, http.StatusServiceUnavailable, apiError{

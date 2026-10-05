@@ -12,7 +12,11 @@ import (
 const (
 	// defaultConcurrencyCap is used when no AIMD cap has been reported for a
 	// (target, identityRef) pair. It acts as a permissive bootstrap ceiling.
-	defaultConcurrencyCap = 100
+	// A lane's tokens span QUEUED and running jobs, so this ceiling is also the
+	// deepest queue one (tenant, target, app) lane can hold: it must sit above
+	// the queue depth the deployment is expected to absorb (the 1,000-queued-job
+	// acceptance target). Override with UBAG_ADMISSION_DEFAULT_LANE_CAP.
+	defaultConcurrencyCap = 2000
 )
 
 // ConcurrencyView is a read-only projection of the adaptive (AIMD) concurrency
@@ -67,6 +71,8 @@ type ConcurrencyRegistry struct {
 	backend TokenBackend
 	limits  LaneLimits
 	pmu     sync.Mutex // guards pending
+	// defaultCap overrides defaultConcurrencyCap when > 0 (SetDefaultLaneCap).
+	defaultCap int
 	// pending holds this process's unassociated token ids per lane, FIFO.
 	// Tokens on one lane are interchangeable, so pairing the oldest pending
 	// token with the next created job is safe.
@@ -97,6 +103,14 @@ func (r *ConcurrencyRegistry) UseBackend(backend TokenBackend, limits LaneLimits
 	}
 	r.backend, r.limits = backend, limits
 	r.pending = map[string][]string{}
+}
+
+// SetDefaultLaneCap sets the ceiling used for lanes with no worker-reported
+// cap. Call it before the registry serves traffic.
+func (r *ConcurrencyRegistry) SetDefaultLaneCap(n int) {
+	if r != nil && n > 0 {
+		r.defaultCap = n
+	}
 }
 
 func laneKeyFor(tenantID, target, identityRef string) string {
@@ -225,6 +239,9 @@ func (r *ConcurrencyRegistry) laneCapLocked(tenantID, target, identityRef string
 		if view, ok := tenant[concurrencyKey(target, identityRef)]; ok && view.CurrentCap > 0 {
 			return view.CurrentCap
 		}
+	}
+	if r.defaultCap > 0 {
+		return r.defaultCap
 	}
 	return defaultConcurrencyCap
 }

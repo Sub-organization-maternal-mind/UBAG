@@ -90,3 +90,17 @@ func TestValidateModelSettingsRejectsReservedKey(t *testing.T) {
 		t.Fatalf("facade _enabled marker must validate, got %v", err)
 	}
 }
+
+// A job that the dispatch queues would refuse (>256 KiB envelope) must be
+// rejected at create, not accepted and then stranded.
+func TestValidatePayloadRejectsJobsTooLargeToDispatch(t *testing.T) {
+	client := Client{AppID: "a", AppVersion: "1", SDKName: "s", SDKVersion: "1"}
+	small := Spec{Target: "mock", CommandType: "chat.prompt", Input: map[string]any{"prompt": "hi"}}
+	if err := ValidatePayload(client, small); err != nil {
+		t.Fatalf("small payload: %v", err)
+	}
+	big := Spec{Target: "mock", CommandType: "chat.prompt", Input: map[string]any{"prompt": strings.Repeat("x", MaxDispatchPayloadBytes)}}
+	if err := ValidatePayload(client, big); err == nil || !strings.Contains(err.Error(), "dispatch limit") {
+		t.Fatalf("oversized payload err = %v", err)
+	}
+}

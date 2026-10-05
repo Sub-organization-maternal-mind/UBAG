@@ -157,8 +157,8 @@ func TestUploadMemoryBudgetRefusesBeyondBudget(t *testing.T) {
 	if _, ok := srv.reserveUploadBytes(w2, req, uploadReservation(req, srv.facadeMaxBody, facadeDecodeFactor), true); ok {
 		t.Fatal("second 1.2 MiB reservation fit in a 1 MiB budget")
 	}
-	if w2.Code != http.StatusServiceUnavailable || w2.Header().Get("Retry-After") == "" {
-		t.Fatalf("refusal = %d retry-after=%q", w2.Code, w2.Header().Get("Retry-After"))
+	if w2.Code != http.StatusServiceUnavailable || w2.Header().Get("Retry-After") == "" || !strings.Contains(w2.Body.String(), `"retry_after_ms":2000`) {
+		t.Fatalf("refusal = %d retry-after=%q body=%s", w2.Code, w2.Header().Get("Retry-After"), w2.Body.String())
 	}
 	metrics := httptest.NewRecorder()
 	srv.writeOverloadMetrics(metrics)
