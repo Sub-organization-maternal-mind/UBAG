@@ -3659,3 +3659,105 @@ rule prevents this provider from receiving blanket E2E acceptance. No credential
 cookies or CAPTCHA handling automated. Optional SSO/integrations/disaster restore
 remain outside these checks. Text attachment acceptance above is DeepSeek only;
 it does not establish every file type on every provider. Historical jobs preserved.
+
+## 2026-10-05 — Multimodal + voice-release slice 1 (feat/multimodal-voice-hardening)
+
+Ground truth first (per the release plan's ordering), then six implementation
+commits on the feature branch (main auto-deploy untouched):
+
+**Live provider verification (read-only, no clicks):**
+- 2026-10-05T03:44Z voice-probe captures (tools/provider-refresh/voice-probe.mjs,
+  committed): ChatGPT composer renders aria-label "Start Voice" (+ "Dictate");
+  Gemini renders "Listen" (Live) + "Dictate (^⇧D)". Chrome 154, Ubuntu Docker,
+  both logged in. mediaDevices.getUserMedia + AudioContext available.
+- The configured browser inspection endpoint (127.0.0.1:15923 SSH tunnel to the
+  production CDP) WAS down at session start; re-established (ssh -L
+  15923:172.28.0.10:9223) and all probes succeeded.
+- Confirmed blocker: the production browser container had NO audio stack at all
+  (no pactl/parec, no /dev/snd, no pulse processes) — two-way live voice was
+  impossible on the current image. Addressed below as opt-in.
+
+**Implemented (commit order):**
+1. 6bcf3e0 — facade multimodal message parts: content arrays accept
+   text/input_text, image_url data URLs (remote URLs rejected per constraints),
+   input_audio wav/mp3; inline parts ride the native attachment storage +
+   per-target manifest policy (capability errors unchanged); gateway stages
+   them and dispatches; caller ubag_attachments keep the 202-held flow;
+   bounded (≤10 parts, 24 MiB/part, UBAG_FACADE_MAX_BODY_BYTES=48 MiB);
+   idempotency fingerprint v2 stays byte-compatible for text bodies; parts
+   digest = key + content-type + sha256.
+2. 53db1d2 — GET /v1/capabilities: per-target attachment policy, facade inline
+   formats INTERSECTED with policy, voice.live from manifest voice blocks
+   (chatgpt_web + gemini_web declare live:true with the probed entry controls +
+   verification note), utterance_jobs derived from audio/voice acceptance,
+   available_accounts = topology contexts with login_state authenticated.
+   Advertisement never promises what create-time validation refuses.
+3. dcc70e9 — internal/voice: voice-session store where each active session
+   holds an EXCLUSIVE provider-account lease + EXCLUSIVE browser/audio
+   environment lease, enforced by SHARED ATOMIC RESERVATIONS (partial UNIQUE
+   indexes in SQLite/Postgres — migrations/postgres/0019_voice_sessions.sql —
+   mutex-serialized in memory), so multi-replica gateways admit against one
+   authority. Queue-then-claim (Claim CAS), lease sweeper for crash recovery.
+   HTTP: POST/GET /v1/voice/sessions, GET/DELETE /{id}, /{id}/connect (claims
+   if queued, hands SDP to the MediaNegotiator, returns short-lived
+   session-scoped HMAC media credential), /{id}/mute, /{id}/renew,
+   /{id}/terminate. job:create on mutations, job:read on reads, 501 when
+   unconfigured, 429 overload with retry guidance (budgets
+   UBAG_VOICE_MAX_SESSIONS_PER_TENANT=4 / MAX_QUEUED=32 / SESSION_TTL=600).
+   UBAG-VOICE error namespace registered in the shared error catalog.
+4. 0ca7ff3 — WebRTC media plane (pion/webrtc v4): MediaHub terminates the
+   client connection with HTTP-only signaling (non-trickle ICE, answer embeds
+   all candidates) and routes raw Opus frames over the framed TCP relay
+   (4-byte LE length + packet) — the gateway NEVER transcodes. Bounded
+   mic buffer with drop-oldest + counters. serve.go wiring: UBAG_VOICE_STORE
+   memory|sqlite|postgres (postgres reuses the gateway pool), 30 s lease
+   sweep, UBAG_VOICE_AUDIO_RELAY_ADDR. Verified with an in-process WebRTC
+   loopback test (client PC offers → hub answers → Opus payloads reach the
+   relay → relay frames return as RTP → Disconnect ends the session).
+5. 0a24856 — browser audio stack, OPT-IN (UBAG_VOICE_AUDIO_ENABLED=1; default
+   OFF keeps production behavior byte-identical): PulseAudio with pipe
+   virtual-mic source (default source) + null provider sink (default sink,
+   monitored); deploy/vps/browser/audio-relay.py speaks the framed protocol
+   (decode/encode via deploy/vps/browser/opus_bridge.py — direct ctypes to
+   libopus, no pip deps); Chrome gains --use-fake-ui-for-media-stream ONLY
+   when voice audio is on (no fake-device flag; anti-detection flags
+   untouched). docker-compose.vps.yml: browser + gateway voice env knobs;
+   relay port 9099 internal-only (no host publish).
+6. d0d3c05 + 748c045 — worker voice runner (ubag_worker.voice.voice_runner):
+   CDP attach → find/open provider tab → fail closed on login wall → click
+   ONLY the verified voice control (ChatGPT "Start Voice", Gemini "Listen";
+   "Dictate" explicitly excluded) — voice_control selector groups added with
+   the 2026-10-05 probe baseline, NOT in all_groups() so text-only drift
+   baselines are unaffected. 9 fake-CDP tests. OpenAPI: capabilities +
+   voice-session paths/schemas, wildcard mapped, SDK manifests regenerated
+   (92 → 101 endpoints); check-contracts green.
+
+**Verification run this session:** go build ./... clean; go vet
+httpapi/voice/serve clean; go test ./internal/voice/ ./internal/httpapi/
+./internal/serve/ green; voice runner pytest 9/9; check-provider-selectors
+green (10 adapters); check-contracts green (101 endpoints).
+
+**REMAINING GATES for the required acceptance (ChatGPT AND Gemini two-way
+live voice demonstrated in Ubuntu Docker) — release stays INCOMPLETE until
+these produce runtime evidence:**
+1. Deploy the audio-enabled browser as a bounded canary (opt-in env) and
+   verify PulseAudio devices + relay inside the real container
+   (pactl list sources | grep ubag_virtual_mic; relay TCP handshake).
+2. Wire voice-session orchestration end-to-end: create session → voice
+   runner activates the provider UI → client connects (SDP) → audio relay
+   dialed → bidirectional audio; then observe the provider's own
+   interruption/barge-in behavior on BOTH providers and record it.
+3. Verify disconnect cleanup and the absence of cross-session audio leakage
+   (one relay connection per session, bounded listener).
+4. Register voice metrics (ubag_voice_media_frames_dropped,
+   sessions_connected/ended) in the metrics registry — the MediaMetrics
+   interface exists but the Prometheus wiring is not done.
+5. Extend the deploy/small portable profile's browser-viewer image with the
+   same audio overlay for the independent portable acceptance run.
+6. SDK method surface (TS/Go) for the new endpoints — manifests are
+   regenerated; hand-written client methods/examples for JS/Python/Go/HTTP
+   are follow-ups.
+7. VPS headroom measurement + bounded canary discipline for any production
+   deployment (shared box: OET + radiology run there).
+8. The same feature branch must NOT be merged until the live voice demo
+   evidence exists; main auto-deploys on push.

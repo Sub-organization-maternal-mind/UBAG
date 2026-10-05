@@ -1154,3 +1154,38 @@ rule prevents this provider from receiving blanket E2E acceptance. No credential
 cookies or CAPTCHA handling automated. Optional SSO/integrations/disaster restore
 remain outside these checks. Text attachment acceptance above is DeepSeek only;
 it does not establish every file type on every provider. Historical jobs preserved.
+
+## 2026-10-05 multimodal + voice slice — resume here
+
+Branch `feat/multimodal-voice-hardening` (6 commits: 6bcf3e0 facade
+multimodal parts, 53db1d2 capabilities endpoint, dcc70e9 voice-session
+store+APIs with shared atomic leases, 0ca7ff3 pion WebRTC media plane +
+relay protocol, 0a24856 opt-in browser audio stack, d0d3c05/748c045 voice
+runner + OpenAPI). Do NOT merge to main until the live voice demo
+evidence exists — main auto-deploys.
+
+Full detail + evidence in PROGRESS.md (2026-10-05 section). The short
+version for the next agent:
+
+- Ground truth established with the committed read-only voice-probe:
+  ChatGPT "Start Voice", Gemini "Listen" — both logged in on the
+  production browser (Chrome 154, Ubuntu Docker). The browser inspection
+  endpoint (SSH tunnel 127.0.0.1:15923 → 172.28.0.10:9223) was DOWN at
+  session start; `ssh -N -L 15923:172.28.0.10:9223 root@185.252.233.186`
+  restores it.
+- The production browser container had NO audio stack. The fix is opt-in:
+  rebuild the browser image and set UBAG_VOICE_AUDIO_ENABLED=1 (canary;
+  do not disturb the shared box without headroom measurement).
+- The gateway side is complete and unit-tested end to end EXCEPT live
+  provider behavior: multimodal facade parts, capabilities discovery,
+  voice-session create/queue/claim/lease-sweep/mute/renew/terminate over
+  shared atomic reservations (SQLite/Postgres partial unique indexes,
+  migrations/postgres/0019), pion media plane with an in-process WebRTC
+  loopback test, worker voice runner with verified selectors, OpenAPI +
+  SDK manifests (101 endpoints), contract + selector gates green.
+- Remaining gates (release incomplete without them): canary deploy +
+  in-container audio verification, end-to-end voice orchestration and the
+  actual two-way audio + interruption demo on BOTH providers, disconnect
+  cleanup + cross-session leakage checks, voice metrics registration,
+  deploy/small browser audio overlay, SDK hand-written method surfaces,
+  VPS headroom measurement. Full list in PROGRESS.md.
