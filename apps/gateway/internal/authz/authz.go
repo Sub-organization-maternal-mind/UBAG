@@ -83,6 +83,8 @@ var roleActions = map[string]map[string]struct{}{
 		"alerts:manage":     {},
 		"browser:read":      {},
 		"concurrency:read":  {},
+		"fleet:read":        {},
+		"fleet:manage":      {},
 	},
 	"admin": {
 		"job:create":        {},
@@ -106,6 +108,8 @@ var roleActions = map[string]map[string]struct{}{
 		"browser:read":      {},
 		"concurrency:read":  {},
 		"region:manage":     {},
+		"fleet:read":        {},
+		"fleet:manage":      {},
 	},
 	"superadmin": {
 		// Satisfied by the RoleAllows superadmin fast path; kept empty so the

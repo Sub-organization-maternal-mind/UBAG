@@ -25,12 +25,23 @@ export const AUDIT_EVENT_NAMES = [
   "rate_limit.rejected",
   "audit.integrity_digest_created",
   "policy.changed",
-  "compliance.mode_changed"
+  "compliance.mode_changed",
+  "node.enrolled",
+  "node.cert_rotated",
+  "node.revoked",
+  "node.auth_rejected",
+  "attempt.granted",
+  "attempt.fenced_rejected",
+  "attempt.committed",
+  "asset.token_issued",
+  "asset.read",
+  "asset.write",
+  "helper.policy_violation"
 ] as const;
 
 export type AuditEventName = (typeof AUDIT_EVENT_NAMES)[number];
 export type AuditResult = "success" | "failure" | "denied" | "attempted";
-export type AuditActorType = "user" | "app" | "device" | "service" | "support" | "system";
+export type AuditActorType = "user" | "app" | "device" | "service" | "support" | "system" | "node";
 
 export interface AuditActor {
   id: string;
