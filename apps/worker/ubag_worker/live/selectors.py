@@ -116,6 +116,26 @@ class ChatDeleteFlow:
 
 
 @dataclass(frozen=True)
+class VoiceReadiness:
+    """Provider controls the voice runner observes AFTER clicking the entry control.
+
+    Plain selector tuples (not SelectorGroup) because an empty tuple is a valid,
+    honest state: no live in-call capture exists yet, and the voice runner then
+    reports ``unverified_ready`` instead of claiming the call started.
+
+    * ``ready_controls`` — match only while the live call is up (e.g. an in-call
+      end/mute control). Any visible match => voice is active.
+    * ``setup_prompts`` — onboarding / mic-permission dialogs that block the call.
+    * ``unavailable`` — "voice not available" notices for this account/region.
+    """
+
+    ready_controls: Sequence[str] = ()
+    setup_prompts: Sequence[str] = ()
+    unavailable: Sequence[str] = ()
+    baseline_version: str = "unverified-until-live-probe"
+
+
+@dataclass(frozen=True)
 class ProviderSelectors:
     """Provider-specific selector + navigation configuration.
 
@@ -179,6 +199,10 @@ class ProviderSelectors:
     # Like file_input, NOT part of all_groups(): text-only drift baselines
     # must not depend on the voice control.
     voice_control: Optional[SelectorGroup] = None
+    # Post-click readiness observation for voice mode (see VoiceReadiness). None =
+    # no readiness evidence at all; the runner reports unverified_ready. Also NOT
+    # part of all_groups().
+    voice_readiness: Optional[VoiceReadiness] = None
     # Ordered, idempotent UI settings enforced before submit (model pickers, mode
     # pills, reasoning toggles). Empty = submit in whatever mode is current.
     settings: Sequence[ProviderSetting] = field(default_factory=tuple)
@@ -324,6 +348,11 @@ CHATGPT_WEB = ProviderSelectors(
         ),
         baseline_version="2026-10-05-voice-probe",
     ),
+    # No in-call capture exists: the 2026-10-05 voice-probe is read-only and
+    # never clicks "Start Voice", so the in-call DOM was never observed. Left
+    # empty on purpose - do NOT guess selectors; fill from a live probe taken
+    # while a call is active.
+    voice_readiness=VoiceReadiness(),
     # Verified 2026-07-17 by deleting a UBAG-created throwaway chat on the live
     # account. The row options button carries the conversation id directly
     # (data-conversation-options-trigger="<uuid>"), which is what makes an exact,
@@ -660,6 +689,9 @@ GEMINI_WEB = ProviderSelectors(
         ),
         baseline_version="2026-10-05-voice-probe",
     ),
+    # Same as ChatGPT: no in-call capture (the Gemini voice capture does not
+    # even list "Listen"). Empty until a live probe taken during a call.
+    voice_readiness=VoiceReadiness(),
     # Operator default (always-on): "3.8 Flash" with Extended thinking OFF.
     #
     # Re-baselined 2026-07-17 against live gemini.google.com. Google FLATTENED the
