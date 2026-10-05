@@ -10,8 +10,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Mapping
+from typing import Any, Dict, Iterator, Mapping
 
 JsonObject = Dict[str, Any]
 
@@ -33,6 +35,52 @@ _REAL_CLOCK = os.environ.get("UBAG_WORKER_EVENT_CLOCK") != "fixed"
 CONVERSATION_THREAD_BOUND_EVENT_TYPE = "conversation.thread_bound"
 CONVERSATION_THREAD_BROKEN_EVENT_TYPE = "conversation.thread_broken"
 CONVERSATION_THREAD_REBOUND_EVENT_TYPE = "conversation.thread_rebound"
+
+
+# Stage timings (P0.9). ``data.timings_ms`` on the terminal ``completed`` event;
+# the closed key set mirrors job-event.schema.json (and observability JOB_STAGES).
+# Measured with a monotonic clock around the real work - NOT derived from event
+# ``created_at``, because the engine buffers the interaction and replays events
+# after it ran. Inert unless UBAG_WORKER_STAGE_TIMINGS is truthy, so the default
+# event stream stays byte-identical.
+STAGE_KEYS = (
+    "worker_start",
+    "browser_prep",
+    "auth_check",
+    "attachment_materialize",
+    "provider_submit",
+    "first_token",
+    "provider_stream",
+    "extraction",
+)
+STAGE_TIMINGS_ENV = "UBAG_WORKER_STAGE_TIMINGS"
+
+
+def stage_timings_enabled() -> bool:
+    return os.environ.get(STAGE_TIMINGS_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+class StageTimer:
+    """Accumulates per-stage durations (ms). Repeated spans (retries) sum."""
+
+    def __init__(self) -> None:
+        self._ms: Dict[str, float] = {}
+
+    def add(self, stage: str, seconds: float) -> None:
+        if stage not in STAGE_KEYS:
+            raise ValueError("unknown stage %r" % stage)
+        self._ms[stage] = self._ms.get(stage, 0.0) + max(seconds, 0.0) * 1000.0
+
+    @contextmanager
+    def span(self, stage: str) -> Iterator[None]:
+        start = time.perf_counter()
+        try:
+            yield
+        finally:  # a failed attempt still cost this much
+            self.add(stage, time.perf_counter() - start)
+
+    def as_dict(self) -> Dict[str, float]:
+        return {k: round(self._ms[k], 3) for k in STAGE_KEYS if k in self._ms}
 
 
 def digest(value: str) -> str:
@@ -80,8 +128,12 @@ __all__ = [
     "CONVERSATION_THREAD_BROKEN_EVENT_TYPE",
     "CONVERSATION_THREAD_REBOUND_EVENT_TYPE",
     "JsonObject",
+    "STAGE_KEYS",
+    "STAGE_TIMINGS_ENV",
+    "StageTimer",
     "canonical_json",
     "digest",
+    "stage_timings_enabled",
     "timestamp",
     "worker_event",
 ]
