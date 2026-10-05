@@ -593,6 +593,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	if jobstore.TerminalStatus(finalJob.Status) {
 		c.observeWorkerRun(job.Target, workerMetricOutcome(finalJob.Status), workerDuration)
 		c.observeIngestion(job.Target, "success", "none", len(events), time.Since(ingestionStarted))
+		c.observeStageTimings(job.Target, events)
 	}
 	if finalJob.Status == jobstore.StatusCanceled {
 		return c.finishTerminalIngestedJob(ctx, lease, finalJob, lease.Cancel)

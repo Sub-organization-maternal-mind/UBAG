@@ -36,6 +36,11 @@ type DeliveryWorker struct {
 	Now          func() time.Time
 	Breakers     *resilience.Registry // optional; nil disables circuit-breaker retry delay
 
+	// OnDelivery, when non-nil, is called after every Send attempt with the
+	// attempt's ErrorClass ("none" on success) and its wall-clock duration.
+	// It feeds ubag_webhook_deliveries_total / _delivery_duration_seconds.
+	OnDelivery func(errorClass string, duration time.Duration)
+
 	// runErrors counts RunOnce failures observed by Run. Previously these ended
 	// the worker outright with no counter, so a delivery loop that had stopped
 	// was indistinguishable from an idle one.
@@ -157,9 +162,13 @@ func (w *DeliveryWorker) RunOnce(ctx context.Context) (bool, error) {
 		now = time.Now
 	}
 	for _, delivery := range deliveries {
+		sendStarted := time.Now()
 		result, err := w.Sender.Send(ctx, delivery)
 		if err != nil {
 			return true, err
+		}
+		if w.OnDelivery != nil {
+			w.OnDelivery(result.ErrorClass, time.Since(sendStarted))
 		}
 		switch {
 		case result.ErrorClass == "none":
