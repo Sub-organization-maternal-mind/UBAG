@@ -1,0 +1,184 @@
+ZCODE REPAIR PROMPT: UBAG MULTIMODAL, PROVIDER-WEBSITE VOICE, AND CONCURRENCY
+Reviewed 2026-10-05. Repository: D:\Projects\UBAG
+Reviewed branch: feat/multimodal-voice-hardening
+Reviewed HEAD: 4651d28
+Comparison baseline: 4c4c52f (before the 14 feature commits)
+
+TASK
+Continue the existing implementation. Fix the verified defects below, complete the missing portions of the agreed plan, and report acceptance honestly. The implementation contains useful foundations, but it is NOT complete or safe to declare production-ready.
+
+The user's requirements are:
+- Mixed text, image, prerecorded audio, utterance-based microphone input, and two-way live voice.
+- Live voice must use the providers' WEBSITE features, not an OpenAI/Gemini realtime API substitute.
+- Both ChatGPT AND Gemini must demonstrate real two-way voice in Ubuntu Docker, including interruption and cleanup. File-audio fallback does not meet that gate.
+- Applications in any language must integrate over private Docker networking or authenticated HTTPS.
+- Initial acceptance target: 100 concurrent API clients and 1,000 queued jobs. Active voice sessions remain separately capped, one per authenticated provider account.
+- Each voice session has an exclusive browser/audio environment. Queue excess sessions.
+
+OPERATING CONSTRAINTS
+Read AGENTS.md, its referenced rules, PROGRESS.md, and AGENT_HANDOFF.md. Preserve unrelated untracked provider captures and all credentials, profiles, volumes, and customer data. Work directly on the existing feature branch. Do not merge/push main: main automatically deploys. Do not deploy or restart production merely to implement fixes. Production is the shared primary VPS; load tests must be bounded and scheduled safely. Builds belong in CI, not on the VPS. Use targeted local checks rather than full local suites.
+Use the project provider-refresh skill for provider controls. Never guess selectors or equate a label with a working voice capability. Logins remain human-only. Read-only probes must not click voice controls or send prompts. A live acceptance run is a separate, deliberate run with synthetic test content, isolated resources, and bounded duration.
+If a genuine provider limitation blocks a requirement, give exact evidence and the remaining gate rather than silently changing scope.
+
+REVIEW EVIDENCE
+The existing targeted checks passed:
+- go test ./internal/voice ./internal/httpapi -run 'Test(Voice|Media|TCP|OpenAI.*(Multimodal|Inline)|FlattenFacade)' -count=1 : 22 tests passed.
+- python -m pytest apps/worker/tests/test_voice_runner.py -q : 9 passed.
+- node tools/check-contracts.mjs : passed.
+- node tools/provider-refresh/check-provider-selectors.mjs : passed.
+These checks do NOT establish the required provider voice behavior.
+Five additional Go review checks failed against the current implementation. Their source is appended below. They were run using a temporary Go overlay, without modifying implementation files.
+Additional Python reproductions showed:
+- new_page actual URL = about:blank, claimed wrapper URL = https://chatgpt.com/, navigation calls = [].
+- _matches_home('https://chatgpt.com.evil.example/', 'chatgpt_web') = True.
+- find_provider_tab selected https://unrelated.example/?provider=chatgpt_web.
+- Failing OpusDecoder initialization raised UnboundLocalError for stop and left the connection open.
+Live read-only CDP inspection during this review reached Chrome/154.0.8037.97. The existing Gemini page exposed Dictate (^shift-D), but no visible Listen/live-voice control in the inspected page DOM. No ChatGPT page was present in that target inventory. No provider voice conversation was initiated in this review.
+
+PRIORITY 1: ISOLATION AND RESOURCE OWNERSHIP (RELEASE BLOCKER)
+Sources:
+- apps/gateway/internal/serve/serve.go:1701-1712
+- migrations/postgres/0019_voice_sessions.sql:37-43
+- apps/gateway/internal/voice/voice.go:258-275 and SQL-store equivalent checks
+- apps/gateway/internal/httpapi/voice_handlers.go:145-183
+- deploy/vps/browser/audio-relay.py:295-305
+
+newVoiceMediaHub ignores instanceRef and maps ALL instances to one UBAG_VOICE_AUDIO_RELAY_ADDR. The relay accepts unlimited active connections in threads, all writing the same microphone FIFO and reading the same speaker monitor. listen(4) limits pending accepts, not active sessions. Resource unique indexes include tenant_id, so different tenants can simultaneously lease the SAME physical instance. The existing store test actually treats this as allowed. A caller-supplied identity_ref is appended without checking that it belongs to the tenant or that it is authenticated, and accounts/instances are selected independently without establishing the correct account-to-context-to-browser mapping.
+
+Implement server-owned resource resolution: tenant/app authorization -> authenticated provider account/context -> its actual browser/audio environment -> its relay address. Do not accept arbitrary identity strings as proof of ownership. Exclusivity must apply to the actual physical resource, including across tenants, unless those tenants truly resolve to different isolated environments. Coordinate ordinary text/file jobs too: they must not change tabs, provider state, or shared audio on an environment leased for voice.
+Enforce one authorized active relay appointment per audio environment, with a bounded admission guard, session/lease fencing, deadlines, and network access controls. Do not expose raw unauthenticated relay access to unrelated containers. Retain tenant isolation in API responses.
+Acceptance: two tenants requesting one physical environment cannot both become active; two different environments resolve to different relays; unknown identities are rejected; ordinary jobs cannot interfere with active voice; concurrent clients cannot hear or inject each other's audio.
+
+PRIORITY 2: WIRE THE ACTUAL PROVIDER SESSION LIFECYCLE (MISSING IMPLEMENTATION)
+Sources: voice_handlers.go:261,423-497; internal/voice/media.go:225-259; apps/worker/ubag_worker/voice/voice_runner.py.
+
+The voice runner exists but is never invoked by gateway/session orchestration. Creating/connecting a session negotiates WebRTC and dials a relay without starting provider voice. Media connection callbacks never advance the persisted session to connected. Mute only calls Store.SetMuted; neither the media hub nor relay consumes the flag. Termination does not stop provider voice UI.
+
+Wire a bounded, supervised lifecycle using the leased account/context/environment. Start and verify provider voice readiness; establish media; transition state using CAS and lease ownership; propagate failures; enforce mute in the microphone path; end provider voice and media on teardown. Starting, connecting, terminating, and reconnecting must be race-safe and tied to a lease generation. Do not report connected from SDP creation alone.
+Acceptance: an API-created session starts the correct provider UI; status reflects actual readiness; muted microphone frames do not reach the provider; unmute resumes; closing the session stops both provider listening and resource use.
+
+PRIORITY 3: FIX THE VOICE RUNNER (VERIFIED DEFECTS)
+Sources: voice_runner.py:76-94,180-186,201-209.
+
+PlaywrightCdpClient.new_page() creates a blank page and only overrides the wrapper's url; it never calls goto(). URL selection uses startswith and provider-id substring checks, accepting lookalike hosts and unrelated pages. Activation returns activated=True after a click and sleep without verifying a listening/live state. It always uses the first browser context rather than the leased authenticated context.
+
+Navigate the actual page, validate exact HTTPS origins using parsed URLs, remove the provider-name substring bypass, select the leased context/account, and use fresh actual page state. Verify post-click voice readiness with observed provider controls; represent setup prompts, unavailable voice, login walls, drift, and timeout explicitly. Do not claim successful activation on click alone.
+Acceptance: no-provider-tab flow navigates to the correct origin; lookalike and unrelated origins are rejected; the intended authenticated context is used; activation cannot succeed without a verified provider ready state.
+
+PRIORITY 4: CLEANUP, EXPIRY, FENCING, AND RECONNECT (VERIFIED DEFECTS)
+Sources: serve.go:180-196; media.go:250-259,297-322; voice_handlers.go:467-497,535-570; SQL/memory RenewLease and SweepExpired.
+
+The sweeper releases database leases without disconnecting audio or stopping the provider, allowing an old media connection to survive resource reassignment. Media failure/closure does not terminate the store record. Shutdown closeVoice closures do not close the MediaHub. RenewLease accepts already-expired sessions before the sweeper runs (reproduced). The SQLite sweeper selects expired IDs, then updates without rechecking expiry, so a concurrent renewal can be terminated. The handler ignores renewal errors after negotiation. Reconnect is documented as permitted, but MediaHub rejects an existing media connection. A stale closeSession callback deletes by session ID without confirming the mapped mediaSession is the same generation.
+
+Make expiry, owner loss, disconnect, errors, explicit termination, and shutdown converge on idempotent teardown. Fence stale owners before resource reuse. Make expired-lease renewal fail atomically; make sweeps recheck expiry and status atomically. Route cleanup to the owning replica and guarantee stale media cannot remain active even if that replica is unavailable. Implement controlled reconnect replacement/ICE restart and protect replacement connections from stale callbacks. Do not ignore failed store operations.
+Acceptance: worker/replica crash or expiry stops audio before another appointment uses the environment; renew-versus-sweep races are safe; expired leases cannot revive; reconnect works; terminating via another gateway replica cleans up the real media owner.
+
+PRIORITY 5: ENFORCE SHARED BUDGETS AT ADMISSION (VERIFIED DEFECT)
+Sources: voice_handlers.go:236-297,454-459; internal/voice/* ActiveCount/Reserve/Claim; topology/concurrency.go.
+
+With max active=1 and two free accounts/environments, two sequential creates BOTH return 201/connecting. The budget check never forces queue-only reservation. ActiveCount includes queued sessions although the handler treats it as lease-holding count. Counts and reserve are separate operations, allowing concurrent overshoot. Claim has no active-budget enforcement. countVoiceQueued performs an unbounded list and returns zero on store errors. Normal job admission remains process-local; the feature did not complete the plan's multi-replica job concurrency authority.
+
+Separate queued and lease-holding counts and enforce limits atomically in the shared admission operation, including Claim. Fail closed on accounting errors. Enforce tenant/app/global resource budgets and bounded queue retention. Preserve durable dispatch and idempotency while completing shared job admission. Production must use the shared store; Compose currently defaults voice to memory, so replicas do not coordinate or recover persisted appointments.
+Acceptance: cap=1 always permits only one active appointment, even with many free resources and concurrent replicas; excess work queues within its cap; queue failures cannot create unbounded work; restart/multi-replica operation preserves authority.
+
+PRIORITY 6: HARDEN THE AUDIO RELAY (VERIFIED CLEANUP FAILURE + STATIC DEFECTS)
+Sources: audio-relay.py:183-305; opus_bridge.py close methods.
+
+stop is initialized after decoder/encoder construction, but finally always calls stop.set(). Constructor failure therefore masks the cause with UnboundLocalError and skips connection cleanup (reproduced). Pump threads join without deadlines. Normal EOF/return does not consistently stop the other pump, which may block on socket, FIFO, or monitor reads. Encoder/decoder handles are never closed. Device readiness checks only microphone presence and stops monitoring after first success, even if PulseAudio restarts. Decode assumes a 20ms maximum, while legal Opus packets can represent longer durations; incoming codec negotiation and packet timing are not explicitly constrained or handled.
+
+Initialize cleanup state before risky operations, use deterministic finally cleanup for sockets/processes/native handles, signal both pumps on every exit, and unblock/join them with deadlines. Make device health and recovery cover microphone AND speaker monitor. Bound active sessions, stalled peers, and buffers. Explicitly negotiate/validate Opus and either correctly handle legal packet durations and RTP ordering or enforce/document a compatible constraint.
+Acceptance: decoder/encoder failures, EOF, slow peers, corrupt frames, monitor exit, Pulse restart, and disconnect leave no sockets, subprocesses, native handles, or blocked session threads behind.
+
+PRIORITY 7: MAKE REMOTE WEBRTC DEPLOYMENT REAL (MISSING)
+Sources: media.go:158,180; serve.go:1701; docker-compose.vps.yml.
+
+The media hub has an ICEServers field, but serve wiring provides no STUN/TURN configuration, external address mapping, or bounded reachable media port configuration. The Docker profile does not publish a media UDP path. A loopback WebRTC test is not evidence that a remote browser can connect through Docker/NAT. HTTPS signaling alone does not carry WebRTC audio.
+
+Provide a documented, configurable ICE/NAT deployment path, including TURN for restrictive client networks, credential handling, necessary bounded media ports, and tested reverse-proxy behavior. Keep CDP and the raw relay private. Respect the shared VPS resource/firewall boundaries.
+Acceptance: a client outside the Docker host completes two-way audio; a TURN-only client also works; malformed offers and stalled negotiation are bounded and safely cleaned up.
+
+PRIORITY 8: REPAIR HTTP CONTRACTS AND MEDIA AUTHORIZATION
+Sources: voice_handlers.go:350-389,423-604; media.go HandleOffer.
+
+POST-only subtree actions have no method guards: GET /connect with a body returns 200 and creates media (reproduced). Other control handlers likewise mutate without checking their documented method. Media failure returns raw err.Error(), potentially exposing internal addresses/implementation details. The media credential verifier is only called in tests; the returned token's expiry is not enforced in the media implementation. Oversized voice JSON is collapsed into 400 instead of a precise 413. UBAG_VOICE_SESSION_TTL_SECONDS is exposed in Compose but never parsed/passed into Config.
+
+Enforce methods before mutation, align Allow/status/error envelopes with OpenAPI, redact internal errors while retaining server-side diagnostics, and make credential scope/expiry/revocation actually govern the documented connection/control flow. Preserve authenticated signaling and DTLS protections; do not invent claims that the current token secures anything it does not. Validate/persist the configured lease interval rather than deriving it from diminishing remaining lifetime.
+Acceptance: wrong methods return 405 without side effects; oversized bodies return 413; error responses contain no internal details; credentials are consumed with tenant/app/session/generation scope and expiry; TTL configuration affects runtime.
+
+PRIORITY 9: MULTIMODAL VALIDATION AND MEMORY BUDGETS
+Sources: openai_facade.go:414-415,735-755,843-857,1468-1477; nginx-dashboard/default.conf.template.
+
+Media-only messages skip role validation because empty text continues before switch msg.Role. A valid text message plus an invalid-role image message is accepted (reproduced). The 48MiB body is fully buffered and JSON/base64 decoded before shared resource admission; 100 concurrent large requests can far exceed the 1.3GiB gateway container memory budget. Inline staging directly calls PutArtifact, bypassing normal upload guards; audit declared MIME/actual bytes, provider-specific byte limits, duplicate/replay writes, and dispatch races rather than assuming the shared declaration check covers them. The nginx ingress template has no explicit client_max_body_size for the increased facade limit.
+
+Validate every role before parsing/accepting its parts. Bound aggregate bytes, decode allocations, concurrent upload memory, temporary disk, and deadlines before expensive reads; prefer the existing multipart/key-reference flows for large input. Reuse consistent artifact safety/idempotency validation. Align edge and gateway request limits while preserving endpoint-specific limits and text fingerprint compatibility. Check normal target restrictions and attachment collision/error cleanup end to end.
+Acceptance: invalid media-only roles fail; valid mixed requests still work; malformed/mislabeled/oversized files fail safely; repeated concurrent requests dispatch once; 100-client tests stay within configured resource budgets rather than merely surviving tiny payloads.
+
+PRIORITY 10: COMPLETE PORTABILITY, SDKs, CAPABILITIES, AND OBSERVABILITY
+The feature updates generated SDK manifests but not callable TS/Go client methods. The portable deploy/small browser image/profile has no voice audio overlay. MediaMetrics defaults to no-op and is not registered. capabilities live=true derives from manifests even when runtime media is unavailable; available_accounts counts authenticated topology contexts rather than distinct free eligible accounts/resources.
+
+Finish the portable profile independent of current VPS hostnames/networks. Add named typed SDK methods and usable JS/Python/Go/HTTP examples, including browser microphone connection with short-lived credentials and safe backend integration. Publish supported versus configured/verified/available voice capability separately, and count free eligible resources honestly. Wire low-cardinality metrics for admission, queueing, readiness, active leases, media drops/latency, cleanup, and errors. Do not expose tenant/session identifiers as unbounded metric labels.
+
+FINAL ACCEPTANCE AND HANDOFF
+1. Turn the review reproductions into targeted regression tests and make them pass, preserving existing tests.
+2. Add targeted tests for real lifecycle glue, actual mute suppression, cross-replica cleanup, transaction/lease races, wrong origins/identities, relay failure cleanup, and reconnect.
+3. Exercise PostgreSQL against the real migration chain in CI; current voice store tests cover memory/SQLite only. Cover parity, contention, queued identity preference, and live/terminal timestamps.
+4. Execute bounded 100-client / 1,000-queued-job acceptance and record CPU, RSS, latency, queue wait, overload behavior, and recovery. Do not infer capacity from unit tests or unsafe sustained load on the shared VPS.
+5. Demonstrate synthetic-client -> gateway -> isolated browser microphone -> actual ChatGPT/Gemini voice -> speaker -> client audio, separately for BOTH providers. Verify meaningful audible responses, barge-in, mute, disconnect, teardown, and no cross-session leakage. Silent sink frames are NOT proof of a provider response.
+6. Reverify Gemini's actual live UI. A Listen label alone could describe playback and is insufficient; the currently inspected DOM exposed only Dictate. Never substitute dictation or read-aloud for a live conversation. If unavailable, mark the release BLOCKED/INCOMPLETE with exact evidence.
+7. Append PROGRESS.md and AGENT_HANDOFF.md evidence and remaining external gates. Do not erase history or mark plans as verification.
+8. Report fixed defects, exact targeted commands/results, unexecuted checks, deployment state, and the explicit remaining acceptance gates. Keep main untouched until the required evidence and release approval exist.
+
+APPENDED REPRODUCTION SOURCE
+The following Go tests fail against reviewed HEAD. They use existing package-local review helpers. Add equivalent regression coverage through the normal test workflow, or run this source using a Go overlay in internal/httpapi. No implementation changes are needed to reproduce the current behavior.
+package httpapi
+import (
+ "context"
+ "encoding/json"
+ "net/http"
+ "testing"
+ "time"
+ "github.com/ubag/ubag/apps/gateway/internal/topology"
+ "github.com/ubag/ubag/apps/gateway/internal/voice"
+)
+func TestReviewActiveBudgetWithTwoEnvironments(t *testing.T) {
+ _, h, _ := voiceTestServer(t, func(c *Config) {
+  c.VoiceMaxSessionsPerTenant=1; c.VoiceMaxQueuedPerTenant=1
+  st:=c.Topology.(*topology.MemoryStore)
+  st.AddInstance(topology.BrowserInstance{InstanceID:"browser-2",TenantID:"tenant_edge",State:"ready"})
+  st.AddContext(topology.ProviderContext{ContextID:"ctx-2",TenantID:"tenant_edge",TargetID:"chatgpt_web",IdentityRef:"acct-chatgpt-2",LoginState:"authenticated"})
+ })
+ first:=doJSON(h,http.MethodPost,"/v1/voice/sessions",voiceBody("chatgpt_web"),authHeaders(""))
+ second:=doJSON(h,http.MethodPost,"/v1/voice/sessions",voiceBody("chatgpt_web"),authHeaders(""))
+ t.Logf("first=%d second=%d",first.Code,second.Code)
+ if second.Code != http.StatusAccepted { t.Fatalf("cap=1 must queue second session, got %d: %s",second.Code,second.Body.String()) }
+}
+func TestReviewPhysicalInstanceExclusiveAcrossTenants(t *testing.T) {
+ st:=voice.NewMemoryStore(); now:=time.Now().UTC()
+ req:=voice.ReserveRequest{SessionID:"a",TenantID:"a",AppID:"a",Target:"chatgpt_web",IdentityCandidates:[]string{"account"},InstanceCandidates:[]string{"physical-browser"},LeaseTTL:time.Minute,Now:now}
+ a,err:=st.Reserve(context.Background(),req); if err!=nil {t.Fatal(err)}
+ req.SessionID="b"; req.TenantID="b"
+ b,err:=st.Reserve(context.Background(),req); if err!=nil {t.Fatal(err)}
+ t.Logf("a=%s instance=%s b=%s instance=%s",a.Status,a.InstanceRef,b.Status,b.InstanceRef)
+ if b.Status!=voice.StatusQueued { t.Fatal("same physical audio environment leased by two tenants") }
+}
+func TestReviewExpiredLeaseCannotBeRenewed(t *testing.T) {
+ st:=voice.NewMemoryStore(); now:=time.Now().UTC()
+ _,err:=st.Reserve(context.Background(),voice.ReserveRequest{SessionID:"a",TenantID:"a",Target:"chatgpt_web",IdentityCandidates:[]string{"a"},InstanceCandidates:[]string{"b"},LeaseTTL:time.Minute,Now:now}); if err!=nil {t.Fatal(err)}
+ err=st.RenewLease(context.Background(),"a","a",now.Add(3*time.Minute),now.Add(2*time.Minute))
+ if err==nil {t.Fatal("expired lease revived before sweeper")}
+}
+func TestReviewConnectRejectsGET(t *testing.T) {
+ _,h,_:=voiceTestServer(t,nil)
+ created:=doJSON(h,http.MethodPost,"/v1/voice/sessions",voiceBody("chatgpt_web"),authHeaders(""))
+ var body struct {Session voice.Session `json:"session"`}; if err:=json.Unmarshal(created.Body.Bytes(),&body);err!=nil {t.Fatal(err)}
+ rec:=doJSON(h,http.MethodGet,"/v1/voice/sessions/"+body.Session.ID+"/connect",`{"sdp_offer":"v=0"}`,authHeaders(""))
+ if rec.Code != http.StatusMethodNotAllowed {t.Fatalf("GET mutates/connects media, status=%d body=%s",rec.Code,rec.Body.String())}
+}
+func TestReviewRejectUnknownMediaOnlyRole(t *testing.T) {
+ _,_,ok:=flattenFacadeMessages([]openAIFacadeMessage{
+  {Role:"user",Content:"describe this"},
+  {Role:"invalid_role",Content:[]any{map[string]any{"type":"image_url","image_url":map[string]any{"url":"data:image/png;base64,AQ=="}}}},
+ })
+ if ok {t.Fatal("media-only content bypassed role validation")}
+}
+
