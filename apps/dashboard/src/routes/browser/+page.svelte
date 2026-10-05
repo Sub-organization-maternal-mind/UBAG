@@ -15,6 +15,7 @@
     BrowserContext,
     BrowserTab,
     BrowserSummary,
+    ConcurrencyView,
   } from '$lib/api/types';
 
   let summary = $state<BrowserSummary | null>(null);
@@ -55,34 +56,18 @@
   let rejectedNoVnc = $derived(Boolean(selectedInstance?.novnc_url && !noVncSrc));
 
   // --- Adaptive concurrency ceilings (GET /v1/concurrency, concurrency:read) ---
-  interface ConcurrencyCeiling {
-    tenant_id?: string;
-    target_id?: string;
-    provider_id?: string;
-    identity_ref?: string;
-    lane?: string;
-    current_cap?: number;
-    minimum?: number;
-    maximum?: number | null;
-    in_flight?: number;
-    [key: string]: unknown;
-  }
-  let concurrency = $state<ConcurrencyCeiling[]>([]);
+  let concurrency = $state<ConcurrencyView[]>([]);
   let concurrencyDenied = $state(false);
   let concurrencyUnavailable = $state(false);
 
   async function loadConcurrency() {
     concurrencyDenied = false;
     concurrencyUnavailable = false;
-    const res = await api.get<{ kind?: string; data?: ConcurrencyCeiling[] }>('/v1/concurrency');
+    const res = await api.get<{ kind?: string; data?: ConcurrencyView[] }>('/v1/concurrency');
     if (res.denied) { concurrencyDenied = true; return; }
     if (res.status === 501 || res.status === 404) { concurrencyUnavailable = true; return; }
     if (res.error) { concurrencyUnavailable = true; return; }
     concurrency = res.data?.data ?? [];
-  }
-
-  function ceilingLabel(c: ConcurrencyCeiling): string {
-    return String(c.provider_id ?? c.target_id ?? '—');
   }
 
   async function load(silent = false) {
@@ -182,31 +167,31 @@
   }
 
   function instanceId(inst: BrowserInstance): string {
-    return inst.instance_id ?? inst.id ?? '';
+    return inst.instance_id;
   }
 
   function instanceState(inst: BrowserInstance): string {
-    return inst.state ?? inst.status ?? 'unknown';
+    return inst.state ?? 'unknown';
   }
 
   function contextId(ctx: BrowserContext): string {
-    return ctx.context_id ?? ctx.id ?? '';
+    return ctx.context_id;
   }
 
   function tabId(tab: BrowserTab): string {
-    return tab.tab_id ?? tab.id ?? '';
+    return tab.tab_id;
   }
 
   function tabState(tab: BrowserTab): string {
-    return tab.state ?? tab.status ?? 'unknown';
+    return tab.state ?? 'unknown';
   }
 
-  function tabUrl(tab: BrowserTab): string {
-    return tab.url ?? tab.conversation_id ?? '';
+  function tabConversation(tab: BrowserTab): string {
+    return tab.conversation_id ?? '';
   }
 
   function contextTabCount(ctx: BrowserContext): number {
-    return ctx.tab_count ?? tabs.filter((tab) => tab.context_id === contextId(ctx)).length;
+    return tabs.filter((tab) => tab.context_id === contextId(ctx)).length;
   }
 
   function isLoopbackHttpUrl(value?: string | null): boolean {
@@ -277,9 +262,9 @@
     {#if summary}
       <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {#each [
-          { label: 'Instances', value: summary.total_instances ?? summary.instances ?? 0, color: 'text-marine' },
-          { label: 'Contexts', value: summary.total_contexts ?? summary.contexts ?? 0, color: 'text-accent-deep' },
-          { label: 'Tabs', value: summary.total_tabs ?? summary.tabs ?? 0, color: 'text-success' },
+          { label: 'Instances', value: summary.total_instances ?? 0, color: 'text-marine' },
+          { label: 'Contexts', value: summary.total_contexts ?? 0, color: 'text-accent-deep' },
+          { label: 'Tabs', value: summary.total_tabs ?? 0, color: 'text-success' },
         ] as card (card.label)}
           <div class="card flex flex-col gap-1">
             <span class="text-xs text-ink-mute uppercase tracking-wider font-mono">{card.label}</span>
@@ -348,7 +333,8 @@
               <thead class="thead">
                 <tr>
                   <th class="th">Context ID</th>
-                  <th class="th">Instance</th>
+                  <th class="th">Target</th>
+                  <th class="th">Identity</th>
                   <th class="th">Tabs</th>
                 </tr>
               </thead>
@@ -356,7 +342,8 @@
                 {#each contexts as ctx, i (contextId(ctx) || i)}
                   <tr class="transition-colors hover:bg-paper-soft/70">
                     <td class="td font-mono text-xs text-ink-mute">{truncate(contextId(ctx), 12)}</td>
-                    <td class="td font-mono text-xs">{truncate(ctx.instance_id, 8)}</td>
+                    <td class="td font-mono text-xs">{truncate(ctx.target_id, 16)}</td>
+                    <td class="td font-mono text-xs">{truncate(ctx.identity_ref, 16)}</td>
                     <td class="td text-center">{contextTabCount(ctx)}</td>
                   </tr>
                 {/each}
@@ -373,8 +360,8 @@
                 <tr>
                   <th class="th">Tab ID</th>
                   <th class="th">Context</th>
-                  <th class="th">URL</th>
-                  <th class="th">Title</th>
+                  <th class="th">Conversation</th>
+                  <th class="th">Current job</th>
                   <th class="th">Status</th>
                 </tr>
               </thead>
@@ -383,8 +370,8 @@
                   <tr class="transition-colors hover:bg-paper-soft/70">
                     <td class="td font-mono text-xs text-ink-mute">{truncate(tabId(tab), 8)}</td>
                     <td class="td font-mono text-xs text-ink-mute">{truncate(tab.context_id, 8)}</td>
-                    <td class="td text-xs max-w-[12rem] truncate" title={tabUrl(tab)}>{truncate(tabUrl(tab), 40)}</td>
-                    <td class="td text-xs text-ink max-w-[10rem] truncate" title={tab.title ?? ''}>{truncate(tab.title, 30)}</td>
+                    <td class="td text-xs max-w-[12rem] truncate" title={tabConversation(tab)}>{truncate(tabConversation(tab), 40)}</td>
+                    <td class="td font-mono text-xs text-ink-mute">{truncate(tab.current_job_id, 16)}</td>
                     <td class="td"><StatusBadge status={tabState(tab)} /></td>
                   </tr>
                 {/each}
@@ -416,8 +403,8 @@
               <table class="w-full text-xs">
                 <thead class="thead">
                   <tr>
-                    <th class="th">Provider</th>
-                    <th class="th">Lane</th>
+                    <th class="th">Target</th>
+                    <th class="th">Identity</th>
                     <th class="th">Cap</th>
                     <th class="th">In&nbsp;Flight</th>
                   </tr>
@@ -425,10 +412,10 @@
                 <tbody class="divide-y divide-rule">
                   {#each concurrency as c, i (i)}
                     <tr class="transition-colors hover:bg-paper-soft/70">
-                      <td class="td font-mono text-ink">{ceilingLabel(c)}</td>
-                      <td class="td">{c.lane ?? '—'}</td>
-                      <td class="td text-ink">{c.current_cap ?? '—'}{c.maximum != null ? ` / ${c.maximum}` : ''}</td>
-                      <td class="td">{c.in_flight ?? 0}</td>
+                      <td class="td font-mono text-ink">{c.target}</td>
+                      <td class="td font-mono">{c.identity_ref}</td>
+                      <td class="td text-ink" title="min {c.min}">{c.current_cap} / {c.max}</td>
+                      <td class="td">{c.in_flight}</td>
                     </tr>
                   {/each}
                 </tbody>
@@ -478,7 +465,7 @@
               {#each instanceTabs as tab}
                 <div class="flex items-center gap-3">
                   <span class="font-mono text-ink-mute">{truncate(tabId(tab), 8)}</span>
-                  <span class="text-ink truncate max-w-[20rem]" title={tabUrl(tab)}>{truncate(tabUrl(tab), 50)}</span>
+                  <span class="text-ink truncate max-w-[20rem]" title={tabConversation(tab)}>{truncate(tabConversation(tab), 50)}</span>
                   <StatusBadge status={tabState(tab)} />
                 </div>
               {/each}

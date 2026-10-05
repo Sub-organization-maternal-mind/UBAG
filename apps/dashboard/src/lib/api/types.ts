@@ -106,55 +106,76 @@ export interface HealthResponse {
   uptime?: number;
 }
 
-// Browser
+// Browser — mirrors packages/openapi (BrowserInstance, ProviderContext, BrowserTab,
+// BrowserTopologySummary, ConcurrencyView). Keep field names identical to the contract.
 export interface BrowserInstance {
   instance_id: string;
+  worker_id: string;
+  tenant_id: string;
+  engine: string;
   state: string;
-  context_count?: number;
-  tab_count?: number;
-  engine?: string;
-  worker_id?: string;
+  context_count: number;
+  tab_count: number;
+  created_at: string;
   remote_endpoint?: string;
+  rss_bytes?: number;
+  recycle_at?: string;
+  // NOT in the OpenAPI contract: the gateway never emits it today. The browser page only
+  // embeds it when present AND loopback-scoped; remove once an operator-viewer contract exists.
   novnc_url?: string;
-  // Legacy / optional
-  id?: string;
-  status?: string;
 }
 
 export interface BrowserContext {
   context_id: string;
   instance_id: string;
-  tab_count?: number;
-  target_id?: string;
-  login_state?: string;
-  // Legacy / optional
-  id?: string;
+  tenant_id: string;
+  target_id: string;
+  identity_ref: string;
+  login_state: string;
+  conversation_model: string;
+  has_storage_state: boolean;
+  max_tabs: number;
+  created_at: string;
+  fingerprint_id?: string;
+  proxy_id?: string;
+  last_health_at?: string;
+  recycle_at?: string;
 }
 
 export interface BrowserTab {
   tab_id: string;
   context_id: string;
+  state: string;
+  jobs_completed: number;
+  created_at: string;
   conversation_id?: string;
-  url?: string;
-  title?: string;
-  state?: string;
-  // Legacy / optional
-  id?: string;
-  status?: string;
+  current_job_id?: string;
+  rss_bytes?: number;
+  last_health_at?: string;
+  recycle_at?: string;
 }
 
-// BrowserSummary — real gateway shape from /v1/browser/summary
+// BrowserTopologySummary — GET /v1/browser/summary
 export interface BrowserSummary {
+  tenant_id?: string;
   total_instances: number;
   total_contexts: number;
   total_tabs: number;
   instances_by_state: Record<string, number>;
   contexts_by_login_state: Record<string, number>;
   tabs_by_state: Record<string, number>;
-  // Legacy / optional
-  instances?: number;
-  contexts?: number;
-  tabs?: number;
+}
+
+// ConcurrencyView — GET /v1/concurrency (concurrency:read)
+export interface ConcurrencyView {
+  target: string;
+  identity_ref: string;
+  current_cap: number;
+  min: number;
+  max: number;
+  in_flight: number;
+  last_change_reason?: string;
+  last_change_at: string;
 }
 
 // Adapter — real gateway shape from /v1/adapters
