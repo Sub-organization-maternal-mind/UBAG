@@ -160,12 +160,13 @@
     }
     const res = await api.get('/v1/workflows');
     if (!silent) loading = false;
-    if (res.denied) { denied = true; return; }
-    if (res.error) { error = res.error; return; }
+    if (res.denied) { denied = true; return res; }
+    if (res.error) { error = res.error; return res; }
     items = listOf<Workflow>(res);
     // Keep the operator's selection across refreshes when it still exists.
     if (!selectedWorkflow || !items.some((w) => w.id === selectedWorkflow?.id)) selectedWorkflow = null;
     lastUpdated = new Date();
+    return res;
   }
 
   async function loadContexts() {
@@ -245,7 +246,7 @@
   onMount(() => {
     load();
     loadContexts();
-    const stopPolling = pollWhileVisible(() => load(true), 45_000);
+    const stopPolling = pollWhileVisible(() => load(true), 45_000, { immediate: false });
     return stopPolling;
   });
 </script>

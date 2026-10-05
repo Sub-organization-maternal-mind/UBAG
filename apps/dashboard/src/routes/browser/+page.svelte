@@ -99,8 +99,8 @@
       api.get('/v1/browser/tabs'),
     ]);
 
-    if (instRes.denied) { denied = true; return; }
-    if (instRes.error) { error = instRes.error; return; }
+    if (instRes.denied) { denied = true; return instRes; }
+    if (instRes.error) { error = instRes.error; return instRes; }
     if (!silent) loading = false;
 
     summary = (sumRes.data as BrowserSummary | null) ?? null;
@@ -231,7 +231,7 @@
   onMount(() => {
     load();
     loadConcurrency();
-    const stopPolling = pollWhileVisible(() => load(true), 45_000);
+    const stopPolling = pollWhileVisible(() => load(true), 45_000, { immediate: false });
     // Refit the terminal when the viewport changes.
     const onResize = () => fitTerm();
     window.addEventListener('resize', onResize);

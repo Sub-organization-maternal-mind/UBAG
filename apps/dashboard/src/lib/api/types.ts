@@ -6,6 +6,8 @@ export interface GwResponse<T = unknown> {
   /** True when the request failed because no/invalid credentials were supplied (401). */
   unauthorized: boolean;
   error: string | null;
+  /** Parsed Retry-After header (ms) on 429/503 responses, when present. */
+  retryAfterMs?: number;
 }
 
 // Job types

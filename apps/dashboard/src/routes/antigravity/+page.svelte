@@ -12,6 +12,7 @@
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
+  import { pollWhileVisible } from '$lib/poll';
 
   let accounts = $state<AntigravityAccount[]>([]);
   let config = $state<AntigravityConfig | null>(null);
@@ -291,8 +292,9 @@
 
   onMount(() => {
     void load();
-    const timer = window.setInterval(() => { void pollLiveState(); }, 3000);
-    return () => { window.clearInterval(timer); authorizationCode = ''; };
+    // Visibility-aware; pollLiveState itself no-ops unless a login/verification is pending.
+    const stopPolling = pollWhileVisible(pollLiveState, 3000, { immediate: false });
+    return () => { stopPolling(); authorizationCode = ''; };
   });
 </script>
 

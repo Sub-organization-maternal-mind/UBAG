@@ -134,10 +134,11 @@
     }
     const res = await api.get('/v1/webhooks');
     if (!silent) loading = false;
-    if (res.denied) { denied = true; return; }
-    if (res.error) { error = res.error; return; }
+    if (res.denied) { denied = true; return res; }
+    if (res.error) { error = res.error; return res; }
     webhooks = listOf<Webhook>(res);
     lastUpdated = new Date();
+    return res;
   }
 
   async function loadDeliveries(webhookId: string) {
@@ -193,7 +194,7 @@
 
   onMount(() => {
     load();
-    const stopPolling = pollWhileVisible(() => load(true), 45_000);
+    const stopPolling = pollWhileVisible(() => load(true), 45_000, { immediate: false });
     return stopPolling;
   });
 </script>

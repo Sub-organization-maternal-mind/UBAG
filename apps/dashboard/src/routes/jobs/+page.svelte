@@ -92,11 +92,12 @@
     const res = await api.get<JobsResponse>(path);
     if (seq !== loadSeq) return; // a newer load superseded this one
     loading = false;
-    if (res.denied) { denied = true; return; }
-    if (res.error) { error = res.error; return; }
+    if (res.denied) { denied = true; return res; }
+    if (res.error) { error = res.error; return res; }
     items = normalizeJobs(res.data?.jobs);
     nextCursor = res.data?.next_cursor;
     lastUpdated = new Date();
+    return res;
   }
 
   async function loadSupportData() {
@@ -317,7 +318,7 @@
     load();
     loadSupportData();
     // Gentle auto-refresh while the tab is visible; silent (no skeleton flash).
-    const stopPolling = pollWhileVisible(() => load(currentCursor, true), 45_000);
+    const stopPolling = pollWhileVisible(() => load(currentCursor, true), 45_000, { immediate: false });
     return stopPolling;
   });
 </script>

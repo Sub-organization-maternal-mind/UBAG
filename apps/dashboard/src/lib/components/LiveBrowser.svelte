@@ -208,6 +208,8 @@
 
   function scheduleRetry() {
     if (retryTimer) return;
+    // Hidden tab: don't burn reconnect attempts; the visibility handler retries.
+    if (document.hidden) return;
     retryTimer = setTimeout(() => {
       retryTimer = null;
       connect();
@@ -326,7 +328,10 @@
     if (canvas) ctx = canvas.getContext('2d');
     connect();
     // Keep the bridge informed when this tab is backgrounded/restored.
-    const onVisibility = () => send({ t: 'visibility', hidden: document.hidden });
+    const onVisibility = () => {
+      send({ t: 'visibility', hidden: document.hidden });
+      if (!document.hidden && !manualClose && !connected && !connecting) scheduleRetry();
+    };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
   });

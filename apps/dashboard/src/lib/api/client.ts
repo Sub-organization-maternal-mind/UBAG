@@ -62,8 +62,12 @@ export async function gw<T = unknown>(
       }
     }
 
+    const ra = response.headers.get('Retry-After');
+    const raSecs = ra ? Number(ra) : NaN;
+    const raMs = Number.isFinite(raSecs) ? raSecs * 1000 : ra ? Date.parse(ra) - Date.now() : NaN;
     return {
       status: response.status,
+      retryAfterMs: raMs > 0 ? raMs : undefined,
       data,
       denied: response.status === 403,
       unauthorized: response.status === 401,
