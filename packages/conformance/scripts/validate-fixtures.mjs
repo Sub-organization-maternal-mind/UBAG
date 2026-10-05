@@ -2,6 +2,9 @@ import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import Ajv2020 from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
+import { parse as parseYaml } from "yaml";
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const fixturePath = join(currentDir, "..", "fixtures", "v0", "scenarios.json");
@@ -169,7 +172,7 @@ for (const scenario of fixture.scenarios ?? []) {
 
   if (scenario.id === "browser.contexts.ok" || scenario.id === "browser.tabs.ok") {
     const rows = Array.isArray(body.data) ? body.data : [];
-    if (!rows.every((row) => typeof row.has_storage_state === "boolean")) {
+    if (scenario.id === "browser.contexts.ok" && !rows.every((row) => typeof row.has_storage_state === "boolean")) {
       errors.push(`${scenario.id} rows must include a boolean has_storage_state`);
     }
     if (/"storage_state_uri"/i.test(JSON.stringify(rows))) {
@@ -256,6 +259,8 @@ function schemaErrors(schema, value) {
   return out;
 }
 
+await validateBodiesAgainstOpenApi();
+
 if (errors.length > 0) {
   console.error(errors.join("\n"));
   process.exit(1);
@@ -267,4 +272,65 @@ function requireString(value, field) {
   if (typeof value !== "string" || value.length === 0) {
     errors.push(`${field} must be a non-empty string`);
   }
+}
+
+// Ajv body validation: browser, concurrency and jobs scenarios must match the
+// OpenAPI request/response schemas (field names and shapes), not just structure.
+async function validateBodiesAgainstOpenApi() {
+  const specDir = join(currentDir, "..", "..", "openapi");
+  const spec = parseYaml(await readFile(join(specDir, "openapi.yaml"), "utf8"));
+  const ajv = new Ajv2020({ strict: false, allErrors: true });
+  addFormats(ajv);
+  // External shared-schema $refs (JobRequest/JobResponse/...) are registered by
+  // their own $id and the component becomes a ref to it.
+  for (const [name, schema] of Object.entries(spec.components.schemas)) {
+    if (typeof schema.$ref === "string" && !schema.$ref.startsWith("#")) {
+      const external = JSON.parse(await readFile(join(specDir, schema.$ref), "utf8"));
+      ajv.addSchema(external);
+      spec.components.schemas[name] = { $ref: external.$id };
+    }
+  }
+  ajv.addSchema({ $id: "urn:ubag:openapi", ...spec });
+
+  const check = (ref, value, label) => {
+    const validate = ajv.compile({ $ref: `urn:ubag:openapi#${ref}` });
+    if (!validate(value)) {
+      errors.push(`${label} violates OpenAPI ${ref}: ${ajv.errorsText(validate.errors)}`);
+    }
+  };
+  const jsonSchemaRef = (content) => content?.["application/json"]?.schema?.$ref?.replace(/^#/, "") ?? null;
+
+  const templates = Object.keys(spec.paths).map((template) => ({
+    template,
+    re: new RegExp(`^${template.replace(/\{[^}]+\}/g, "[^/]+")}$`)
+  }));
+
+  for (const scenario of fixture.scenarios ?? []) {
+    const covered = ["browser", "concurrency", "jobs"].includes(scenario.category) || scenario.id.startsWith("jobs.");
+    if (!covered || !scenario.request || !scenario.response) continue;
+    const label = `scenario ${scenario.id}`;
+    const path = String(scenario.request.path).split("?")[0];
+    const match = templates.find((t) => t.re.test(path));
+    const operation = match && spec.paths[match.template][String(scenario.request.method).toLowerCase()];
+    if (!operation) {
+      errors.push(`${label}: ${scenario.request.method} ${path} is not an OpenAPI operation`);
+      continue;
+    }
+    if (scenario.request.body) {
+      const ref = jsonSchemaRef(operation.requestBody?.content);
+      if (ref) check(ref, scenario.request.body, `${label} request body`);
+    }
+    const body = scenario.response.body;
+    if (body && typeof body === "object") {
+      const response = operation.responses?.[String(scenario.response.status)];
+      const resolved = response?.$ref ? resolvePointer(spec, response.$ref) : response;
+      const ref = jsonSchemaRef(resolved?.content);
+      if (ref) check(ref, body, `${label} response body`);
+      else errors.push(`${label}: OpenAPI declares no JSON body schema for status ${scenario.response.status}`);
+    }
+  }
+}
+
+function resolvePointer(root, ref) {
+  return ref.replace(/^#\//, "").split("/").reduce((node, key) => node?.[key], root);
 }

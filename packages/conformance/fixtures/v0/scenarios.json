@@ -3930,7 +3930,12 @@
           "idempotent_replay": false,
           "status": "cancelled",
           "target": "mock_target",
-          "trace_id": "trace_job_cancel"
+          "trace_id": "trace_job_cancel",
+          "metadata": {
+            "queued_at": "2026-05-22T00:00:01Z",
+            "retries": 0
+          },
+          "events_url": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1AU/events"
         }
       },
       "expect": {
@@ -4166,7 +4171,7 @@
     {
       "id": "browser.summary.ok",
       "category": "browser",
-      "title": "Browser summary returns topology counts without storage-state URIs",
+      "title": "Browser topology summary returns tenant-scoped counts by lifecycle state",
       "request": {
         "method": "GET",
         "path": "/v1/browser/summary",
@@ -4179,26 +4184,35 @@
         "status": 200,
         "body": {
           "api_version": "2026-05-22",
-          "kind": "browser_summary",
-          "data": {
-            "browser_instances": 3,
-            "provider_contexts": 5,
-            "channel_tabs": 11,
-            "quarantined_tabs": 1
+          "kind": "browser_topology_summary",
+          "tenant_id": "tenant_fixture",
+          "total_instances": 3,
+          "total_contexts": 5,
+          "total_tabs": 11,
+          "instances_by_state": {
+            "ready": 3
+          },
+          "contexts_by_login_state": {
+            "logged_in": 4,
+            "unknown": 1
+          },
+          "tabs_by_state": {
+            "idle": 10,
+            "busy": 1
           },
           "trace_id": "trace_browser_summary"
         }
       },
       "expect": {
         "ok": true,
-        "body.kind": "browser_summary",
-        "body.data.browser_instances": 3
+        "body.kind": "browser_topology_summary",
+        "body.total_instances": 3
       }
     },
     {
       "id": "browser.instances.ok",
       "category": "browser",
-      "title": "Browser instances list exposes engine and a boolean storage indicator",
+      "title": "Browser instances list exposes worker, engine, state and tab counts",
       "request": {
         "method": "GET",
         "path": "/v1/browser/instances?limit=1",
@@ -4215,10 +4229,13 @@
           "data": [
             {
               "instance_id": "browser_inst_01",
+              "worker_id": "worker-fixture",
+              "tenant_id": "tenant_fixture",
               "engine": "Chromium (CDP)",
               "state": "ready",
               "context_count": 2,
-              "trace_id": "trace_browser_instance_item"
+              "tab_count": 2,
+              "created_at": "2026-05-22T00:00:01Z"
             }
           ],
           "next_cursor": null,
@@ -4247,15 +4264,19 @@
         "status": 200,
         "body": {
           "api_version": "2026-05-22",
-          "kind": "browser_contexts",
+          "kind": "provider_contexts",
           "data": [
             {
               "context_id": "ctx_openai_primary",
               "instance_id": "browser_inst_01",
-              "provider": "chatgpt_web",
-              "identity": "acct-alpha",
+              "tenant_id": "tenant_fixture",
+              "target_id": "chatgpt_web",
+              "identity_ref": "acct-alpha",
+              "login_state": "logged_in",
+              "conversation_model": "tab_per_conversation",
               "has_storage_state": true,
-              "tab_count": 2
+              "max_tabs": 4,
+              "created_at": "2026-05-22T00:00:01Z"
             }
           ],
           "next_cursor": null,
@@ -4264,14 +4285,14 @@
       },
       "expect": {
         "ok": true,
-        "body.kind": "browser_contexts",
+        "body.kind": "provider_contexts",
         "body.data.0.has_storage_state": true
       }
     },
     {
       "id": "browser.tabs.ok",
       "category": "browser",
-      "title": "Browser tabs list exposes tab lifecycle state and boolean storage indicator only",
+      "title": "Browser tabs list exposes tab lifecycle state and the running job",
       "request": {
         "method": "GET",
         "path": "/v1/browser/tabs?limit=1",
@@ -4289,10 +4310,10 @@
             {
               "tab_id": "tab_openai_a1",
               "context_id": "ctx_openai_primary",
-              "provider": "chatgpt_web",
               "state": "busy",
-              "job_id": "job_mock_018",
-              "has_storage_state": true
+              "current_job_id": "job_mock_018",
+              "jobs_completed": 7,
+              "created_at": "2026-05-22T00:00:01Z"
             }
           ],
           "next_cursor": null,
@@ -4321,17 +4342,17 @@
         "status": 200,
         "body": {
           "api_version": "2026-05-22",
-          "kind": "concurrency",
+          "kind": "concurrency_ceilings",
           "data": [
             {
-              "provider": "chatgpt_web",
-              "identity": "acct-alpha",
+              "target": "chatgpt_web",
+              "identity_ref": "acct-alpha",
               "current_cap": 4,
-              "min_tabs": 1,
-              "max_tabs": 6,
-              "inflight": 3,
+              "min": 1,
+              "max": 6,
+              "in_flight": 3,
               "last_change_reason": "Increase · success streak",
-              "state": "ready"
+              "last_change_at": "2026-05-22T00:00:01Z"
             }
           ],
           "next_cursor": null,
@@ -4340,7 +4361,7 @@
       },
       "expect": {
         "ok": true,
-        "body.kind": "concurrency",
+        "body.kind": "concurrency_ceilings",
         "body.data.0.current_cap": 4
       }
     },
