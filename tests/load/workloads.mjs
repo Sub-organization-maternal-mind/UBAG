@@ -53,7 +53,20 @@ export function wavSize(fx, profile) {
 /** Schema check plus the cross-field rules a schema cannot express. */
 export function validateWorkload(manifest, schema = readJson('workload.schema.json')) {
   const errs = validateSchema(schema, manifest);
-  const fx = manifest?.fixture;
+  if (errs.length) return errs;
+  const AUDIO_ONLY = ['synthetic', 'route', 'prompt', 'target_requirements', 'fixture'];
+  const isAudio = manifest.kind === 'audio-upload';
+  for (const k of AUDIO_ONLY) {
+    if (isAudio && !(k in manifest)) errs.push(`$: missing required "${k}"`);
+    if (!isAudio && k in manifest) errs.push(`$.${k}: only valid for kind audio-upload`);
+  }
+  const sum = manifest.mix.reduce((a, m) => a + m.weight, 0);
+  if (sum !== 100) errs.push(`$.mix: weights must sum to 100 (got ${sum})`);
+  manifest.mix.forEach((m, i) => { if (m.payload_bytes.min > m.payload_bytes.max) errs.push(`$.mix[${i}].payload_bytes: min > max`); });
+  if (manifest.think_time_ms.min > manifest.think_time_ms.max) errs.push('$.think_time_ms: min > max');
+  if (manifest.ladder_steps.some((v, i, a) => i > 0 && v <= a[i - 1])) errs.push('$.ladder_steps: must be strictly ascending');
+  if (manifest.provider_scenario.requires_live_media && manifest.harness_support === 'implemented') errs.push('$.harness_support: a live-media workload cannot be "implemented"');
+  const fx = manifest.fixture;
   if (errs.length || !fx) return errs;
   if (!fx.profiles[fx.default_profile]) errs.push(`$.fixture.default_profile "${fx.default_profile}" is not a defined profile`);
   for (const name of Object.keys(fx.profiles)) if (wavSize(fx, name) > fx.max_bytes) errs.push(`$.fixture.profiles.${name}: ${wavSize(fx, name)} bytes exceeds max_bytes ${fx.max_bytes}`);
@@ -61,6 +74,9 @@ export function validateWorkload(manifest, schema = readJson('workload.schema.js
   if (!manifest.target_requirements.content_types.includes(fx.content_type)) errs.push('$.fixture.content_type is not listed in target_requirements.content_types');
   return errs;
 }
+
+/** SHA-256 of the manifest file with CRLF normalised, so Windows (autocrlf) and Linux checkouts agree. */
+export const workloadSha256 = (name) => sha256Hex(Buffer.from(readFileSync(join(dir, `${name}.json`), 'utf8').replace(/\r\n/g, '\n')));
 
 /** Load and validate a manifest by name; throws with every error so a bad manifest fails closed. */
 export function loadWorkload(name) {

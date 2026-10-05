@@ -23,7 +23,8 @@ import { arch, platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { loadWorkload, multipartBody, sha256Hex, syntheticWav } from './workloads.mjs';
+import { containerLimits, gatewayInfoFrom, harnessGit, harnessHost, pickEnv, stackEnv } from './lib/provenance.mjs';
+import { loadWorkload, multipartBody, sha256Hex, syntheticWav, workloadSha256 } from './workloads.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const API_VERSION = '2026-05-22';
@@ -184,7 +185,7 @@ const NUM = { // flag: [cfgKey, default, min, max]
   'events-subscribers': ['eventsSubscribers', 20, 1, 500], 'events-timeout-ms': ['eventsTimeoutMs', 30_000, 100, 600_000],
   'events-idle-seconds': ['eventsIdleSeconds', 0, 0, 3600], 'events-calibrate-ms': ['eventsCalibrateMs', 2500, 0, 30_000],
 };
-const STR = { target: 'target', 'command-type': 'commandType', 'docker-stats-container': 'dockerContainer', 'cgroup-containers': 'cgroupContainers', 'out-dir': 'outDir', thresholds: 'thresholds', goals: 'goals', 'audio-profile': 'audioProfile', 'pg-stat-container': 'pgContainer', 'pg-user': 'pgUser', 'pg-db': 'pgDb' };
+const STR = { target: 'target', 'command-type': 'commandType', 'docker-stats-container': 'dockerContainer', 'cgroup-containers': 'cgroupContainers', 'out-dir': 'outDir', thresholds: 'thresholds', goals: 'goals', 'audio-profile': 'audioProfile', 'pg-stat-container': 'pgContainer', 'pg-user': 'pgUser', 'pg-db': 'pgDb', workload: 'workload' };
 const FLAGS = new Set([ACK_FLAG, 'with-upload', 'require-goals']);
 
 export function parseArgs(argv, env = process.env) {
@@ -238,6 +239,8 @@ export function parseArgs(argv, env = process.env) {
   for (const [flag, v] of [['pg-stat-container', cfg.pgContainer], ['pg-user', cfg.pgUser], ['pg-db', cfg.pgDb]]) {
     if (v && !/^[A-Za-z0-9][\w.-]*$/.test(v)) throw new Error(`--${flag} has an invalid name`);
   }
+  // A named workload manifest is validated before any load is generated; it is recorded in meta, not applied.
+  if (cfg.workload) { const manifest = loadWorkload(cfg.workload); cfg.workloadInfo = { name: cfg.workload, sha256: workloadSha256(cfg.workload), manifest }; }
   return cfg;
 }
 
@@ -1045,7 +1048,7 @@ const RUNNERS = { 'queue-1000': queue1000, 'clients-100': clients100, duplicates
 
 // -------------------------------------------------------------------- driver
 
-export async function run(cfg, deps = {}) {
+export async function run(cfg, deps = {}, env = process.env) {
   const request = deps.request ?? makeRequest(cfg);
   const ctx = { cfg, request, rec: new Recorder(), sleep: deps.sleep ?? defaultSleep, runId: randomBytes(6).toString('hex'), jobIds: new Set(), tenantBudget: cfg.apiKeyB ? cfg.tenantProbeSamples : 0, pgExec: deps.pgExec };
   const started = new Date();
@@ -1091,11 +1094,22 @@ export async function run(cfg, deps = {}) {
   const thresholds = JSON.parse(readFileSync(cfg.thresholds, 'utf8'));
   if (cfg.requireGoals) Object.assign(thresholds, JSON.parse(readFileSync(cfg.goals, 'utf8'))); // goals tighten/extend the base set
   const verdict = { ...evaluateThresholds(summary, thresholds, { strict: cfg.requireGoals }), goals_required: cfg.requireGoals };
+  const provenance = {
+    gateway: gatewayInfoFrom(before), // null when /v1/metrics was unreadable
+    harness: { ...(deps.harnessGit ?? harnessGit)() },
+    harness_host: harnessHost(),
+    harness_env: pickEnv(env),
+    stack_env: cfg.cgroupTargets.length ? await stackEnv(cfg.cgroupTargets, deps.dockerEnv) : { skipped: 'no --cgroup-containers' },
+    container_limits: containerLimits(resources),
+    workload: cfg.workloadInfo
+      ? { name: cfg.workloadInfo.name, sha256: cfg.workloadInfo.sha256, harness_support: cfg.workloadInfo.manifest.harness_support, manifest: cfg.workloadInfo.manifest, note: 'recorded for provenance; the traffic that ran is selected by --scenario' }
+      : null,
+  };
   return {
     meta: {
       run_id: ctx.runId, started_at: started.toISOString(), finished_at: new Date().toISOString(),
       target_origin: new URL(cfg.baseUrl).origin, node: process.version, platform: `${platform()}-${arch()}`,
-      scenarios: cfg.scenarios, config: Object.fromEntries(Object.entries(cfg).filter(([k]) => !['apiKey', 'apiKeyB', 'baseUrl', 'scenarios'].includes(k))),
+      scenarios: cfg.scenarios, provenance, config: Object.fromEntries(Object.entries(cfg).filter(([k]) => !['apiKey', 'apiKeyB', 'baseUrl', 'scenarios', 'workloadInfo'].includes(k))),
     },
     ...report, summary, ops: ctx.rec.opsTable(), classes: ctx.rec.classes, error_codes: ctx.rec.errorCodes,
     client_rejections_by_reason: ctx.rec.rejections, retry: ctx.rec.retry, violations: ctx.rec.violations,
@@ -1111,6 +1125,8 @@ const table = (head, rows) => [`| ${head.join(' | ')} |`, `| ${head.map(() => '-
 export function renderMarkdown(report) {
   const m = report.meta; const lines = [];
   lines.push(`# UBAG acceptance load report`, '', `- run: \`${m.run_id}\` (${m.started_at} -> ${m.finished_at})`, `- target: ${m.target_origin}`, `- scenarios: ${m.scenarios.join(', ')}`, `- verdict: **${report.thresholds.passed ? 'PASS' : 'FAIL'}**${report.thresholds.goals_required ? ' (--require-goals: unmeasured = FAIL)' : ''}`, '');
+  const pv = m.provenance;
+  if (pv) lines.push('## Provenance', '', `- gateway: ${pv.gateway ? `${pv.gateway.version} (commit ${pv.gateway.commit})` : 'unknown (metrics unavailable)'}`, `- harness: ${pv.harness.sha ?? 'unknown'}${pv.harness.dirty ? ' (+uncommitted changes under tests/load)' : ''}`, `- workload: ${pv.workload ? `${pv.workload.name} sha256 ${pv.workload.sha256.slice(0, 12)}` : 'none'}`, `- harness host: ${pv.harness_host.cpu_count} CPU, ${pv.harness_host.mem_total_mb} MB, ${pv.harness_host.platform}`, `- container limits: \`${JSON.stringify(pv.container_limits)}\``, `- stack env: \`${JSON.stringify(pv.stack_env)}\``, '');
   lines.push('## Thresholds', '', table(['threshold', 'limit', 'actual', 'result'], report.thresholds.results.map((r) => [r.name, r.limit, r.actual, r.ok ? `ok${r.note ? ` (${r.note})` : ''}` : 'VIOLATED'])), '');
   lines.push('## Latency by operation (ms)', '', table(['scenario/op', 'attempts', 'ok n', 'ok p50', 'ok p95', 'ok p99', 'all p95', 'max', 'statuses'],
     Object.entries(report.ops).map(([k, v]) => [k, v.all.count, v.ok.count, v.ok.p50, v.ok.p95, v.ok.p99, v.all.p95, v.all.max, JSON.stringify(v.statuses)])), '');
@@ -1164,7 +1180,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, deps
   try { cfg = parseArgs(argv, env); } catch (e) { console.error(`[load] refused: ${e.message}`); return 2; }
   console.log(`[load] ${cfg.scenarios.join(',')} -> ${new URL(cfg.baseUrl).origin}`);
   let report;
-  try { report = await run(cfg, deps); } catch (e) { console.error(`[load] harness error: ${e.message}`); return 2; }
+  try { report = await run(cfg, deps, env); } catch (e) { console.error(`[load] harness error: ${e.message}`); return 2; }
   const dir = resolve(cfg.outDir, report.meta.started_at.replace(/[:.]/g, '-'));
   mkdirSync(dir, { recursive: true });
   const markdown = renderMarkdown(report);

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "name": "attachment",
+  "kind": "attachment",
+  "description": "Text jobs, a fifth of which carry a multipart attachment (the --with-upload path of the harness).",
+  "harness_support": "implemented",
+  "provider_scenario": { "target": "mock", "command_type": "chat.prompt", "live_provider": false, "requires_live_media": false },
+  "mix": [
+    { "kind": "text", "weight": 80, "payload_bytes": { "min": 64, "max": 2048 } },
+    { "kind": "attachment", "weight": 20, "payload_bytes": { "min": 4096, "max": 524288 } }
+  ],
+  "think_time_ms": { "min": 0, "max": 500 },
+  "ladder_steps": [1, 2, 5, 10, 20]
+}
