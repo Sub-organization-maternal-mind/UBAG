@@ -113,6 +113,14 @@ func (r *ReplicatingStore) GetArtifact(ctx context.Context, jobID, key string) (
 	return r.home.GetArtifact(ctx, jobID, key)
 }
 
+// LocalObjectPath delegates to the home store when it can serve local paths.
+func (r *ReplicatingStore) LocalObjectPath(ctx context.Context, jobID, key string) (string, ArtifactRecord, error) {
+	if p, ok := r.home.(LocalObjectPather); ok {
+		return p.LocalObjectPath(ctx, jobID, key)
+	}
+	return "", ArtifactRecord{}, &ErrArtifactInvalid{Field: "local_object_path"}
+}
+
 // ListArtifacts delegates to the home store.
 func (r *ReplicatingStore) ListArtifacts(ctx context.Context, jobID string) ([]ArtifactRecord, error) {
 	return r.home.ListArtifacts(ctx, jobID)

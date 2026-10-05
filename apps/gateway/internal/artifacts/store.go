@@ -45,6 +45,15 @@ type ArtifactStore interface {
 	DeleteArtifact(ctx context.Context, jobID, key string) error
 }
 
+// LocalObjectPather is an optional ArtifactStore capability implemented by
+// stores whose object bytes live as plain files on the local filesystem. It lets
+// a same-host consumer hardlink the object instead of streaming a second copy.
+// Callers must treat the returned path as read-only and must fall back to
+// GetArtifact when the capability is missing or the link fails.
+type LocalObjectPather interface {
+	LocalObjectPath(ctx context.Context, jobID, key string) (string, ArtifactRecord, error)
+}
+
 // ErrArtifactNotFound is returned when the requested artifact does not exist.
 type ErrArtifactNotFound struct {
 	JobID string

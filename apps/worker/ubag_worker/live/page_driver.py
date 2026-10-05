@@ -78,6 +78,11 @@ _INDICATOR_GONE_GRACE_S = 0.75
 # A warm tab gets a full reload every N jobs (in between, New chat is an in-page
 # SPA transition). Bounds renderer memory growth on a long-lived provider tab.
 _WARM_RELOAD_EVERY = 10
+# Optional heap-gated deferral (UBAG_WARM_RELOAD_HEAP_MB, default off): at the
+# Nth job skip the reload while performance.memory.usedJSHeapSize is under the
+# budget, up to this multiple of N jobs, then reload regardless.
+_WARM_RELOAD_MAX_FACTOR = 4
+_JS_HEAP_USED = "() => (performance.memory ? performance.memory.usedJSHeapSize : 0)"
 # Warm-reuse emptiness probe budget. A presence check on an already-loaded page,
 # so it is deliberately short; a false "absent" is caught downstream by drift
 # detection rather than by waiting longer here.
@@ -708,7 +713,7 @@ class PlaywrightPageDriver(PageDriver):
             return False
         try:
             self._jobs_on_page += 1
-            if self._jobs_on_page >= _warm_reload_every():
+            if self._reload_due():
                 # A full reload every N jobs bounds the SPA's memory growth: a
                 # provider tab kept warm for hours across in-page New chat
                 # transitions would otherwise creep toward the browser cgroup
@@ -738,6 +743,26 @@ class PlaywrightPageDriver(PageDriver):
             return True
         except Exception:  # noqa: BLE001 - any doubt forces a cold page
             return False
+
+    def _reload_due(self) -> bool:
+        """True when this warm page should take its periodic full reload now.
+
+        Default (UBAG_WARM_RELOAD_HEAP_MB unset/0): every Nth job, as always.
+        With a heap budget set, the Nth-job reload is deferred while the page's
+        JS heap is provably under budget, but never past _WARM_RELOAD_MAX_FACTOR
+        x N jobs. Any doubt (no budget reading, CDP error) reloads.
+        """
+        every = _warm_reload_every()
+        if self._jobs_on_page < every:
+            return False
+        budget = _warm_reload_heap_budget_bytes()
+        if budget <= 0 or self._jobs_on_page >= every * _WARM_RELOAD_MAX_FACTOR:
+            return True
+        try:
+            used = self._page.evaluate(_JS_HEAP_USED)
+            return not (isinstance(used, (int, float)) and 0 < used < budget)
+        except Exception:  # noqa: BLE001 - cannot prove it is safe -> reload
+            return True
 
     def _wait_until_absent(self, group, *, timeout_ms: int) -> bool:  # pragma: no cover - requires real browser
         """True once no candidate of ``group`` is visible; False otherwise.
@@ -1952,6 +1977,15 @@ def _warm_reload_every() -> int:
     if raw.isdigit() and int(raw) > 0:
         return int(raw)
     return _WARM_RELOAD_EVERY
+
+
+def _warm_reload_heap_budget_bytes() -> int:
+    """JS-heap budget (bytes) under which a warm reload may be deferred; 0 = off."""
+
+    raw = os.environ.get("UBAG_WARM_RELOAD_HEAP_MB", "").strip()
+    if raw.isdigit():
+        return int(raw) * 1024 * 1024
+    return 0
 
 
 def offline_mode_enabled() -> bool:
