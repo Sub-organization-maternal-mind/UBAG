@@ -40,3 +40,4 @@ e0db672808b75000591db1beb4cdfec4f57b633e:deploy/small/nginx-dashboard/README.md:
 e0db672808b75000591db1beb4cdfec4f57b633e:deploy/small/nginx-dashboard/set-operator-password.sh:curl-auth-user:19
 e79c0c6ff03969d087909c8d1d6aed40e6902423:packages/sdk-typescript/test/client-retry.test.mjs:generic-api-key:26
 fdbf31637068d4af6120ceb5f46b245dd8549ecb:apps/docs/src/content/docs/operations/multi-region.md:generic-api-key:278
+1999175cfcfd353ac19d4540fa47a4ae2e5fe93a:tools/check-small-deployment.mjs:generic-api-key:264

@@ -6,9 +6,21 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pion/ice/v4"
 	"github.com/pion/webrtc/v4"
 	"github.com/pion/webrtc/v4/pkg/media"
 )
+
+// testClientPeerConnection builds the CLIENT side peer for tests with a
+// deterministic network setup: UDP4 only and mDNS candidate obfuscation off.
+// Default settings can stall ICE gathering for seconds on CI runners (mDNS
+// registration, interface enumeration), which made the tests time-dependent.
+func testClientPeerConnection() (*webrtc.PeerConnection, error) {
+	se := webrtc.SettingEngine{}
+	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
+	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	return webrtc.NewAPI(webrtc.WithSettingEngine(se)).NewPeerConnection(webrtc.Configuration{})
+}
 
 func relayDialer(addr string, secret []byte) *TCPRelayDialer {
 	return &TCPRelayDialer{Address: func(Session) (string, error) { return addr, nil }, Secret: secret, ReadyTimeout: 2 * time.Second}
@@ -60,7 +72,7 @@ func TestRelayDialerOneSessionPerEnvironment(t *testing.T) {
 // the client's mic track for sending samples.
 func hubWithClient(t *testing.T, hub *MediaHub, session Session) *webrtc.TrackLocalStaticSample {
 	t.Helper()
-	clientPC, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	clientPC, err := testClientPeerConnection()
 	if err != nil {
 		t.Fatalf("client pc: %v", err)
 	}
@@ -201,7 +213,7 @@ func TestMediaHubControlChannelRequiresScopedCredential(t *testing.T) {
 			return s.ID == "voice_ctl" && credential == "good"
 		},
 	}
-	clientPC, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	clientPC, err := testClientPeerConnection()
 	if err != nil {
 		t.Fatal(err)
 	}

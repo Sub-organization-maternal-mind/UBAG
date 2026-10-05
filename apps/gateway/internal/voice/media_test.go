@@ -188,7 +188,7 @@ func TestMediaHubLoopbackNegotiatesAndRelays(t *testing.T) {
 	}
 
 	// Client-side peer connection with one Opus track.
-	clientPC, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	clientPC, err := testClientPeerConnection()
 	if err != nil {
 		t.Fatalf("client pc: %v", err)
 	}
@@ -316,7 +316,7 @@ func waitGathered(t *testing.T, pc *webrtc.PeerConnection) {
 	})
 	select {
 	case <-gathered:
-	case <-time.After(5 * time.Second):
+	case <-time.After(20 * time.Second):
 		t.Fatal("ICE gathering did not complete")
 	}
 }

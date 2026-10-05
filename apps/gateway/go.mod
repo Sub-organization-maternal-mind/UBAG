@@ -9,6 +9,9 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/minio/minio-go/v7 v7.2.1
 	github.com/nats-io/nats.go v1.52.0
+	github.com/pion/ice/v4 v4.0.10
+	github.com/pion/interceptor v0.1.41
+	github.com/pion/webrtc/v4 v4.1.6
 	github.com/tetratelabs/wazero v1.12.0
 	github.com/ubag/ubag/packages/proto/gen/go v0.0.0-00010101000000-000000000000
 	go.opentelemetry.io/otel v1.47.0
@@ -40,8 +43,6 @@ require (
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/pion/datachannel v1.5.10 // indirect
 	github.com/pion/dtls/v3 v3.0.7 // indirect
-	github.com/pion/ice/v4 v4.0.10 // indirect
-	github.com/pion/interceptor v0.1.41 // indirect
 	github.com/pion/logging v0.2.4 // indirect
 	github.com/pion/mdns/v2 v2.0.7 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
@@ -53,7 +54,6 @@ require (
 	github.com/pion/stun/v3 v3.0.0 // indirect
 	github.com/pion/transport/v3 v3.0.8 // indirect
 	github.com/pion/turn/v4 v4.1.1 // indirect
-	github.com/pion/webrtc/v4 v4.1.6 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
