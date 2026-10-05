@@ -54,6 +54,7 @@ Select with `--scenario a,b` or `--scenario all` (repeat or comma separate).
 | `clients-100` | `--clients` (100) concurrent clients, `--iterations` each, rotating: text job, small-image facade call, malformed JSON / malformed data URL, oversized body (must be 413), and with `--with-upload` an artifact PUT. Malformed/oversized must be 4xx; no 5xx, no hangs. |
 | `duplicates` | `--dup-keys` keys each fired by `--dup-concurrency` concurrent identical requests: exactly one job id per key. Then `--cancel-races` jobs cancelled immediately (same-key pair plus distinct key) and checked to reach a terminal state that does not flip. |
 | `steady-state` | Seeds `--steady-seed-jobs` jobs, then for `--steady-seconds` holds a constant `--steady-rate` creates/s alongside a dedicated GET mix at `--steady-read-rate` reads/s (job, events, list). Latencies land in `steady-state/create` and `steady-state/read`; the goal thresholds gate their p95. Not a burst: keep rates modest. |
+| `events-latency` | `--events-subscribers` (20) jobs, each followed by one SSE subscriber on `GET /v1/sse/jobs/{id}` from creation to its terminal event. Delivery latency (`events-latency/event_delivery`) = receive time minus the event's `created_at`, both on the server clock (see below). With `--events-idle-seconds N` the same number of subscribers then idles on the finished jobs for N s while `/v1/metrics` and (optionally) `pg_stat_statements` are diffed over that window. |
 | `overload` | Upload-memory burst (`--burst` x `--burst-body-bytes` facade bodies), an in-flight burst (`--inflight-burst` cheap authenticated GETs), then recovery: health/ready 200 and `--recovery-requests` normal jobs complete. Every 429/503 must carry `Retry-After` and body `retry_after_ms`. |
 | `metrics-snapshot` | `/v1/metrics` is scraped before and after every run (and sampled every `--metrics-interval-ms` for gauge maxima); this scenario adds an optional idle window (`--snapshot-seconds`). `--cgroup-containers role=container,...` (e.g. `gateway=..,browser=..,worker=..`; legacy `--docker-stats-container <name>` is a one-container alias) reads cgroup files with a read-only `docker exec` every `--docker-interval-ms` (default 5 s), plus one closing sample; a container that cannot be read is skipped with a note (see Resource sampling below). |
 
@@ -112,6 +113,31 @@ key; malformed/oversized payloads fail with 4xx; cancel races end consistent;
 recovery after overload; create p95 under 2000 ms (provider time excluded, the
 mock target does not hit a provider). That 2000 ms is the **100-client burst**
 limit; steady-state latency has its own goals (below).
+
+### Event-delivery latency and idle load (`events-latency`)
+
+- **Clock calibration.** The harness and the gateway clocks differ, and the `Date` header only has 1 s resolution, so the
+  offset is estimated by sampling `GET /v1/health` (up to `--events-calibrate-ms`, default 2500) and intersecting the
+  `[date, date+1 s)` intervals; a sample pair straddling a second boundary pins the offset to a few ms. The report prints
+  `offset +/- uncertainty`; judge latencies against that uncertainty (it ignores half the request RTT, fine on loopback/LAN).
+  `--events-calibrate-ms 0` takes one sample (+/-500 ms), good for smoke runs only.
+- **Live vs backlog.** The stream replays existing events on connect. Only events created after the subscription opened are
+  latency samples; replays are counted (`backlog_events`) and ignored. A run that measured zero live events FAILS
+  (`min_event_latency_samples`), as do a non-200 or reset stream, a stream with no terminal event within
+  `--events-timeout-ms` (`sse_stream_failures`), and out-of-order sequence numbers, duplicate event ids or another job's
+  events (`sse_event_violations`). `event_latency_p95_ms` is reported but has no threshold until the lab host sets one.
+- **Idle window** (`--events-idle-seconds`): the report shows the heartbeats received, the `ubag_gateway_http_requests_total`
+  delta by route, and the DB-pool / `ubag_sse_connections_current` series over just that window.
+- **Optional `pg_stat_statements` delta**: `--pg-stat-container <name>` (plus `--pg-user`/`--pg-db`, default `ubag`) runs a
+  read-only `docker exec ... psql` snapshot before/after (the stats are never reset) and reports total calls, total exec ms and
+  the top 10 statements by calls (`events_idle_pg_calls_per_s` is derived when an idle window ran). The extension must be
+  enabled on the test database; if it is not (or docker is missing) the section says `skipped` and the run is unaffected.
+- `/v1/events` is a paged JSON list in the gateway (not a stream), so only the per-job stream is probed.
+- Run this against an isolated stack only; numbers from a laptop/Docker stack are NON-AUTHORITATIVE.
+
+The gateway-metrics section now also lists `ubag_gateway_http_requests_total` deltas per route, `ubag_sse_connections_current`,
+`ubag_worker_*`, and every job/worker/stage histogram (`ubag_worker_job_duration_seconds`, `ubag_job_stage_duration_seconds`,
+`ubag_jobs_duration_seconds`, ...) with quantiles.
 
 ### Integrity gates (fail closed)
 

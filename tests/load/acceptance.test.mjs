@@ -9,8 +9,8 @@ import { dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  ACK_FLAG, checkTarget, evaluateThresholds, histogramQuantile, main, metricsDelta, parseArgs,
-  parseProm, parseRetryAfterMs, percentile, retryDelayMs, run, renderMarkdown, summarize,
+  ACK_FLAG, checkTarget, clockBounds, evaluateThresholds, histogramQuantile, main, metricsDelta, parseArgs, parsePgStatements,
+  parseProm, parseRetryAfterMs, percentile, pgDelta, retryDelayMs, run, renderMarkdown, splitSse, summarize,
 } from './acceptance.mjs';
 import { evaluatePressure, parseSample, parseTargets, startCgroupSampler, summarizeContainer } from './lib/cgroup.mjs';
 
@@ -61,9 +61,10 @@ function splitMultipart(buf, boundary) {
 }
 
 async function startFake(opts = {}) {
-  const o = { maxBody: 4096, rejectFirstCreates: 0, facadeLimit: Infinity, maxInflight: Infinity, omitRetryAfter: false, dupBug: false, facadeNoBodyMs: false, resultBug: null, dupTerminal: false, leak: false, facadeBad: false, finalStatus: 'completed', slowGetMs: 5, ...opts };
-  const st = { uploads: [], requests: 0, jobs: new Map(), byKey: new Map(), seq: 0, inflight: 0, facadeInflight: 0, creates: 0, completed: 0, rejections: { inflight_requests: 0, upload_memory: 0 }, uploadBytes: 0 };
-  const json = (res, status, body, headers = {}) => { res.writeHead(status, { 'Content-Type': 'application/json', ...headers }); res.end(JSON.stringify(body)); };
+  const o = { maxBody: 4096, rejectFirstCreates: 0, facadeLimit: Infinity, maxInflight: Infinity, omitRetryAfter: false, dupBug: false, facadeNoBodyMs: false, resultBug: null, dupTerminal: false, leak: false, facadeBad: false, finalStatus: 'completed', slowGetMs: 5, clockSkewMs: 0, sseDelayMs: 15, sseMode: null, ...opts };
+  const st = { uploads: [], requests: 0, jobs: new Map(), byKey: new Map(), seq: 0, inflight: 0, facadeInflight: 0, creates: 0, completed: 0, rejections: { inflight_requests: 0, upload_memory: 0 }, uploadBytes: 0, sseOpens: 0, sseOpen: 0 };
+  const skewedDate = () => new Date(Date.now() + o.clockSkewMs).toUTCString(); // second-resolution, like a real Date header
+  const json = (res, status, body, headers = {}) => { res.writeHead(status, { 'Content-Type': 'application/json', Date: skewedDate(), ...headers }); res.end(JSON.stringify(body)); };
   const overload = (res, reason, facade = false) => {
     st.rejections[reason] += 1;
     const headers = o.omitRetryAfter ? {} : { 'Retry-After': '0' };
@@ -94,6 +95,12 @@ async function startFake(opts = {}) {
         `ubag_queue_job_wait_duration_seconds_bucket{queue="default",le="+Inf"} ${st.completed}`,
         `ubag_queue_job_wait_duration_seconds_sum{queue="default"} ${st.completed * 0.2}`,
         `ubag_queue_job_wait_duration_seconds_count{queue="default"} ${st.completed}`,
+        `ubag_gateway_http_requests_total{service="ubag-gateway",route="/v1/jobs",method="POST",status_class="2xx",outcome="success"} ${st.creates}`,
+        `ubag_gateway_http_requests_total{service="ubag-gateway",route="/v1/sse/jobs/*",method="GET",status_class="2xx",outcome="success"} ${st.sseOpens}`,
+        `ubag_gateway_http_requests_total{service="ubag-gateway",route="/v1/jobs/{job_id}",method="GET",status_class="2xx",outcome="success"} ${st.requests}`,
+        `ubag_sse_connections_current ${st.sseOpen}`,
+        `ubag_worker_job_duration_seconds_bucket{adapter="mock",le="1"} ${st.completed}`, `ubag_worker_job_duration_seconds_bucket{adapter="mock",le="+Inf"} ${st.completed}`,
+        `ubag_worker_job_duration_seconds_sum{adapter="mock"} ${st.completed * 0.5}`, `ubag_worker_job_duration_seconds_count{adapter="mock"} ${st.completed}`,
         'ubag_admission_tokens_active{kind="tenant"} 1', 'ubag_db_pool_connections{state="open"} 2', 'ubag_voice_sessions_connected_total 0', 'ubag_unrelated_total 9', '',
       ].join('\n'));
     }
@@ -148,6 +155,25 @@ async function startFake(opts = {}) {
       const types = ['queued', 'running', 'token', ...(job.status === 'cancelled' ? ['cancelled'] : job.polls >= 3 ? [o.finalStatus] : [])];
       if (o.dupTerminal && job.polls >= 3) types.push(o.finalStatus);
       return json(res, 200, { job_id: m[1], events: types.map((type, i) => ({ job_id: m[1], type, sequence: i + 1 })), next_cursor: null });
+    }
+    const sse = /^\/v1\/sse\/jobs\/([^/]+)$/.exec(path);
+    if (sse && req.method === 'GET') {
+      req.resume();
+      if (!visible(sse[1])) return json(res, 404, { error: { code: 'UBAG-JOB-NOT-FOUND-001' } });
+      if (o.sseMode === 'reject') return json(res, 503, { error: { code: 'UBAG-OVERLOAD-REQUESTS-001', retry_after_ms: 15 } }, { 'Retry-After': '0' });
+      st.sseOpens += 1; st.sseOpen += 1;
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Date: skewedDate() });
+      const stamp = (agoMs = 0) => new Date(Date.now() + o.clockSkewMs - agoMs).toISOString();
+      const send = (type, sequence, createdAt) => { const id = `${sse[1]}-${sequence}`; res.write(`id: ${id}\nevent: job.${type}\ndata: ${JSON.stringify({ event_id: id, job_id: sse[1], type, sequence, created_at: createdAt })}\n\n`); };
+      const born = () => stamp(o.sseMode === 'backlog' ? 60_000 : 0); // 'backlog': every event predates the subscription
+      send('queued', 1, stamp(5000)); // always a replayed backlog event
+      const d = o.sseDelayMs; const timers = [
+        setTimeout(() => send('running', 2, born()), d),
+        setTimeout(() => send('token', 3, born()), 2 * d),
+        ...(o.sseMode === 'noTerminal' ? [] : [setTimeout(() => send('completed', o.sseMode === 'dupSeq' ? 3 : 4, born()), 3 * d)]),
+        setInterval(() => res.write(': ping\n\n'), 30),
+      ];
+      return res.on('close', () => { st.sseOpen -= 1; timers.forEach((t) => { clearTimeout(t); clearInterval(t); }); });
     }
     if (m && m[2] === 'artifacts' && req.method === 'GET') {
       req.resume();
@@ -380,7 +406,7 @@ describe('host allowlist refusal', () => {
     assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--jobs', '0'], env), /--jobs/);
     assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--bogus'], env), /unknown option/);
     const ok = parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--docker-stats-container', 'ubag-gateway'], env);
-    assert.equal(ok.scenarios.length, 6); assert.equal(ok.dockerContainer, 'ubag-gateway');
+    assert.equal(ok.scenarios.length, 7); assert.equal(ok.dockerContainer, 'ubag-gateway');
     assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--docker-stats-container', '--privileged'], env), /requires a value|invalid container target/);
     assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--cgroup-containers', 'gw=a b'], env), /invalid container target/);
     assert.deepEqual(ok.cgroupTargets, [{ role: 'ubag-gateway', container: 'ubag-gateway' }]);
@@ -536,14 +562,14 @@ describe('scenario smoke runs against the in-process fake gateway', () => {
   it('main(): all scenarios write report.json + summary.md and exit 0; bad gateway exits 1', async () => {
     const fake = await startFake({ facadeLimit: 3 });
     const dir = outDir();
-    const args = [`--${ACK_FLAG}`, ...FAST, '--scenario', 'all', '--jobs', '20', '--rate', '5000', '--clients', '8', '--iterations', '2', '--dup-keys', '2', '--dup-concurrency', '5', '--cancel-races', '3', '--burst', '15', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2', '--steady-seconds', '1', '--steady-rate', '5', '--steady-read-rate', '20', '--steady-seed-jobs', '2', '--out-dir', dir];
+    const args = [`--${ACK_FLAG}`, ...FAST, '--scenario', 'all', '--jobs', '20', '--rate', '5000', '--clients', '8', '--iterations', '2', '--dup-keys', '2', '--dup-concurrency', '5', '--cancel-races', '3', '--burst', '15', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2', '--steady-seconds', '1', '--steady-rate', '5', '--steady-read-rate', '20', '--steady-seed-jobs', '2', '--events-subscribers', '3', '--out-dir', dir];
     const logs = []; const orig = console.log; console.log = (...a) => logs.push(a.join(' '));
     let code; try { code = await main(args, fake.env); } finally { console.log = orig; }
     assert.equal(code, 0, logs.join('\n'));
     const [stamp] = readdirSync(dir);
     assert.ok(existsSync(join(dir, stamp, 'report.json')) && existsSync(join(dir, stamp, 'summary.md')));
     const report = JSON.parse(readFileSync(join(dir, stamp, 'report.json'), 'utf8'));
-    assert.equal(Object.keys(report.scenarios).length, 6);
+    assert.equal(Object.keys(report.scenarios).length, 7);
     assert.match(readFileSync(join(dir, stamp, 'summary.md'), 'utf8'), /verdict: \*\*PASS\*\*/);
 
     const broken = await startFake({ dupBug: true });
@@ -648,7 +674,7 @@ describe('acceptance integrity gates fail closed', () => {
 
   it('steady-state measures its own create and read p95; a full --require-goals run passes against a healthy fake', async () => {
     const fake = await startFake({ facadeLimit: 3 });
-    const report = await run(cfgFor(fake, ['--scenario', 'all', '--require-goals', '--jobs', '12', '--rate', '5000', '--clients', '8', '--iterations', '2', '--dup-keys', '2', '--dup-concurrency', '5', '--cancel-races', '3', '--burst', '15', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2', '--steady-seconds', '1', '--steady-rate', '5', '--steady-read-rate', '20', '--steady-seed-jobs', '2', '--cgroup-containers', 'gateway=g,browser=b,worker=w', '--docker-interval-ms', '20']), { dockerExec: async () => v2Fixture({ current: 300 * MB }) });
+    const report = await run(cfgFor(fake, ['--scenario', 'all', '--require-goals', '--jobs', '12', '--rate', '5000', '--clients', '8', '--iterations', '2', '--dup-keys', '2', '--dup-concurrency', '5', '--cancel-races', '3', '--burst', '15', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2', '--steady-seconds', '1', '--steady-rate', '5', '--steady-read-rate', '20', '--steady-seed-jobs', '2', '--cgroup-containers', 'gateway=g,browser=b,worker=w', '--docker-interval-ms', '20', '--events-subscribers', '3']), { dockerExec: async () => v2Fixture({ current: 300 * MB }) });
     assert.equal(report.summary.memory_headroom_pct, 70); assert.equal(report.summary.oom_kills, 0);
     assert.ok(Number.isFinite(report.summary.steady_create_p95_ms));
     assert.ok(Number.isFinite(report.summary.steady_read_p95_ms));
@@ -712,5 +738,111 @@ describe('audio-upload workload scenario (opt-in)', () => {
     const report = await run(cfgFor(fake, [...AUDIO, '--audio-profile', 'huge']));
     assert.match(report.scenarios['audio-upload'].error, /unknown fixture profile/);
     assert.ok(failed(report).includes('max_scenario_errors'));
+  });
+});
+
+// ------------------------------------------------ event delivery latency (P0.12)
+
+describe('events-latency scenario', () => {
+  const EV = ['--scenario', 'events-latency', '--events-subscribers', '4'];
+  const failed = (report) => report.thresholds.results.filter((r) => !r.ok).map((r) => r.name);
+
+  it('parses SSE frames across chunk boundaries and counts heartbeats', () => {
+    const a = splitSse('id: 1\nevent: job.queued\ndata: {"a":1}\n\n: ping\n\nid: 2\nda');
+    assert.deepEqual(a.frames, [{ id: '1', event: 'job.queued', data: '{"a":1}' }, { comment: true }]);
+    assert.equal(a.rest, 'id: 2\nda');
+    assert.deepEqual(splitSse(`${a.rest}ta: x\ndata: y\n\n`).frames, [{ id: '2', data: 'x\ny' }]);
+  });
+
+  it('parseProm keeps series whose quoted label values contain braces (route="/v1/jobs/{job_id}")', () => {
+    const m = parseProm('ubag_gateway_http_requests_total{service="g",route="/v1/jobs/{job_id}/events",method="GET"} 7\nplain_total 2');
+    assert.equal(m.get('ubag_gateway_http_requests_total{service="g",route="/v1/jobs/{job_id}/events",method="GET"}'), 7);
+    assert.equal(m.get('plain_total'), 2);
+  });
+
+  it('narrows the clock offset by intersecting Date-header intervals', () => {
+    assert.equal(clockBounds([]), null);
+    // one sample only says "somewhere in a 1 s window"
+    assert.deepEqual(clockBounds([{ server: 10_000, local: 10_300 }]), { offsetMs: 200, uncertaintyMs: 500, samples: 1 });
+    // a second sample just after a second boundary pins the offset to within the sample spacing
+    assert.deepEqual(clockBounds([{ server: 10_000, local: 10_980 }, { server: 11_000, local: 11_010 }]), { offsetMs: 5, uncertaintyMs: 15, samples: 2 });
+  });
+
+  it('measures per-event delivery latency calibrated to a skewed server clock; an uncalibrated run is visibly uncertain', async () => {
+    const fake = await startFake({ clockSkewMs: -7000 });
+    const report = await run(cfgFor(fake, EV));
+    const ev = report.scenarios['events-latency'];
+    assert.equal(ev.accepted, 4); assert.equal(ev.streams_terminal, 4);
+    assert.equal(ev.live_events, 12); assert.equal(ev.backlog_events, 4); // running/token/completed live, queued replayed
+    assert.ok(ev.clock.uncertaintyMs <= 50, JSON.stringify(ev.clock));
+    assert.ok(Math.abs(ev.clock.offsetMs + 7000) <= 100, JSON.stringify(ev.clock));
+    assert.equal(report.summary.event_latency_samples, 12);
+    assert.ok(report.summary.event_latency_p95_ms < 500, `p95 ${report.summary.event_latency_p95_ms}`);
+    assert.ok(report.ops['events-latency/sse_open'].ok.count === 4);
+    assert.equal(report.thresholds.passed, true, JSON.stringify(failed(report)));
+    assert.match(renderMarkdown(report), /## events-latency/);
+    // calibration budget 0 = a single sample: the 1 s Date resolution leaves +/-500 ms and the report says so
+    const loose = await run(cfgFor(fake, [...EV, '--events-calibrate-ms', '0']));
+    assert.ok(loose.scenarios['events-latency'].clock.uncertaintyMs > 100);
+  });
+
+  it('deltas gateway request counters by route and folds the worker histogram', async () => {
+    const fake = await startFake();
+    const report = await run(cfgFor(fake, [...EV, '--events-calibrate-ms', '0']));
+    assert.equal(report.metrics.requests_by_route['/v1/sse/jobs/*'].total, 4);
+    assert.equal(report.metrics.requests_by_route['/v1/jobs'].by_status_class['2xx'], 4);
+    assert.ok(report.metrics.requests_by_route['/v1/jobs/{job_id}'].total > 0, 'braced route labels must survive parsing');
+    assert.ok('ubag_worker_job_duration_seconds{adapter="mock"}' in report.metrics.histograms);
+    assert.ok('ubag_sse_connections_current' in report.metrics.series);
+    const d = metricsDelta(parseProm('ubag_job_stage_duration_seconds_bucket{stage="x",le="1"} 0\nubag_job_stage_duration_seconds_bucket{stage="x",le="+Inf"} 0'),
+      parseProm('ubag_job_stage_duration_seconds_bucket{stage="x",le="1"} 4\nubag_job_stage_duration_seconds_bucket{stage="x",le="+Inf"} 4\nubag_job_stage_duration_seconds_count{stage="x"} 4\nubag_job_stage_duration_seconds_sum{stage="x"} 2'));
+    assert.equal(d.histograms['ubag_job_stage_duration_seconds{stage="x"}'].mean_s, 0.5);
+    assert.match(renderMarkdown(report), /requests delta/);
+  });
+
+  it('a rejected stream, a stream with no terminal event and malformed ordering are FAILs', async () => {
+    const rejected = await run(cfgFor(await startFake({ sseMode: 'reject' }), [...EV, '--events-calibrate-ms', '0']));
+    assert.equal(rejected.summary.sse_stream_failures, 4);
+    assert.ok(failed(rejected).includes('max_sse_stream_failures'));
+    const silent = await run(cfgFor(await startFake({ sseMode: 'noTerminal' }), [...EV, '--events-subscribers', '2', '--events-timeout-ms', '300', '--events-calibrate-ms', '0']));
+    assert.equal(silent.summary.sse_stream_failures, 2);
+    const dup = await run(cfgFor(await startFake({ sseMode: 'dupSeq' }), [...EV, '--events-calibrate-ms', '0']));
+    assert.ok(dup.summary.sse_event_violations >= 4, JSON.stringify(dup.violations));
+    assert.ok(failed(dup).includes('max_sse_event_violations'));
+  });
+
+  it('a run that only ever saw replayed backlog measured nothing and FAILs', async () => {
+    const report = await run(cfgFor(await startFake({ sseMode: 'backlog' }), [...EV, '--events-calibrate-ms', '0']));
+    assert.equal(report.summary.event_latency_samples, 0);
+    assert.ok(failed(report).includes('min_event_latency_samples'));
+  });
+
+  it('idle window: holds subscribers, diffs request counters and pg_stat_statements', async () => {
+    const fake = await startFake();
+    const seen = []; let calls = 0;
+    const pgExec = async (sql) => { seen.push(sql); calls += 1; return calls <= 2 ? '' : ['q1\u001f50\u001f12.5\u001f50\u001fSELECT 1', 'q2\u001f3\u001f1\u001f3\u001fSELECT 2'].join('\n'); };
+    const report = await run(cfgFor(fake, [...EV, '--events-subscribers', '3', '--events-idle-seconds', '1', '--pg-stat-container', 'fake-pg']), { pgExec });
+    const idle = report.scenarios['events-latency'].idle;
+    assert.equal(idle.subscribers, 3);
+    assert.ok(idle.pings_received > 0);
+    assert.equal(idle.http_requests_by_route['/v1/sse/jobs/*'].total, 3);
+    assert.ok(idle.seconds >= 0.9);
+    const pg = report.scenarios['events-latency'].pg_stat_statements;
+    assert.equal(pg.total_calls_delta, 53); assert.equal(pg.top[0].queryid, 'q1');
+    assert.ok(report.summary.events_idle_pg_calls_per_s > 0);
+    assert.ok(seen.every((q) => /FROM pg_stat_statements/.test(q) && !/reset/i.test(q)), 'must only read the stats');
+    assert.equal(report.summary.event_latency_samples, 9, 'idle holders must not feed delivery latency');
+    assert.match(renderMarkdown(report), /idle window/);
+  });
+
+  it('pg_stat_statements is optional: absent flag and failing psql are reported, not fatal', async () => {
+    assert.equal(pgDelta(parsePgStatements('a\u001f1\u001f1\u001f1\u001fx'), parsePgStatements('a\u001f4\u001f2\u001f4\u001fx\nb\u001f2\u001f1\u001f2\u001fy')).total_calls_delta, 5);
+    const fake = await startFake();
+    const none = await run(cfgFor(fake, [...EV, '--events-calibrate-ms', '0']));
+    assert.match(none.scenarios['events-latency'].pg_stat_statements.skipped, /not requested/);
+    const broken = await run(cfgFor(fake, [...EV, '--pg-stat-container', 'fake-pg', '--events-calibrate-ms', '0']), { pgExec: async () => { throw new Error('relation "pg_stat_statements" does not exist'); } });
+    assert.match(broken.scenarios['events-latency'].pg_stat_statements.skipped, /unavailable/);
+    assert.equal(broken.thresholds.passed, true);
+    assert.throws(() => cfgFor(fake, [...EV, '--pg-stat-container', 'x;rm -rf /']), /invalid name/);
   });
 });
