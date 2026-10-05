@@ -121,3 +121,7 @@ buf breaking packages/proto --against 'buf.build/ubag/ubag'
 ```
 
 CI runs both checks on every PR that touches `packages/proto/`.
+
+## Helper Node contract (`ubag.helper.v1`)
+
+`packages/proto/proto/ubag/helper/v1/helper.proto` defines `HelperService`, the primary-to-Helper-Node execution contract (a separate package from the public `ubag.v1`). The primary is the gRPC client and dials the helper over WireGuard; the helper is the mTLS gRPC server. RPCs: `Handshake`, `ReportCapacity` (15 s), `RunAttempt` (server stream), `RenewAttempt`, `CancelAttempt`, `InspectAttempt`, `Drain`, `StageManifest`. Every mutating RPC carries a `Fence` (job, attempt, node, lease generation, lease expiry, input fingerprint, workload version); the event key is `attempt_id:sequence`, and `PROMPT_SUBMITTED` is the submission boundary. Staging uploads use the helper's mTLS HTTPS listener, outside `/v1`. Contract only: no gateway or helper implements it yet, and it is inert.
