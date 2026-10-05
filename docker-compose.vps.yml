@@ -102,6 +102,9 @@ services:
       UBAG_VOICE_MAX_SESSIONS_PER_TENANT: ${UBAG_VOICE_MAX_SESSIONS_PER_TENANT:-4}
       UBAG_VOICE_MAX_QUEUED_PER_TENANT: ${UBAG_VOICE_MAX_QUEUED_PER_TENANT:-32}
       UBAG_VOICE_SESSION_TTL_SECONDS: ${UBAG_VOICE_SESSION_TTL_SECONDS:-600}
+      # Shared secret authenticating media sessions to the browser audio relay
+      # (the relay refuses all sessions when unset). Same value on both services.
+      UBAG_VOICE_RELAY_SECRET: ${UBAG_VOICE_RELAY_SECRET:-}
       # Full DSN lives in deploy/vps/env.local (platform credentials from
       # /opt/platform/projects/ubag.env on the VPS — never committed).
       UBAG_POSTGRES_DSN: ${UBAG_POSTGRES_DSN:?Set UBAG_POSTGRES_DSN in deploy/vps/env.local}
@@ -290,6 +293,7 @@ services:
       # the operator sets UBAG_VOICE_AUDIO_ENABLED=1.
       UBAG_VOICE_AUDIO_ENABLED: ${UBAG_VOICE_AUDIO_ENABLED:-0}
       UBAG_VOICE_RELAY_ADDR: ${UBAG_VOICE_RELAY_ADDR:-0.0.0.0:9099}
+      UBAG_VOICE_RELAY_SECRET: ${UBAG_VOICE_RELAY_SECRET:-}
     volumes:
       - browser_profile:/profiles
     healthcheck:

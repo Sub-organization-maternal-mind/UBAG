@@ -181,3 +181,12 @@ func TestMediaHubCloseEndsAllSessions(t *testing.T) {
 		t.Fatalf("active sessions after Close = %d", hub.ActiveSessions())
 	}
 }
+
+// The Python relay verifies the same HMAC; this vector was computed there
+// (hmac sha256, "voice-relay|s1|1700000000").
+func TestRelayTokenMatchesPythonRelay(t *testing.T) {
+	const want = "43e2f2445ad07779cdf6135f4756cbe2ea5802718f6b6b9c930bb67d53a10591"
+	if got := RelayToken([]byte("relay-test-secret"), "s1", 1700000000); got != want {
+		t.Fatalf("RelayToken = %s, want %s", got, want)
+	}
+}
