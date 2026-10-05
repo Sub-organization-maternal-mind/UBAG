@@ -34,6 +34,12 @@ BRIDGE_PORT="${UBAG_LIVE_BROWSER_PORT:-58090}"
 START_URL="${UBAG_BROWSER_START_URL:-https://chatgpt.com}"
 WATCHDOG_INTERVAL="${UBAG_BROWSER_WATCHDOG_INTERVAL:-3}"
 CDP_GRACE_PROBES="${UBAG_BROWSER_CDP_GRACE_PROBES:-12}"
+# Voice media plane: UBAG_VOICE_AUDIO_ENABLED=1 starts PulseAudio with the
+# virtual mic source + provider sink and the audio relay the gateway's
+# MediaHub dials. OFF by default — the shared production browser only gains
+# audio when the operator opts in (bounded canary).
+VOICE_AUDIO_ENABLED="${UBAG_VOICE_AUDIO_ENABLED:-0}"
+VOICE_RELAY_ADDR="${UBAG_VOICE_RELAY_ADDR:-0.0.0.0:9099}"
 
 mkdir -p "$PROFILE_DIR" /run/ubag /root/.fluxbox
 
@@ -107,6 +113,14 @@ reset_profile_guards() {
 # pre-warmed spare renderer, and the back/forward page cache. None of them is
 # observable from a web page, so the provider-facing fingerprint is unchanged.
 CHROME_PID=""
+# Voice mode auto-grants the microphone permission prompt (the gateway's
+# authenticated voice session IS the consenting party; the virtual mic is the
+# device it authorized). Never combined with fake-device flags — the audio is
+# real, only the permission UI is waived. Added ONLY when voice audio is on.
+VOICE_MEDIA_FLAGS=""
+if [ "$VOICE_AUDIO_ENABLED" = "1" ]; then
+  VOICE_MEDIA_FLAGS="--use-fake-ui-for-media-stream"
+fi
 start_chrome() {
   reset_profile_guards
   google-chrome-stable \
@@ -124,6 +138,7 @@ start_chrome() {
     --disable-dev-shm-usage \
     --disable-gpu \
     --disable-infobars \
+    $VOICE_MEDIA_FLAGS \
     --disable-features=Translate,OptimizationHints,InterestFeedContentSuggestions,CalculateNativeWinOcclusion,MediaRouter,DialMediaRouteProvider,GlobalMediaControls,WebUIOmniboxPopup,WebUIOmniboxAimPopup,PreloadTopChromeWebUI,SpareRendererForSitePerProcess \
     --disable-backgrounding-occluded-windows \
     --disable-renderer-backgrounding \
@@ -174,6 +189,25 @@ maximize_chrome &
 # network. (Chrome may keep DevTools on loopback even with
 # --remote-debugging-address=0.0.0.0, so proxy it explicitly.)
 socat "TCP-LISTEN:$CDP_PROXY_PORT,fork,reuseaddr,bind=0.0.0.0" "TCP:127.0.0.1:$CDP_PORT" &
+
+# ---------------------------------------------------------------------------
+# Voice audio (opt-in): PulseAudio user instance, then the audio relay in a
+# supervised restart loop. The relay creates the virtual mic source and the
+# provider null-sink itself (idempotent) and serves framed Opus sessions for
+# the gateway's MediaHub on the private network only.
+# ---------------------------------------------------------------------------
+if [ "$VOICE_AUDIO_ENABLED" = "1" ]; then
+  (
+    set +e
+    pulseaudio --start --exit-idle-time=-1 --disallow-exit >/run/ubag/pulse.log 2>&1 \
+      || pulseaudio --start --exit-idle-time=-1 >/run/ubag/pulse.log 2>&1
+    while true; do
+      python3 /app/audio-relay.py --addr "$VOICE_RELAY_ADDR" >>/run/ubag/audio-relay.log 2>&1
+      echo "$(date -u +%FT%TZ) vps-browser: audio relay exited; restarting in 2s" >>/run/ubag/audio-relay.log
+      sleep 2
+    done
+  ) &
+fi
 
 # Wait for Chrome's CDP before starting the bridge (attach-only bridge would
 # otherwise poll, but this keeps startup logs clean).

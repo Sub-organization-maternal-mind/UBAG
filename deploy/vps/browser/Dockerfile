@@ -38,6 +38,10 @@ RUN apt-get update \
     gnupg \
     tini \
     wget \
+    pulseaudio \
+    pulseaudio-utils \
+    libopus0 \
+    python3 \
   && rm -rf /var/lib/apt/lists/*
 
 # Branded Google Chrome from Google's signed apt repo (the plain Debian
@@ -61,10 +65,20 @@ COPY tools/live-browser/bridge.mjs /app/bridge.mjs
 COPY deploy/vps/browser/entrypoint.sh /usr/local/bin/ubag-vps-browser
 RUN chmod +x /usr/local/bin/ubag-vps-browser
 
+# Voice media plane (browser-container side): the relay moves framed Opus
+# between the gateway's MediaHub and PulseAudio's virtual mic / sink monitor
+# (decode/encode via libopus through opus_bridge.py, apt-only deps). Inert
+# unless the entrypoint's UBAG_VOICE_AUDIO_ENABLED=1 turns PulseAudio + the
+# relay on; the port stays on the internal Docker network only.
+COPY deploy/vps/browser/audio-relay.py /app/audio-relay.py
+COPY deploy/vps/browser/opus_bridge.py /app/opus_bridge.py
+
 # 58090 = dashboard-facing bridge WebSocket; 9223 = Docker-private CDP proxy the
-# live worker attaches through. Neither is published to the host — the bridge WS
-# reaches the browser only via nginx, and CDP stays on the internal network.
-EXPOSE 58090 9223 6080
+# live worker attaches through; 9099 = voice audio relay (the gateway MediaHub
+# dials it privately per active voice session). None are published to the
+# host — the bridge WS reaches the browser only via nginx, CDP and the relay
+# stay on the internal network.
+EXPOSE 58090 9223 6080 9099
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/usr/local/bin/ubag-vps-browser"]
