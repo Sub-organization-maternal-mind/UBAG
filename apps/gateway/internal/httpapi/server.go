@@ -256,6 +256,10 @@ type Config struct {
 	VoiceMaxSessionsPerTenant int
 	VoiceMaxQueuedPerTenant   int
 
+	// VoiceMetrics is the shared media-plane counter set the hub writes and
+	// /v1/metrics renders. Optional: nil renders zero-valued series.
+	VoiceMetrics *voice.MediaCounters
+
 	// Plugins is the optional WASM plugin host. When nil, no plugin hooks run.
 	Plugins *plugins.Host
 
@@ -295,6 +299,7 @@ type Server struct {
 
 	voiceMaxSessionsPerTenant int
 	voiceMaxQueuedPerTenant   int
+	voiceMetrics              *voice.MediaCounters
 	jobs                      jobstore.Store
 	idempotency               idempotency.Service
 	executor                  executor.Dispatcher
@@ -582,6 +587,7 @@ func NewServer(config Config) *Server {
 
 		voiceMaxSessionsPerTenant: config.VoiceMaxSessionsPerTenant,
 		voiceMaxQueuedPerTenant:   config.VoiceMaxQueuedPerTenant,
+		voiceMetrics:              config.VoiceMetrics,
 		patStore:                  config.PAT,
 		patDefaultTTL:             config.PATDefaultTTL,
 		appJWTPublicKey:           config.AppJWTPublicKey,
@@ -1019,6 +1025,37 @@ func (s *Server) writeMetricsBody(ctx context.Context, w io.Writer) error {
 	_, _ = fmt.Fprintf(w, "ubag_attachment_dispatch_failures_total %d\n", s.attachmentDispatchFailures.Load())
 	for _, item := range s.facadeOutcomes.snapshotWithDefaults([]string{facadeOutcomeCompleted, facadeOutcomeWaitTimeout, facadeOutcomeProviderError, facadeOutcomeRejected, facadeOutcomeError}) {
 		_, _ = fmt.Fprintf(w, "ubag_facade_jobs_total{outcome=\"%s\"} %d\n", promLabel(item.key), item.count)
+	}
+
+	// Voice media plane: dropped audio per direction, session lifecycle
+	// (lease_expired doubles as the lease-recovery signal), and global
+	// session gauges — the metrics endpoint is unauthenticated by design, so
+	// these are deliberately cross-tenant aggregates with no tenant split.
+	if s.voiceMetrics != nil {
+		for _, item := range s.voiceMetrics.SnapshotFramesDropped() {
+			_, _ = fmt.Fprintf(w, "ubag_voice_media_frames_dropped_total{direction=\"%s\"} %d\n", promLabel(item.Direction), item.Count)
+		}
+		_, _ = fmt.Fprintf(w, "ubag_voice_sessions_connected_total %d\n", s.voiceMetrics.SessionsConnected())
+		for _, item := range s.voiceMetrics.SnapshotSessionsEnded() {
+			_, _ = fmt.Fprintf(w, "ubag_voice_sessions_ended_total{reason=\"%s\"} %d\n", promLabel(item.Reason), item.Count)
+		}
+	} else {
+		_, _ = fmt.Fprint(w, "ubag_voice_media_frames_dropped_total{direction=\"mic\"} 0\n")
+		_, _ = fmt.Fprint(w, "ubag_voice_media_frames_dropped_total{direction=\"speaker\"} 0\n")
+		_, _ = fmt.Fprint(w, "ubag_voice_sessions_connected_total 0\n")
+		_, _ = fmt.Fprint(w, "ubag_voice_sessions_ended_total{reason=\"session_terminated\"} 0\n")
+		_, _ = fmt.Fprint(w, "ubag_voice_sessions_ended_total{reason=\"lease_expired\"} 0\n")
+		_, _ = fmt.Fprint(w, "ubag_voice_sessions_ended_total{reason=\"peer_connection_failed\"} 0\n")
+	}
+	if s.voice != nil {
+		active, queued, err := s.voice.GlobalSessionCounts(ctx)
+		if err == nil {
+			_, _ = fmt.Fprintf(w, "ubag_voice_sessions_active %d\n", active)
+			_, _ = fmt.Fprintf(w, "ubag_voice_sessions_queued %d\n", queued)
+		}
+	} else {
+		_, _ = fmt.Fprint(w, "ubag_voice_sessions_active 0\n")
+		_, _ = fmt.Fprint(w, "ubag_voice_sessions_queued 0\n")
 	}
 	materializeFailures := executor.AttachmentMaterializeFailureSnapshot()
 	if _, ok := materializeFailures["artifact_read"]; !ok {

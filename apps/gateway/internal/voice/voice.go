@@ -140,6 +140,12 @@ type Store interface {
 	// ActiveCount counts active (lease-holding or queued) sessions for the
 	// tenant, optionally per target (empty target = all).
 	ActiveCount(ctx context.Context, tenantID, target string) (int, error)
+
+	// GlobalSessionCounts returns (active, queued) across ALL tenants for
+	// the unauthenticated metrics endpoint (which must never split by
+	// tenant). Active counts lease-holding sessions only; queued counts
+	// StatusQueued rows.
+	GlobalSessionCounts(ctx context.Context) (active int, queued int, err error)
 }
 
 // SessionID generates a session identifier with the vault-prefixed, sortable
@@ -415,6 +421,21 @@ func (m *MemoryStore) SweepExpired(_ context.Context, now time.Time) ([]string, 
 		swept = append(swept, s.ID)
 	}
 	return swept, nil
+}
+
+func (m *MemoryStore) GlobalSessionCounts(_ context.Context) (int, int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	active, queued := 0, 0
+	for _, s := range m.sessions {
+		switch s.Status {
+		case StatusConnecting, StatusConnected:
+			active++
+		case StatusQueued:
+			queued++
+		}
+	}
+	return active, queued, nil
 }
 
 func (m *MemoryStore) ActiveCount(_ context.Context, tenantID, target string) (int, error) {

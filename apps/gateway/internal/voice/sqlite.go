@@ -416,6 +416,18 @@ WHERE session_id = ? AND status IN ('connecting','connected')`, formatSQLiteTime
 	return ids, nil
 }
 
+func (s *SQLiteStore) GlobalSessionCounts(ctx context.Context) (int, int, error) {
+	var active, queued int
+	if err := s.db.QueryRowContext(ctx, `
+SELECT
+  COUNT(1) FILTER (WHERE status IN ('connecting','connected')),
+  COUNT(1) FILTER (WHERE status = 'queued')
+FROM gateway_voice_sessions`).Scan(&active, &queued); err != nil {
+		return 0, 0, err
+	}
+	return active, queued, nil
+}
+
 func (s *SQLiteStore) ActiveCount(ctx context.Context, tenantID, target string) (int, error) {
 	query := `
 SELECT COUNT(1) FROM gateway_voice_sessions

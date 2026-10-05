@@ -173,6 +173,10 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("invalid voice configuration: %w", err)
 	}
 	defer closeVoice()
+	voiceMetrics := voice.NewMediaCounters()
+	if hub, ok := voiceMedia.(*voice.MediaHub); ok {
+		hub.Metrics = voiceMetrics
+	}
 	if voiceStore != nil {
 		if err := voiceStore.Ready(ctx); err != nil {
 			return fmt.Errorf("voice store not ready: %w", err)
@@ -239,6 +243,8 @@ func Run(ctx context.Context) error {
 
 		VoiceStore: voiceStore,
 		VoiceMedia: voiceMedia,
+
+		VoiceMetrics: voiceMetrics,
 
 		RateLimiter:       enterprise.rateLimiter,
 		RateLimitResolver: enterprise.rateResolver,

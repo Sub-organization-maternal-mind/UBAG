@@ -343,6 +343,18 @@ RETURNING session_id`, now)
 	return ids, rows.Err()
 }
 
+func (s *PostgresStore) GlobalSessionCounts(ctx context.Context) (int, int, error) {
+	var active, queued int
+	if err := s.db.QueryRowContext(ctx, `
+SELECT
+  COUNT(1) FILTER (WHERE status IN ('connecting','connected')),
+  COUNT(1) FILTER (WHERE status = 'queued')
+FROM gateway_voice_sessions`).Scan(&active, &queued); err != nil {
+		return 0, 0, err
+	}
+	return active, queued, nil
+}
+
 func (s *PostgresStore) ActiveCount(ctx context.Context, tenantID, target string) (int, error) {
 	query := `
 SELECT COUNT(1) FROM gateway_voice_sessions
