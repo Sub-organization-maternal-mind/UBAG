@@ -46,6 +46,11 @@ START_URL="${UBAG_BROWSER_START_URL:-about:blank}"
 # while the process is still alive before we force a restart (~ probes * cadence).
 WATCHDOG_INTERVAL="${UBAG_BROWSER_WATCHDOG_INTERVAL:-3}"
 CDP_GRACE_PROBES="${UBAG_BROWSER_CDP_GRACE_PROBES:-12}"
+# Voice media plane: UBAG_VOICE_AUDIO_ENABLED=1 starts PulseAudio with the
+# virtual mic source + provider sink and the audio relay the gateway's
+# MediaHub dials. OFF by default; same opt-in semantics as the VPS profile.
+VOICE_AUDIO_ENABLED="${UBAG_VOICE_AUDIO_ENABLED:-0}"
+VOICE_RELAY_ADDR="${UBAG_VOICE_RELAY_ADDR:-0.0.0.0:9099}"
 
 # A VNC password is mandatory — never expose an unauthenticated remote display.
 if [ -z "${UBAG_BROWSER_VNC_PASSWORD:-}" ]; then
@@ -113,6 +118,12 @@ reset_profile_guards() {
 #   --password-store=basic --use-mock-keychain  avoid the gnome-keyring prompt
 #       that can stall sign-in and lose the saved session in a headless container.
 CHROMIUM_PID=""
+# Voice mode auto-grants the microphone permission prompt ONLY when voice
+# audio is on (no fake-device flag; audio stays real).
+VOICE_MEDIA_FLAGS=""
+if [ "$VOICE_AUDIO_ENABLED" = "1" ]; then
+  VOICE_MEDIA_FLAGS="--use-fake-ui-for-media-stream"
+fi
 start_chromium() {
   reset_profile_guards
   # Branded Google Chrome (not Chrome): Google trusts genuine Chrome at sign-in
@@ -132,6 +143,7 @@ start_chromium() {
     --disable-dev-shm-usage \
     --disable-gpu \
     --disable-infobars \
+    $VOICE_MEDIA_FLAGS \
     --disable-features=Translate,OptimizationHints,InterestFeedContentSuggestions \
     --window-position=0,0 \
     --window-size="$SCREEN_W,$SCREEN_H" \
@@ -166,6 +178,29 @@ maximize_chromium &
 socat \
   "TCP-LISTEN:$CDP_PROXY_PORT,fork,reuseaddr,bind=0.0.0.0" \
   "TCP:127.0.0.1:$CDP_PORT" &
+
+# Voice audio (opt-in): supervised PulseAudio (foreground loop with
+# stale-runtime cleanup — /tmp survives docker restart) + the audio relay.
+if [ "$VOICE_AUDIO_ENABLED" = "1" ]; then
+  (
+    set +e
+    while true; do
+      rm -rf /tmp/pulse-* 2>/dev/null
+      pulseaudio --exit-idle-time=-1 --disallow-exit >>/run/ubag/pulse.log 2>&1
+      echo "$(date -u +%FT%TZ) browser-viewer: pulse exited; restarting in 2s" >>/run/ubag/pulse.log
+      rm -rf /tmp/pulse-* 2>/dev/null
+      sleep 2
+    done
+  ) &
+  (
+    set +e
+    while true; do
+      python3 /app/audio-relay.py --addr "$VOICE_RELAY_ADDR" >>/run/ubag/audio-relay.log 2>&1
+      echo "$(date -u +%FT%TZ) browser-viewer: audio relay exited; restarting in 2s" >>/run/ubag/audio-relay.log
+      sleep 2
+    done
+  ) &
+fi
 
 # Share the display over VNC on loopback only; websockify wraps it for noVNC.
 x11vnc \

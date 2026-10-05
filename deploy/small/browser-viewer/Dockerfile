@@ -36,6 +36,10 @@ RUN apt-get update \
     gnupg \
     tini \
     wget \
+    pulseaudio \
+    pulseaudio-utils \
+    libopus0 \
+    python3 \
   && rm -rf /var/lib/apt/lists/*
 
 # Google Chrome stable from Google's official, signed apt repository. Pinned to a
@@ -65,8 +69,16 @@ COPY deploy/small/browser-viewer/open-chrome /usr/local/bin/open-chrome
 RUN chmod +x /usr/local/bin/open-chrome
 COPY deploy/small/browser-viewer/fluxbox-menu /root/.fluxbox/menu
 
-# 6080 = noVNC (websockify), 9223 = private CDP proxy for the worker.
-EXPOSE 6080 9223
+# Voice media plane (opt-in): same relay as the VPS profile — framed Opus
+# between the gateway's MediaHub and PulseAudio's virtual mic / sink monitor
+# (decode/encode via libopus through opus_bridge.py, apt-only deps). Inert
+# unless UBAG_VOICE_AUDIO_ENABLED=1; the port stays on the internal network.
+COPY deploy/vps/browser/audio-relay.py /app/audio-relay.py
+COPY deploy/vps/browser/opus_bridge.py /app/opus_bridge.py
+
+# 6080 = noVNC (websockify), 9223 = private CDP proxy for the worker,
+# 9099 = voice audio relay (internal network only).
+EXPOSE 6080 9223 9099
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/usr/local/bin/ubag-browser-viewer"]

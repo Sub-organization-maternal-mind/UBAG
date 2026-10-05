@@ -157,14 +157,26 @@ services:
       UBAG_BROWSER_GEOMETRY: ${UBAG_BROWSER_GEOMETRY:-1280x800x24}
       UBAG_BROWSER_PROFILE_DIR: ${UBAG_BROWSER_PROFILE_DIR:-/profiles/default}
       UBAG_BROWSER_CDP_PORT: ${UBAG_BROWSER_CDP_PORT:-9222}
+      # Voice sessions (see /v1/voice/sessions + /v1/capabilities). The relay
+      # address is the browser-viewer's internal-only audio-relay port.
+      UBAG_VOICE_STORE: ${UBAG_VOICE_STORE:-memory}
+      UBAG_VOICE_AUDIO_RELAY_ADDR: ${UBAG_VOICE_AUDIO_RELAY_ADDR:-browser-viewer:9099}
+      UBAG_VOICE_MAX_SESSIONS_PER_TENANT: ${UBAG_VOICE_MAX_SESSIONS_PER_TENANT:-4}
+      UBAG_VOICE_MAX_QUEUED_PER_TENANT: ${UBAG_VOICE_MAX_QUEUED_PER_TENANT:-32}
+      UBAG_VOICE_SESSION_TTL_SECONDS: ${UBAG_VOICE_SESSION_TTL_SECONDS:-600}
       UBAG_BROWSER_CDP_PROXY_PORT: ${UBAG_BROWSER_CDP_PROXY_PORT:-9223}
       UBAG_BROWSER_VNC_PORT: ${UBAG_BROWSER_VNC_PORT:-5900}
       UBAG_BROWSER_NOVNC_PORT: ${UBAG_BROWSER_NOVNC_PORT:-6080}
       UBAG_BROWSER_START_URL: ${UBAG_BROWSER_START_URL:-about:blank}
+      # Voice media plane (opt-in via env.local): same semantics as the VPS
+      # profile. Inert until UBAG_VOICE_AUDIO_ENABLED=1.
+      UBAG_VOICE_AUDIO_ENABLED: ${UBAG_VOICE_AUDIO_ENABLED:-0}
+      UBAG_VOICE_RELAY_ADDR: ${UBAG_VOICE_RELAY_ADDR:-0.0.0.0:9099}
       UBAG_BROWSER_VNC_PASSWORD: ${UBAG_BROWSER_VNC_PASSWORD:?Set UBAG_BROWSER_VNC_PASSWORD in deploy/small/env.local}
     ports:
       # noVNC published to loopback only (matches the worker's loopback noVNC URL
-      # at http://127.0.0.1:7900/session/...). CDP stays internal — never bound.
+      # at http://127.0.0.1:7900/session/...). CDP and the voice relay stay
+      # internal — never bound.
       - "${UBAG_BACKING_BIND_HOST:-127.0.0.1}:${UBAG_NOVNC_PORT:-7900}:6080"
     volumes:
       - browser_profiles:/profiles
