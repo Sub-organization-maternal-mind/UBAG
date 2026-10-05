@@ -2,7 +2,10 @@ package voice
 
 import (
 	"context"
+	"crypto/hmac"
 	"encoding/binary"
+	"encoding/json"
+	"errors"
 	"net"
 	"sync"
 	"testing"
@@ -12,12 +15,21 @@ import (
 	"github.com/pion/webrtc/v4/pkg/media"
 )
 
-// fakeRelay accepts one framed connection and echoes every received frame
-// back (standing in for the browser container's mic→speaker loopback).
+// testRelaySecret authenticates the hub's hello to the fake relay.
+var testRelaySecret = []byte("relay-test-secret")
+
+// fakeRelay speaks relay protocol v2: it verifies the hello token, answers
+// ready, echoes every audio frame back (standing in for the browser
+// container's mic→speaker loopback), records control messages, and serves ONE
+// session at a time (a second concurrent connection gets error "busy").
 type fakeRelay struct {
 	listener net.Listener
+	secret   []byte
 	mu       sync.Mutex
 	frames   [][]byte
+	controls []map[string]any
+	hellos   int
+	active   bool
 }
 
 func startFakeRelay(t *testing.T) (*fakeRelay, string) {
@@ -26,44 +38,107 @@ func startFakeRelay(t *testing.T) (*fakeRelay, string) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	relay := &fakeRelay{listener: listener}
+	relay := &fakeRelay{listener: listener, secret: testRelaySecret}
 	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			return
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go relay.serve(conn)
 		}
-		go relay.serve(conn)
 	}()
 	t.Cleanup(func() { _ = listener.Close() })
 	return relay, listener.Addr().String()
 }
 
+func writeRelayFrame(conn net.Conn, kind byte, payload []byte) error {
+	out := make([]byte, relayFrameHeaderBytes+1+len(payload))
+	binary.LittleEndian.PutUint32(out, uint32(1+len(payload)))
+	out[relayFrameHeaderBytes] = kind
+	copy(out[relayFrameHeaderBytes+1:], payload)
+	_, err := conn.Write(out)
+	return err
+}
+
+func readRelayFrame(conn net.Conn) (byte, []byte, error) {
+	header := make([]byte, relayFrameHeaderBytes)
+	if _, err := readFull(conn, header); err != nil {
+		return 0, nil, err
+	}
+	length := binary.LittleEndian.Uint32(header)
+	if length < 2 || length > maxRelayFrameBytes {
+		return 0, nil, errors.New("bad frame length")
+	}
+	frame := make([]byte, length)
+	if _, err := readFull(conn, frame); err != nil {
+		return 0, nil, err
+	}
+	return frame[0], frame[1:], nil
+}
+
 func (r *fakeRelay) serve(conn net.Conn) {
 	defer conn.Close()
-	header := make([]byte, relayFrameHeaderBytes)
-	for {
-		if _, err := readFull(conn, header); err != nil {
-			return
-		}
-		length := binary.LittleEndian.Uint32(header)
-		if length == 0 || length > maxRelayFrameBytes {
-			return
-		}
-		frame := make([]byte, length)
-		if _, err := readFull(conn, frame); err != nil {
-			return
-		}
-		r.mu.Lock()
-		r.frames = append(r.frames, frame)
+	kind, payload, err := readRelayFrame(conn)
+	if err != nil || kind != relayTypeControl {
+		return
+	}
+	var hello struct {
+		Op        string `json:"op"`
+		SessionID string `json:"session_id"`
+		Exp       int64  `json:"exp"`
+		Token     string `json:"token"`
+	}
+	if json.Unmarshal(payload, &hello) != nil || hello.Op != "hello" ||
+		!hmac.Equal([]byte(hello.Token), []byte(RelayToken(r.secret, hello.SessionID, hello.Exp))) {
+		_ = writeRelayFrame(conn, relayTypeControl, []byte(`{"op":"error","reason":"unauthorized"}`))
+		return
+	}
+	r.mu.Lock()
+	if r.active {
 		r.mu.Unlock()
-		// Echo it back (speaker direction).
-		out := make([]byte, relayFrameHeaderBytes+len(frame))
-		binary.LittleEndian.PutUint32(out, uint32(len(frame)))
-		copy(out[relayFrameHeaderBytes:], frame)
-		if _, err := conn.Write(out); err != nil {
+		_ = writeRelayFrame(conn, relayTypeControl, []byte(`{"op":"error","reason":"busy"}`))
+		return
+	}
+	r.active = true
+	r.hellos++
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		r.active = false
+		r.mu.Unlock()
+	}()
+	if err := writeRelayFrame(conn, relayTypeControl, []byte(`{"op":"ready"}`)); err != nil {
+		return
+	}
+	for {
+		kind, payload, err := readRelayFrame(conn)
+		if err != nil {
 			return
+		}
+		switch kind {
+		case relayTypeAudio:
+			r.mu.Lock()
+			r.frames = append(r.frames, payload)
+			r.mu.Unlock()
+			if err := writeRelayFrame(conn, relayTypeAudio, payload); err != nil {
+				return
+			}
+		case relayTypeControl:
+			var msg map[string]any
+			if json.Unmarshal(payload, &msg) == nil {
+				r.mu.Lock()
+				r.controls = append(r.controls, msg)
+				r.mu.Unlock()
+			}
 		}
 	}
+}
+
+func (r *fakeRelay) frameCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.frames)
 }
 
 func readFull(conn net.Conn, buf []byte) (int, error) {
@@ -108,7 +183,7 @@ func TestMediaHubLoopbackNegotiatesAndRelays(t *testing.T) {
 	relay, addr := startFakeRelay(t)
 	metrics := &countingMetrics{dropped: map[string]int64{}}
 	hub := &MediaHub{
-		Dialer:  &TCPRelayDialer{Address: func(string) (string, error) { return addr, nil }},
+		Dialer:  &TCPRelayDialer{Address: func(Session) (string, error) { return addr, nil }, Secret: testRelaySecret},
 		Metrics: metrics,
 	}
 
@@ -233,12 +308,12 @@ func TestMediaHubLoopbackNegotiatesAndRelays(t *testing.T) {
 }
 
 func TestTCPRelayDialerUnreachable(t *testing.T) {
-	dialer := &TCPRelayDialer{Address: func(string) (string, error) { return "127.0.0.1:1", nil }, DialTimeout: 200 * time.Millisecond}
-	if _, err := dialer.Dial(context.Background(), "browser-x", "s"); err == nil {
+	dialer := &TCPRelayDialer{Address: func(Session) (string, error) { return "127.0.0.1:1", nil }, Secret: testRelaySecret, DialTimeout: 200 * time.Millisecond}
+	if _, err := dialer.Dial(context.Background(), Session{ID: "s", InstanceRef: "browser-x"}); err == nil {
 		t.Fatal("dial to closed port must fail")
 	}
-	empty := &TCPRelayDialer{Address: func(string) (string, error) { return "", nil }}
-	if _, err := empty.Dial(context.Background(), "browser-x", "s"); err != ErrRelayUnavailable {
+	empty := &TCPRelayDialer{Address: func(Session) (string, error) { return "", nil }, Secret: testRelaySecret}
+	if _, err := empty.Dial(context.Background(), Session{ID: "s", InstanceRef: "browser-x"}); err != ErrRelayUnavailable {
 		t.Fatalf("empty address err = %v, want ErrRelayUnavailable", err)
 	}
 }

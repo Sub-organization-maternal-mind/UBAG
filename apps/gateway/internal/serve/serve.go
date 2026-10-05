@@ -168,7 +168,7 @@ func Run(ctx context.Context) error {
 	// the routes 501 only when UBAG_VOICE_STORE is explicitly disabled) and
 	// the WebRTC media hub bridging client audio to the browser/audio
 	// environment's relay process.
-	voiceStore, voiceMedia, closeVoice, err := newVoiceComponentsFromEnv(ctx, storeKind, db)
+	voiceStore, voiceMedia, closeVoice, err := newVoiceComponentsFromEnv(ctx, storeKind, db, enterprise.topology)
 	if err != nil {
 		return fmt.Errorf("invalid voice configuration: %w", err)
 	}
@@ -176,6 +176,10 @@ func Run(ctx context.Context) error {
 	voiceMetrics := voice.NewMediaCounters()
 	if hub, ok := voiceMedia.(*voice.MediaHub); ok {
 		hub.Metrics = voiceMetrics
+		defer hub.Close()
+		if voiceStore != nil {
+			go reconcileVoiceMedia(ctx, hub, voiceStore)
+		}
 	}
 	if voiceStore != nil {
 		if err := voiceStore.Ready(ctx); err != nil {
@@ -195,13 +199,19 @@ func Run(ctx context.Context) error {
 						slog.Error("voice lease sweep failed", "error", err)
 					} else if len(swept) > 0 {
 						slog.Warn("voice sessions terminated by lease expiry", "count", len(swept))
+						if hub, ok := voiceMedia.(*voice.MediaHub); ok {
+							for _, id := range swept {
+								hub.Disconnect(id)
+							}
+						}
 					}
 				}
 			}
 		}()
 		slog.Info("voice sessions enabled",
 			"store", storeKind,
-			"media_relay", getenv("UBAG_VOICE_AUDIO_RELAY_ADDR", voiceMediaRelayAddrDefault))
+			"relay_map", os.Getenv("UBAG_VOICE_AUDIO_RELAY_MAP") != "",
+			"relay_addr", os.Getenv("UBAG_VOICE_AUDIO_RELAY_ADDR"))
 	}
 
 	appJWTPublicKey, err := appJWTPublicKeyFromEnv()
@@ -1656,11 +1666,11 @@ func resolveWorkerScriptPath(value string) (string, error) {
 // replicas reusing the gateway's pool). The media hub dials the browser
 // container's audio relay over TCP (UBAG_VOICE_AUDIO_RELAY_ADDR).
 const (
-	voiceMediaRelayAddrDefault = "127.0.0.1:9099"
 	voiceSweepInterval         = 30 * time.Second
+	voiceReconcileInterval     = 2 * time.Second
 )
 
-func newVoiceComponentsFromEnv(ctx context.Context, storeKind string, db *sql.DB) (voice.Store, httpapi.MediaNegotiator, func(), error) {
+func newVoiceComponentsFromEnv(ctx context.Context, storeKind string, db *sql.DB, topo topology.Store) (voice.Store, httpapi.MediaNegotiator, func(), error) {
 	mode := strings.ToLower(strings.TrimSpace(getenv("UBAG_VOICE_STORE", "memory")))
 	if mode == "disabled" || mode == "off" {
 		return nil, nil, func() {}, nil
@@ -1668,13 +1678,13 @@ func newVoiceComponentsFromEnv(ctx context.Context, storeKind string, db *sql.DB
 	switch mode {
 	case "", "memory", "in_memory":
 		store := voice.NewMemoryStore()
-		return store, newVoiceMediaHub(), func() {}, nil
+		return store, newVoiceMediaHub(store, topo), func() {}, nil
 	case "postgres", "postgresql":
 		if storeKind != "postgres" || db == nil {
 			return nil, nil, func() {}, fmt.Errorf("UBAG_VOICE_STORE=postgres requires UBAG_GATEWAY_STORE=postgres")
 		}
 		store := voice.NewPostgresStore(db)
-		return store, newVoiceMediaHub(), func() {}, nil
+		return store, newVoiceMediaHub(store, topo), func() {}, nil
 	case "sqlite", "sqlite3":
 		dsn := strings.TrimSpace(getenv("UBAG_VOICE_SQLITE_DSN", voiceSQLiteDSNDefault))
 		if strings.HasPrefix(dsn, "~") {
@@ -1696,7 +1706,7 @@ func newVoiceComponentsFromEnv(ctx context.Context, storeKind string, db *sql.DB
 			_ = dbHandle.Close()
 			return nil, nil, func() {}, err
 		}
-		return store, newVoiceMediaHub(), func() { _ = dbHandle.Close() }, nil
+		return store, newVoiceMediaHub(store, topo), func() { _ = dbHandle.Close() }, nil
 	default:
 		return nil, nil, func() {}, fmt.Errorf("unsupported UBAG_VOICE_STORE %q", mode)
 	}
@@ -1704,16 +1714,97 @@ func newVoiceComponentsFromEnv(ctx context.Context, storeKind string, db *sql.DB
 
 const voiceSQLiteDSNDefault = "~/.ubag/voice.db"
 
-func newVoiceMediaHub() *voice.MediaHub {
-	return &voice.MediaHub{
-		Dialer: &voice.TCPRelayDialer{
-			Address: func(string) (string, error) {
-				addr := strings.TrimSpace(getenv("UBAG_VOICE_AUDIO_RELAY_ADDR", voiceMediaRelayAddrDefault))
-				if addr == "" {
-					return "", voice.ErrRelayUnavailable
+// newVoiceMediaHub builds the media hub and binds its lifecycle callbacks to
+// the shared store: a media path that ends on its own terminates the session
+// record (so its leases free immediately), and a client-side mute is
+// persisted.
+func newVoiceMediaHub(store voice.Store, topo topology.Store) *voice.MediaHub {
+	secret := []byte(strings.TrimSpace(os.Getenv("UBAG_VOICE_RELAY_SECRET")))
+	if len(secret) == 0 {
+		slog.Warn("UBAG_VOICE_RELAY_SECRET is not set: the audio relay refuses unauthenticated sessions, so live voice media is unavailable")
+	}
+	hub := &voice.MediaHub{
+		Dialer: &voice.TCPRelayDialer{Address: voiceRelayResolver(topo), Secret: secret},
+	}
+	hub.OnClosed = func(s voice.Session, reason string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := store.Terminate(ctx, s.TenantID, s.ID, time.Now().UTC(), reason); err != nil {
+			slog.Error("voice session terminate after media end failed", "session_id", s.ID, "error", err)
+		}
+	}
+	hub.OnMute = func(s voice.Session, muted bool) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := store.SetMuted(ctx, s.TenantID, s.ID, muted, time.Now().UTC()); err != nil {
+			slog.Warn("voice mute persist failed", "session_id", s.ID, "error", err)
+		}
+	}
+	return hub
+}
+
+// voiceRelayResolver maps a session's browser environment to its relay.
+// Order: the explicit UBAG_VOICE_AUDIO_RELAY_MAP ("instance=host:port,..."),
+// then the instance's own registered host (RemoteEndpoint host + the relay
+// port) so different environments resolve to different relays, then the
+// single-environment UBAG_VOICE_AUDIO_RELAY_ADDR. Anything else fails closed;
+// the relay itself additionally admits one authenticated session at a time.
+func voiceRelayResolver(topo topology.Store) func(voice.Session) (string, error) {
+	explicit := map[string]string{}
+	for _, pair := range strings.Split(os.Getenv("UBAG_VOICE_AUDIO_RELAY_MAP"), ",") {
+		if instance, addr, ok := strings.Cut(strings.TrimSpace(pair), "="); ok && instance != "" && addr != "" {
+			explicit[strings.TrimSpace(instance)] = strings.TrimSpace(addr)
+		}
+	}
+	port := strings.TrimSpace(getenv("UBAG_VOICE_AUDIO_RELAY_PORT", "9099"))
+	legacy := strings.TrimSpace(os.Getenv("UBAG_VOICE_AUDIO_RELAY_ADDR"))
+	return func(session voice.Session) (string, error) {
+		if addr := explicit[session.InstanceRef]; addr != "" {
+			return addr, nil
+		}
+		if topo != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			instances, err := topo.ListInstances(ctx, topology.InstanceFilter{TenantID: session.TenantID, Limit: 100})
+			if err == nil {
+				for _, instance := range instances {
+					if instance.InstanceID != session.InstanceRef || instance.RemoteEndpoint == "" {
+						continue
+					}
+					if u, err := url.Parse(instance.RemoteEndpoint); err == nil && u.Hostname() != "" {
+						return net.JoinHostPort(u.Hostname(), port), nil
+					}
 				}
-				return addr, nil
-			},
-		},
+			}
+		}
+		if legacy != "" {
+			return legacy, nil
+		}
+		return "", voice.ErrRelayUnavailable
+	}
+}
+
+// reconcileVoiceMedia ends any media connection whose session is no longer
+// live in the shared store — terminated or swept by ANY replica, or gone — so
+// stale audio can never survive resource reassignment even when the replica
+// that owns the connection did not perform the termination.
+func reconcileVoiceMedia(ctx context.Context, hub *voice.MediaHub, store voice.Store) {
+	ticker := time.NewTicker(voiceReconcileInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			for _, session := range hub.Sessions() {
+				current, found, err := store.Get(ctx, session.TenantID, session.ID)
+				if err != nil {
+					continue // store trouble is not evidence the session ended
+				}
+				if !found || !current.Status.Active() || (!current.LeaseExpires.IsZero() && current.LeaseExpires.Before(time.Now().UTC())) {
+					hub.Disconnect(session.ID)
+				}
+			}
+		}
 	}
 }

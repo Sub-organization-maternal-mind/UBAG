@@ -612,6 +612,14 @@ func (s *Server) handleVoiceSessionMute(w http.ResponseWriter, r *http.Request, 
 	if err := s.voice.SetMuted(r.Context(), tenantID, sessionID, *req.Muted, time.Now().UTC()); s.mapVoiceStoreError(w, r, err) {
 		return
 	}
+	// The mute flag must govern the microphone path itself, not just the
+	// record: tell the live media connection (best effort — a session with
+	// no media yet picks the flag up at connect).
+	if media, ok := s.voiceMedia.(interface {
+		SetMuted(sessionID string, muted bool) bool
+	}); ok {
+		media.SetMuted(sessionID, *req.Muted)
+	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "muted": *req.Muted, "kind": "voice_session_control"})
 }
 
