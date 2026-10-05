@@ -54,7 +54,8 @@
           { "code": "UBAG-AUTHZ-ROLE-DENIED-001",   "message": "Action denied: insufficient role",                      "retryable": false },
           { "code": "UBAG-AUTHZ-SCOPE-DENIED-002",  "message": "Action denied: missing required scope",                  "retryable": false },
           { "code": "UBAG-AUTHZ-ABAC-DENIED-003",   "message": "Action denied: ABAC predicate not satisfied",            "retryable": false },
-          { "code": "UBAG-AUTHZ-TENANT-MISMATCH-004","message": "Resource belongs to a different tenant",               "retryable": false }
+          { "code": "UBAG-AUTHZ-TENANT-MISMATCH-004","message": "Resource belongs to a different tenant",               "retryable": false },
+          { "code": "UBAG-AUTHZ-ORIGIN-005",        "message": "Browser origin is not allowed for voice sessions",       "retryable": false }
         ]
       },
       {
@@ -286,6 +287,15 @@
           { "code": "UBAG-INTERNAL-DB-003",       "message": "Internal database error",           "retryable": true },
           { "code": "UBAG-INTERNAL-QUEUE-004",    "message": "Internal queue error",              "retryable": true },
           { "code": "UBAG-INTERNAL-CRYPTO-005",   "message": "Internal cryptographic operation failed", "retryable": true }
+        ]
+      },
+      {
+        "prefix": "UBAG-OVERLOAD",
+        "category": "overload",
+        "description": "Gateway self-protection: concurrent-request and in-memory upload budgets. Always retryable; responses carry Retry-After and retry_after_ms.",
+        "codes": [
+          { "code": "UBAG-OVERLOAD-REQUESTS-001", "message": "The gateway is at its concurrent-request limit", "retryable": true },
+          { "code": "UBAG-OVERLOAD-UPLOAD-001",   "message": "The gateway is holding its maximum upload memory", "retryable": true }
         ]
       },
       {

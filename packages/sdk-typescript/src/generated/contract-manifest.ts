@@ -447,6 +447,10 @@ export const UBAG_ERROR_CODES = {
     "category": "authz",
     "retryable": false
   },
+  "UBAG-AUTHZ-ORIGIN-005": {
+    "category": "authz",
+    "retryable": false
+  },
   "UBAG-VALIDATION-API-VERSION-001": {
     "category": "validation",
     "retryable": false
@@ -951,6 +955,14 @@ export const UBAG_ERROR_CODES = {
     "category": "internal",
     "retryable": true
   },
+  "UBAG-OVERLOAD-REQUESTS-001": {
+    "category": "overload",
+    "retryable": true
+  },
+  "UBAG-OVERLOAD-UPLOAD-001": {
+    "category": "overload",
+    "retryable": true
+  },
   "UBAG-VOICE-UNSUPPORTED-001": {
     "category": "voice",
     "retryable": false
@@ -980,7 +992,7 @@ export const UBAG_ERROR_CODES = {
     "retryable": true
   }
 } as const;
-export const UBAG_ERROR_CATEGORIES = ["auth","authz","validation","quota","rate","queue","worker","browser","context","tab","concurrency","adapter","target","template","cache","webhook","artifact","sidecar","internal"] as const;
+export const UBAG_ERROR_CATEGORIES = ["auth","authz","validation","quota","rate","queue","worker","browser","context","tab","concurrency","adapter","target","template","cache","webhook","artifact","sidecar","voice","overload","internal"] as const;
 export const UBAG_JOB_STATUSES = {
   "created": {
     "terminal": false

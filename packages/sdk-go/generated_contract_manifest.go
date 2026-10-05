@@ -133,6 +133,7 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 	"UBAG-AUTHZ-SCOPE-DENIED-002": {Category: "authz", Retryable: false, RetryAfterMs: 0},
 	"UBAG-AUTHZ-ABAC-DENIED-003": {Category: "authz", Retryable: false, RetryAfterMs: 0},
 	"UBAG-AUTHZ-TENANT-MISMATCH-004": {Category: "authz", Retryable: false, RetryAfterMs: 0},
+	"UBAG-AUTHZ-ORIGIN-005": {Category: "authz", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-API-VERSION-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-API-VERSION-MISMATCH-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-API-VERSION-UNSUPPORTED-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
@@ -259,6 +260,8 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 	"UBAG-INTERNAL-DB-003": {Category: "internal", Retryable: true, RetryAfterMs: 0},
 	"UBAG-INTERNAL-QUEUE-004": {Category: "internal", Retryable: true, RetryAfterMs: 0},
 	"UBAG-INTERNAL-CRYPTO-005": {Category: "internal", Retryable: true, RetryAfterMs: 0},
+	"UBAG-OVERLOAD-REQUESTS-001": {Category: "overload", Retryable: true, RetryAfterMs: 0},
+	"UBAG-OVERLOAD-UPLOAD-001": {Category: "overload", Retryable: true, RetryAfterMs: 0},
 	"UBAG-VOICE-UNSUPPORTED-001": {Category: "voice", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VOICE-NOT-CONFIGURED-002": {Category: "voice", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VOICE-SESSION-LIMIT-003": {Category: "voice", Retryable: true, RetryAfterMs: 0},
@@ -327,6 +330,8 @@ var UbagErrorCategories = []string{
 	"webhook",
 	"artifact",
 	"sidecar",
+	"voice",
+	"overload",
 	"internal",
 }
 

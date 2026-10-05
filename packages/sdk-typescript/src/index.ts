@@ -23,8 +23,21 @@ export type {
   UbagAuditExportStats,
   UbagAuditRecord,
   UbagBrowserInstance,
+  UbagCapabilitiesResponse,
   UbagCapability,
+  UbagChatCompletionRequest,
+  UbagChatCompletionResponse,
+  UbagChatContentPart,
+  UbagChatMessage,
   UbagCreateVoiceSessionRequest,
+  UbagIceServer,
+  UbagVoiceCapability,
+  UbagVoiceControlResponse,
+  UbagVoiceSession,
+  UbagVoiceSessionConnectResponse,
+  UbagVoiceSessionListResponse,
+  UbagVoiceSessionResponse,
+  UbagVoiceSessionStatus,
   UbagBrowserInstanceListResponse,
   UbagBrowserTab,
   UbagBrowserTabListResponse,
@@ -92,6 +105,15 @@ export {
   UBAG_SDK_VERSION
 } from "./types.js";
 export { type RetryPolicy, DEFAULT_RETRY_POLICY, computeBackoff, shouldRetry } from "./retry.js";
+export { textPart, imagePart, audioPart } from "./multimodal.js";
+export {
+  VoiceMediaClient,
+  type VoiceControlEvent,
+  type VoiceDataChannelLike,
+  type VoiceMediaClientOptions,
+  type VoiceMicrophoneLike,
+  type VoicePeerConnectionLike
+} from "./voice-media.js";
 export { verifyWebhookSignature, type VerifyWebhookOptions } from "./webhooks.js";
 export { discoverSidecar, SIDECAR_URL, type DiscoverSidecarOptions } from "./sidecar.js";
 export { OfflineQueue, type StorageAdapter, type JobQueueEntry, type QueueSender } from "./offline.js";

@@ -47,10 +47,12 @@ import {
   type UbagVersionResponse,
   type UbagWebhookReplayRequest,
   type UbagWebhookReplayResponse,
-  type UbagVoiceCapability,
+  type UbagCapabilitiesResponse,
+  type UbagChatCompletionRequest,
+  type UbagChatCompletionResponse,
   type UbagVoiceControlResponse,
-  type UbagVoiceSession,
   type UbagVoiceSessionConnectResponse,
+  type UbagVoiceSessionListResponse,
   type UbagVoiceSessionResponse
 } from "./types.js";
 
@@ -256,8 +258,19 @@ export class UbagClient {
 
   // ── Capabilities (media + voice discovery) ──────────────────────────────
 
-  async listCapabilities(options: UbagRequestOptions = {}): Promise<UbagCollectionResponse> {
+  async listCapabilities(options: UbagRequestOptions = {}): Promise<UbagCapabilitiesResponse> {
     return this.request("GET", "/v1/capabilities", options);
+  }
+
+  // ── Multimodal chat (OpenAI-compatible facade) ──────────────────────────
+
+  /**
+   * Posts a (possibly multimodal) chat request; build content with
+   * textPart / imagePart / audioPart. Facade errors are OpenAI-shaped, so a
+   * failure is a UbagApiError with status/body but no UBAG envelope.
+   */
+  async createChatCompletion(request: UbagChatCompletionRequest, options: UbagRequestOptions = {}): Promise<UbagChatCompletionResponse> {
+    return this.request("POST", "/v1/openai/chat/completions", { ...options, body: request });
   }
 
   // ── Voice sessions ──────────────────────────────────────────────────────
@@ -269,8 +282,11 @@ export class UbagClient {
     return this.request("POST", "/v1/voice/sessions", { ...options, body: request });
   }
 
-  async listVoiceSessions(params: UbagListEventsParams & { target?: string } = {}, options: UbagRequestOptions = {}): Promise<UbagCollectionResponse> {
-    return this.request("GET", `/v1/voice/sessions${buildListQuery(params)}`, options);
+  async listVoiceSessions(params: UbagListEventsParams & { target?: string } = {}, options: UbagRequestOptions = {}): Promise<UbagVoiceSessionListResponse> {
+    const query = new URLSearchParams(buildListQuery(params));
+    addOptionalQuery(query, "target", params.target);
+    const qs = query.toString();
+    return this.request("GET", `/v1/voice/sessions${qs === "" ? "" : `?${qs}`}`, options);
   }
 
   async getVoiceSession(sessionId: string, options: UbagRequestOptions = {}): Promise<UbagVoiceSessionResponse> {

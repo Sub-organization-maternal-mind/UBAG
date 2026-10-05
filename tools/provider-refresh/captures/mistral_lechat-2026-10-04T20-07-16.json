@@ -1,0 +1,259 @@
+{
+  "id": "mistral_lechat",
+  "captured_at": "2026-10-04T20:07:16.904Z",
+  "cdp": "http://127.0.0.1:15924",
+  "opened_tab": false,
+  "url": "https://chat.mistral.ai/chat",
+  "title": "Vibe Chat",
+  "likely_login_wall": false,
+  "loginish": [
+    "Sign up"
+  ],
+  "composers": [
+    {
+      "tag": "div",
+      "placeholder": "Ask anything"
+    }
+  ],
+  "composer_neighborhood": [
+    {
+      "tag": "button",
+      "label": "Open settings menu",
+      "aria": {
+        "aria-label": "Open settings menu",
+        "aria-disabled": "false"
+      },
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "span",
+      "label": "Fast",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "button",
+      "label": "Voice Mode",
+      "aria": {
+        "aria-label": "Voice Mode",
+        "aria-disabled": "false",
+        "aria-busy": "false"
+      },
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    }
+  ],
+  "manifest_catalog_compare": {},
+  "menu_captures": {},
+  "selector_checks": {
+    "prompt_input": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "textarea[name='message']",
+          "count": 0
+        },
+        {
+          "sel": "textarea[placeholder*='Ask']",
+          "count": 0
+        },
+        {
+          "sel": "div[contenteditable='true']",
+          "count": 1
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "submit_button": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "button[type='submit']",
+          "count": 1
+        },
+        {
+          "sel": "button[aria-label*='Send']",
+          "count": 0
+        },
+        {
+          "sel": "button:has(svg[data-icon='send'])",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "response_container": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "div[data-message-author='assistant']",
+          "count": 0
+        },
+        {
+          "sel": "div.prose",
+          "count": 0
+        },
+        {
+          "sel": "div[class*='assistant'] div.markdown",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "authenticated_signal": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "textarea[name='message']",
+          "count": 0
+        },
+        {
+          "sel": "nav[aria-label*='chat']",
+          "count": 0
+        },
+        {
+          "sel": "button[aria-label*='account']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "login_signal": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "a[href*='login']",
+          "count": 0
+        },
+        {
+          "sel": "input[type='email']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": [
+        "text=Sign in"
+      ]
+    },
+    "streaming_indicator": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[aria-label*='Stop']",
+          "count": 0
+        },
+        {
+          "sel": ".animate-pulse",
+          "count": 0
+        },
+        {
+          "sel": "div[data-streaming='true']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "file_input": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "input[type='file']",
+          "count": 0
+        },
+        {
+          "sel": "input[accept*='audio']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    }
+  },
+  "desired_defaults": {},
+  "raw_controls": [
+    {
+      "tag": "div",
+      "role": "button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Toggle theme"
+    },
+    {
+      "tag": "div",
+      "role": "button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Privacy"
+    },
+    {
+      "tag": "button",
+      "label": "Sign in"
+    },
+    {
+      "tag": "button",
+      "label": "Sign up"
+    },
+    {
+      "tag": "button",
+      "label": "Open settings menu"
+    },
+    {
+      "tag": "button",
+      "label": "Fast"
+    },
+    {
+      "tag": "button",
+      "label": "Voice Mode"
+    },
+    {
+      "tag": "button",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "a",
+      "label": "Terms of Service"
+    },
+    {
+      "tag": "a",
+      "label": "Privacy Policy"
+    },
+    {
+      "tag": "button",
+      "label": "Accept and continue"
+    }
+  ]
+}

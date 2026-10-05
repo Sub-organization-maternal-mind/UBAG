@@ -1,0 +1,35 @@
+{
+  "started_at": "2026-10-04T20:06:31.375Z",
+  "providers": {
+    "gemini_web": {
+      "settings": [
+        {
+          "key": "model",
+          "kind": "choice",
+          "desired": "3.8 Flash",
+          "steps": [
+            "attempt1: open via button[data-test-id='bard-mode-menu-button']",
+            "attempt1: satisfied=true (checked {\"satisfied_when\":\"gem-menu-item.selected:has-text(\\\"{value}\\\")\",\"n\":1})"
+          ],
+          "state": "already_set"
+        },
+        {
+          "key": "thinking",
+          "kind": "toggle",
+          "desired": false,
+          "steps": [
+            "attempt1: open via button[data-test-id='bard-mode-menu-button']",
+            "attempt1: satisfied=true (checked {\"onWhen\":\"gem-menu-item.selected:has-text('Extended thinking')\",\"n\":0})"
+          ],
+          "state": "already_set"
+        }
+      ]
+    },
+    "mistral_lechat": {
+      "settings": []
+    },
+    "perplexity_web": {
+      "settings": []
+    }
+  }
+}

@@ -159,6 +159,10 @@ export default defineConfig({
           label: 'Guides',
           items: [
             { label: 'App Developer', slug: 'guides/app-developer' },
+            { label: 'Multimodal Requests', slug: 'guides/multimodal' },
+            { label: 'Live Voice', slug: 'guides/live-voice' },
+            { label: 'Voice Behind HTTPS and TURN', slug: 'guides/voice-remote-deployment' },
+            { label: 'Capability Discovery', slug: 'guides/capabilities' },
             { label: 'Adapter Author', slug: 'guides/adapter-author' },
             { label: 'Plugin Author', slug: 'guides/plugin-author' },
             { label: 'Operator', slug: 'guides/operator' },

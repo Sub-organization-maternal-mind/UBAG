@@ -1,0 +1,298 @@
+{
+  "id": "chatgpt_web",
+  "captured_at": "2026-10-04T20:03:29.461Z",
+  "cdp": "http://127.0.0.1:15924",
+  "opened_tab": true,
+  "url": "https://chatgpt.com/",
+  "title": "ChatGPT",
+  "likely_login_wall": false,
+  "loginish": [],
+  "composers": [
+    {
+      "tag": "textarea",
+      "placeholder": "Ask ChatGPT"
+    }
+  ],
+  "composer_neighborhood": [
+    {
+      "tag": "textarea",
+      "label": "Ask ChatGPT",
+      "aria": {
+        "aria-label": "Ask ChatGPT"
+      }
+    }
+  ],
+  "manifest_catalog_compare": {
+    "model": {
+      "kind": "choice",
+      "values": [
+        {
+          "value": "Latest",
+          "seen": false
+        },
+        {
+          "value": "GPT-5.6 Sol",
+          "seen": false
+        },
+        {
+          "value": "GPT-5.5",
+          "seen": false
+        },
+        {
+          "value": "Pro",
+          "seen": true
+        }
+      ]
+    },
+    "thinking": {
+      "kind": "choice",
+      "values": [
+        {
+          "value": "Instant",
+          "seen": false
+        },
+        {
+          "value": "Medium",
+          "seen": false
+        },
+        {
+          "value": "High",
+          "seen": false
+        }
+      ]
+    }
+  },
+  "selector_checks": {
+    "prompt_input": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "div[contenteditable='true'][data-virtualkeyboard='true']",
+          "count": 0
+        },
+        {
+          "sel": "div[contenteditable='true'][data-placeholder*='Ask']",
+          "count": 0
+        },
+        {
+          "sel": "#prompt-textarea",
+          "count": 0
+        },
+        {
+          "sel": "textarea[data-id='root']",
+          "count": 0
+        },
+        {
+          "sel": "textarea[placeholder*='Message']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "submit_button": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "button[aria-label*='Send']",
+          "count": 1
+        },
+        {
+          "sel": "button[data-testid='send-button']",
+          "count": 0
+        },
+        {
+          "sel": "button[type='submit']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "response_container": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "[data-content-search-unit-key*='assistant']",
+          "count": 0
+        },
+        {
+          "sel": "div[class*='MarkdownRoot']",
+          "count": 0
+        },
+        {
+          "sel": "[data-testid='chatgpt-writing-block']",
+          "count": 0
+        },
+        {
+          "sel": "div[data-message-author-role='assistant']",
+          "count": 0
+        },
+        {
+          "sel": "div.markdown.prose",
+          "count": 0
+        },
+        {
+          "sel": "[data-testid^='conversation-turn'] .markdown",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "authenticated_signal": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "#prompt-textarea",
+          "count": 0
+        },
+        {
+          "sel": "nav[aria-label='Chat history']",
+          "count": 0
+        },
+        {
+          "sel": "button[data-testid='profile-button']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "login_signal": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[data-testid='login-button']",
+          "count": 0
+        },
+        {
+          "sel": "a[href*='auth/login']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": [
+        "text=Log in"
+      ]
+    },
+    "streaming_indicator": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[data-testid='stop-button']",
+          "count": 0
+        },
+        {
+          "sel": "button[aria-label*='Stop']",
+          "count": 0
+        },
+        {
+          "sel": ".result-streaming",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "file_input": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "input[type='file'][multiple]",
+          "count": 3
+        },
+        {
+          "sel": "input[type='file']",
+          "count": 3
+        },
+        {
+          "sel": "input[accept*='audio']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "new_chat": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "a[data-testid='create-new-chat-button']",
+          "count": 0
+        },
+        {
+          "sel": "button[aria-label*='New chat']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": [
+        "a[href='/']:has-text('New chat')"
+      ]
+    }
+  },
+  "desired_defaults": {
+    "model": "GPT-5.6 Sol",
+    "thinking": "Medium"
+  },
+  "raw_controls": [
+    {
+      "tag": "button",
+      "label": "Home",
+      "expanded": "false"
+    },
+    {
+      "tag": "button",
+      "label": "Space",
+      "expanded": "false"
+    },
+    {
+      "tag": "button",
+      "label": "Scheduled",
+      "expanded": "false"
+    },
+    {
+      "tag": "button",
+      "label": "Plugins",
+      "expanded": "false"
+    },
+    {
+      "tag": "button",
+      "label": "Explore",
+      "expanded": "false",
+      "haspopup": "dialog"
+    },
+    {
+      "tag": "button",
+      "label": "Open profile menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "div",
+      "testid": "app-shell-header-context-menu-surface"
+    },
+    {
+      "tag": "button",
+      "label": "Temporary chat"
+    },
+    {
+      "tag": "button",
+      "label": "Chat"
+    },
+    {
+      "tag": "button",
+      "label": "Work"
+    },
+    {
+      "tag": "button",
+      "label": "Temporary chat"
+    },
+    {
+      "tag": "button",
+      "label": "Add files and more",
+      "expanded": "false"
+    },
+    {
+      "tag": "button",
+      "label": "Dictate"
+    },
+    {
+      "tag": "button",
+      "label": "Send"
+    }
+  ]
+}

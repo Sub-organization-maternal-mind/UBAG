@@ -1,0 +1,88 @@
+{
+  "started_at": "2026-10-04T20:05:25.257Z",
+  "providers": {
+    "chatgpt_web": {
+      "settings": [
+        {
+          "key": "model",
+          "kind": "choice",
+          "desired": "GPT-5.6 Sol",
+          "steps": [
+            "attempt1: open via button[aria-label*='Select ChatGPT model']",
+            "attempt1: satisfied=false (checked {\"satisfied_when\":\"[role='menuitemradio'][aria-checked='true']:has-text(\\\"{value}\\\")\",\"n\":0})",
+            "attempt1: apply_click via [role='menuitemradio']:has-text(\"GPT-5.6 Sol\")",
+            "attempt2: open via button[aria-label*='Select ChatGPT model']",
+            "attempt2: satisfied=true (checked {\"satisfied_when\":\"[role='menuitemradio'][aria-checked='true']:has-text(\\\"{value}\\\")\",\"n\":1})"
+          ],
+          "state": "set"
+        },
+        {
+          "key": "thinking",
+          "kind": "choice",
+          "desired": "Medium",
+          "steps": [
+            "attempt1: open FAILED (no candidate visible)",
+            "attempt1: satisfied=false (checked {\"satisfied_when\":\"[aria-label*='Thinking effort']:has-text(\\\"{value}\\\")\",\"n\":0})",
+            "attempt1: apply_click FAILED",
+            "attempt2: open FAILED (no candidate visible)",
+            "attempt2: satisfied=false (checked {\"satisfied_when\":\"[aria-label*='Thinking effort']:has-text(\\\"{value}\\\")\",\"n\":0})",
+            "attempt2: apply_click FAILED",
+            "attempt3: open FAILED (no candidate visible)",
+            "attempt3: satisfied=false (checked {\"satisfied_when\":\"[aria-label*='Thinking effort']:has-text(\\\"{value}\\\")\",\"n\":0})"
+          ],
+          "state": "unverified"
+        }
+      ]
+    },
+    "deepseek_web": {
+      "settings": [
+        {
+          "key": "deepthink",
+          "kind": "toggle",
+          "desired": true,
+          "steps": [
+            "attempt1: satisfied=true (checked {\"onWhen\":\"div.ds-toggle-button[aria-pressed='true']:has-text('DeepThink')\",\"n\":1})"
+          ],
+          "state": "already_set"
+        }
+      ]
+    },
+    "duckai_web": {
+      "settings": [
+        {
+          "key": "model",
+          "kind": "choice",
+          "desired": "GPT-5.6 Luna",
+          "steps": [
+            "attempt1: open via button[data-testid='model-picker-button']",
+            "attempt1: satisfied=false (checked {\"satisfied_when\":\"[role='menuitemradio'][aria-checked='true']:has-text(\\\"{value}\\\")\",\"n\":0})",
+            "attempt1: apply_click via [role='menuitemradio']:has-text(\"GPT-5.6 Luna\")",
+            "attempt2: open via button[data-testid='model-picker-button']",
+            "attempt2: satisfied=true (checked {\"satisfied_when\":\"[role='menuitemradio'][aria-checked='true']:has-text(\\\"{value}\\\")\",\"n\":1})"
+          ],
+          "state": "set"
+        },
+        {
+          "key": "reasoning",
+          "kind": "choice",
+          "desired": "Reasoning",
+          "steps": [
+            "attempt1: open via button[data-testid='duckai-reasoning-button']",
+            "attempt1: satisfied=true (checked {\"satisfied_when\":\"[role='menuitemradio'][aria-checked='true']:has-text(\\\"{value}\\\")\",\"n\":1})"
+          ],
+          "state": "already_set"
+        },
+        {
+          "key": "web_search",
+          "kind": "toggle",
+          "desired": false,
+          "steps": [
+            "attempt1: open via button[data-testid='duckai-tools-button']",
+            "attempt1: satisfied=true (checked {\"onWhen\":\"[aria-checked='true']:has-text(\\\"Web Search\\\")\",\"n\":0})"
+          ],
+          "state": "already_set"
+        }
+      ]
+    }
+  }
+}

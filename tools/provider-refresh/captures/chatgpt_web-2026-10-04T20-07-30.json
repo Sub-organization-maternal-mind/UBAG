@@ -1,0 +1,1038 @@
+{
+  "id": "chatgpt_web",
+  "captured_at": "2026-10-04T20:07:30.122Z",
+  "cdp": "http://127.0.0.1:15924",
+  "opened_tab": false,
+  "url": "https://chatgpt.com/",
+  "title": "ChatGPT",
+  "likely_login_wall": false,
+  "loginish": [],
+  "composers": [
+    {
+      "tag": "div",
+      "placeholder": "Ask ChatGPT"
+    }
+  ],
+  "composer_neighborhood": [
+    {
+      "tag": "div",
+      "role": "presentation",
+      "label": "Thinking effort5.6 Medium",
+      "aria": {}
+    },
+    {
+      "tag": "button",
+      "label": "Add files and more",
+      "aria": {
+        "aria-label": "Add files and more",
+        "aria-expanded": "false"
+      },
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "div",
+      "role": "presentation",
+      "aria": {}
+    },
+    {
+      "tag": "div",
+      "role": "textbox",
+      "label": "Ask ChatGPT",
+      "aria": {
+        "aria-multiline": "true",
+        "aria-label": "Ask ChatGPT"
+      }
+    },
+    {
+      "tag": "button",
+      "label": "Select ChatGPT model",
+      "aria": {
+        "aria-label": "Select ChatGPT model",
+        "aria-haspopup": "menu",
+        "aria-expanded": "false"
+      },
+      "cursor": true
+    },
+    {
+      "tag": "span",
+      "label": "Thinking effort",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "span",
+      "label": "5.6",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "button",
+      "label": "Dictate",
+      "aria": {
+        "aria-busy": "false",
+        "aria-label": "Dictate"
+      },
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "button",
+      "label": "Start Voice",
+      "aria": {
+        "aria-label": "Start Voice"
+      },
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    },
+    {
+      "tag": "path",
+      "aria": {},
+      "cursor": true
+    }
+  ],
+  "manifest_catalog_compare": {
+    "model": {
+      "kind": "choice",
+      "values": [
+        {
+          "value": "Latest",
+          "seen": true
+        },
+        {
+          "value": "GPT-5.6 Sol",
+          "seen": true
+        },
+        {
+          "value": "GPT-5.5",
+          "seen": true
+        },
+        {
+          "value": "Pro",
+          "seen": true
+        }
+      ]
+    },
+    "thinking": {
+      "kind": "choice",
+      "values": [
+        {
+          "value": "Instant",
+          "seen": false
+        },
+        {
+          "value": "Medium",
+          "seen": false
+        },
+        {
+          "value": "High",
+          "seen": false
+        }
+      ]
+    }
+  },
+  "menu_captures": {
+    "Select ChatGPT model": {
+      "roles": [
+        {
+          "role": "menuitem",
+          "label": "Select model"
+        },
+        {
+          "role": "menuitem",
+          "label": "Reset to default"
+        },
+        {
+          "role": "menuitem",
+          "label": "Power"
+        },
+        {
+          "role": "menuitemradio",
+          "label": "Latest",
+          "checked": "false"
+        },
+        {
+          "role": "menuitemradio",
+          "label": "GPT-5.6 Sol",
+          "checked": "true"
+        },
+        {
+          "role": "menuitemradio",
+          "label": "GPT-5.5Leaving on October 14",
+          "checked": "false"
+        }
+      ],
+      "generic": [
+        {
+          "role": "button",
+          "label": "Home"
+        },
+        {
+          "role": "button",
+          "label": "Space"
+        },
+        {
+          "role": "button",
+          "label": "Scheduled"
+        },
+        {
+          "role": "button",
+          "label": "Plugins"
+        },
+        {
+          "role": "button",
+          "label": "Explore"
+        },
+        {
+          "role": "button",
+          "label": "Sites"
+        },
+        {
+          "role": "button",
+          "label": "Open profile menu"
+        },
+        {
+          "role": "navigation",
+          "label": "Home"
+        },
+        {
+          "role": "status",
+          "label": "A workspace member hit a limitTurn on auto-reload to automatically add credits and prevent"
+        },
+        {
+          "role": "button",
+          "label": "Turn on auto-reload"
+        },
+        {
+          "role": "div",
+          "testid": "app-shell-header-context-menu-surface"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "group",
+          "label": "Composer mode"
+        },
+        {
+          "role": "button",
+          "label": "Chat"
+        },
+        {
+          "role": "button",
+          "label": "Work"
+        },
+        {
+          "role": "main",
+          "label": "What’s on the agenda today?What’s on the agenda today?Dr Ahmed shared 100 testimonials. Bu"
+        },
+        {
+          "role": "button",
+          "label": "Dr Ahmed shared 100 testimonials. Build a clean asset index."
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "button",
+          "label": "Speaking PRs overlap on Oct 4. Compare the clean merge path."
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "button",
+          "label": "✨Finish the three-piece suit portrait edit"
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "presentation",
+          "label": "Thinking effortThinking effort"
+        },
+        {
+          "role": "button",
+          "label": "Add files and more"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "textbox",
+          "label": "Ask ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Select ChatGPT model"
+        },
+        {
+          "role": "button",
+          "label": "Dictate"
+        },
+        {
+          "role": "button",
+          "label": "Start Voice"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "menu",
+          "label": "5.6MediumConsumes usage limits fasterMedium, 2 of 5.Use Left and Right arrow keys to adjus"
+        },
+        {
+          "role": "menuitem",
+          "label": "Select model"
+        },
+        {
+          "role": "menuitem",
+          "label": "Reset to default"
+        },
+        {
+          "role": "status",
+          "label": "Medium, 2 of 5."
+        },
+        {
+          "role": "menuitem",
+          "label": "Power"
+        },
+        {
+          "role": "slider"
+        },
+        {
+          "role": "menuitemradio",
+          "label": "Latest",
+          "checked": "false"
+        },
+        {
+          "role": "menuitemradio",
+          "label": "GPT-5.6 Sol",
+          "checked": "true"
+        },
+        {
+          "role": "menuitemradio",
+          "label": "GPT-5.5Leaving on October 14",
+          "checked": "false"
+        }
+      ]
+    },
+    "Explore": {
+      "roles": [],
+      "generic": [
+        {
+          "role": "button",
+          "label": "Home"
+        },
+        {
+          "role": "button",
+          "label": "Space"
+        },
+        {
+          "role": "button",
+          "label": "Scheduled"
+        },
+        {
+          "role": "button",
+          "label": "Plugins"
+        },
+        {
+          "role": "button",
+          "label": "Explore"
+        },
+        {
+          "role": "button",
+          "label": "Sites"
+        },
+        {
+          "role": "button",
+          "label": "Open profile menu"
+        },
+        {
+          "role": "navigation",
+          "label": "Home"
+        },
+        {
+          "role": "status",
+          "label": "A workspace member hit a limitTurn on auto-reload to automatically add credits and prevent"
+        },
+        {
+          "role": "button",
+          "label": "Turn on auto-reload"
+        },
+        {
+          "role": "div",
+          "testid": "app-shell-header-context-menu-surface"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "group",
+          "label": "Composer mode"
+        },
+        {
+          "role": "button",
+          "label": "Chat"
+        },
+        {
+          "role": "button",
+          "label": "Work"
+        },
+        {
+          "role": "main",
+          "label": "What’s on the agenda today?What’s on the agenda today?Dr Ahmed shared 100 testimonials. Bu"
+        },
+        {
+          "role": "button",
+          "label": "Dr Ahmed shared 100 testimonials. Build a clean asset index."
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "button",
+          "label": "Speaking PRs overlap on Oct 4. Compare the clean merge path."
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "button",
+          "label": "✨Finish the three-piece suit portrait edit"
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "presentation",
+          "label": "Thinking effort5.6 Medium"
+        },
+        {
+          "role": "button",
+          "label": "Add files and more"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "textbox",
+          "label": "Ask ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Select ChatGPT model"
+        },
+        {
+          "role": "button",
+          "label": "Dictate"
+        },
+        {
+          "role": "button",
+          "label": "Start Voice"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "dialog",
+          "label": "Explore"
+        },
+        {
+          "role": "group",
+          "label": "Projects"
+        },
+        {
+          "role": "button",
+          "label": "Projects"
+        },
+        {
+          "role": "button",
+          "label": "Pin to sidebar"
+        },
+        {
+          "role": "group",
+          "label": "Images"
+        },
+        {
+          "role": "button",
+          "label": "Images"
+        },
+        {
+          "role": "button",
+          "label": "Pin to sidebar"
+        },
+        {
+          "role": "group",
+          "label": "Sites"
+        },
+        {
+          "role": "button",
+          "label": "Sites"
+        },
+        {
+          "role": "button",
+          "label": "Unpin from sidebar"
+        },
+        {
+          "role": "group",
+          "label": "Maps"
+        },
+        {
+          "role": "button",
+          "label": "Maps"
+        },
+        {
+          "role": "button",
+          "label": "Pin to sidebar"
+        },
+        {
+          "role": "group",
+          "label": "GPTs"
+        },
+        {
+          "role": "button",
+          "label": "GPTs"
+        },
+        {
+          "role": "button",
+          "label": "Pin to sidebar"
+        },
+        {
+          "role": "group",
+          "label": "Agents"
+        },
+        {
+          "role": "button",
+          "label": "Agents"
+        },
+        {
+          "role": "button",
+          "label": "Pin to sidebar"
+        },
+        {
+          "role": "group",
+          "label": "Codex"
+        },
+        {
+          "role": "button",
+          "label": "Codex"
+        },
+        {
+          "role": "button",
+          "label": "Pin to sidebar"
+        }
+      ]
+    },
+    "Open profile menu": {
+      "roles": [
+        {
+          "role": "menuitem",
+          "label": "OET With Dr HeshamBusiness"
+        },
+        {
+          "role": "menuitem",
+          "label": "Workspace settings"
+        },
+        {
+          "role": "menuitem",
+          "label": "Personalization"
+        },
+        {
+          "role": "menuitem",
+          "label": "Profile"
+        },
+        {
+          "role": "menuitem",
+          "label": "Settings"
+        },
+        {
+          "role": "menuitem",
+          "label": "Help"
+        },
+        {
+          "role": "menuitem",
+          "label": "Log out"
+        }
+      ],
+      "generic": [
+        {
+          "role": "button",
+          "label": "Home"
+        },
+        {
+          "role": "button",
+          "label": "Space"
+        },
+        {
+          "role": "button",
+          "label": "Scheduled"
+        },
+        {
+          "role": "button",
+          "label": "Plugins"
+        },
+        {
+          "role": "button",
+          "label": "Explore"
+        },
+        {
+          "role": "button",
+          "label": "Sites"
+        },
+        {
+          "role": "button",
+          "label": "Open profile menu"
+        },
+        {
+          "role": "navigation",
+          "label": "Home"
+        },
+        {
+          "role": "status",
+          "label": "A workspace member hit a limitTurn on auto-reload to automatically add credits and prevent"
+        },
+        {
+          "role": "button",
+          "label": "Turn on auto-reload"
+        },
+        {
+          "role": "div",
+          "testid": "app-shell-header-context-menu-surface"
+        },
+        {
+          "role": "button",
+          "label": "Temporary chat"
+        },
+        {
+          "role": "group",
+          "label": "Composer mode"
+        },
+        {
+          "role": "button",
+          "label": "Chat"
+        },
+        {
+          "role": "button",
+          "label": "Work"
+        },
+        {
+          "role": "main",
+          "label": "What’s on the agenda today?What’s on the agenda today?Dr Ahmed shared 100 testimonials. Bu"
+        },
+        {
+          "role": "button",
+          "label": "Dr Ahmed shared 100 testimonials. Build a clean asset index."
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "button",
+          "label": "Speaking PRs overlap on Oct 4. Compare the clean merge path."
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "button",
+          "label": "✨Finish the three-piece suit portrait edit"
+        },
+        {
+          "role": "button",
+          "label": "Dismiss suggestion"
+        },
+        {
+          "role": "presentation",
+          "label": "Thinking effort5.6 Medium"
+        },
+        {
+          "role": "button",
+          "label": "Add files and more"
+        },
+        {
+          "role": "presentation"
+        },
+        {
+          "role": "textbox",
+          "label": "Ask ChatGPT"
+        },
+        {
+          "role": "button",
+          "label": "Select ChatGPT model"
+        },
+        {
+          "role": "button",
+          "label": "Dictate"
+        },
+        {
+          "role": "button",
+          "label": "Start Voice"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "status"
+        },
+        {
+          "role": "menu",
+          "label": "OET With Dr HeshamBusinessWorkspace settings Personalization Profile SettingsHelp Log out"
+        },
+        {
+          "role": "menuitem",
+          "label": "OET With Dr HeshamBusiness"
+        },
+        {
+          "role": "span",
+          "label": "OET With Dr HeshamBusiness",
+          "testid": "workspace-switcher-trigger"
+        },
+        {
+          "role": "menuitem",
+          "label": "Workspace settings"
+        },
+        {
+          "role": "menuitem",
+          "label": "Personalization"
+        },
+        {
+          "role": "menuitem",
+          "label": "Profile"
+        },
+        {
+          "role": "menuitem",
+          "label": "Settings"
+        },
+        {
+          "role": "menuitem",
+          "label": "Help"
+        },
+        {
+          "role": "menuitem",
+          "label": "Log out"
+        }
+      ]
+    }
+  },
+  "selector_checks": {
+    "prompt_input": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "div[contenteditable='true'][data-virtualkeyboard='true']",
+          "count": 1
+        },
+        {
+          "sel": "div[contenteditable='true'][data-placeholder*='Ask']",
+          "count": 0
+        },
+        {
+          "sel": "#prompt-textarea",
+          "count": 0
+        },
+        {
+          "sel": "textarea[data-id='root']",
+          "count": 0
+        },
+        {
+          "sel": "textarea[placeholder*='Message']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "submit_button": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[aria-label*='Send']",
+          "count": 0
+        },
+        {
+          "sel": "button[data-testid='send-button']",
+          "count": 0
+        },
+        {
+          "sel": "button[type='submit']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "response_container": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "[data-content-search-unit-key*='assistant']",
+          "count": 0
+        },
+        {
+          "sel": "div[class*='MarkdownRoot']",
+          "count": 0
+        },
+        {
+          "sel": "[data-testid='chatgpt-writing-block']",
+          "count": 0
+        },
+        {
+          "sel": "div[data-message-author-role='assistant']",
+          "count": 0
+        },
+        {
+          "sel": "div.markdown.prose",
+          "count": 0
+        },
+        {
+          "sel": "[data-testid^='conversation-turn'] .markdown",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "authenticated_signal": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "#prompt-textarea",
+          "count": 0
+        },
+        {
+          "sel": "nav[aria-label='Chat history']",
+          "count": 0
+        },
+        {
+          "sel": "button[data-testid='profile-button']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "login_signal": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[data-testid='login-button']",
+          "count": 0
+        },
+        {
+          "sel": "a[href*='auth/login']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": [
+        "text=Log in"
+      ]
+    },
+    "streaming_indicator": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[data-testid='stop-button']",
+          "count": 0
+        },
+        {
+          "sel": "button[aria-label*='Stop']",
+          "count": 0
+        },
+        {
+          "sel": ".result-streaming",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "file_input": {
+      "matched": true,
+      "css": [
+        {
+          "sel": "input[type='file'][multiple]",
+          "count": 3
+        },
+        {
+          "sel": "input[type='file']",
+          "count": 3
+        },
+        {
+          "sel": "input[accept*='audio']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "new_chat": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "a[data-testid='create-new-chat-button']",
+          "count": 0
+        },
+        {
+          "sel": "button[aria-label*='New chat']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": [
+        "a[href='/']:has-text('New chat')"
+      ]
+    }
+  },
+  "desired_defaults": {
+    "model": "GPT-5.6 Sol",
+    "thinking": "Medium"
+  },
+  "raw_controls": [
+    {
+      "tag": "a",
+      "label": "Skip to content"
+    },
+    {
+      "tag": "button",
+      "label": "Home",
+      "expanded": "false"
+    },
+    {
+      "tag": "button",
+      "label": "Space",
+      "expanded": "false"
+    },
+    {
+      "tag": "button",
+      "label": "Scheduled",
+      "expanded": "false"
+    },
+    {
+      "tag": "button",
+      "label": "Plugins",
+      "expanded": "false"
+    },
+    {
+      "tag": "button",
+      "label": "Explore",
+      "expanded": "false",
+      "haspopup": "dialog"
+    },
+    {
+      "tag": "button",
+      "label": "Sites",
+      "expanded": "false"
+    },
+    {
+      "tag": "button",
+      "label": "Open profile menu",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Turn on auto-reload"
+    },
+    {
+      "tag": "div",
+      "testid": "app-shell-header-context-menu-surface"
+    },
+    {
+      "tag": "button",
+      "label": "Temporary chat"
+    },
+    {
+      "tag": "button",
+      "label": "Chat"
+    },
+    {
+      "tag": "button",
+      "label": "Work"
+    },
+    {
+      "tag": "button",
+      "label": "Dr Ahmed shared 100 testimonials. Build a clean asset index."
+    },
+    {
+      "tag": "button",
+      "label": "Dismiss suggestion"
+    },
+    {
+      "tag": "button",
+      "label": "Speaking PRs overlap on Oct 4. Compare the clean merge path."
+    },
+    {
+      "tag": "button",
+      "label": "Dismiss suggestion"
+    },
+    {
+      "tag": "button",
+      "label": "✨Finish the three-piece suit portrait edit"
+    },
+    {
+      "tag": "button",
+      "label": "Dismiss suggestion"
+    },
+    {
+      "tag": "button",
+      "label": "Add files and more",
+      "expanded": "false"
+    },
+    {
+      "tag": "button",
+      "label": "Select ChatGPT model",
+      "expanded": "false",
+      "haspopup": "menu"
+    },
+    {
+      "tag": "button",
+      "label": "Dictate"
+    },
+    {
+      "tag": "button",
+      "label": "Start Voice"
+    }
+  ]
+}

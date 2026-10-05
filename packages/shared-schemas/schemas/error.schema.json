@@ -38,6 +38,8 @@
             "webhook",
             "artifact",
             "sidecar",
+            "voice",
+            "overload",
             "internal"
           ]
         },

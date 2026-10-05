@@ -78,8 +78,14 @@ paths:
         manifest's voice block), and the number of available voice accounts
         (topology contexts whose last worker-detected login state is
         authenticated). Advertisement is not a login guarantee:
-        manual_login_required stays authoritative. Requires the job:read
-        action.
+        manual_login_required stays authoritative. Each record's voice object
+        publishes supported (adapter declares live voice), configured (this
+        gateway has the voice store, media plane and provider activation
+        wired), verified (true only when a live acceptance run is recorded;
+        verified_note carries the text), available (configured and a free
+        authenticated account+environment exists now) and free_resources
+        separately; live (= supported) and available_accounts
+        (= free_resources) are legacy aliases. Requires the job:read action.
       parameters:
         - $ref: "#/components/parameters/UbagApiVersion"
       responses:
@@ -175,7 +181,12 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
         "429":
-          description: Voice-session budget reached (UBAG-VOICE-SESSION-LIMIT-003 or UBAG-VOICE-QUEUE-FULL-004).
+          description: Voice-session budget reached (UBAG-VOICE-SESSION-LIMIT-003 or UBAG-VOICE-QUEUE-FULL-004). Carries a Retry-After header and retry_after_ms.
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying.
+              schema:
+                type: integer
           content:
             application/json:
               schema:
@@ -255,8 +266,16 @@ paths:
         Claims leases first when the session is queued (409 with retry
         guidance when nothing is free), hands the SDP offer to the gateway's
         media plane, and returns the answer with every ICE candidate
-        embedded (HTTP-only signaling) plus a short-lived session-scoped
-        media credential. Requires the job:create action.
+        embedded (HTTP-only signaling), the ICE servers to configure, and a
+        short-lived media credential scoped to tenant+app+session. The
+        client must send it as the first message on the "control" data
+        channel ({"op":"auth","credential":...}); control commands are
+        ignored until authenticated. Requires the job:create action. Every
+        action under /v1/voice/sessions/{session_id}/ (connect, mute, renew,
+        terminate) is POST-only (405 with Allow otherwise); oversized bodies
+        answer 413; a browser request with a disallowed Origin answers 403
+        UBAG-AUTHZ-ORIGIN-005 (server-to-server calls send no Origin). Every
+        429/503 carries a Retry-After header and retry_after_ms.
       parameters:
         - $ref: "#/components/parameters/UbagApiVersion"
         - name: session_id
@@ -343,8 +362,9 @@ paths:
       description: >-
         Extends the lease window so the sweeper does not reap a live
         session. A client that stops heart-beating without terminating
-        cannot pin a provider account longer than the TTL. Requires the
-        job:create action.
+        cannot pin a provider account longer than the TTL. An expired or
+        terminated session cannot be renewed (409). Requires the job:create
+        action.
       parameters:
         - $ref: "#/components/parameters/UbagApiVersion"
         - name: session_id
@@ -3973,6 +3993,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    Conflict:
+      description: The request conflicts with the resource's current state (for example an expired or terminated voice session).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
     MethodNotAllowed:
       description: The route exists but does not allow this HTTP method.
       content:
@@ -4082,6 +4108,14 @@ components:
           type: integer
           minimum: 30
           maximum: 3600
+        mode:
+          description: >-
+            "live" (default) is a two-way voice session holding exclusive
+            leases; "utterance" is the separately selected audio-in/text-out
+            mode backed by a transcription job (response carries job_id).
+            A live session is never substituted with an utterance job.
+          type: string
+          enum: [live, utterance]
     VoiceSessionResponse:
       type: object
       additionalProperties: false
@@ -4090,6 +4124,22 @@ components:
         kind:
           type: string
           enum: [voice_session]
+        session_id:
+          type: string
+        target:
+          type: string
+        status:
+          type: string
+          enum: [queued, connecting, connected, terminated]
+        mode:
+          type: string
+          enum: [live, utterance]
+        job_id:
+          description: Backing transcription job (utterance mode only).
+          type: string
+        next:
+          description: Human-readable next step (utterance mode only).
+          type: string
         session:
           type: object
           additionalProperties: true
@@ -4123,6 +4173,24 @@ components:
         media_credential_expires_ms:
           type: integer
           format: int64
+        ice_servers:
+          description: >-
+            STUN/TURN servers (TURN with time-limited credentials) the client
+            must configure its RTCPeerConnection with.
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [urls]
+            properties:
+              urls:
+                type: array
+                items:
+                  type: string
+              username:
+                type: string
+              credential:
+                type: string
     CollectionResponse:
       type: object
       additionalProperties: false

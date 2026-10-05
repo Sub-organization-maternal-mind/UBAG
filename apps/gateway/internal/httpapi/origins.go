@@ -51,7 +51,7 @@ func (s *Server) withVoiceOriginPolicy(next http.Handler) http.Handler {
 			return
 		}
 		if !s.originAllowed(r, origin) {
-			s.writeError(w, r, http.StatusForbidden, authzError("UBAG-AUTH-ORIGIN-001", "origin is not allowed for voice sessions"))
+			s.writeError(w, r, http.StatusForbidden, authzError("UBAG-AUTHZ-ORIGIN-005", "origin is not allowed for voice sessions"))
 			return
 		}
 		w.Header().Set("Access-Control-Allow-Origin", origin)

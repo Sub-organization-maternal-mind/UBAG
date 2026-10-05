@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UBAG live voice example</title>
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 36rem; margin: 2rem auto; padding: 0 1rem; }
+    button { font: inherit; padding: .5rem 1rem; margin-right: .5rem; }
+    #log { background: #f4f1ea; padding: .75rem; min-height: 8rem; white-space: pre-wrap; font: 13px/1.4 ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <h1>Live voice</h1>
+  <p>
+    The page talks only to this app's backend (<code>voice-backend.mjs</code>), which holds the UBAG API key.
+    The browser receives the SDP answer, ICE servers and a short-lived media credential, never the key.
+  </p>
+  <p>
+    <label>Target <input id="target" value="chatgpt_web"></label>
+  </p>
+  <p>
+    <button id="start">Start</button>
+    <button id="mute" disabled aria-pressed="false">Mute</button>
+    <button id="stop" disabled>Hang up</button>
+  </p>
+  <p id="status" role="status" aria-live="polite">Idle</p>
+  <audio id="remote" autoplay></audio>
+  <pre id="log" aria-label="Event log"></pre>
+
+  <script type="module">
+    // Served by voice-backend.mjs from the built SDK. In your own app: import from "@ubag/sdk".
+    import { VoiceMediaClient } from "/sdk/index.js";
+
+    const $ = (id) => document.getElementById(id);
+    const log = (message) => { $("log").textContent += message + "\n"; };
+    const setStatus = (text) => { $("status").textContent = text; };
+
+    async function api(path, body) {
+      const response = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
+      const data = await response.json();
+      if (!response.ok) {
+        const wait = data.retry_after_ms ? ` (retry in ${Math.ceil(data.retry_after_ms / 1000)}s)` : "";
+        throw new Error(`${response.status} ${data.error?.message ?? data.error ?? "request failed"}${wait}`);
+      }
+      return data;
+    }
+
+    let media;
+    let sessionId;
+    let muted = false;
+
+    async function start() {
+      $("start").disabled = true;
+      try {
+        setStatus("Requesting microphone...");
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        setStatus("Reserving a voice session...");
+        const session = await api("/api/voice/sessions", { target: $("target").value });
+        sessionId = session.session_id;
+        log(`session ${sessionId} (${session.status})`);
+
+        media = new VoiceMediaClient({
+          stream,
+          iceServers: [{ urls: ["stun:stun.l.google.com:19302"] }], // replaced by the gateway's ice_servers after connect
+          exchange: (sdpOffer) => api(`/api/voice/sessions/${sessionId}/connect`, { sdp_offer: sdpOffer }),
+          onTrack: (event) => { $("remote").srcObject = event.streams[0]; },
+          onEvent: (event) => {
+            log(JSON.stringify(event));
+            if (event.event === "status") setStatus(`Gateway media: ${event.state}`);
+            if (event.event === "error") setStatus(`Control error: ${event.reason}`);
+          },
+        });
+
+        setStatus("Connecting...");
+        await media.connect();
+        await media.ready; // gateway accepted the media credential on the control channel
+        setStatus("Connected. Speak; the provider's reply plays here. Barge-in is the provider's own.");
+        $("mute").disabled = false;
+        $("stop").disabled = false;
+      } catch (error) {
+        log(`error: ${error.message}`);
+        setStatus(`Failed: ${error.message}`);
+        await stop();
+      }
+    }
+
+    async function stop() {
+      media?.close();
+      media = undefined;
+      if (sessionId) {
+        await api(`/api/voice/sessions/${sessionId}/terminate`).catch((e) => log(`terminate: ${e.message}`));
+        sessionId = undefined;
+      }
+      muted = false;
+      $("mute").disabled = true;
+      $("mute").textContent = "Mute";
+      $("mute").setAttribute("aria-pressed", "false");
+      $("stop").disabled = true;
+      $("start").disabled = false;
+    }
+
+    $("start").addEventListener("click", start);
+    $("stop").addEventListener("click", () => { setStatus("Ended"); stop(); });
+    $("mute").addEventListener("click", () => {
+      muted = !muted;
+      media.mute(muted);
+      $("mute").textContent = muted ? "Unmute" : "Mute";
+      $("mute").setAttribute("aria-pressed", String(muted));
+    });
+    // Free the provider account if the tab closes mid-call (the lease also lapses on its own).
+    addEventListener("pagehide", () => { if (sessionId) navigator.sendBeacon?.(`/api/voice/sessions/${sessionId}/terminate`, new Blob(["{}"], { type: "application/json" })); });
+  </script>
+</body>
+</html>

@@ -35,6 +35,14 @@ The full UBAG Gateway REST API reference is available in machine-readable OpenAP
 | GET | /v1/openai/models | List facade model IDs (`target` and `target\|setting`) |
 | POST | /v1/openai/audio/transcriptions | Transcribe audio via a held native job (`{text, ubag_job_id}`) |
 | POST | /v1/openai/embeddings | Deterministic hash embeddings in the OpenAI shape (NOT semantic) |
+| GET | /v1/capabilities | Per-target media and voice support (`voice.supported/configured/verified/available`) |
+| GET | /v1/voice/sessions | List this tenant's voice sessions (`target`, `limit` filters) |
+| POST | /v1/voice/sessions | Create a voice session (`201` connecting, `202` queued, `429` queue full with `Retry-After`) |
+| GET | /v1/voice/sessions/{id} | Read one voice session's status |
+| POST | /v1/voice/sessions/{id}/connect | Exchange the SDP offer; returns `sdp_answer`, `media_credential`, `ice_servers` |
+| POST | /v1/voice/sessions/{id}/mute | Mute or unmute the microphone (`{muted}`) |
+| POST | /v1/voice/sessions/{id}/renew | Renew the lease (heartbeat) |
+| POST | /v1/voice/sessions/{id}/terminate | Terminate and release leases (also `DELETE /v1/voice/sessions/{id}`) |
 
 ## Required headers
 
@@ -130,3 +138,40 @@ errors are OpenAI-shaped (`error.message/type/code`, with the still-running
 job ID in `error.param` on 504); a missing credential keeps the gateway
 `UBAG-AUTH-MISSING-001` envelope from shared auth middleware. Usage figures
 are character-based estimates, not metered model tokens.
+
+## Capabilities and voice sessions
+
+`GET /v1/capabilities` publishes per target the attachment policy,
+`inline_message_parts` (inline image and audio MIME types the facade accepts,
+`remote_urls` always false) and a `voice` object with separate `supported`,
+`configured`, `verified`, `available`, `free_resources`, `utterance_jobs` and
+`live_entry_control` fields (`live` and `available_accounts` are legacy
+aliases). See [Capability Discovery](/guides/capabilities).
+
+`POST /v1/openai/chat/completions` content arrays accept `text` / `input_text`,
+`image_url` (data URLs only) and `input_audio` (`wav`/`mp3`) parts; see
+[Multimodal Requests](/guides/multimodal).
+
+Voice sessions (`/v1/voice/sessions...`, see [Live Voice](/guides/live-voice)):
+
+- `POST /v1/voice/sessions` body `{target, identity_ref?, ttl_seconds?, mode?}`
+  where `mode` is `live` (default) or `utterance`. Answers `201` (connecting),
+  `202` (queued), `429` (budget or queue full, `UBAG-VOICE-QUEUE-FULL-004`).
+  Status values are `queued`, `connecting`, `connected` and `terminated`.
+- `POST .../{id}/connect` body `{sdp_offer}` answers
+  `{session_id, status, sdp_answer, media_credential, media_credential_expires_ms, ice_servers, kind}`.
+  The media credential is scoped to tenant, app and session and must be the
+  first message (`{"op":"auth","credential":...}`) on the `control` data channel.
+- `connect`, `mute`, `renew` and `terminate` are POST-only (`405` with `Allow`
+  otherwise); oversized bodies answer `413`; renewing an expired or terminated
+  session answers `409`; a browser request with a disallowed `Origin` answers
+  `403 UBAG-AUTHZ-ORIGIN-005` (server-to-server calls send no `Origin`).
+- Every `429` and `503` carries a `Retry-After` header and `retry_after_ms` in
+  the error body, including the overload codes `UBAG-OVERLOAD-REQUESTS-001`
+  (in-flight request limit) and `UBAG-OVERLOAD-UPLOAD-001` (upload memory
+  budget); facade errors use the OpenAI-shaped code `overloaded`.
+
+Typed clients: TypeScript `@ubag/sdk` (`VoiceMediaClient`, `textPart`,
+`imagePart`, `audioPart`), Go `packages/sdk-go` (`VoiceSession`,
+`VoiceConnectResponse`, `ICEServer`, `Capability`), Python
+`packages/sdk-python` (`ubag_client`).

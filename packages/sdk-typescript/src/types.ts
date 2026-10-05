@@ -609,11 +609,23 @@ export interface UbagErrorEnvelope {
 
 // ── Capabilities + voice sessions (multimodal release) ─────────────────────
 
+/**
+ * Voice support for one target. supported / configured / verified / available
+ * are separate on purpose: `verified` is true only when a live acceptance run
+ * is recorded (`verified_note` carries the text), `available` means configured
+ * AND a free authenticated account+environment exists right now.
+ * `live` (= supported) and `available_accounts` (= free_resources) are legacy.
+ */
 export interface UbagVoiceCapability {
+  supported: boolean;
+  configured: boolean;
+  verified: boolean;
+  verified_note?: string;
+  available: boolean;
+  free_resources: number;
   live: boolean;
   utterance_jobs: boolean;
   live_entry_control?: string;
-  verified?: string;
   available_accounts: number;
 }
 
@@ -636,6 +648,14 @@ export interface UbagCapability {
   voice: UbagVoiceCapability;
 }
 
+export interface UbagCapabilitiesResponse {
+  api_version: string;
+  kind: "capabilities";
+  data: UbagCapability[];
+  next_cursor?: string | null;
+  trace_id?: string;
+}
+
 export interface UbagCreateVoiceSessionRequest {
   target: string;
   identity_ref?: string;
@@ -644,6 +664,8 @@ export interface UbagCreateVoiceSessionRequest {
   mode?: "live" | "utterance";
 }
 
+export type UbagVoiceSessionStatus = "queued" | "connecting" | "connected" | "terminated";
+
 export interface UbagVoiceSession {
   session_id: string;
   tenant_id: string;
@@ -651,10 +673,11 @@ export interface UbagVoiceSession {
   target: string;
   mode: string;
   job_id?: string;
-  status: "queued" | "connecting" | "connected" | "terminated";
+  status: UbagVoiceSessionStatus;
   muted: boolean;
   identity_ref?: string;
   instance_ref?: string;
+  /** e.g. `activation_failed: <state>` when the provider voice UI never became ready. */
   last_error?: string;
   created_at: string;
   updated_at: string;
@@ -662,9 +685,35 @@ export interface UbagVoiceSession {
   terminated_at?: string;
 }
 
+/**
+ * Answer to create (201 connecting / 202 queued), get and terminate. The
+ * top-level convenience fields are set on create; job_id/next only for
+ * utterance-mode sessions.
+ */
 export interface UbagVoiceSessionResponse {
   kind: "voice_session";
+  session_id?: string;
+  target?: string;
+  status?: UbagVoiceSessionStatus;
+  mode?: string;
+  job_id?: string;
+  next?: string;
   session: UbagVoiceSession;
+}
+
+export interface UbagVoiceSessionListResponse {
+  api_version: string;
+  kind: "voice_sessions";
+  data: UbagVoiceSession[];
+  next_cursor?: string | null;
+  trace_id?: string;
+}
+
+/** STUN/TURN entry for RTCPeerConnection `iceServers` (TURN credentials are time-limited). */
+export interface UbagIceServer {
+  urls: string[];
+  username?: string;
+  credential?: string;
 }
 
 export interface UbagVoiceSessionConnectResponse {
@@ -672,12 +721,43 @@ export interface UbagVoiceSessionConnectResponse {
   session_id: string;
   status: string;
   sdp_answer?: string;
+  /** Short-lived credential; send as the first `control` data-channel message. */
   media_credential?: string;
   media_credential_expires_ms?: number;
+  ice_servers?: UbagIceServer[];
 }
 
 export interface UbagVoiceControlResponse {
   session_id: string;
   kind: string;
+  muted?: boolean;
+  lease_expires_at?: string;
   [key: string]: unknown;
+}
+
+// ── Multimodal chat (OpenAI-compatible facade) ─────────────────────────────
+
+export type UbagChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "input_audio"; input_audio: { data: string; format: "wav" | "mp3" } };
+
+export interface UbagChatMessage {
+  role: "system" | "user" | "assistant";
+  content: string | UbagChatContentPart[];
+}
+
+export interface UbagChatCompletionRequest {
+  /** Target key, optionally `target|setting`. */
+  model: string;
+  messages: UbagChatMessage[];
+  ubag_wait_ms?: number;
+}
+
+export interface UbagChatCompletionResponse {
+  id: string;
+  object: "chat.completion";
+  model: string;
+  choices: Array<{ index: number; message: { role: string; content: string }; finish_reason: string }>;
+  ubag_job_id?: string;
 }

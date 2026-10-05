@@ -1,0 +1,137 @@
+{
+  "id": "mistral_lechat",
+  "captured_at": "2026-10-04T20:04:07.676Z",
+  "cdp": "http://127.0.0.1:15924",
+  "opened_tab": true,
+  "url": "about:blank",
+  "title": "",
+  "likely_login_wall": false,
+  "loginish": [],
+  "composers": [],
+  "composer_neighborhood": [],
+  "manifest_catalog_compare": {},
+  "selector_checks": {
+    "prompt_input": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "textarea[name='message']",
+          "count": 0
+        },
+        {
+          "sel": "textarea[placeholder*='Ask']",
+          "count": 0
+        },
+        {
+          "sel": "div[contenteditable='true']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "submit_button": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[type='submit']",
+          "count": 0
+        },
+        {
+          "sel": "button[aria-label*='Send']",
+          "count": 0
+        },
+        {
+          "sel": "button:has(svg[data-icon='send'])",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "response_container": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "div[data-message-author='assistant']",
+          "count": 0
+        },
+        {
+          "sel": "div.prose",
+          "count": 0
+        },
+        {
+          "sel": "div[class*='assistant'] div.markdown",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "authenticated_signal": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "textarea[name='message']",
+          "count": 0
+        },
+        {
+          "sel": "nav[aria-label*='chat']",
+          "count": 0
+        },
+        {
+          "sel": "button[aria-label*='account']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "login_signal": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "a[href*='login']",
+          "count": 0
+        },
+        {
+          "sel": "input[type='email']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": [
+        "text=Sign in"
+      ]
+    },
+    "streaming_indicator": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "button[aria-label*='Stop']",
+          "count": 0
+        },
+        {
+          "sel": ".animate-pulse",
+          "count": 0
+        },
+        {
+          "sel": "div[data-streaming='true']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    },
+    "file_input": {
+      "matched": false,
+      "css": [
+        {
+          "sel": "input[type='file']",
+          "count": 0
+        },
+        {
+          "sel": "input[accept*='audio']",
+          "count": 0
+        }
+      ],
+      "playwrightOnly": []
+    }
+  },
+  "desired_defaults": {},
+  "raw_controls": []
+}
