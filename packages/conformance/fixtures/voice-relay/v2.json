@@ -1,0 +1,82 @@
+{
+  "suite": "ubag.voice-relay.v2",
+  "protocol_version": 2,
+  "description": "Shared vectors for the gateway<->audio-relay framed TCP protocol v2. Consumed by deploy/vps/browser/tests/test_relay_vectors.py (Python relay), apps/gateway/internal/voice/relay_vectors_test.go (Go gateway) and, later, the Rust relay. Control payloads must validate against packages/shared-schemas/schemas/voice-relay-control.schema.json.",
+  "secret": "relay-test-secret",
+  "constants": {
+    "frame_header_bytes": 4,
+    "max_frame_bytes": 65536,
+    "type_audio": 1,
+    "type_control": 2,
+    "session_id_max_len": 128,
+    "hello_max_future_s": 300,
+    "hello_timeout_s": 5,
+    "hello_ttl_s": 60,
+    "ready_timeout_s": 10,
+    "device_ready_wait_s": 8,
+    "idle_timeout_s": 30,
+    "max_pending": 4
+  },
+  "framing_note": "Wire = u32-LE(length) + body. length counts the type byte plus the payload. length 0 has no body. A frame case lists length, type and payload (payload_hex, or payload_len zero bytes). outcome 'frame' means a reader returns (type, payload); 'violation' means the reader rejects at once (it must not wait for the rest of an oversized body) and closes the connection. Length 1 (type byte only, empty payload) is a VALID frame; empty audio packets are dropped by the receiver, never a protocol error. Resolved in P2.8: Go previously rejected length 1, Python accepted it; Go now accepts it too.",
+  "framing": [
+    { "id": "audio_min_payload", "length": 2, "type": 1, "payload_hex": "ab", "outcome": "frame" },
+    { "id": "audio_empty_payload", "length": 1, "type": 1, "payload_hex": "", "outcome": "frame" },
+    { "id": "control_empty_payload", "length": 1, "type": 2, "payload_hex": "", "outcome": "frame" },
+    { "id": "control_ready", "length": 15, "type": 2, "payload_hex": "7b226f70223a227265616479227d", "outcome": "frame" },
+    { "id": "audio_max_length", "length": 65536, "type": 1, "payload_len": 65535, "outcome": "frame" },
+    { "id": "length_zero", "length": 0, "outcome": "violation" },
+    { "id": "length_over_max", "length": 65537, "type": 1, "outcome": "violation" },
+    { "id": "length_huge", "length": 4294967295, "type": 1, "outcome": "violation" },
+    { "id": "unknown_type_0", "length": 2, "type": 0, "payload_hex": "ab", "outcome": "violation" },
+    { "id": "unknown_type_3", "length": 2, "type": 3, "payload_hex": "ab", "outcome": "violation" },
+    { "id": "unknown_type_255", "length": 3, "type": 255, "payload_hex": "abcd", "outcome": "violation" },
+    { "id": "unknown_type_empty_payload", "length": 1, "type": 3, "payload_hex": "", "outcome": "violation" }
+  ],
+  "token_vectors": [
+    { "secret": "relay-test-secret", "session_id": "s1", "exp": 1700000000, "token": "43e2f2445ad07779cdf6135f4756cbe2ea5802718f6b6b9c930bb67d53a10591" },
+    { "secret": "relay-test-secret", "session_id": "voice_é-1", "exp": 1893456000, "token": "fd8e1c2b2745a2237f1294b2bb4867ff0dcfd1b3cdd00181be73fd070d027004" },
+    { "secret": "other-secret", "session_id": "s1", "exp": 1700000000, "token": "a6496fe40dcbd7c4759260dbd1bab4468e6b2845738ab3756f507d50c0147274" }
+  ],
+  "hello_note": "Relay-side hello validation; the hello is the first frame. Case fields: hello (control JSON object; keys absent stay absent), exp_offset_s (sets hello.exp = now + offset), session_id_len (sets hello.session_id to that many 'a'), token_mode ('valid' sets the correct token for the final session_id/exp under the configured secret, 'wrong' a well-formed but incorrect one), raw_payload (control payload sent verbatim instead of hello), frame_type ('audio' sends the first frame as audio), secret_configured (default true). outcome is 'ok' or the error reason the relay answers before closing.",
+  "hello_validation": [
+    { "id": "valid", "hello": { "op": "hello", "session_id": "s1" }, "exp_offset_s": 60, "token_mode": "valid", "outcome": "ok" },
+    { "id": "valid_session_id_128", "hello": { "op": "hello" }, "session_id_len": 128, "exp_offset_s": 60, "token_mode": "valid", "outcome": "ok" },
+    { "id": "valid_exp_near_max_future", "hello": { "op": "hello", "session_id": "s1" }, "exp_offset_s": 290, "token_mode": "valid", "outcome": "ok" },
+    { "id": "unconfigured_secret", "secret_configured": false, "hello": { "op": "hello", "session_id": "s1" }, "exp_offset_s": 60, "token_mode": "valid", "outcome": "unconfigured" },
+    { "id": "first_frame_audio", "frame_type": "audio", "outcome": "bad_hello" },
+    { "id": "payload_not_json", "raw_payload": "not json", "outcome": "bad_hello" },
+    { "id": "payload_not_object", "raw_payload": "[1,2]", "outcome": "bad_hello" },
+    { "id": "op_not_hello", "hello": { "op": "mute", "session_id": "s1" }, "exp_offset_s": 60, "token_mode": "valid", "outcome": "bad_hello" },
+    { "id": "session_id_missing", "hello": { "op": "hello" }, "exp_offset_s": 60, "token_mode": "wrong", "outcome": "bad_hello" },
+    { "id": "session_id_empty", "hello": { "op": "hello", "session_id": "" }, "exp_offset_s": 60, "token_mode": "wrong", "outcome": "bad_hello" },
+    { "id": "session_id_too_long", "hello": { "op": "hello" }, "session_id_len": 129, "exp_offset_s": 60, "token_mode": "valid", "outcome": "bad_hello" },
+    { "id": "session_id_not_string", "hello": { "op": "hello", "session_id": 7 }, "exp_offset_s": 60, "token_mode": "wrong", "outcome": "bad_hello" },
+    { "id": "exp_missing", "hello": { "op": "hello", "session_id": "s1" }, "token_mode": "wrong", "outcome": "bad_hello" },
+    { "id": "exp_boolean", "hello": { "op": "hello", "session_id": "s1", "exp": true }, "token_mode": "wrong", "outcome": "bad_hello" },
+    { "id": "exp_string", "hello": { "op": "hello", "session_id": "s1", "exp": "1700000000" }, "token_mode": "wrong", "outcome": "bad_hello" },
+    { "id": "token_missing", "hello": { "op": "hello", "session_id": "s1" }, "exp_offset_s": 60, "outcome": "bad_hello" },
+    { "id": "token_not_string", "hello": { "op": "hello", "session_id": "s1", "token": 5 }, "exp_offset_s": 60, "outcome": "bad_hello" },
+    { "id": "exp_in_past", "hello": { "op": "hello", "session_id": "s1" }, "exp_offset_s": -10, "token_mode": "valid", "outcome": "expired" },
+    { "id": "exp_too_far_ahead", "hello": { "op": "hello", "session_id": "s1" }, "exp_offset_s": 400, "token_mode": "valid", "outcome": "expired" },
+    { "id": "token_wrong", "hello": { "op": "hello", "session_id": "s1" }, "exp_offset_s": 60, "token_mode": "wrong", "outcome": "unauthorized" }
+  ],
+  "reply_reasons": {
+    "handshake": ["busy", "unconfigured", "bad_hello", "hello_timeout", "expired", "unauthorized", "devices_unavailable", "codec_unavailable", "mic_unavailable", "monitor_unavailable", "internal"],
+    "session": ["devices_lost", "monitor_exited", "mic_closed"],
+    "gateway_busy_reason": "busy",
+    "note": "Gateway dialer: reason 'busy' maps to ErrRelayBusy (retryable); every other handshake reason maps to ErrRelayUnavailable. A session-phase error surfaces as a Recv error carrying the reason."
+  },
+  "control_frames": [
+    { "id": "hello", "json": { "op": "hello", "session_id": "s1", "exp": 1700000000, "token": "43e2f2445ad07779cdf6135f4756cbe2ea5802718f6b6b9c930bb67d53a10591" }, "valid": true },
+    { "id": "ready", "json": { "op": "ready" }, "valid": true },
+    { "id": "error_busy", "json": { "op": "error", "reason": "busy" }, "valid": true },
+    { "id": "error_mic_closed", "json": { "op": "error", "reason": "mic_closed" }, "valid": true },
+    { "id": "mute", "json": { "op": "mute", "muted": true }, "valid": true },
+    { "id": "unmute", "json": { "op": "mute", "muted": false }, "valid": true },
+    { "id": "hello_session_id_empty", "json": { "op": "hello", "session_id": "", "exp": 1, "token": "43e2f2445ad07779cdf6135f4756cbe2ea5802718f6b6b9c930bb67d53a10591" }, "valid": false },
+    { "id": "hello_token_not_hex", "json": { "op": "hello", "session_id": "s1", "exp": 1, "token": "zz" }, "valid": false },
+    { "id": "error_unknown_reason", "json": { "op": "error", "reason": "nope" }, "valid": false },
+    { "id": "mute_not_boolean", "json": { "op": "mute", "muted": "yes" }, "valid": false },
+    { "id": "ready_extra_key", "json": { "op": "ready", "extra": 1 }, "valid": false }
+  ]
+}
