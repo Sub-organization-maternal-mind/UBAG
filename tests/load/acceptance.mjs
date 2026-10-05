@@ -8,7 +8,7 @@
  *   UBAG_LOAD_BASE_URL=http://127.0.0.1:8080 UBAG_LOAD_API_KEY=... \
  *     node tests/load/acceptance.mjs --i-understand-this-is-load --scenario queue-1000
  *
- * Scenarios: queue-1000 | clients-100 | duplicates | steady-state | overload | metrics-snapshot | all
+ * Scenarios: queue-1000 | clients-100 | duplicates | steady-state | events-latency | overload | metrics-snapshot | all
  * Opt-in (never part of "all"): audio-upload (workloads/audio-upload.json; needs a target that accepts audio attachments)
  *
  * Integrity gates (fail closed): completed jobs have their result body and event
@@ -27,7 +27,7 @@ import { loadWorkload, multipartBody, sha256Hex, syntheticWav } from './workload
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const API_VERSION = '2026-05-22';
-export const SCENARIOS = ['queue-1000', 'clients-100', 'duplicates', 'steady-state', 'overload', 'metrics-snapshot', 'audio-upload'];
+export const SCENARIOS = ['queue-1000', 'clients-100', 'duplicates', 'steady-state', 'events-latency', 'overload', 'metrics-snapshot', 'audio-upload'];
 // Scenarios that need a specific kind of target are never part of "all".
 const OPT_IN = new Set(['audio-upload']);
 export const ACK_FLAG = 'i-understand-this-is-load';
@@ -181,15 +181,17 @@ const NUM = { // flag: [cfgKey, default, min, max]
   'steady-read-rate': ['steadyReadRate', 20, 1, 1000], 'steady-seed-jobs': ['steadySeedJobs', 10, 1, 1000],
   'tenant-probe-samples': ['tenantProbeSamples', 10, 0, 1000],
   'audio-jobs': ['audioJobs', 5, 1, 1000],
+  'events-subscribers': ['eventsSubscribers', 20, 1, 500], 'events-timeout-ms': ['eventsTimeoutMs', 30_000, 100, 600_000],
+  'events-idle-seconds': ['eventsIdleSeconds', 0, 0, 3600], 'events-calibrate-ms': ['eventsCalibrateMs', 2500, 0, 30_000],
 };
-const STR = { target: 'target', 'command-type': 'commandType', 'docker-stats-container': 'dockerContainer', 'cgroup-containers': 'cgroupContainers', 'out-dir': 'outDir', thresholds: 'thresholds', goals: 'goals', 'audio-profile': 'audioProfile' };
+const STR = { target: 'target', 'command-type': 'commandType', 'docker-stats-container': 'dockerContainer', 'cgroup-containers': 'cgroupContainers', 'out-dir': 'outDir', thresholds: 'thresholds', goals: 'goals', 'audio-profile': 'audioProfile', 'pg-stat-container': 'pgContainer', 'pg-user': 'pgUser', 'pg-db': 'pgDb' };
 const FLAGS = new Set([ACK_FLAG, 'with-upload', 'require-goals']);
 
 export function parseArgs(argv, env = process.env) {
   const cfg = {
     scenarios: [], target: 'mock', commandType: 'chat.prompt', withUpload: false, jitter: 0.1,
     dockerContainer: undefined, cgroupContainers: undefined, outDir: join(here, 'results'), thresholds: join(here, 'thresholds.json'),
-    goals: join(here, 'thresholds.goals.json'), requireGoals: false,
+    goals: join(here, 'thresholds.goals.json'), requireGoals: false, pgContainer: undefined, pgUser: 'ubag', pgDb: 'ubag',
   };
   for (const [, [key, def]] of Object.entries(NUM)) cfg[key] = def;
   let acknowledged = false;
@@ -233,6 +235,9 @@ export function parseArgs(argv, env = process.env) {
   if (cfg.apiKeyB && cfg.apiKeyB === cfg.apiKey) throw new Error('UBAG_LOAD_API_KEY_B must differ from UBAG_LOAD_API_KEY (it must belong to a second tenant)');
   // --docker-stats-container <name> is the legacy single-container spelling of --cgroup-containers.
   try { cfg.cgroupTargets = parseTargets([cfg.cgroupContainers, cfg.dockerContainer].filter(Boolean).join(',')); } catch (e) { throw new Error(`--cgroup-containers: ${e.message}`); }
+  for (const [flag, v] of [['pg-stat-container', cfg.pgContainer], ['pg-user', cfg.pgUser], ['pg-db', cfg.pgDb]]) {
+    if (v && !/^[A-Za-z0-9][\w.-]*$/.test(v)) throw new Error(`--${flag} has an invalid name`);
+  }
   return cfg;
 }
 
@@ -335,6 +340,8 @@ export class Recorder {
       audio_upload_violations: c('audio_upload_violations'), audio_artifacts_verified: c('audio_artifacts_verified'),
       create_p95_ms: createOk.length ? summarize(createOk).p95 : undefined,
       steady_create_p95_ms: p95Of('steady-state/create'), steady_read_p95_ms: p95Of('steady-state/read'),
+      sse_stream_failures: c('sse_stream_failures'), sse_event_violations: c('sse_event_violations'), event_latency_samples: this.counters.event_latency_samples, // undefined until events-latency runs (so min_ gates skip)
+      event_latency_p95_ms: p95Of('events-latency/event_delivery'), // informational: no threshold until the lab host sets one
       ...extra,
     };
   }
@@ -365,19 +372,25 @@ export function evaluateThresholds(summary, thresholds, { strict = false } = {})
 
 // ------------------------------------------------------------------- metrics
 
+// Histogram base names (the _bucket/_sum/_count families folded into quantiles by metricsDelta).
+export const HISTOGRAMS = new Set([
+  'ubag_gateway_request_latency_seconds', 'ubag_gateway_http_request_duration_seconds', 'ubag_queue_job_wait_duration_seconds',
+  'ubag_worker_job_duration_seconds', 'ubag_worker_result_ingestion_duration_seconds', 'ubag_job_stage_duration_seconds', 'ubag_jobs_duration_seconds',
+]);
 const TRACKED = [
   'ubag_gateway_http_inflight_requests', 'ubag_admission_rejections_total', 'ubag_upload_memory_inflight_bytes',
-  'ubag_upload_memory_budget_bytes', 'ubag_gateway_request_latency_seconds', 'ubag_queue_job_wait_duration_seconds',
-  'ubag_admission_tokens_active', 'ubag_db_pool_', 'ubag_voice_', 'ubag_queue_depth',
+  'ubag_upload_memory_budget_bytes', 'ubag_admission_tokens_active', 'ubag_db_pool_', 'ubag_voice_', 'ubag_queue_depth',
+  'ubag_gateway_http_requests_total', 'ubag_sse_connections_current', 'ubag_worker_', ...HISTOGRAMS,
 ];
-const GAUGES = ['ubag_gateway_http_inflight_requests', 'ubag_upload_memory_inflight_bytes', 'ubag_admission_tokens_active', 'ubag_db_pool_connections', 'ubag_queue_depth'];
+const GAUGES = ['ubag_gateway_http_inflight_requests', 'ubag_upload_memory_inflight_bytes', 'ubag_admission_tokens_active', 'ubag_db_pool_connections', 'ubag_queue_depth', 'ubag_sse_connections_current'];
 const isTracked = (key) => TRACKED.some((p) => key.startsWith(p));
 
 export function parseProm(text) {
   const out = new Map();
   for (const line of text.split('\n')) {
     if (!line || line.startsWith('#')) continue;
-    const m = /^([^\s{]+)(\{[^}]*\})?\s+(\S+)/.exec(line);
+    // Label values are quoted and may contain braces (route="/v1/jobs/{job_id}"), so skip quoted strings whole.
+    const m = /^([^\s{]+)(\{(?:[^}"]|"(?:[^"\\]|\\.)*")*\})?\s+(\S+)/.exec(line);
     if (!m) continue;
     const v = Number(m[3]);
     if (Number.isFinite(v)) out.set(m[1] + (m[2] ?? ''), v);
@@ -410,7 +423,7 @@ export function metricsDelta(before, after, maxSampled = new Map()) {
     const b = before?.get(key) ?? 0; const a = after?.get(key) ?? 0;
     const name = key.split('{')[0];
     const hm = /^(.*)_(bucket|sum|count)$/.exec(name);
-    if (hm && (hm[1] === 'ubag_gateway_request_latency_seconds' || hm[1] === 'ubag_queue_job_wait_duration_seconds')) {
+    if (hm && HISTOGRAMS.has(hm[1])) {
       const labels = key.slice(name.length);
       const le = /(?:^\{|,)le="([^"]+)"/.exec(labels)?.[1];
       const base = `${hm[1]}${labels.replace(/,?le="[^"]+"/, '').replace('{,', '{').replace(/^\{\}$/, '')}`;
@@ -437,7 +450,17 @@ export function metricsDelta(before, after, maxSampled = new Map()) {
     const m = /^ubag_admission_rejections_total\{reason="([^"]+)"\}$/.exec(key);
     if (m) rejections[m[1]] = v.delta;
   }
-  return { series, histograms, rejections_by_reason: rejections };
+  // ubag_gateway_http_requests_total deltas folded per route (all methods/outcomes) with a status_class split.
+  const requests = {};
+  for (const [key, v] of Object.entries(series)) {
+    const m = /^ubag_gateway_http_requests_total\{(.*)\}$/.exec(key);
+    if (!m || !v.delta) continue;
+    const label = (n) => new RegExp(`(?:^|,)${n}="([^"]*)"`).exec(m[1])?.[1];
+    const r = (requests[label('route') ?? '?'] ??= { total: 0, by_status_class: {} });
+    r.total = r2(r.total + v.delta); const sc = label('status_class') ?? '?';
+    r.by_status_class[sc] = r2((r.by_status_class[sc] ?? 0) + v.delta);
+  }
+  return { series, histograms, rejections_by_reason: rejections, requests_by_route: requests };
 }
 
 // --------------------------------------------------------------- HTTP client
@@ -793,6 +816,186 @@ async function steadyState(ctx) {
   return { seconds: cfg.steadySeconds, create_rate: cfg.steadyRate, read_rate: cfg.steadyReadRate, creates: nCreate, accepted: accepted.length, reads: nRead, final: out.byStatus };
 }
 
+// ------------------------------------------------- event delivery (SSE) latency
+
+/**
+ * Server-minus-local wall-clock offset from `Date` response headers. A header has 1 s resolution, so
+ * each sample only says the server time was in [date, date+1000): intersecting the intervals over
+ * samples that straddle a second boundary tightens it to a few ms. samples: [{server, local}] ms.
+ */
+export function clockBounds(samples) {
+  if (!samples.length) return null;
+  const lo = Math.max(...samples.map((s) => s.server - s.local));
+  const hi = Math.min(...samples.map((s) => s.server + 1000 - s.local));
+  return { offsetMs: r2((lo + hi) / 2), uncertaintyMs: r2(Math.abs(hi - lo) / 2), samples: samples.length };
+}
+
+// ponytail: ignores half the request RTT (loopback/LAN: sub-ms). Over a WAN the error is RTT/2 on top of uncertaintyMs.
+async function calibrateClock(ctx) {
+  const samples = []; const end = now() + ctx.cfg.eventsCalibrateMs;
+  do {
+    const a = Date.now(); const res = await ctx.request('GET', '/v1/health'); const b = Date.now();
+    const server = Date.parse(res.headers?.get?.('date') ?? '');
+    if (res.status === 200 && Number.isFinite(server)) samples.push({ server, local: (a + b) / 2 });
+    if ((clockBounds(samples)?.uncertaintyMs ?? Infinity) <= 50) break;
+    await ctx.sleep(25);
+  } while (now() < end);
+  return clockBounds(samples) ?? { offsetMs: 0, uncertaintyMs: null, samples: 0 };
+}
+
+const sseFrame = (text) => {
+  const f = {};
+  for (const line of text.split(/\r?\n/)) {
+    if (line.startsWith(':')) { f.comment = true; continue; }
+    const i = line.indexOf(':'); const k = i < 0 ? line : line.slice(0, i); const v = i < 0 ? '' : line.slice(i + 1).replace(/^ /, '');
+    f[k] = k === 'data' && f.data !== undefined ? `${f.data}\n${v}` : v;
+  }
+  return f;
+};
+
+/** Split an SSE text buffer into complete frames plus the unfinished tail. */
+export function splitSse(buffer) {
+  const parts = buffer.split(/\r?\n\r?\n/); const rest = parts.pop();
+  return { frames: parts.filter(Boolean).map(sseFrame), rest };
+}
+
+/**
+ * One SSE subscriber on GET /v1/sse/jobs/{id}. Latency = receive time minus the event's created_at, both on the
+ * server clock (receive time shifted by the calibrated offset). Only events created after the subscription
+ * opened count (the backlog replayed on connect says nothing about delivery). stopAtTerminal=false holds the
+ * stream open until timeoutMs (idle mode: nothing is recorded as latency, the abort is expected).
+ */
+async function subscribe(ctx, jobId, { clock, stopAtTerminal, timeoutMs }) {
+  const { cfg, rec } = ctx;
+  const out = { jobId, events: 0, live: 0, backlog: 0, pings: 0, terminal: false, latencies: [] };
+  const fail = (why) => rec.violation('sse_stream_failures', `${jobId}: ${why}`);
+  const bad = (why) => rec.violation('sse_event_violations', `${jobId}: ${why}`);
+  const ac = new AbortController(); const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const subscribedAt = Date.now() + clock.offsetMs; const t0 = now();
+  try {
+    const res = await fetch(`${cfg.baseUrl}/v1/sse/jobs/${encodeURIComponent(jobId)}`, {
+      redirect: 'error', signal: ac.signal,
+      headers: { Accept: 'text/event-stream', 'Ubag-Api-Version': API_VERSION, Authorization: `Bearer ${cfg.apiKey}` },
+    });
+    if (res.status !== 200) { await res.body?.cancel().catch(() => {}); fail(`HTTP ${res.status}`); return out; }
+    rec.latency('sse_open', now() - t0);
+    const reader = res.body.getReader(); const dec = new TextDecoder(); const ids = new Set();
+    let buf = ''; let lastSeq = 0;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const recvAt = Date.now() + clock.offsetMs;
+      const split = splitSse(buf + dec.decode(value, { stream: true })); buf = split.rest;
+      for (const f of split.frames) {
+        if (f.data === undefined) { if (f.comment) out.pings += 1; continue; }
+        let ev; try { ev = JSON.parse(f.data); } catch { bad('unparseable data frame'); continue; }
+        out.events += 1;
+        if (ev.job_id !== undefined && ev.job_id !== jobId) bad(`frame for another job (${ev.job_id})`);
+        if (Number.isFinite(ev.sequence)) { if (ev.sequence <= lastSeq) bad(`sequence ${ev.sequence} after ${lastSeq}`); lastSeq = ev.sequence; }
+        const id = ev.event_id ?? f.id;
+        if (id !== undefined) { if (ids.has(id)) bad(`duplicate event id ${id}`); ids.add(id); }
+        const created = Date.parse(ev.created_at);
+        if (Number.isFinite(created) && created >= subscribedAt) {
+          out.live += 1;
+          if (stopAtTerminal) { const ms = Math.max(0, recvAt - created); out.latencies.push(ms); rec.latency('event_delivery', ms); rec.count('event_latency_samples'); }
+        } else out.backlog += 1;
+        if (TERMINAL_EVENTS.has(String(ev.type ?? '').replace(/^job\./, ''))) out.terminal = true;
+      }
+      if (out.terminal && stopAtTerminal) break;
+    }
+    await reader.cancel().catch(() => {});
+    if (stopAtTerminal && !out.terminal) fail('stream ended without a terminal event');
+  } catch (e) {
+    if (ac.signal.aborted) { if (stopAtTerminal) fail(`no terminal event within ${timeoutMs} ms`); } else fail(`stream error: ${e?.cause?.code ?? e?.message}`);
+  } finally { clearTimeout(timer); }
+  return out;
+}
+
+// ---- optional pg_stat_statements delta (docker exec psql, read-only; the stats are never reset)
+
+const PG_SQL = "SELECT queryid, calls, round(total_exec_time::numeric, 2), rows, left(regexp_replace(query, '\\s+', ' ', 'g'), 100) FROM pg_stat_statements ORDER BY calls DESC LIMIT 500";
+const PG_SEP = '\u001f';
+
+export function parsePgStatements(text) {
+  const out = new Map();
+  for (const line of String(text ?? '').split('\n')) {
+    const [id, calls, ms, rows, ...q] = line.split(PG_SEP);
+    if (!id || !Number.isFinite(Number(calls))) continue;
+    out.set(id, { calls: Number(calls), total_ms: Number(ms), rows: Number(rows), query: q.join(PG_SEP) });
+  }
+  return out;
+}
+
+export function pgDelta(before, after, top = 10) {
+  const rows = [];
+  for (const [id, a] of after) {
+    const b = before.get(id) ?? { calls: 0, total_ms: 0, rows: 0 };
+    if (a.calls > b.calls) rows.push({ queryid: id, calls: a.calls - b.calls, total_ms: r2(a.total_ms - b.total_ms), rows: a.rows - b.rows, query: a.query });
+  }
+  rows.sort((x, y) => y.calls - x.calls);
+  return { total_calls_delta: rows.reduce((n, x) => n + x.calls, 0), total_exec_ms_delta: r2(rows.reduce((n, x) => n + x.total_ms, 0)), top: rows.slice(0, top) };
+}
+
+const pgDockerExec = (cfg) => (sql) => new Promise((res, rej) => {
+  execFile('docker', ['exec', cfg.pgContainer, 'psql', '-U', cfg.pgUser, '-d', cfg.pgDb, '-At', '-F', PG_SEP, '-c', sql], { timeout: 20_000 }, (err, stdout) => (err ? rej(err) : res(stdout)));
+});
+
+/** Takes the "before" snapshot now; the returned async fn takes "after" and returns the delta report (or {skipped}). */
+async function pgWindow(ctx) {
+  const { cfg } = ctx;
+  if (!cfg.pgContainer) return async () => ({ skipped: 'not requested (--pg-stat-container)' });
+  const exec = ctx.pgExec ?? pgDockerExec(cfg);
+  let before;
+  try { before = parsePgStatements(await exec(PG_SQL)); } catch (e) { return async () => ({ skipped: `pg_stat_statements unavailable: ${e.code ?? e.message}` }); }
+  return async () => {
+    try { return pgDelta(before, parsePgStatements(await exec(PG_SQL))); } catch (e) { return { skipped: `pg_stat_statements unavailable: ${e.code ?? e.message}` }; }
+  };
+}
+
+/**
+ * events-latency: --events-subscribers jobs, each followed by one SSE subscriber from creation to its terminal
+ * event (event_delivery latency, calibrated to the server clock via the Date header). With --events-idle-seconds,
+ * the same number of subscribers then idles on finished jobs while /v1/metrics (and optionally pg_stat_statements)
+ * are diffed over that window: what an idle SSE fleet costs the gateway and the database.
+ * ponytail: per-job streams only; /v1/events is a paged JSON list here (not SSE), so no cross-job stream to probe.
+ */
+async function eventsLatency(ctx) {
+  const { cfg, rec } = ctx;
+  rec.count('event_latency_samples', 0); // arms the min_event_latency_samples gate: running this scenario with zero samples must FAIL
+  const clock = await calibrateClock(ctx);
+  const pgLive = await pgWindow(ctx);
+  const pairs = (await pool(range(cfg.eventsSubscribers), cfg.eventsSubscribers, async (i) => {
+    const job = await createJob(ctx, idemKey(ctx, 'e', i), { prompt: `events job ${i}`, op: 'events_create' });
+    if (!job.ok) { rec.count('unaccepted_jobs'); return null; }
+    return { job, sub: await subscribe(ctx, job.jobId, { clock, stopAtTerminal: true, timeoutMs: cfg.eventsTimeoutMs }) };
+  })).filter(Boolean);
+  const { out } = await settleJobs(ctx, pairs.map((p) => p.job));
+  const live = pairs.flatMap((p) => p.sub.latencies);
+  let pg = cfg.eventsIdleSeconds > 0 ? { skipped: 'measured over the idle window' } : await pgLive();
+
+  let idle = null; const extra = {};
+  if (cfg.eventsIdleSeconds > 0 && pairs.length) {
+    const pgIdle = await pgWindow(ctx);
+    const before = await ctx.scrape().catch(() => null); const t0 = now();
+    const holders = await Promise.all(pairs.map((p) => subscribe(ctx, p.job.jobId, { clock, stopAtTerminal: false, timeoutMs: cfg.eventsIdleSeconds * 1000 })));
+    const seconds = (now() - t0) / 1000;
+    const after = before ? await ctx.scrape().catch(() => null) : null;
+    pg = await pgIdle();
+    const d = before && after ? metricsDelta(before, after) : null;
+    idle = {
+      seconds: r2(seconds), subscribers: holders.length, pings_received: holders.reduce((n, h) => n + h.pings, 0), backlog_events: holders.reduce((n, h) => n + h.backlog, 0),
+      http_requests_by_route: d?.requests_by_route ?? 'metrics unavailable',
+      series: d ? Object.fromEntries(Object.entries(d.series).filter(([k, v]) => /^ubag_(db_pool_|sse_connections_current)/.test(k) && (v.delta || v.after)).map(([k, v]) => [k, { before: v.before, after: v.after, delta: v.delta }])) : undefined,
+    };
+    if (pg.total_calls_delta !== undefined) extra.events_idle_pg_calls_per_s = r2(pg.total_calls_delta / seconds);
+  }
+  return {
+    subscribers: cfg.eventsSubscribers, accepted: pairs.length, streams_terminal: pairs.filter((p) => p.sub.terminal).length,
+    live_events: pairs.reduce((n, p) => n + p.sub.live, 0), backlog_events: pairs.reduce((n, p) => n + p.sub.backlog, 0), pings: pairs.reduce((n, p) => n + p.sub.pings, 0),
+    latency_ms: summarize(live), clock, idle, pg_stat_statements: pg, final: out.byStatus, _summary: extra,
+  };
+}
+
 async function snapshotScenario(ctx) {
   if (ctx.cfg.snapshotSeconds > 0) await ctx.sleep(ctx.cfg.snapshotSeconds * 1000);
   return { idle_window_seconds: ctx.cfg.snapshotSeconds };
@@ -838,13 +1041,13 @@ async function audioUpload(ctx) {
   return { profile, bytes: wav.length, sha256: sha, requested: cfg.audioJobs, accepted: jobs.length, final: out.byStatus };
 }
 
-const RUNNERS = { 'queue-1000': queue1000, 'clients-100': clients100, duplicates, 'steady-state': steadyState, overload, 'metrics-snapshot': snapshotScenario, 'audio-upload': audioUpload };
+const RUNNERS = { 'queue-1000': queue1000, 'clients-100': clients100, duplicates, 'steady-state': steadyState, 'events-latency': eventsLatency, overload, 'metrics-snapshot': snapshotScenario, 'audio-upload': audioUpload };
 
 // -------------------------------------------------------------------- driver
 
 export async function run(cfg, deps = {}) {
   const request = deps.request ?? makeRequest(cfg);
-  const ctx = { cfg, request, rec: new Recorder(), sleep: deps.sleep ?? defaultSleep, runId: randomBytes(6).toString('hex'), jobIds: new Set(), tenantBudget: cfg.apiKeyB ? cfg.tenantProbeSamples : 0 };
+  const ctx = { cfg, request, rec: new Recorder(), sleep: deps.sleep ?? defaultSleep, runId: randomBytes(6).toString('hex'), jobIds: new Set(), tenantBudget: cfg.apiKeyB ? cfg.tenantProbeSamples : 0, pgExec: deps.pgExec };
   const started = new Date();
   const scrape = async () => {
     const res = await request('GET', '/v1/metrics', { headers: { Accept: 'text/plain' } });
@@ -852,6 +1055,7 @@ export async function run(cfg, deps = {}) {
     return parseProm(res.text);
   };
 
+  ctx.scrape = scrape;
   const maxSampled = new Map();
   let before = null; let metricsError = null;
   try { before = await scrape(); } catch (e) { metricsError = e.message; }
@@ -921,12 +1125,24 @@ export function renderMarkdown(report) {
   if (st && !st.error) lines.push('## steady-state', '', `${st.seconds}s at ${st.create_rate} creates/s and ${st.read_rate} reads/s; accepted ${st.accepted}/${st.creates}; final states: \`${JSON.stringify(st.final)}\``, '');
   const au = report.scenarios['audio-upload'];
   if (au && !au.error) lines.push('## audio-upload', '', `profile ${au.profile} (${au.bytes} bytes, sha256 ${au.sha256}); accepted ${au.accepted}/${au.requested}; final states: \`${JSON.stringify(au.final)}\``, '');
+  const ev = report.scenarios['events-latency'];
+  if (ev && !ev.error) {
+    const L = ev.latency_ms; const ck = ev.clock;
+    lines.push('## events-latency', '', `${ev.accepted}/${ev.subscribers} subscribers reached a terminal event; ${ev.live_events} live events measured (${ev.backlog_events} backlog replays ignored); delivery latency ms: n=${L.count} p50=${L.p50} p95=${L.p95} p99=${L.p99} max=${L.max}`,
+      `clock calibration (Date header, 1 s resolution): offset ${ck.offsetMs} ms +/- ${ck.uncertaintyMs ?? 'n/a (uncalibrated)'} ms from ${ck.samples} samples`, '');
+    if (ev.idle) lines.push(`idle window: ${ev.idle.subscribers} subscribers held ${ev.idle.seconds}s, ${ev.idle.pings_received} heartbeats; HTTP requests by route: \`${JSON.stringify(ev.idle.http_requests_by_route)}\``, '');
+    const pg = ev.pg_stat_statements;
+    if (pg?.skipped) lines.push(`pg_stat_statements: ${pg.skipped}`, '');
+    else if (pg) lines.push(`pg_stat_statements: ${pg.total_calls_delta} calls, ${pg.total_exec_ms_delta} ms exec`, '', table(['calls', 'total ms', 'rows', 'query'], pg.top.map((r) => [r.calls, r.total_ms, r.rows, r.query.replace(/\|/g, '/')])), '');
+  }
   const o = report.scenarios.overload;
   if (o && !o.error) lines.push('## overload', '', `rejected responses: ${o.rejected_responses}; recovered: ${o.recovered}`, o.note ? `note: ${o.note}` : '', '');
   lines.push('## Gateway metrics (before -> after)', '');
   if (!report.metrics.available) lines.push(`unavailable: ${report.metrics.error ?? 'unknown'}`, '');
   else {
     lines.push(table(['histogram', 'count', 'mean s', 'p50 s', 'p95 s', 'p99 s'], Object.entries(report.metrics.histograms).map(([k, h]) => [k, h.count, h.mean_s, h.p50_s, h.p95_s, h.p99_s])), '');
+    const routes = Object.entries(report.metrics.requests_by_route ?? {});
+    if (routes.length) lines.push(table(['route', 'requests delta', 'by status class'], routes.map(([k, v]) => [k, v.total, JSON.stringify(v.by_status_class)])), '');
     lines.push(table(['series', 'before', 'after', 'delta', 'max sampled'], Object.entries(report.metrics.series).map(([k, v]) => [k, v.before, v.after, v.delta, v.max_sampled])), '');
   }
   lines.push('## Resource usage (cgroup, NON-AUTHORITATIVE off the lab host)', '');
