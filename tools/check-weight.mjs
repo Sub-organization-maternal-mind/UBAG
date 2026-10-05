@@ -12,6 +12,9 @@ const budgets = [
   // and xterm are single-route lazy chunks and correctly excluded).
   { name: 'dashboard initial JS', path: 'apps/dashboard/dist/_app/immutable', max: 150 * 1024, kind: 'shared-js' },
   { name: 'dashboard css', path: 'apps/dashboard/dist', max: 120 * 1024, kind: 'css' },
+  // Per-route cap: no single JS chunk may exceed this (largest lazy chunk
+  // measured ~322KB at P0.6; ~10% headroom).
+  { name: 'dashboard largest JS chunk', path: 'apps/dashboard/dist/_app/immutable', max: 360 * 1024, kind: 'largest-js' },
   { name: 'pnpm lockfile', path: 'pnpm-lock.yaml', max: 300 * 1024, kind: 'file' },
 ];
 let failures = 0;
@@ -70,10 +73,18 @@ function dirBytes(dir) {
 
 for (const b of budgets) {
   const abs = join(ROOT, b.path);
-  if (!existsSync(abs)) { console.log(`skip  ${b.name} (missing ${b.path})`); continue; }
+  if (!existsSync(abs)) {
+    // --strict: a missing build output is a failure, not a silent skip.
+    if (STRICT) { failures++; console.log(`FAIL  ${b.name}: missing ${b.path} (build the dashboard first)`); }
+    else console.log(`skip  ${b.name} (missing ${b.path})`);
+    continue;
+  }
   let size = 0, extra = '';
   if (b.kind === 'file') size = statSync(abs).size;
-  else if (b.kind === 'shared-js') size = sharedJsBytes(abs);
+  else if (b.kind === 'largest-js') {
+    const big = jsFiles(abs).map((f) => ({ f, s: statSync(f).size })).sort((a, c) => c.s - a.s)[0];
+    size = big ? big.s : 0; extra = big ? ` (${big.f.split(/[/\\]/).pop()})` : '';
+  } else if (b.kind === 'shared-js') size = sharedJsBytes(abs);
   else {
     const { total, largest, css } = dirBytes(abs);
     if (b.kind === 'largest') {
