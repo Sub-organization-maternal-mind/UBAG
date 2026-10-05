@@ -93,3 +93,12 @@ def test_evaluate_verdict_flips_at_threshold():
     samples_8 = [JobSample(succeeded=True)] * 8 + [JobSample(succeeded=False)] * 2
     result_8 = evaluate_steady_state(ready_ok=True, samples=samples_8, config=config_90)
     assert result_8.is_healthy is False
+
+
+def test_experiment_without_applied_fault_is_not_success():
+    from chaos.harness.runner import ExperimentResult
+    cfg = SteadyStateConfig()
+    ok = evaluate_steady_state(True, [JobSample(succeeded=True)] * 20, cfg)
+    assert not ExperimentResult("t", ok, ok).success
+    assert not ExperimentResult("t", ok, ok, fault_applied=True).success
+    assert ExperimentResult("t", ok, ok, fault_applied=True, recovered=True).success

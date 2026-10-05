@@ -2,8 +2,8 @@
 
 `tests/load/acceptance.mjs` is the acceptance harness for "100 concurrent API
 clients and 1,000 queued jobs". It is a zero-dependency Node script (global
-`fetch`, async pools). It sits next to the older k6/Locust smoke scripts and does
-not replace them.
+`fetch`, async pools). It supersedes the former k6/Locust/`run-load.mjs` scripts and baselines, which
+were deleted because they could report success without proving anything.
 
 **It generates real load. Never point it at the shared production VPS** until you
 have measured headroom on an isolated stack (below).

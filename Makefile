@@ -31,7 +31,6 @@ help:
 	@echo "  make migrate-tier - run ubag migrate (TO=<tier> [FROM=<tier>] [DRY_RUN=--dry-run])"
 	@echo "  make cover        - go test with coverage report and 50% gate"
 	@echo "  make e2e          - run Playwright end-to-end tests (tests/e2e/)"
-	@echo "  make load         - run load test suite (tests/load/run-load.mjs)"
 
 # --- developer loop -------------------------------------------------------
 dev: dev-edge
@@ -79,10 +78,6 @@ itest:
 e2e:
 	UBAG_E2E=1 npx playwright test tests/e2e/ --reporter=list
 
-# Load / stress tests (Task B1.5).
-load:
-	node tests/load/run-load.mjs
-
 # ─── test-all: full local validation umbrella (blueprint §32) ─────────────────
 # Runs all gated CI signals locally:
 #   make cover       → go test ./... + 50% coverage gate
@@ -91,7 +86,6 @@ load:
 # Separate gated jobs (not in test-all):
 #   make itest       → integration test (gateway+postgres+stub; needs Docker)
 #   make chaos-smoke → chaos experiment schema validation
-#   make load        → load test with regression gate (needs k6)
 #   UBAG_E2E=1 make e2e → live E2E against real targets (staging only)
 test-all: cover
 	pnpm test:v0:local
@@ -99,7 +93,7 @@ test-all: cover
 	@echo "test-all: unit + coverage gate (≥50%) + conformance + observability"
 	@echo "          + integration (make itest separately)"
 	@echo "          + visual regression (cd apps/dashboard && npx playwright test)"
-	@echo "Chaos, load, and E2E are separate gated jobs (make chaos-smoke / make load / UBAG_E2E=1 make e2e)"
+	@echo "Chaos, load, and E2E are separate gated jobs (make chaos-smoke / UBAG_E2E=1 make e2e)"
 	@echo "──────────────────────────────────────────"
 
 # --- SDK generation pipeline (blueprint §8.1) -----------------------------

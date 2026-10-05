@@ -6,11 +6,14 @@ import { performance } from 'node:perf_hooks';
 export const API_VERSION = '2026-05-22';
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:8080';
-const FIXED_PROMPT = 'Return the exact text: UBAG_BENCHMARK_OK';
+const RESULT_MARKER = 'UBAG_BENCHMARK_OK';
+const FIXED_PROMPT = `Return the exact text: ${RESULT_MARKER}`;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
-const SUCCESS_STATUSES = new Set(['completed', 'completed_with_warnings']);
+const SUCCESS_STATUSES = new Set(['completed']);
+const WARNING_STATUS = 'completed_with_warnings';
 const TERMINAL_STATUSES = new Set([
   ...SUCCESS_STATUSES,
+  WARNING_STATUS,
   'failed_retryable',
   'failed_terminal',
   'dead_letter',
@@ -37,7 +40,7 @@ const VALUE_OPTIONS = new Set([
   'timeout-ms',
   'warmups',
 ]);
-const FLAG_OPTIONS = new Set(['allow-remote', 'json']);
+const FLAG_OPTIONS = new Set(['allow-remote', 'allow-warnings', 'json']);
 
 function optionValue(args, index) {
   const token = args[index];
@@ -97,6 +100,7 @@ function normalizeBaseUrl(raw, allowRemote) {
 export function buildConfig(args, env = process.env) {
   const parsed = {
     allowRemote: false,
+    allowWarnings: false,
     appSecret: undefined,
     baseUrl: env.UBAG_BASE_URL ?? env.UBAG_GATEWAY_URL ?? DEFAULT_BASE_URL,
     json: false,
@@ -117,6 +121,7 @@ export function buildConfig(args, env = process.env) {
     if (FLAG_OPTIONS.has(plainName)) {
       if (token.includes('=')) throw new Error(`--${plainName} does not accept a value`);
       if (plainName === 'allow-remote') parsed.allowRemote = true;
+      if (plainName === 'allow-warnings') parsed.allowWarnings = true;
       if (plainName === 'json') parsed.json = true;
       continue;
     }
@@ -163,6 +168,9 @@ export function buildConfig(args, env = process.env) {
   }
   if (!['acceptance', 'mock-e2e'].includes(parsed.scenario)) {
     throw new Error('--scenario must be acceptance or mock-e2e');
+  }
+  if (parsed.allowWarnings && parsed.scenario !== 'mock-e2e') {
+    throw new Error('--allow-warnings is only valid with --scenario mock-e2e');
   }
   parsed.baseUrl = normalizeBaseUrl(parsed.baseUrl, parsed.allowRemote);
   return parsed;
@@ -360,7 +368,7 @@ function deriveFromEvents(value, expectedJobId) {
   };
   const queued = firstTime(new Set(['queued']));
   const assigned = firstTime(new Set(['assigned']));
-  const completed = firstTime(new Set(['completed', 'completed_with_warnings']));
+  const completed = firstTime(new Set(['completed', WARNING_STATUS]));
   const timing = {};
   if (queued !== undefined && assigned !== undefined && assigned >= queued) {
     timing.queue_ms = assigned - queued;
@@ -399,6 +407,8 @@ async function runSample(config) {
   if (acceptedJob.idempotent_replay) {
     throw new Error('benchmark endpoint replayed a supposedly unique request');
   }
+  // ponytail: acceptance is accept-only (POST latency); it never polls, so a job that is already
+  // terminal at accept time must be plain `completed`, warnings are not success here.
   if (TERMINAL_STATUSES.has(acceptedJob.status) && !SUCCESS_STATUSES.has(acceptedJob.status)) {
     throw new Error(`benchmark job ended in ${acceptedJob.status}`);
   }
@@ -425,8 +435,12 @@ async function runSample(config) {
   }
 
   const totalMs = performance.now() - startedAt;
-  if (!SUCCESS_STATUSES.has(terminalJob.status)) {
+  const warningOk = config.allowWarnings && terminalJob.status === WARNING_STATUS;
+  if (!SUCCESS_STATUSES.has(terminalJob.status) && !warningOk) {
     throw new Error(`benchmark job ended in ${terminalJob.status}`);
+  }
+  if (!JSON.stringify(terminalJob.result ?? null).includes(RESULT_MARKER)) {
+    throw new Error('benchmark job result does not contain the expected marker');
   }
 
   const events = await requestJson(safeEventsUrl(config.baseUrl, terminalJob), {
@@ -458,6 +472,8 @@ function metadata(config) {
     node_version: process.version,
     timestamp_utc: new Date().toISOString(),
     scenario: config.scenario,
+    scenario_kind: config.scenario === 'acceptance' ? 'accept-only' : 'end-to-end',
+    allow_warnings: config.allowWarnings,
     base_url: config.baseUrl,
     auth_configured: Boolean(config.appSecret),
     warmups: config.warmups,

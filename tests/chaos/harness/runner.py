@@ -21,8 +21,9 @@ class ExperimentResult:
 
     @property
     def success(self) -> bool:
-        """Experiment succeeded if pre was healthy and post recovered."""
-        return self.pre_steady_state.is_healthy and self.post_steady_state.is_healthy
+        """Fail closed: a fault must have been applied and recovered, with healthy steady state before and after."""
+        return (self.fault_applied and self.recovered
+                and self.pre_steady_state.is_healthy and self.post_steady_state.is_healthy)
 
 
 # Expose ubag_chaos_* metric names (for Prometheus in integration mode)

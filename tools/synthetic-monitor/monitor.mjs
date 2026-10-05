@@ -12,7 +12,7 @@
  * Config file format (JSON):
  * {
  *   "targets": [
- *     { "name": "gateway-local", "url": "http://localhost:4000", "secret": "dev-secret" }
+ *     { "name": "gateway-local", "url": "http://localhost:4000", "secret": "<app secret>" }
  *   ],
  *   "interval_seconds": 60,
  *   "timeout_ms": 10000,
@@ -21,7 +21,10 @@
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
+
+const API_VERSION = '2026-05-22';
 
 // ── SLO / failure budget math ─────────────────────────────────────────────────
 
@@ -92,45 +95,54 @@ class MetricsStore {
 
 // ── Probe logic ───────────────────────────────────────────────────────────────
 
+const PROBE_MARKER = 'UBAG_SYNTHETIC_OK';
+const TERMINAL = new Set(['completed', 'completed_with_warnings', 'failed_retryable', 'failed_terminal', 'dead_letter', 'cancelled', 'timed_out']);
+
+// Fail closed: a probe succeeds only if the job reaches plain `completed` before the deadline.
 async function probe(target, timeoutMs) {
   const start = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const headers = {
+    Accept: 'application/json',
+    'Content-Type': 'application/json',
+    'Ubag-Api-Version': API_VERSION,
+    Authorization: `Bearer ${target.secret}`,
+  };
+  const fail = (extra) => ({ success: false, latencyMs: Date.now() - start, ...extra });
 
   try {
-    const idempotencyKey = `synthetic-probe-${Date.now()}`;
-    const body = JSON.stringify({
-      job: {
-        target: 'synthetic.health.v1',
-        command_type: 'probe',
-        input: { probe: true, ts: new Date().toISOString() },
-      },
-      client: { app_id: 'synthetic-monitor', app_version: '1.0.0', sdk: { name: 'synthetic', version: '1.0.0' } },
-    });
-
+    const key = `synthetic-probe-${randomUUID()}`;
     const res = await fetch(`${target.url}/v1/jobs`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Idempotency-Key': idempotencyKey,
-        'Authorization': `Bearer ${target.secret || 'dev-secret'}`,
-        'Ubag-Tenant-Id': 'synthetic',
-        'Ubag-App-Id': 'monitor',
-      },
-      body,
+      headers: { ...headers, 'Idempotency-Key': key },
+      body: JSON.stringify({
+        api_version: API_VERSION,
+        idempotency_key: key,
+        client: { app_id: 'synthetic-monitor', app_version: '1.0.0', sdk: { name: 'synthetic', version: '1.0.0' } },
+        job: { target: 'mock', command_type: 'chat.prompt', input: { prompt: `Return the exact text: ${PROBE_MARKER}` } },
+      }),
       signal: controller.signal,
     });
-
-    clearTimeout(timer);
-    const latencyMs = Date.now() - start;
-
-    // 2xx is success for the probe; 422/429 are expected rejections in CI.
-    const success = res.status >= 200 && res.status < 300;
-    return { success, latencyMs, statusCode: res.status };
+    if (res.status !== 202) return fail({ statusCode: res.status, error: 'unexpected create status' });
+    const created = await res.json();
+    if (typeof created?.job_id !== 'string' || !/^job_[A-Za-z0-9]+$/.test(created.job_id)) {
+      return fail({ error: 'malformed create response' });
+    }
+    for (;;) {
+      const r = await fetch(`${target.url}/v1/jobs/${created.job_id}`, { headers, signal: controller.signal });
+      if (r.status !== 200) return fail({ statusCode: r.status, error: 'unexpected poll status' });
+      const job = await r.json();
+      if (TERMINAL.has(job.status)) {
+        const ok = job.status === 'completed' && JSON.stringify(job.result ?? null).includes(PROBE_MARKER);
+        return ok ? { success: true, latencyMs: Date.now() - start, statusCode: 200 } : fail({ error: `terminal ${job.status}` });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
   } catch (err) {
+    return fail({ error: err.name === 'AbortError' ? 'probe timed out' : err.message });
+  } finally {
     clearTimeout(timer);
-    const latencyMs = Date.now() - start;
-    return { success: false, latencyMs, error: err.message };
   }
 }
 
@@ -143,7 +155,7 @@ async function main() {
   const configPath = configArg >= 0 ? args[configArg + 1] : null;
 
   let config = {
-    targets: [{ name: 'gateway-local', url: 'http://localhost:4000', secret: 'dev-secret' }],
+    targets: [],
     interval_seconds: 60,
     timeout_ms: 10000,
     metrics_port: 9091,
@@ -160,6 +172,20 @@ async function main() {
     }
   }
 
+  // Fail closed: no implicit target, and every target needs a real URL and secret.
+  if (!Array.isArray(config.targets) || config.targets.length === 0) {
+    process.stderr.write('Config error: at least one target is required (--config)\n');
+    process.exit(1);
+  }
+  for (const t of config.targets) {
+    let validUrl = false;
+    try { validUrl = ['http:', 'https:'].includes(new URL(t.url).protocol); } catch { /* invalid */ }
+    if (!t.name || !validUrl || !t.secret) {
+      process.stderr.write(`Config error: target "${t.name ?? '?'}" needs name, http(s) url and secret\n`);
+      process.exit(1);
+    }
+  }
+
   const metrics = new MetricsStore();
   const windows = new Map();
   for (const t of config.targets) {
@@ -167,8 +193,10 @@ async function main() {
   }
 
   async function runProbes() {
+    let anyFailed = false;
     for (const target of config.targets) {
       const result = await probe(target, config.timeout_ms);
+      if (!result.success) anyFailed = true;
       const w = windows.get(target.name);
       w.record(result.success, result.latencyMs);
 
@@ -185,9 +213,10 @@ async function main() {
       metrics.set('ubag_synthetic_health', labels, stats.burnRate > 14.4 ? 0 : 1);
 
       process.stdout.write(
-        `[probe] ${target.name} ${result.success ? 'OK' : 'FAIL'} ${result.latencyMs}ms burn=${stats.burnRate.toFixed(2)}\n`
+        `[probe] ${target.name} ${result.success ? 'OK' : 'FAIL'} ${result.latencyMs}ms burn=${stats.burnRate.toFixed(2)}${result.error ? ` (${result.error})` : ''}\n`
       );
     }
+    return anyFailed;
   }
 
   // Expose metrics over HTTP.
@@ -206,7 +235,8 @@ async function main() {
     });
   }
 
-  await runProbes();
+  const failed = await runProbes();
+  if (once && failed) process.exit(1);
 
   if (!once) {
     setInterval(runProbes, config.interval_seconds * 1000);
