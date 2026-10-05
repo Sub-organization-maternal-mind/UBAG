@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   HEALTH_PROBES,
+  JOB_STAGES,
+  METHOD_CLASSES,
   OBSERVABILITY_EVENT_NAMES,
   OBSERVABILITY_METRICS,
   SMOKE_CHECKLIST,
@@ -50,6 +52,22 @@ test("metric registry uses stable UBAG names and bounded labels", () => {
   ]);
   assert.match(failures.join("\n"), /_total/);
   assert.match(failures.join("\n"), /high-cardinality/);
+});
+
+test("stage timing metric contract matches the job-event timings_ms key set", async () => {
+  const stage = getMetricByName("ubag_job_stage_duration_seconds");
+  assert.equal(stage.type, "histogram");
+  assert.deepEqual(stage.labels, ["stage", "adapter_family"]);
+  assert.deepEqual(getMetricByName("ubag_gateway_http_request_duration_seconds").labels.slice(-1), ["method_class"]);
+  assert.deepEqual(METHOD_CLASSES, ["read", "write", "other"]);
+
+  const { readFile } = await import("node:fs/promises");
+  const schema = JSON.parse(
+    await readFile(new URL("../../shared-schemas/schemas/job-event.schema.json", import.meta.url), "utf8")
+  );
+  const timings = schema.properties.data.properties.timings_ms;
+  assert.equal(timings.additionalProperties, false);
+  assert.deepEqual(Object.keys(timings.properties), [...JOB_STAGES]);
 });
 
 test("event registry and event payload validation enforce stable shape", () => {

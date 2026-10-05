@@ -1041,5 +1041,5 @@ export const UBAG_JOB_EVENT_TYPES = ["created","queued","assigned","running","br
 export const UBAG_TERMINAL_JOB_STATUSES = ["completed","completed_with_warnings","failed_retryable","failed_terminal","dead_letter","cancelled","timed_out"] as const;
 export const UBAG_SCHEMA_FINGERPRINTS = {
   "job-request": "c97e105265015aee85de030cfc1721260eb3492ea75fefb501e2c0bdb2336138",
-  "job-response": "9376a48605e7b6d11a4199253308188e48831a48482c2070a5ac7f9f4f7a9018"
+  "job-response": "ae9735e2b351c635955365d1015d6ff5d640e5510d9e9ac107b2ffe35bbe9d02"
 } as const;

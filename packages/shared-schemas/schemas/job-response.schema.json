@@ -235,6 +235,7 @@
     },
     "metadata": {
       "type": "object",
+      "description": "Closed job lifecycle metadata. Worker stage timings are not carried here; they are reported as the optional data.timings_ms object on job events (see job-event.schema.json).",
       "additionalProperties": false,
       "properties": {
         "queued_at": {
