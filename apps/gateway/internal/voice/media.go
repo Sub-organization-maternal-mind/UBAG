@@ -273,9 +273,9 @@ func (c *TCPFrameConn) Close() error { return c.conn.Close() }
 //     replacement, whose callers already own the session's fate;
 //   - OnMute: the client toggled mute over the control data channel.
 type MediaHub struct {
-	Dialer     RelayDialer
-	ICEServers []webrtc.ICEServer
-	Metrics    MediaMetrics
+	Dialer  RelayDialer
+	ICE     *ICEConfig // NAT traversal (nil = host candidates on the OS port range)
+	Metrics MediaMetrics
 
 	OnConnected func(Session)
 	// AuthorizeControl verifies the credential a client presents on the
@@ -348,7 +348,12 @@ func (h *MediaHub) HandleOffer(ctx context.Context, session Session, sdpOffer st
 	if err != nil {
 		return "", err
 	}
-	pc, err := webrtc.NewPeerConnection(webrtc.Configuration{ICEServers: h.ICEServers})
+	api, err := h.ICE.newAPI()
+	if err != nil {
+		_ = relay.Close()
+		return "", err
+	}
+	pc, err := api.NewPeerConnection(webrtc.Configuration{ICEServers: h.ICE.serverICEServers(session.ID, time.Now())})
 	if err != nil {
 		_ = relay.Close()
 		return "", fmt.Errorf("voice: peer connection: %w", err)
@@ -553,6 +558,12 @@ func (h *MediaHub) applyMute(ms *mediaSession, muted bool) {
 	ms.muted.Store(muted)
 	_ = ms.relay.Control(map[string]any{"op": "mute", "muted": muted})
 	ms.sendEvent(map[string]any{"event": "mute", "muted": muted})
+}
+
+// ClientICEServers lists the ICE servers (STUN, and TURN with freshly minted
+// time-limited credentials) a client should use for the session.
+func (h *MediaHub) ClientICEServers(session Session) []ICEServer {
+	return h.ICE.ClientICEServers(session, time.Now())
 }
 
 // Sessions lists the sessions that currently hold media on THIS replica; the

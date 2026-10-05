@@ -1794,6 +1794,7 @@ func newVoiceMediaHub(store voice.Store, topo topology.Store) *voice.MediaHub {
 	}
 	hub := &voice.MediaHub{
 		Dialer: &voice.TCPRelayDialer{Address: voiceRelayResolver(topo), Secret: secret},
+		ICE:    voiceICEConfigFromEnv(),
 	}
 	hub.OnClosed = func(s voice.Session, reason string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1810,6 +1811,49 @@ func newVoiceMediaHub(store voice.Store, topo topology.Store) *voice.MediaHub {
 		}
 	}
 	return hub
+}
+
+// voiceICEConfigFromEnv reads the NAT-traversal deployment settings:
+//
+//	UBAG_VOICE_STUN_URLS, UBAG_VOICE_TURN_URLS  comma-separated ICE URLs
+//	UBAG_VOICE_TURN_SECRET                      coturn static-auth-secret
+//	UBAG_VOICE_NAT_1TO1_IP                      public address of the gateway
+//	UBAG_VOICE_MEDIA_PORT_MIN / _MAX            bounded UDP range to publish
+//	UBAG_VOICE_SERVER_VIA_TURN=1                gateway allocates a relay too
+func voiceICEConfigFromEnv() *voice.ICEConfig {
+	split := func(key string) []string {
+		var out []string
+		for _, part := range strings.Split(os.Getenv(key), ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				out = append(out, part)
+			}
+		}
+		return out
+	}
+	port := func(key string) uint16 {
+		n, err := strconv.Atoi(strings.TrimSpace(os.Getenv(key)))
+		if err != nil || n < 1 || n > 65535 {
+			return 0
+		}
+		return uint16(n)
+	}
+	cfg := &voice.ICEConfig{
+		STUNURLs:      split("UBAG_VOICE_STUN_URLS"),
+		TURNURLs:      split("UBAG_VOICE_TURN_URLS"),
+		TURNSecret:    os.Getenv("UBAG_VOICE_TURN_SECRET"),
+		NAT1To1IP:     strings.TrimSpace(os.Getenv("UBAG_VOICE_NAT_1TO1_IP")),
+		PortMin:       port("UBAG_VOICE_MEDIA_PORT_MIN"),
+		PortMax:       port("UBAG_VOICE_MEDIA_PORT_MAX"),
+		ServerViaTURN: envBool("UBAG_VOICE_SERVER_VIA_TURN"),
+	}
+	if (cfg.PortMin == 0) != (cfg.PortMax == 0) || cfg.PortMin > cfg.PortMax {
+		slog.Warn("ignoring UBAG_VOICE_MEDIA_PORT_MIN/MAX: both must be set and MIN <= MAX")
+		cfg.PortMin, cfg.PortMax = 0, 0
+	}
+	if len(cfg.TURNURLs) > 0 && cfg.TURNSecret == "" {
+		slog.Warn("UBAG_VOICE_TURN_URLS is set without UBAG_VOICE_TURN_SECRET: TURN is not offered to clients")
+	}
+	return cfg
 }
 
 // voiceRelayResolver maps a session's browser environment to its relay.

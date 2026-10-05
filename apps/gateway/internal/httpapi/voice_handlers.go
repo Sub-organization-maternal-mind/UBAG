@@ -94,7 +94,10 @@ type voiceSessionConnectResponse struct {
 	SDPAnswer       string `json:"sdp_answer,omitempty"`
 	MediaCredential string `json:"media_credential,omitempty"`
 	MediaExpiresMS  int64  `json:"media_credential_expires_ms,omitempty"`
-	Kind            string `json:"kind"`
+	// ICEServers are the STUN/TURN servers (TURN with time-limited
+	// credentials) the client must configure its RTCPeerConnection with.
+	ICEServers []voice.ICEServer `json:"ice_servers,omitempty"`
+	Kind       string            `json:"kind"`
 }
 
 func (s *Server) voiceError(w http.ResponseWriter, r *http.Request, status int, code, message string, retryable bool, retryAfterMS *int) {
@@ -565,7 +568,14 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 	}
 	s.beginVoiceActivation(session)
 	expires := now.Add(voiceMediaCredentialTTL)
+	var iceServers []voice.ICEServer
+	if provider, ok := s.voiceMedia.(interface {
+		ClientICEServers(voice.Session) []voice.ICEServer
+	}); ok {
+		iceServers = provider.ClientICEServers(session)
+	}
 	s.writeJSON(w, http.StatusOK, voiceSessionConnectResponse{
+		ICEServers:      iceServers,
 		SessionID:       sessionID,
 		Status:          string(voice.StatusConnecting),
 		SDPAnswer:       answer,
