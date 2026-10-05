@@ -89,6 +89,7 @@ func (s *Server) simpleRoutes() []routeDecl {
 		{"/v1/conversations", s.handleConversations},
 		{"/v1/jobs", s.handleJobs},
 		{"/v1/jobs/batch", s.handleBatchJobs},
+		{"/v1/jobs/summary", s.handleJobsSummary},
 		{"/v1/openai/chat/completions", s.handleOpenAIChatCompletion},
 		{"/v1/openai/models", s.handleOpenAIModels},
 		{"/v1/openai/audio/transcriptions", s.handleOpenAITranscription},
@@ -118,7 +119,7 @@ func (s *Server) simpleRoutes() []routeDecl {
 // routePattern resolves the canonical metric pattern for a concrete request
 // path. Single source: the jobMetricRoutes table.
 func routePattern(path string) string {
-	if path == "/v1/jobs" || path == "/v1/jobs/batch" {
+	if path == "/v1/jobs" || path == "/v1/jobs/batch" || path == "/v1/jobs/summary" {
 		return path
 	}
 	segments := splitRouteTail(path, "/")

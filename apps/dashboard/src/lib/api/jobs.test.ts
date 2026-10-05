@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeJob, normalizeJobs } from './jobs';
+import { failedCount, normalizeJob, normalizeJobs, parseJobsSummary } from './jobs';
 
 describe('job response normalization', () => {
   it('normalizes the production list summary shape', () => {
@@ -42,3 +42,25 @@ describe('job response normalization', () => {
       .toHaveLength(1);
   });
 });
+
+describe('jobs summary parsing', () => {
+  it('keeps uncapped counts and derives the failed total from the status vocabulary', () => {
+    const summary = parseJobsSummary({
+      kind: 'jobs_summary',
+      total: 242,
+      counts_by_status: { queued: 130, completed: 108, failed_terminal: 2, timed_out: 2 },
+      queued_by_reason: {},
+      oldest_queued_at: '2026-05-22T10:00:00Z',
+    });
+    expect(summary?.total).toBe(242);
+    expect(summary?.counts_by_status.queued).toBe(130);
+    expect(summary?.oldest_queued_at).toBe('2026-05-22T10:00:00Z');
+    expect(failedCount(summary!)).toBe(4);
+  });
+
+  it('returns null for non-contract bodies so pages can fall back', () => {
+    expect(parseJobsSummary(null)).toBeNull();
+    expect(parseJobsSummary({ error: 'nope' })).toBeNull();
+  });
+});
+

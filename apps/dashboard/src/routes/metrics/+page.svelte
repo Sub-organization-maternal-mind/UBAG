@@ -9,6 +9,7 @@
   import SkeletonCards from '$lib/components/SkeletonCards.svelte';
   import type { MetricsResponse } from '$lib/api/types';
   import { FAILED_STATES as FAILED_STATUS_LIST } from '$lib/api/statuses';
+  import { failedCount, parseJobsSummary } from '$lib/api/jobs';
   import type { Chart as ChartJS } from 'chart.js/auto';
 
   let metrics = $state<MetricsResponse | null>(null);
@@ -68,8 +69,9 @@ const FAILED_STATES = new Set(FAILED_STATUS_LIST);
     error = null;
     denied = false;
 
-    const [jobsRes, targetsRes, adaptersRes, browserRes] = await Promise.all([
+    const [jobsRes, summaryRes, targetsRes, adaptersRes, browserRes] = await Promise.all([
       api.get<{ jobs?: Array<{ status?: string }>; total?: number }>('/v1/jobs?limit=100'),
+      api.get('/v1/jobs/summary'),
       api.get('/v1/targets'),
       api.get('/v1/adapters'),
       api.get('/v1/browser/summary'),
@@ -82,6 +84,7 @@ const FAILED_STATES = new Set(FAILED_STATUS_LIST);
     if (jobsRes.status < 0) { error = jobsRes.error ?? 'Failed to reach gateway'; return; }
 
     const jobs = jobsRes.data?.jobs ?? [];
+    const summary = parseJobsSummary(summaryRes.data);
     // targets / adapters use real {data:[...]} envelope
     const targetsData = targetsRes.data as Record<string, unknown> | null;
     const targets = (Array.isArray(targetsData?.['data']) ? targetsData!['data'] : []) as unknown[];
@@ -91,8 +94,12 @@ const FAILED_STATES = new Set(FAILED_STATUS_LIST);
     const b = browserRes.data as Record<string, unknown> | null ?? {};
 
     metrics = {
-      jobs_total: jobsRes.data?.total ?? jobs.length,
-      jobs_failed: jobs.filter((j) => FAILED_STATES.has((j.status ?? '').toLowerCase())).length,
+      // True counts from /v1/jobs/summary; the capped list page is only a fallback.
+      jobs_total: summary?.total ?? jobsRes.data?.total ?? jobs.length,
+      jobs_failed: summary
+        ? failedCount(summary)
+        : jobs.filter((j) => FAILED_STATES.has((j.status ?? '').toLowerCase())).length,
+      jobs_queued: summary?.counts_by_status['queued'] ?? jobs.filter((j) => j.status === 'queued').length,
       targets_total: targets.length,
       adapters_total: adapters.length,
       browser_instances: (b['total_instances'] ?? b['instances'] ?? 0) as number,

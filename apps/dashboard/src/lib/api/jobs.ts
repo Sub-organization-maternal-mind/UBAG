@@ -1,4 +1,5 @@
-import type { Job } from './types';
+import type { Job, JobsSummary } from './types';
+import { isFailedStatus } from './statuses';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -44,4 +45,27 @@ export function normalizeJobs(value: unknown): Job[] {
   return Array.isArray(value)
     ? value.map(normalizeJob).filter((job): job is Job => job !== null)
     : [];
+}
+
+/**
+ * Validate a GET /v1/jobs/summary body. Returns null for anything that is not
+ * the contract shape (older gateway, error body) so callers can fall back.
+ */
+export function parseJobsSummary(value: unknown): JobsSummary | null {
+  const raw = record(value);
+  if (typeof raw.total !== 'number') return null;
+  const counts = (r: unknown): Record<string, number> =>
+    Object.fromEntries(Object.entries(record(r)).filter(([, n]) => typeof n === 'number')) as Record<string, number>;
+  return {
+    total: raw.total,
+    counts_by_status: counts(raw.counts_by_status),
+    queued_by_reason: counts(raw.queued_by_reason),
+    oldest_queued_at: typeof raw.oldest_queued_at === 'string' ? raw.oldest_queued_at : null,
+  };
+}
+
+export function failedCount(summary: JobsSummary): number {
+  return Object.entries(summary.counts_by_status)
+    .filter(([status]) => isFailedStatus(status))
+    .reduce((sum, [, n]) => sum + n, 0);
 }
