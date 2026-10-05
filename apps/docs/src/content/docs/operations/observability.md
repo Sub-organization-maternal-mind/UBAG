@@ -92,3 +92,9 @@ Enable with `docker compose --profile observability up`:
 | `vector` | `timberio/vector` | JSON log scraping → Loki |
 
 Gateway pprof endpoint is enabled when `UBAG_PPROF_ADDR` is set (e.g. `127.0.0.1:6060`).
+
+`UBAG_PPROF_ADDR` accepts only a loopback host (`127.0.0.1`, `::1`, `localhost`). Unset means no listener; a non-loopback value (including `:6060`) is refused with a warning and the gateway keeps running without profiling. Only the `/debug/pprof/*` routes are served, and no new authentication surface is added.
+
+### Go runtime and process metrics
+
+`/v1/metrics` also emits the standard `go_*` and `process_*` series under their conventional (non-`ubag_`) names: `go_goroutines`, `go_threads`, `go_memstats_{heap_alloc,heap_inuse,sys}_bytes`, `go_memstats_alloc_bytes_total`, `go_gc_cycles_total`, `go_gc_pause_seconds_total`, `go_gc_last_pause_seconds`, `process_start_time_seconds`, and, on Linux (read from `/proc`), `process_cpu_seconds_total`, `process_resident_memory_bytes` and `process_open_fds`. The values come from the same 5-second cached render as the other series.

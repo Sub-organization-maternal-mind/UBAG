@@ -34,7 +34,7 @@ function walk(dir) {
     // Metric literals appear as "ubag_something" in Fprintf/Print calls,
     // immediately followed by `{labels}` or an end quote. _test.go files are
     // excluded so a fixture cannot make a real gap look covered.
-    for (const m of text.matchAll(/"(ubag_[a-z0-9_]+)[\"{]/g)) {
+    for (const m of text.matchAll(/"((?:ubag|go|process)_[a-z0-9_]+)[\"{]/g)) {
       EMITTED.add(m[1]);
     }
   }
@@ -96,9 +96,7 @@ const EXTERNAL_OK = new Set([
   'up',
   'scrape_duration_seconds',
   'scrape_samples_scraped',
-  'scrape_samples_post_metric_relabeling',
-  'process_cpu_seconds_total',
-  'process_resident_memory_bytes'
+  'scrape_samples_post_metric_relabeling'
 ]);
 
 for (const [name, files] of referenced) {

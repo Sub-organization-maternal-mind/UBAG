@@ -423,6 +423,14 @@ func Run(ctx context.Context) error {
 		// follow-up that unlocks a write deadline for everything else.
 	}
 
+	// Opt-in loopback-only pprof (UBAG_PPROF_ADDR). A bad value is logged, not
+	// fatal: profiling is optional and must never take the gateway down.
+	stopPprof, pprofErr := startPprof(os.Getenv("UBAG_PPROF_ADDR"))
+	if pprofErr != nil {
+		slog.Warn("pprof listener disabled", "error", pprofErr)
+	}
+	defer stopPprof()
+
 	serverErr := make(chan error, 1)
 	go func() {
 		serverErr <- httpServer.ListenAndServe()

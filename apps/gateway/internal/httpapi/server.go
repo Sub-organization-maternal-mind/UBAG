@@ -1154,6 +1154,7 @@ func (s *Server) writeMetricsBody(ctx context.Context, w io.Writer) error {
 	// the live queue. LiveDepth counts queued+assigned only.
 	_, _ = fmt.Fprintf(w, "ubag_queue_depth_live{queue=\"%s\"} %d\n", promLabel(queueStats.QueueName), queueStats.LiveDepth)
 	_, _ = fmt.Fprintf(w, "ubag_queue_depth_total{queue=\"%s\"} %d\n", promLabel(queueStats.QueueName), queueStats.TotalDepth)
+	writeRuntimeMetrics(w)
 	return nil
 }
 
