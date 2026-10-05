@@ -183,6 +183,7 @@ func TestMediaHubLoopbackNegotiatesAndRelays(t *testing.T) {
 	relay, addr := startFakeRelay(t)
 	metrics := &countingMetrics{dropped: map[string]int64{}}
 	hub := &MediaHub{
+		ICE:     testICE,
 		Dialer:  &TCPRelayDialer{Address: func(Session) (string, error) { return addr, nil }, Secret: testRelaySecret},
 		Metrics: metrics,
 	}

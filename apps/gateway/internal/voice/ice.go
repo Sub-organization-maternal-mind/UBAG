@@ -35,6 +35,10 @@ type ICEConfig struct {
 	// PortMin/PortMax restrict the gateway's ephemeral UDP ports so exactly
 	// that range needs publishing. Both zero leaves the OS range.
 	PortMin, PortMax uint16
+	// IncludeLoopback also gathers loopback candidates. Tests and single-host
+	// development only: it lets two peers on one machine connect without any
+	// routable interface (CI runners).
+	IncludeLoopback bool
 	// ServerViaTURN makes the gateway allocate a relay candidate too, for
 	// gateways with no publicly reachable UDP.
 	ServerViaTURN bool
@@ -101,6 +105,7 @@ func (c *ICEConfig) newAPI() (*webrtc.API, error) {
 	se := webrtc.SettingEngine{}
 	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
 	if c != nil {
+		se.SetIncludeLoopbackCandidate(c.IncludeLoopback)
 		if c.PortMin != 0 || c.PortMax != 0 {
 			if err := se.SetEphemeralUDPPortRange(c.PortMin, c.PortMax); err != nil {
 				return nil, fmt.Errorf("voice: media UDP port range: %w", err)

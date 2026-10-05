@@ -19,8 +19,12 @@ func testClientPeerConnection() (*webrtc.PeerConnection, error) {
 	se := webrtc.SettingEngine{}
 	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
 	se.SetICEMulticastDNSMode(ice.MulticastDNSModeDisabled)
+	se.SetIncludeLoopbackCandidate(true)
 	return webrtc.NewAPI(webrtc.WithSettingEngine(se)).NewPeerConnection(webrtc.Configuration{})
 }
+
+// testICE lets the hub and test clients connect over loopback on any host.
+var testICE = &ICEConfig{IncludeLoopback: true}
 
 func relayDialer(addr string, secret []byte) *TCPRelayDialer {
 	return &TCPRelayDialer{Address: func(Session) (string, error) { return addr, nil }, Secret: secret, ReadyTimeout: 2 * time.Second}
@@ -125,7 +129,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 // the relay is told about each change.
 func TestMediaHubMuteSuppressesMicFrames(t *testing.T) {
 	relay, addr := startFakeRelay(t)
-	hub := &MediaHub{Dialer: relayDialer(addr, testRelaySecret)}
+	hub := &MediaHub{Dialer: relayDialer(addr, testRelaySecret), ICE: testICE}
 	mic := hubWithClient(t, hub, Session{ID: "voice_mute", TenantID: "t", Target: "chatgpt_web", InstanceRef: "browser-1"})
 	defer hub.Disconnect("voice_mute")
 
@@ -158,6 +162,7 @@ func TestMediaHubReconnectReplacesOldConnection(t *testing.T) {
 	metrics := &countingMetrics{dropped: map[string]int64{}}
 	var closed []string
 	hub := &MediaHub{
+		ICE:      testICE,
 		Dialer:   relayDialer(addr, testRelaySecret),
 		Metrics:  metrics,
 		OnClosed: func(_ Session, reason string) { closed = append(closed, reason) },
@@ -186,7 +191,7 @@ func TestMediaHubReconnectReplacesOldConnection(t *testing.T) {
 // Hub shutdown closes every live media session.
 func TestMediaHubCloseEndsAllSessions(t *testing.T) {
 	_, addr := startFakeRelay(t)
-	hub := &MediaHub{Dialer: relayDialer(addr, testRelaySecret)}
+	hub := &MediaHub{Dialer: relayDialer(addr, testRelaySecret), ICE: testICE}
 	hubWithClient(t, hub, Session{ID: "voice_shutdown", TenantID: "t", Target: "chatgpt_web", InstanceRef: "browser-1"})
 	hub.Close()
 	if hub.ActiveSessions() != 0 {
@@ -208,6 +213,7 @@ func TestRelayTokenMatchesPythonRelay(t *testing.T) {
 func TestMediaHubControlChannelRequiresScopedCredential(t *testing.T) {
 	_, addr := startFakeRelay(t)
 	hub := &MediaHub{
+		ICE:    testICE,
 		Dialer: relayDialer(addr, testRelaySecret),
 		AuthorizeControl: func(s Session, credential string) bool {
 			return s.ID == "voice_ctl" && credential == "good"
