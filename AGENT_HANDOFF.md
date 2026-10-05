@@ -1209,3 +1209,42 @@ point `UBAG_VOICE_AUDIO_RELAY_ADDR` at it, run the gateway from this
 branch, then voice_runner-activate ChatGPT "Start Voice" / Gemini
 "Listen" and drive a real WebRTC client through MediaHub to demonstrate
 two-way audio + provider barge-in on BOTH providers.
+
+## 2026-10-05 repair + concurrency pass — resume here
+
+Branch `feat/multimodal-voice-hardening` has ~17 more commits since the earlier
+slices (defect-by-defect list and numbers: PROGRESS.md, 2026-10-05 "Repair +
+concurrency hardening pass"). Still do NOT merge: **no live ChatGPT/Gemini
+two-way voice evidence exists.**
+
+Architecture changes to know before touching voice/admission:
+- Voice placements are server-resolved pairs; environments are globally
+  exclusive; budgets live inside `Store.Reserve/Claim`.
+- Provider voice is started by INTERNAL control jobs (`voice.activate` /
+  `voice.deactivate`, app id `ubag-internal-voice`) dispatched through the normal
+  executor and run by `apps/worker/ubag_worker/voice/voice_job.py`. `voice.*` is a
+  reserved command prefix (`jobcore.IsReservedCommandType`).
+- Relay protocol v2 (typed frames + HMAC hello). `UBAG_VOICE_RELAY_SECRET` must be
+  identical on the gateway and the browser container or every session is refused.
+- Admission is shared: `topology.TokenBackend` (SQLite/Postgres) behind
+  `ConcurrencyRegistry.UseBackend`; execution leases (`WorkerConsumer.ExecLeases`)
+  stop duplicate provider submission. Migrations 0019–0021 are required.
+- The default lane ceiling is 2000 (it also caps queue depth per lane).
+
+Next agent, in order:
+1. Re-open the SSH tunnel to the production CDP (`ssh -N -L 15923:172.28.0.10:9223
+   root@185.252.233.186`), then — with the user present and synthetic content —
+   run a deliberate live probe that clicks ChatGPT "Start Voice" and records the
+   in-call DOM (ready/end controls, setup prompts); do the same for Gemini and
+   record whether a live (not dictation/read-aloud) conversation control exists.
+   Fill `voice_readiness` in `apps/worker/ubag_worker/live/selectors.py`; set
+   `acceptance_verified` in the manifests only after an audible round trip.
+2. Measure VPS headroom (`docker stats`, free memory/CPU), then run a bounded
+   isolated canary (separate container; relay secret set) and the audible two-way
+   test with barge-in, mute, disconnect and cross-session checks.
+3. Only then consider remote-WebRTC/TURN acceptance and a production rollout.
+
+Local evidence harness: `tests/load/acceptance.mjs` (see `docs/load-testing.md`;
+never aim it at the shared VPS). A throwaway local Postgres works for the
+Postgres suites: `initdb` in a temp dir, start it on a loopback port, then
+`UBAG_TEST_POSTGRES_DSN=… node tools/run-postgres-roundtrip-tests.mjs --apply-migrations`.

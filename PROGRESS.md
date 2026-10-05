@@ -3807,3 +3807,126 @@ ChatGPT "Start Voice" / Gemini "Listen" in the canary with a real client
 WebRTC connection through the gateway MediaHub, observing the provider's
 own barge-in. The canary + gateway wiring for that run is the next step
 (attach canary to ubag-private, point UBAG_VOICE_AUDIO_RELAY_ADDR at it).
+
+## 2026-10-05 — Repair + concurrency hardening pass (feat/multimodal-voice-hardening)
+
+Scope: the 10 priorities in `docs/reviews/2026-10-05-zcode-multimodal-voice-repair.txt`
+(P1–P10) plus the shared-admission / overload / acceptance-load work. Main is
+untouched. **The release is STILL INCOMPLETE: the required live two-way voice
+demo on ChatGPT AND Gemini has not been run** (see "Not verified / remaining gates").
+
+**Commits (oldest first):** d1b969c, 8e9caf7, 7de3f58, 14d5f37, f9350ae,
+9cc4aab, 81914f1, 39954c7, 490ba5c, 6b39700, 251de42, 8448aab, 4a11ec5,
+1999175, e8a47ef, afebfb7 (+ the SDK/examples/docs commit and this docs commit).
+
+**Review defects fixed (each with a regression test):**
+- P1 isolation: server-resolved (authenticated context ↔ hosting instance)
+  placements — caller `identity_ref` is only a preference; browser/audio
+  environment exclusivity is GLOBAL across tenants (migration 0020; SQLite index
+  replaced); per-instance relay resolution (explicit map → instance host+9099 →
+  legacy single addr, fail closed); the relay admits one authenticated session.
+- P2 lifecycle: `voice.activate`/`voice.deactivate` INTERNAL control jobs through
+  the existing dispatcher (tenant-owned, app `ubag-internal-voice`, high
+  priority, hard timeout); a session is `connected` only when the provider is
+  verified ready AND the WebRTC peer is up; activation failure terminates with
+  the worker's explicit state; any media end deactivates best-effort. `voice.*`
+  command types are reserved (jobcore/HTTP/batch/gRPC/workflows reject them);
+  voice jobs bypass the warm daemon runner. Worker `voice_job.py` (CDP host
+  allowlist, fail closed, exactly one terminal event).
+- P3 runner: real `goto`, exact-HTTPS-origin match (no lookalikes/userinfo),
+  fail-closed context selection, readiness verified by observed controls
+  (`unverified_ready` while the in-call DOM is unprobed), `deactivate_voice`.
+- P4 cleanup/fencing: RenewLease cannot revive expired leases; SQLite sweep is one
+  atomic UPDATE…RETURNING (fixed-width timestamps); reconnect REPLACES media
+  (stale callbacks cannot close the replacement); sweeper + 2 s reconciler end
+  media whose session was terminated/expired on ANY replica; hub Close on shutdown.
+- P5 budgets: active/queued budgets enforced INSIDE Reserve/Claim (Postgres
+  tenant advisory lock); queue-full = 429 + Retry-After; utterance unbudgeted.
+- P6 relay v2 (`deploy/vps/browser/audio-relay.py`, `opus_bridge.py`): HMAC hello
+  (`UBAG_VOICE_RELAY_SECRET`, fail closed), typed frames, mute frames, one
+  session, bounded handshake, deterministic cleanup/joins, codec handles closed,
+  ≤120 ms Opus packets, mic+speaker health re-check. Python vector matches Go.
+- P7 remote WebRTC: bounded media UDP range, NAT 1:1 public IP, time-limited
+  coturn REST credentials returned in the connect response (`ice_servers`),
+  optional gateway-via-TURN.
+- P8 HTTP contracts: POST-only actions (405 before side effects), 413, redacted
+  media errors, renew errors surfaced, `UBAG_VOICE_SESSION_TTL_SECONDS` parsed,
+  media credential scoped to tenant+app+session and ENFORCED (the control data
+  channel ignores commands until `{"op":"auth","credential":…}` verifies),
+  browser origin allowlist `UBAG_ALLOWED_ORIGINS` on `/v1/voice/*`.
+- P9: facade validates every role before parsing parts; non-blocking shared
+  upload-memory budget (facade ×3, transcription, artifact PUT) → 503+Retry-After;
+  jobs above the 256 KiB dispatch envelope are rejected at create (they used to
+  be accepted then stranded — found by the load run).
+- P10: capabilities publish supported / configured / verified / available
+  separately + `free_resources`; small profile made portable (see below).
+
+**Shared concurrency (multi-replica):** `topology.TokenBackend` (SQLite/Postgres,
+migration 0021) — multi-lane all-or-nothing admission under per-lane advisory
+locks, expiring unassociated tokens, job-held tokens released from any replica,
+worker AIMD caps shared via `gateway_admission_caps`; optional per-app/tenant/
+global budgets (`UBAG_ADMISSION_MAX_INFLIGHT_*`); default lane ceiling raised
+100→2000 (`UBAG_ADMISSION_DEFAULT_LANE_CAP`) because tokens span QUEUED jobs.
+A per-job execution lease + NATS `InProgress` heartbeat prevent a redelivered
+job from reaching the provider twice; a lost lease cancels the local run.
+Central `Retry-After` + `retry_after_ms` on every 429/503; in-flight request
+limiter (`UBAG_GATEWAY_MAX_INFLIGHT_REQUESTS`, default 2000; probes exempt);
+metrics: route latency histogram, `ubag_admission_rejections_total{reason}`,
+`ubag_admission_tokens_active{kind}`, upload memory in-use/budget, DB pool stats.
+
+**Portable profile:** voice env moved to the gateway service, real ipam subnet +
+pinned browser address, `tls` (stock caddy:2) and `turn` (coturn) compose
+profiles, opt-in `deploy/small/compose.voice-media.yml` publishing the bounded
+media UDP range; CDP/VNC/relay never published; checks extended.
+
+**Runtime evidence (ISOLATED local stack only — NOT the shared VPS):**
+- Real PostgreSQL 18.6 (throwaway instance, loopback :55432): the full
+  `tools/run-postgres-roundtrip-tests.mjs --apply-migrations` run is green except
+  the pre-existing Windows-only `TestAntigravityLoginRelaysCodeToOwnedWorker`
+  (also fails without these changes). Voice store Postgres parity passes:
+  contract, cross-tenant exclusivity, budgets, **24 concurrent admissions →
+  exactly the budget (3) leased on 3 distinct environments**, sweep/renew race.
+  Admission tokens: 40-way concurrent lane acquire admits exactly the ceiling on
+  SQLite and Postgres.
+- Real gateway binary + Postgres store + mock worker (16 consumers):
+  - `queue-1000`: 1000/1000 accepted (202) and completed; create p50 51 ms /
+    p95 79.5 ms / p99 172 ms; DB pool peak 19 connections; 0 rejections.
+  - 100 concurrent clients enqueuing 1,000 jobs with the consumer paused: all
+    1000 accepted in 7.5 s (create p50 720 ms / p95 1.13 s / p99 1.39 s —
+    single-lane advisory-lock serialization, below the 2 s threshold),
+    `ubag_queue_depth_live=1000`, 1000 shared admission tokens, 0 rejections.
+  - `clients-100` + `duplicates`: PASS — malformed JSON/file → 400, oversized →
+    413, concurrent identical idempotency keys → exactly one job per key,
+    cancel races consistent.
+  - `overload` (limits lowered to 20 in-flight / 6 MiB): 2468 in-flight 503s and
+    194 upload-memory 503s, each with Retry-After + retry_after_ms; the gateway
+    recovered; the in-flight gauge peaked at exactly 20.
+  Harness: `tests/load/acceptance.mjs` (23 offline self-tests green).
+- Caveat: single-box numbers with a mock worker. They measure UBAG's own
+  overhead, not provider speed, and say nothing about the production VPS's
+  headroom (not measured; no load was sent to it).
+
+**Not verified / remaining gates (release INCOMPLETE until 1 and 2 have evidence):**
+1. Live two-way voice on **ChatGPT** and **Gemini** in Ubuntu Docker (provider
+   audio actually heard, barge-in, mute, disconnect cleanup, no cross-session
+   leakage). NOT RUN. The in-call/ready DOM of either provider has never been
+   probed, so `voice_readiness.ready_controls` is empty and activation reports
+   `unverified_ready` — it cannot produce `activated` until a deliberate live
+   probe records the controls (human-supervised run, synthetic content).
+   **Gemini's "Listen" label is not backed by any capture** (the 2026-10-05
+   captures show only "Dictate"); live Gemini voice may not exist in the browser
+   UI — if so the release is BLOCKED for Gemini with that evidence.
+2. Remote-client WebRTC through Docker/NAT and a TURN-only client: designed and
+   unit-tested (credentials, port range, NAT mapping, loopback media), never
+   exercised from outside a host.
+3. `docker compose config` / caddy / coturn rendering: no Docker on the dev
+   machine; compose files were parsed with PyYAML and covered by
+   `tools/check-small-deployment.mjs` only. The coturn image tag and option
+   names are from memory.
+4. Canary + headroom measurement on the shared VPS (OET + radiology share it):
+   not done; nothing was deployed. Main still auto-deploys on push — do NOT merge
+   this branch until items 1–2 have evidence.
+5. Known limits: voice uses one CDP context (`--context` index); relay idle
+   timeout 30 s vs DTX silence; lane-lock serialization bounds single-lane create
+   throughput (~130 jobs/s locally); facade multi-MiB prompts are refused at
+   create (use attachments).
