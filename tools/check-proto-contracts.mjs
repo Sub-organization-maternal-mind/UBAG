@@ -1,55 +1,168 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join, relative } from 'node:path';
 
-const protoPath = 'packages/proto/proto/ubag/v1/jobs.proto';
-const text = readFileSync(protoPath, 'utf8');
+const protoRoot = 'packages/proto/proto';
+const genRoot = 'packages/proto/gen/go';
 const failures = [];
 
-for (const rpc of ['CreateJob', 'ListJobs', 'GetJob', 'CancelJob', 'RetryJob', 'ListJobEvents', 'StreamJobEvents']) {
-  if (!new RegExp(`rpc\\s+${rpc}\\s*\\(`).test(text)) {
-    failures.push(`missing ${rpc} RPC`);
+// Every .proto must be registered here, so a new proto cannot skip the checks.
+const specs = {
+  'ubag/v1/jobs.proto': {
+    rpcs: ['CreateJob', 'ListJobs', 'GetJob', 'CancelJob', 'RetryJob', 'ListJobEvents', 'StreamJobEvents'],
+    messages: ['JobSpec', 'JobEvent', 'JobResponse', 'CreateJobRequest', 'GetJobRequest', 'ListJobEventsRequest'],
+    parityFields: [
+      'string api_version',
+      'string idempotency_key',
+      'string job_id',
+      'string trace_id',
+      'string data_json',
+      'repeated JobEvent events'
+    ]
+  },
+  // ubag.helper.v1 (P2.3): primary is the gRPC client, the helper is the server.
+  'ubag/helper/v1/helper.proto': {
+    rpcs: [
+      'Handshake',
+      'ReportCapacity',
+      'RunAttempt',
+      'RenewAttempt',
+      'CancelAttempt',
+      'InspectAttempt',
+      'Drain',
+      'StageManifest'
+    ],
+    messages: ['Fence', 'AttemptEvent', 'AttemptOutcome', 'RunAttemptRequest', 'RunAttemptResponse'],
+    // The submission boundary and the event key parts must stay in the contract.
+    parityFields: [
+      'ATTEMPT_EVENT_TYPE_PROMPT_SUBMITTED',
+      'uint64 sequence',
+      'bool submitted',
+      'bool reconcile_required',
+      'bool partial',
+      'string staging_path_prefix'
+    ],
+    // message -> required "type name" field declarations
+    requiredFields: {
+      Fence: [
+        'string job_id',
+        'string attempt_id',
+        'string node_id',
+        'uint64 lease_generation',
+        'google.protobuf.Timestamp lease_expires_at',
+        'string input_fingerprint',
+        'string workload_version'
+      ]
+    },
+    // Every mutating RPC request must carry the Fence.
+    fencedRequests: ['RunAttemptRequest', 'RenewAttemptRequest', 'CancelAttemptRequest', 'StageManifestRequest'],
+    // Voice RPCs land in P5.7; until then they must not exist.
+    forbiddenRpcPattern: /Voice/
+  }
+};
+
+function listProtos(dir) {
+  const found = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...listProtos(full));
+    else if (entry.name.endsWith('.proto')) found.push(relative(protoRoot, full).replaceAll('\\', '/'));
+  }
+  return found;
+}
+
+function stripComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+}
+
+// Field/enum-value numbers must be unique inside each message/enum scope. A
+// oneof shares its parent message's number space.
+function checkNumbers(file, code) {
+  const stack = [];
+  for (const line of code.split(/\r?\n/)) {
+    const open = line.match(/^\s*(message|enum|oneof|service)\s+([A-Za-z0-9_]+)\s*\{/);
+    if (open) {
+      const [, kind, name] = open;
+      const scope = kind === 'oneof' ? stack.at(-1)?.scope : kind === 'service' ? null : { name, numbers: new Set() };
+      stack.push({ kind, name, scope });
+      continue;
+    }
+    if (/^\s*}/.test(line)) {
+      stack.pop();
+      continue;
+    }
+    const top = stack.at(-1);
+    if (!top?.scope) continue;
+    const field = line.match(/=\s*(\d+)\s*[;[]/);
+    if (!field) continue;
+    if (top.scope.numbers.has(field[1])) {
+      failures.push(`${file}: ${top.scope.name} reuses number ${field[1]}`);
+    }
+    top.scope.numbers.add(field[1]);
   }
 }
 
-for (const message of ['JobSpec', 'JobEvent', 'JobResponse', 'CreateJobRequest', 'GetJobRequest', 'ListJobEventsRequest']) {
-  if (!new RegExp(`message\\s+${message}\\s*\\{`).test(text)) {
-    failures.push(`missing ${message} message`);
-  }
+function messageBody(code, name) {
+  const match = code.match(new RegExp(`message\\s+${name}\\s*\\{([\\s\\S]*?)\\n\\}`));
+  return match ? match[1] : null;
 }
 
-const fieldNumbersByMessage = new Map();
-let currentMessage = '';
-for (const line of text.split(/\r?\n/)) {
-  const messageMatch = line.match(/^\s*message\s+([A-Za-z0-9_]+)\s*\{/);
-  if (messageMatch) {
-    currentMessage = messageMatch[1];
-    fieldNumbersByMessage.set(currentMessage, new Set());
+const protos = listProtos(protoRoot);
+for (const file of protos) {
+  if (!specs[file]) failures.push(`${file}: no contract spec registered in tools/check-proto-contracts.mjs`);
+}
+
+for (const [file, spec] of Object.entries(specs)) {
+  const path = join(protoRoot, file);
+  if (!existsSync(path)) {
+    failures.push(`${file}: missing`);
     continue;
   }
-  if (currentMessage && /^\s*}/.test(line)) {
-    currentMessage = '';
-    continue;
-  }
-  if (!currentMessage) continue;
-  const fieldMatch = line.match(/=\s*(\d+)\s*;/);
-  if (!fieldMatch) continue;
-  const number = fieldMatch[1];
-  const seen = fieldNumbersByMessage.get(currentMessage);
-  if (seen.has(number)) {
-    failures.push(`${currentMessage} reuses field number ${number}`);
-  }
-  seen.add(number);
-}
+  const text = readFileSync(path, 'utf8');
+  const code = stripComments(text);
 
-for (const parityField of [
-  'string api_version',
-  'string idempotency_key',
-  'string job_id',
-  'string trace_id',
-  'string data_json',
-  'repeated JobEvent events'
-]) {
-  if (!text.includes(parityField)) {
-    failures.push(`missing parity field "${parityField}"`);
+  for (const rpc of spec.rpcs) {
+    if (!new RegExp(`rpc\\s+${rpc}\\s*\\(`).test(code)) failures.push(`${file}: missing ${rpc} RPC`);
+  }
+  for (const message of spec.messages) {
+    if (!new RegExp(`message\\s+${message}\\s*\\{`).test(code)) failures.push(`${file}: missing ${message} message`);
+  }
+  for (const field of spec.parityFields ?? []) {
+    if (!code.includes(field)) failures.push(`${file}: missing parity field "${field}"`);
+  }
+  for (const [message, fields] of Object.entries(spec.requiredFields ?? {})) {
+    const body = messageBody(code, message);
+    if (body === null) continue;
+    for (const field of fields) {
+      if (!new RegExp(`${field.replace(/\s+/g, '\\s+')}\\s*=\\s*\\d+`).test(body)) {
+        failures.push(`${file}: ${message} missing field "${field}"`);
+      }
+    }
+  }
+  for (const message of spec.fencedRequests ?? []) {
+    const body = messageBody(code, message);
+    if (body === null) failures.push(`${file}: missing ${message} message`);
+    else if (!/\bFence\s+fence\s*=\s*\d+/.test(body)) failures.push(`${file}: ${message} must carry "Fence fence"`);
+  }
+  if (spec.forbiddenRpcPattern) {
+    for (const match of code.matchAll(/rpc\s+([A-Za-z0-9_]+)\s*\(/g)) {
+      if (spec.forbiddenRpcPattern.test(match[1])) failures.push(`${file}: RPC ${match[1]} is not allowed yet`);
+    }
+  }
+  checkNumbers(file, code);
+
+  // Checked-in generated Go must exist and expose every RPC (freshness smoke).
+  const genBase = join(genRoot, file.replace(/\.proto$/, ''));
+  if (!existsSync(`${genBase}.pb.go`)) failures.push(`${file}: generated ${genBase}.pb.go missing`);
+  if (spec.rpcs.length > 0) {
+    const grpcPath = `${genBase}_grpc.pb.go`;
+    if (!existsSync(grpcPath)) {
+      failures.push(`${file}: generated ${grpcPath} missing`);
+    } else {
+      const grpcText = readFileSync(grpcPath, 'utf8');
+      for (const rpc of spec.rpcs) {
+        if (!grpcText.includes(`${rpc}(`)) failures.push(`${file}: generated gRPC code is stale (no ${rpc})`);
+      }
+    }
   }
 }
 
