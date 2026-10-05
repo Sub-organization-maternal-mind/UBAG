@@ -560,10 +560,13 @@ func (s *Server) handleVoiceSessionTerminate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	tenantID, _ := requestScope(r)
-	// Termination is idempotent in the store; the media plane drops its side
-	// keyed on the terminal status.
+	// Termination is idempotent in the store, and the media path drops
+	// immediately — cleanup never waits for ICE to notice the session died.
 	if err := s.voice.Terminate(r.Context(), tenantID, sessionID, time.Now().UTC(), "terminated_by_client"); s.mapVoiceStoreError(w, r, err) {
 		return
+	}
+	if dropper, ok := s.voiceMedia.(interface{ Disconnect(sessionID string) }); ok {
+		dropper.Disconnect(sessionID)
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "status": "terminated", "kind": "voice_session"})
 }

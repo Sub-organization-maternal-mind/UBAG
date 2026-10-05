@@ -49,6 +49,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/sso"
 	"github.com/ubag/ubag/apps/gateway/internal/storekit"
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
+	voice "github.com/ubag/ubag/apps/gateway/internal/voice"
 	"github.com/ubag/ubag/apps/gateway/internal/webhooks"
 	"github.com/ubag/ubag/apps/gateway/internal/workflow"
 	ubagv1 "github.com/ubag/ubag/packages/proto/gen/go/ubag/v1"
@@ -163,6 +164,42 @@ func Run(ctx context.Context) error {
 		}()
 	}
 
+	// Voice-session components: the shared store (memory by default keeps
+	// the routes 501 only when UBAG_VOICE_STORE is explicitly disabled) and
+	// the WebRTC media hub bridging client audio to the browser/audio
+	// environment's relay process.
+	voiceStore, voiceMedia, closeVoice, err := newVoiceComponentsFromEnv(ctx, storeKind, db)
+	if err != nil {
+		return fmt.Errorf("invalid voice configuration: %w", err)
+	}
+	defer closeVoice()
+	if voiceStore != nil {
+		if err := voiceStore.Ready(ctx); err != nil {
+			return fmt.Errorf("voice store not ready: %w", err)
+		}
+		// Lease sweeper: any replica may run it (CAS-guarded, idempotent);
+		// it releases accounts pinned by crashed clients/replicas.
+		go func() {
+			ticker := time.NewTicker(voiceSweepInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if swept, err := voiceStore.SweepExpired(ctx, time.Now().UTC()); err != nil {
+						slog.Error("voice lease sweep failed", "error", err)
+					} else if len(swept) > 0 {
+						slog.Warn("voice sessions terminated by lease expiry", "count", len(swept))
+					}
+				}
+			}
+		}()
+		slog.Info("voice sessions enabled",
+			"store", storeKind,
+			"media_relay", getenv("UBAG_VOICE_AUDIO_RELAY_ADDR", voiceMediaRelayAddrDefault))
+	}
+
 	appJWTPublicKey, err := appJWTPublicKeyFromEnv()
 	if err != nil {
 		return fmt.Errorf("invalid app JWT configuration: %w", err)
@@ -199,6 +236,9 @@ func Run(ctx context.Context) error {
 			return webhookWorkerRunErrors()
 		},
 		FacadeMaxWait: facadeMaxWait,
+
+		VoiceStore: voiceStore,
+		VoiceMedia: voiceMedia,
 
 		RateLimiter:       enterprise.rateLimiter,
 		RateLimitResolver: enterprise.rateResolver,
@@ -1603,4 +1643,71 @@ func resolveWorkerScriptPath(value string) (string, error) {
 		return "", fmt.Errorf("worker script %q is a directory", value)
 	}
 	return value, nil
+}
+
+// Voice wiring: UBAG_VOICE_STORE selects the shared session store
+// ("memory" default, "sqlite" single-node file, "postgres" shared across
+// replicas reusing the gateway's pool). The media hub dials the browser
+// container's audio relay over TCP (UBAG_VOICE_AUDIO_RELAY_ADDR).
+const (
+	voiceMediaRelayAddrDefault = "127.0.0.1:9099"
+	voiceSweepInterval         = 30 * time.Second
+)
+
+func newVoiceComponentsFromEnv(ctx context.Context, storeKind string, db *sql.DB) (voice.Store, httpapi.MediaNegotiator, func(), error) {
+	mode := strings.ToLower(strings.TrimSpace(getenv("UBAG_VOICE_STORE", "memory")))
+	if mode == "disabled" || mode == "off" {
+		return nil, nil, func() {}, nil
+	}
+	switch mode {
+	case "", "memory", "in_memory":
+		store := voice.NewMemoryStore()
+		return store, newVoiceMediaHub(), func() {}, nil
+	case "postgres", "postgresql":
+		if storeKind != "postgres" || db == nil {
+			return nil, nil, func() {}, fmt.Errorf("UBAG_VOICE_STORE=postgres requires UBAG_GATEWAY_STORE=postgres")
+		}
+		store := voice.NewPostgresStore(db)
+		return store, newVoiceMediaHub(), func() {}, nil
+	case "sqlite", "sqlite3":
+		dsn := strings.TrimSpace(getenv("UBAG_VOICE_SQLITE_DSN", voiceSQLiteDSNDefault))
+		if strings.HasPrefix(dsn, "~") {
+			if home, homeErr := os.UserHomeDir(); homeErr == nil {
+				dsn = filepath.Join(home, dsn[1:])
+			}
+		}
+		dbHandle, err := sql.Open("sqlite", dsn)
+		if err != nil {
+			return nil, nil, func() {}, err
+		}
+		dbHandle.SetMaxOpenConns(1)
+		if err := dbHandle.PingContext(ctx); err != nil {
+			_ = dbHandle.Close()
+			return nil, nil, func() {}, err
+		}
+		store := voice.NewSQLiteStore(dbHandle)
+		if err := store.Ready(ctx); err != nil {
+			_ = dbHandle.Close()
+			return nil, nil, func() {}, err
+		}
+		return store, newVoiceMediaHub(), func() { _ = dbHandle.Close() }, nil
+	default:
+		return nil, nil, func() {}, fmt.Errorf("unsupported UBAG_VOICE_STORE %q", mode)
+	}
+}
+
+const voiceSQLiteDSNDefault = "~/.ubag/voice.db"
+
+func newVoiceMediaHub() *voice.MediaHub {
+	return &voice.MediaHub{
+		Dialer: &voice.TCPRelayDialer{
+			Address: func(string) (string, error) {
+				addr := strings.TrimSpace(getenv("UBAG_VOICE_AUDIO_RELAY_ADDR", voiceMediaRelayAddrDefault))
+				if addr == "" {
+					return "", voice.ErrRelayUnavailable
+				}
+				return addr, nil
+			},
+		},
+	}
 }
