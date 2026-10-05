@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "UBAG load workload manifest",
+  "description": "One workload class for tests/load. Only the audio-upload class exists today (P0.15); text, attachment, mixed and voice manifests belong to P0.11 and extend this schema. Validated by tests/load/workloads.mjs (a small built-in checker; no ajv dependency).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "name", "kind", "description", "synthetic", "route", "prompt", "target_requirements", "fixture"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+    "kind": { "enum": ["audio-upload"] },
+    "description": { "type": "string", "minLength": 1 },
+    "synthetic": { "const": true },
+    "route": { "enum": ["native_multipart"] },
+    "prompt": { "type": "string", "minLength": 1 },
+    "target_requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attachment_kinds", "content_types", "suggested_targets"],
+      "properties": {
+        "attachment_kinds": { "type": "array", "minItems": 1, "items": { "enum": ["audio", "voice"] } },
+        "content_types": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^audio/[a-z0-9.+-]+$" } },
+        "suggested_targets": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" } }
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["generator", "attachment_kind", "content_type", "sample_rate_hz", "channels", "bits_per_sample", "max_bytes", "default_profile", "profiles"],
+      "properties": {
+        "generator": { "const": "synthetic-wav" },
+        "attachment_kind": { "enum": ["audio", "voice"] },
+        "content_type": { "type": "string", "pattern": "^audio/[a-z0-9.+-]+$" },
+        "sample_rate_hz": { "type": "integer", "minimum": 8000, "maximum": 48000 },
+        "channels": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "bits_per_sample": { "const": 16 },
+        "max_bytes": { "type": "integer", "minimum": 1024, "maximum": 33554432 },
+        "default_profile": { "type": "string", "minLength": 1 },
+        "profiles": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["duration_s"],
+            "properties": { "duration_s": { "type": "integer", "minimum": 1, "maximum": 3600 } }
+          }
+        }
+      }
+    }
+  }
+}

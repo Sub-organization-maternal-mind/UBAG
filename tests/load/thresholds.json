@@ -26,5 +26,6 @@
   "max_cross_tenant_leaks": 0,
   "max_tenant_probe_unexpected": 0,
   "max_facade_image_failures": 0,
+  "max_audio_upload_violations": 0,
   "min_overload_rejections": 1
 }
