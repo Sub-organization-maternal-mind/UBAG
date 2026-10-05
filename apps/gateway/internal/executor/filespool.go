@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
@@ -54,6 +55,27 @@ type FileSpoolDispatcher struct {
 	retentionMu  sync.Mutex
 	retentionTTL time.Duration
 	retentionMax int
+	// honorNotBefore (UBAG_FILESPOOL_HONOR_NOT_BEFORE, default off) makes
+	// LeaseNext skip pending envelopes whose not_before is still in the future,
+	// matching the NATS consumer's §14.6 scheduling. notBefore caches the
+	// parsed time per pending file so a deferred envelope is read once, not on
+	// every poll.
+	// terminalIDs indexes the job IDs present in done/failed/cancelled so the
+	// duplicate check on every enqueue is a map lookup instead of a Stat+Glob
+	// per terminal dir (cost grew linearly with the terminal backlog, P0.8).
+	// nil = not loaded yet; it is built lazily by one ReadDir pass, kept current
+	// by this process's own moves, and rebuilt after a retention sweep deletes
+	// files. Files dropped into the terminal dirs by another process after the
+	// load are not seen until then (the job store is authoritative; a terminal
+	// job is never re-enqueued).
+	terminalMu  sync.Mutex
+	terminalIDs map[string]struct{}
+	honorNotBefore atomic.Bool
+	notBeforeMu    sync.Mutex
+	notBefore      map[string]time.Time
+	// beforeLease is a test seam called just before a pending envelope is
+	// claimed, so a test can deterministically lose the lease race.
+	beforeLease func(name string)
 }
 
 // SetRetention configures the terminal-state retention bounds. Call it before
@@ -66,6 +88,67 @@ func (d *FileSpoolDispatcher) SetRetention(cfg SpoolRetentionConfig) {
 	d.retentionTTL = cfg.TTL
 	d.retentionMax = cfg.MaxCount
 	d.retentionMu.Unlock()
+}
+
+// SetHonorNotBefore turns on not_before scheduling for LeaseNext. Call it at
+// wiring time, before the lease loop starts.
+func (d *FileSpoolDispatcher) SetHonorNotBefore(on bool) {
+	if d != nil {
+		d.honorNotBefore.Store(on)
+	}
+}
+
+// notBeforeDeferred reports whether the pending envelope `name` is scheduled
+// for the future. Unreadable or malformed envelopes are never deferred: the
+// normal lease path owns parking them in failed/.
+func (d *FileSpoolDispatcher) notBeforeDeferred(name string, now time.Time) bool {
+	d.notBeforeMu.Lock()
+	defer d.notBeforeMu.Unlock()
+	if at, ok := d.notBefore[name]; ok {
+		if now.Before(at) {
+			return true
+		}
+		delete(d.notBefore, name)
+		return false
+	}
+	path := filepath.Join(d.pendingDir(), name)
+	if info, err := os.Stat(path); err != nil || info.Size() > maxSpoolEnvelopeBytes {
+		return false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var probe struct {
+		NotBefore *time.Time `json:"not_before"`
+	}
+	if json.Unmarshal(raw, &probe) != nil || probe.NotBefore == nil || !now.Before(*probe.NotBefore) {
+		return false
+	}
+	if d.notBefore == nil {
+		d.notBefore = map[string]time.Time{}
+	}
+	d.notBefore[name] = *probe.NotBefore
+	return true
+}
+
+// pruneNotBefore drops cache entries whose envelope is no longer pending
+// (leased elsewhere, cancelled) so the cache stays bounded by the pending set.
+func (d *FileSpoolDispatcher) pruneNotBefore(pending []string) {
+	d.notBeforeMu.Lock()
+	defer d.notBeforeMu.Unlock()
+	if len(d.notBefore) == 0 {
+		return
+	}
+	live := make(map[string]struct{}, len(pending))
+	for _, name := range pending {
+		live[name] = struct{}{}
+	}
+	for name := range d.notBefore {
+		if _, ok := live[name]; !ok {
+			delete(d.notBefore, name)
+		}
+	}
 }
 
 func (d *FileSpoolDispatcher) retentionBounds() (time.Duration, int) {
@@ -266,23 +349,55 @@ func (d *FileSpoolDispatcher) LeaseNext(ctx context.Context) (FileSpoolLease, bo
 	if err != nil {
 		return FileSpoolLease{}, false, err
 	}
-	// Single-pass oldest-first: job files are `<jobID>.json` with zero-padded
-	// sequential IDs (job_%012d), so lexicographic minimum IS the oldest —
-	// no O(n log n) sort on every poll.
-	oldest := ""
+	// Job files are `<jobID>.json` with zero-padded sequential IDs
+	// (job_%012d), so lexicographic order IS oldest-first. The first candidate
+	// is a single-pass minimum (no sort on the common empty/one-winner poll);
+	// the slice is sorted lazily only when the first candidate is lost.
+	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		if oldest == "" || entry.Name() < oldest {
-			oldest = entry.Name()
-		}
+		names = append(names, entry.Name())
 	}
-	if oldest == "" {
+	if len(names) == 0 {
 		return FileSpoolLease{}, false, nil
 	}
+	first := 0
+	for i, name := range names {
+		if name < names[first] {
+			first = i
+		}
+	}
+	names[0], names[first] = names[first], names[0]
+	honorNotBefore := d.honorNotBefore.Load()
+	if honorNotBefore {
+		d.pruneNotBefore(names)
+	}
+	now := d.now()
+	for i := 0; i < len(names); i++ {
+		if i == 1 {
+			sort.Strings(names[1:])
+		}
+		if honorNotBefore && d.notBeforeDeferred(names[i], now) {
+			continue
+		}
+		lease, ok, err := d.tryLease(names[i])
+		if err != nil || ok {
+			return lease, ok, err
+		}
+		// Lost the race for this candidate (another worker or a cancel moved
+		// it first): try the next-oldest instead of reporting an empty queue.
+	}
+	return FileSpoolLease{}, false, nil
+}
 
-	name := oldest
+// tryLease claims one pending envelope. ok=false with a nil error means the
+// candidate vanished underneath us and the caller should try the next one.
+func (d *FileSpoolDispatcher) tryLease(name string) (FileSpoolLease, bool, error) {
+	if d.beforeLease != nil {
+		d.beforeLease(name)
+	}
 	jobID := strings.TrimSuffix(name, ".json")
 	leasedAt := d.now().UTC()
 	leaseID := fmt.Sprintf("%d", leasedAt.UnixNano())
@@ -290,7 +405,6 @@ func (d *FileSpoolDispatcher) LeaseNext(ctx context.Context) (FileSpoolLease, bo
 	destination := filepath.Join(d.leasedDir(), fmt.Sprintf("%s.%s.json", jobID, leaseID))
 	if err := os.Rename(source, destination); err != nil {
 		if os.IsNotExist(err) {
-			// Lost the race with another worker — report empty, not an error.
 			return FileSpoolLease{}, false, nil
 		}
 		return FileSpoolLease{}, false, err
@@ -547,6 +661,9 @@ func (d *FileSpoolDispatcher) SweepRetention(now time.Time) (int, error) {
 		}
 		removed++
 	}
+	if removed > 0 {
+		d.invalidateTerminal()
+	}
 	return removed, nil
 }
 
@@ -596,6 +713,7 @@ func (d *FileSpoolDispatcher) movePendingToCancelled(jobID string) (bool, error)
 		}
 		return false, err
 	}
+	d.noteTerminal(filepath.Base(source))
 	return true, nil
 }
 
@@ -631,7 +749,11 @@ func (d *FileSpoolDispatcher) writeCancellationMarker(job jobstore.Job, reason s
 		return err
 	}
 	payload = append(payload, '\n')
-	return writeFileExclusive(filepath.Join(d.cancelledDir(), job.ID+".json"), payload)
+	if err := writeFileExclusive(filepath.Join(d.cancelledDir(), job.ID+".json"), payload); err != nil {
+		return err
+	}
+	d.noteTerminal(job.ID + ".json")
+	return nil
 }
 
 func (d *FileSpoolDispatcher) moveLeasePath(source string, destinationDir string) error {
@@ -648,6 +770,8 @@ func (d *FileSpoolDispatcher) moveLeasePath(source string, destinationDir string
 		}
 		return err
 	}
+	// Every caller moves into done/failed/cancelled.
+	d.noteTerminal(filepath.Base(source))
 	return nil
 }
 
@@ -686,12 +810,53 @@ func (d *FileSpoolDispatcher) jobExistsInAnyState(jobID string) bool {
 }
 
 func (d *FileSpoolDispatcher) jobExistsInTerminalState(jobID string) bool {
-	for _, dir := range []string{d.doneDir(), d.failedDir(), d.cancelledDir()} {
-		if _, ok := d.findJobPath(jobID, dir); ok {
-			return true
+	d.terminalMu.Lock()
+	defer d.terminalMu.Unlock()
+	if d.terminalIDs == nil {
+		ids := map[string]struct{}{}
+		for _, dir := range []string{d.doneDir(), d.failedDir(), d.cancelledDir()} {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue // missing dir == nothing terminal there
+			}
+			for _, entry := range entries {
+				addTerminalName(ids, entry.Name())
+			}
+		}
+		d.terminalIDs = ids
+	}
+	_, ok := d.terminalIDs[jobID]
+	return ok
+}
+
+// addTerminalName indexes a terminal file name `<jobID>.json` or
+// `<jobID>.<leaseID>.json` under every ID the old `<jobID>.json` / `<jobID>.*.json`
+// lookup would have matched.
+func addTerminalName(ids map[string]struct{}, name string) {
+	base, ok := strings.CutSuffix(name, ".json")
+	if !ok {
+		return
+	}
+	ids[base] = struct{}{}
+	for i := 0; i < len(base); i++ {
+		if base[i] == '.' {
+			ids[base[:i]] = struct{}{}
 		}
 	}
-	return false
+}
+
+func (d *FileSpoolDispatcher) noteTerminal(name string) {
+	d.terminalMu.Lock()
+	defer d.terminalMu.Unlock()
+	if d.terminalIDs != nil { // not loaded yet: the load will see the file
+		addTerminalName(d.terminalIDs, name)
+	}
+}
+
+func (d *FileSpoolDispatcher) invalidateTerminal() {
+	d.terminalMu.Lock()
+	d.terminalIDs = nil
+	d.terminalMu.Unlock()
 }
 
 func (d *FileSpoolDispatcher) findJobPath(jobID string, dir string) (string, bool) {

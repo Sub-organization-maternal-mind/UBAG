@@ -486,3 +486,137 @@ func TestFileSpoolDispatcherRecoversOrphanLeases(t *testing.T) {
 		t.Fatalf("duplicate lease must be parked in cancelled/, found %d", len(entries))
 	}
 }
+
+func enqueueSpoolJobs(t *testing.T, d *FileSpoolDispatcher, ids ...string) {
+	t.Helper()
+	for _, id := range ids {
+		job := sampleJob()
+		job.ID = id
+		if _, err := d.EnqueueJob(context.Background(), job); err != nil {
+			t.Fatalf("enqueue %s: %v", id, err)
+		}
+	}
+}
+
+func TestFileSpoolLeaseNextTriesNextCandidateAfterLostRace(t *testing.T) {
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	enqueueSpoolJobs(t, dispatcher, "job_000000000001", "job_000000000002", "job_000000000003")
+	// Another worker claims the oldest envelope between ReadDir and Rename.
+	dispatcher.beforeLease = func(name string) {
+		if name == "job_000000000001.json" {
+			_ = os.Remove(filepath.Join(dispatcher.pendingDir(), name))
+		}
+	}
+	lease, ok, err := dispatcher.LeaseNext(context.Background())
+	if err != nil || !ok {
+		t.Fatalf("LeaseNext ok=%v err=%v; a lost race must fall through to the next candidate", ok, err)
+	}
+	if lease.JobID != "job_000000000002" {
+		t.Fatalf("leased %s, want the next-oldest job_000000000002", lease.JobID)
+	}
+}
+
+func TestFileSpoolLeaseNextEmptyWhenEveryCandidateLost(t *testing.T) {
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	enqueueSpoolJobs(t, dispatcher, "job_000000000001", "job_000000000002")
+	dispatcher.beforeLease = func(name string) {
+		_ = os.Remove(filepath.Join(dispatcher.pendingDir(), name))
+	}
+	if _, ok, err := dispatcher.LeaseNext(context.Background()); ok || err != nil {
+		t.Fatalf("LeaseNext ok=%v err=%v, want empty without error", ok, err)
+	}
+}
+
+func TestFileSpoolLeaseNextHonorsNotBeforeWhenEnabled(t *testing.T) {
+	clock := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	dispatcher.now = func() time.Time { return clock }
+	dispatcher.SetHonorNotBefore(true)
+
+	due := clock.Add(10 * time.Minute)
+	scheduled := sampleJob()
+	scheduled.ID = "job_000000000001"
+	scheduled.Status = jobstore.StatusScheduled
+	scheduled.NotBefore = &due
+	if _, err := dispatcher.EnqueueJob(context.Background(), scheduled); err != nil {
+		t.Fatalf("enqueue scheduled: %v", err)
+	}
+	if _, ok, err := dispatcher.LeaseNext(context.Background()); ok || err != nil {
+		t.Fatalf("scheduled job leased before not_before: ok=%v err=%v", ok, err)
+	}
+
+	// A younger, unscheduled job must not be blocked behind the scheduled one.
+	enqueueSpoolJobs(t, dispatcher, "job_000000000002")
+	lease, ok, err := dispatcher.LeaseNext(context.Background())
+	if err != nil || !ok || lease.JobID != "job_000000000002" {
+		t.Fatalf("LeaseNext = %q ok=%v err=%v, want job_000000000002", lease.JobID, ok, err)
+	}
+
+	clock = due
+	lease, ok, err = dispatcher.LeaseNext(context.Background())
+	if err != nil || !ok || lease.JobID != scheduled.ID {
+		t.Fatalf("LeaseNext after not_before = %q ok=%v err=%v, want %s", lease.JobID, ok, err, scheduled.ID)
+	}
+	if len(dispatcher.notBefore) != 0 {
+		t.Fatalf("not_before cache not cleared: %v", dispatcher.notBefore)
+	}
+}
+
+func TestFileSpoolLeaseNextIgnoresNotBeforeByDefault(t *testing.T) {
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	due := time.Now().Add(time.Hour)
+	job := sampleJob()
+	job.Status = jobstore.StatusScheduled
+	job.NotBefore = &due
+	if _, err := dispatcher.EnqueueJob(context.Background(), job); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	if _, ok, err := dispatcher.LeaseNext(context.Background()); !ok || err != nil {
+		t.Fatalf("legacy behaviour (flag off) must lease immediately: ok=%v err=%v", ok, err)
+	}
+}
+
+func TestFileSpoolEnqueueTerminalIndex(t *testing.T) {
+	ctx := context.Background()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	if err := dispatcher.Ready(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-existing terminal files (loaded lazily by the first enqueue).
+	writeSpoolFile(t, dispatcher.doneDir(), "job_000000000001.7.json", time.Now())
+	writeSpoolFile(t, dispatcher.cancelledDir(), "job_000000000002.json", time.Now())
+	pending := func(id string) bool {
+		_, err := os.Stat(filepath.Join(dispatcher.pendingDir(), id+".json"))
+		return err == nil
+	}
+	enqueueSpoolJobs(t, dispatcher, "job_000000000001", "job_000000000002", "job_000000000003", "job_00000000000")
+	if pending("job_000000000001") || pending("job_000000000002") {
+		t.Fatal("terminal job was re-enqueued")
+	}
+	if !pending("job_000000000003") || !pending("job_00000000000") {
+		t.Fatal("non-terminal job (incl. an ID that is only a prefix of a terminal one) must enqueue")
+	}
+
+	// This process's own moves keep the loaded index current.
+	lease, ok, err := dispatcher.LeaseNext(ctx)
+	if err != nil || !ok {
+		t.Fatalf("LeaseNext ok=%v err=%v", ok, err)
+	}
+	if err := dispatcher.CompleteLease(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	enqueueSpoolJobs(t, dispatcher, lease.JobID)
+	if pending(lease.JobID) {
+		t.Fatalf("completed job %s was re-enqueued", lease.JobID)
+	}
+
+	// Retention deletion invalidates the index: an expired envelope is gone.
+	dispatcher.SetRetention(SpoolRetentionConfig{TTL: time.Hour})
+	if _, err := dispatcher.SweepRetention(time.Now().Add(48 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	enqueueSpoolJobs(t, dispatcher, "job_000000000002")
+	if !pending("job_000000000002") {
+		t.Fatal("job whose terminal envelope was swept should enqueue again")
+	}
+}
