@@ -236,36 +236,18 @@ func TestMediaHubLoopbackNegotiatesAndRelays(t *testing.T) {
 		t.Fatalf("client remote desc: %v", err)
 	}
 
-	// Wait for the client track to reach the hub's OnTrack (negotiation).
-	deadline := time.Now().Add(5 * time.Second)
+	// Keep sending until the relay has seen a steady flow: samples written
+	// before the DTLS handshake completes are silently dropped, so a fixed
+	// burst would depend on handshake timing.
+	deadline := time.Now().Add(8 * time.Second)
 	sent := 0
-	for time.Now().Before(deadline) && sent < 5 {
-		if err := micTrack.WriteSample(media.Sample{Data: []byte{byte(sent), 0xAA, 0xBB}, Duration: opusFrameDuration}); err != nil {
-			time.Sleep(20 * time.Millisecond)
-			continue
+	for time.Now().Before(deadline) && relay.frameCount() < 5 {
+		if err := micTrack.WriteSample(media.Sample{Data: []byte{byte(sent), 0xAA, 0xBB}, Duration: opusFrameDuration}); err == nil {
+			sent++
 		}
-		sent++
 		time.Sleep(10 * time.Millisecond)
 	}
-	if sent == 0 {
-		t.Fatal("client could not send any sample (track not ready)")
-	}
-
-	// Relay must have received the client's Opus payloads.
-	deadline = time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		relay.mu.Lock()
-		n := len(relay.frames)
-		relay.mu.Unlock()
-		if n >= sent {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	relay.mu.Lock()
-	got := len(relay.frames)
-	relay.mu.Unlock()
-	if got < 3 {
+	if got := relay.frameCount(); got < 3 {
 		t.Fatalf("relay received %d frames, want a steady flow (sent %d)", got, sent)
 	}
 

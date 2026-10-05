@@ -244,6 +244,11 @@ type Config struct {
 	// connect with 501 while create/status still work.
 	VoiceStore voice.Store
 	VoiceMedia MediaNegotiator
+	// VoiceProviderActivation makes live sessions start the provider voice UI
+	// through worker control jobs and reach connected only once the provider is
+	// verified ready. Off keeps sessions at connecting (unit tests, media-only
+	// development).
+	VoiceProviderActivation bool
 
 	// VoiceSessionTTL is the default lease window between renewals
 	// (30s..1h). Zero selects the 10-minute default.
@@ -294,6 +299,8 @@ type Server struct {
 	maxBody          int64
 	facadeMaxBody    int64
 	voice            voice.Store
+	voiceActivation  bool
+	voiceLife        voiceLifecycle
 	voiceMedia       MediaNegotiator
 	voiceSessionTTL  time.Duration
 
@@ -585,6 +592,7 @@ func NewServer(config Config) *Server {
 		facadeMaxWait:    config.FacadeMaxWait,
 		facadeMaxBody:    config.FacadeMaxBodyBytes,
 		voice:            config.VoiceStore,
+		voiceActivation:  config.VoiceProviderActivation,
 		voiceMedia:       config.VoiceMedia,
 		voiceSessionTTL:  config.VoiceSessionTTL,
 

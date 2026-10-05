@@ -85,6 +85,17 @@ class WarmWorkerDaemon:
         The event stream is passed through untouched: the daemon changes where
         the page comes from, never what is captured from it.
         """
+        from ..voice.voice_job import UNSUPPORTED_RUNNER, is_voice_command, refuse_voice_job
+
+        if is_voice_command(payload):
+            # PlaywrightCdpClient starts its own sync_playwright, which cannot
+            # share this daemon's thread with a warm driver's manager.
+            yield from refuse_voice_job(
+                payload,
+                UNSUPPORTED_RUNNER,
+                "voice jobs must run on the per-job runner, not the warm daemon",
+            )
+            return
         target = _target_from_payload(payload)
         if target not in self._selectors_by_target:
             raise ValueError("no live selector configuration for target %r" % target)

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -370,6 +371,11 @@ func (s *Server) workflowDispatcher(r *http.Request, runID string, def workflow.
 		input := step.Input
 		if input == nil {
 			input = map[string]any{}
+		}
+		if jobcore.IsReservedCommandType(step.Command) {
+			// Workflows are caller-authored: gateway-internal control jobs
+			// (voice.*) must never be created through them.
+			return "", errors.New("step command is reserved for gateway-internal use")
 		}
 		job, err := s.jobs.Create(ctx, jobstore.CreateRequest{
 			APIVersion:     s.apiVersion,

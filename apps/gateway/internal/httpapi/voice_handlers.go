@@ -563,6 +563,7 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 		s.writeError(w, r, http.StatusInternalServerError, internalError("voice session store error"))
 		return
 	}
+	s.beginVoiceActivation(session)
 	expires := now.Add(voiceMediaCredentialTTL)
 	s.writeJSON(w, http.StatusOK, voiceSessionConnectResponse{
 		SessionID:       sessionID,

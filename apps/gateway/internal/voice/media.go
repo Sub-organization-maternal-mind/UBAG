@@ -278,8 +278,12 @@ type MediaHub struct {
 	Metrics    MediaMetrics
 
 	OnConnected func(Session)
-	OnClosed    func(s Session, reason string)
-	OnMute      func(s Session, muted bool)
+	// OnEnded fires once for EVERY end of a media path (explicit disconnect,
+	// peer or relay failure, shutdown) except reconnect replacement, which
+	// keeps the session's provider voice alive.
+	OnEnded  func(s Session, reason string)
+	OnClosed func(s Session, reason string)
+	OnMute   func(s Session, muted bool)
 
 	mu       sync.Mutex
 	sessions map[string]*mediaSession
@@ -582,6 +586,10 @@ func (h *MediaHub) closeSession(ms *mediaSession, reason string, notify bool) {
 		_ = ms.relay.Close()
 		_ = ms.pc.Close()
 		h.metrics().AddSessionsEnded(reason)
+		if reason != "reconnect_replaced" && h.OnEnded != nil {
+			session := ms.session
+			h.fire(func() { h.OnEnded(session, reason) })
+		}
 		if notify && h.OnClosed != nil {
 			session := ms.session
 			h.fire(func() { h.OnClosed(session, reason) })

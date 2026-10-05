@@ -6,6 +6,8 @@ The Go worker-consumer invokes this script as:
 
 Routing logic
 -------------
+- ``voice.*`` commands (``voice.activate`` / ``voice.deactivate``) are handled
+  first by :mod:`ubag_worker.voice.voice_job`, never by the paths below.
 - If ``payload["job"]["target"]`` (or ``payload["target"]`` as fallback) is found
   in ``PROVIDER_SELECTORS`` (e.g. ``"chatgpt_web"``) the job is driven through
   :class:`LiveSessionEngine`, which internally calls ``create_default_driver()``
@@ -46,6 +48,7 @@ from ubag_worker.live.envelope import _target_from_payload  # noqa: E402
 from ubag_worker.live.selectors import PROVIDER_SELECTORS  # noqa: E402
 from ubag_worker.runner import emit_jsonl, load_payload_from_text  # noqa: E402
 from ubag_worker.runtime.shutdown import GracefulDrainer, install_shutdown_handler  # noqa: E402
+from ubag_worker.voice.voice_job import is_voice_command, iter_voice_events  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Graceful shutdown — mirrors run_mock_worker.py pattern
@@ -178,6 +181,17 @@ def _emit_live_jsonl(payload: object, stream) -> int:
     return count
 
 
+def _emit_voice_jsonl(payload: object, stream) -> int:
+    """Run a voice.activate/deactivate job and emit each event as a JSONL line."""
+    count = 0
+    for event in iter_voice_events(payload):
+        stream.write(_dump_event(event))
+        stream.write("\n")
+        stream.flush()
+        count += 1
+    return count
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -192,16 +206,24 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         target = _target_from_payload(payload)
         is_live = target in PROVIDER_SELECTORS
+        # Voice jobs are checked first: they must never fall through to the chat
+        # engine or the adapter registry, which would type the input JSON into
+        # the provider.
+        is_voice = is_voice_command(payload)
 
         if args.output:
             output_path = Path(args.output)
             with output_path.open("w", encoding="utf-8", newline="\n") as output:
-                if is_live:
+                if is_voice:
+                    _emit_voice_jsonl(payload, output)
+                elif is_live:
                     _emit_live_jsonl(payload, output)
                 else:
                     emit_jsonl(payload, output)
         else:
-            if is_live:
+            if is_voice:
+                _emit_voice_jsonl(payload, sys.stdout)
+            elif is_live:
                 _emit_live_jsonl(payload, sys.stdout)
             else:
                 emit_jsonl(payload, sys.stdout)

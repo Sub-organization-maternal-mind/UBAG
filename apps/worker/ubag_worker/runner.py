@@ -6,6 +6,7 @@ import json
 from typing import Any, Dict, List, Mapping, TextIO
 
 from .adapter_registry import events_for_payload as _events_for_payload
+from .voice.voice_job import is_voice_command, iter_voice_events
 
 JsonObject = Dict[str, Any]
 
@@ -18,6 +19,10 @@ def load_payload_from_text(text: str) -> JsonObject:
 
 
 def events_for_payload(payload: Mapping[str, Any]) -> List[JsonObject]:
+    # A voice job must never reach the adapter registry (it would type the
+    # input JSON into the provider).
+    if is_voice_command(payload):
+        return list(iter_voice_events(payload))
     return _events_for_payload(payload)
 
 

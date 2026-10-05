@@ -90,7 +90,20 @@ func CanonicalCreateHash(apiVersion string, client Client, spec Spec) (string, e
 
 // ValidatePayload enforces the executable-payload safety policy on a job
 // request, ignoring the webhook secret reference which is resolved server-side.
+// ReservedCommandPrefix marks gateway-internal control job types (provider
+// voice activation/teardown). They carry a CDP endpoint and drive a live
+// browser, so external callers must never be able to create them.
+const ReservedCommandPrefix = "voice."
+
+// IsReservedCommandType reports whether a command type is gateway-internal.
+func IsReservedCommandType(commandType string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(commandType)), ReservedCommandPrefix)
+}
+
 func ValidatePayload(client Client, spec Spec) error {
+	if IsReservedCommandType(spec.CommandType) {
+		return fmt.Errorf("job.command_type %q is reserved for gateway-internal use", strings.TrimSpace(spec.CommandType))
+	}
 	callbacks := cloneMap(spec.Callbacks)
 	delete(callbacks, "webhook_secret_id")
 	payload := map[string]any{

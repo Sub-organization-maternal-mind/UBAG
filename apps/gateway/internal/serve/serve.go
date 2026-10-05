@@ -32,6 +32,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/grpcapi"
 	"github.com/ubag/ubag/apps/gateway/internal/httpapi"
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
+	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	"github.com/ubag/ubag/apps/gateway/internal/jitadmin"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/mfa"
@@ -255,6 +256,10 @@ func Run(ctx context.Context) error {
 		VoiceMedia: voiceMedia,
 
 		VoiceMetrics: voiceMetrics,
+		// Provider voice is started by worker control jobs and a session is only
+		// "connected" once the provider is verified ready. Disable only for
+		// media-path development (UBAG_VOICE_PROVIDER_ACTIVATION=0).
+		VoiceProviderActivation: voiceStore != nil && getenv("UBAG_VOICE_PROVIDER_ACTIVATION", "1") != "0",
 
 		RateLimiter:       enterprise.rateLimiter,
 		RateLimitResolver: enterprise.rateResolver,
@@ -376,6 +381,10 @@ func Run(ctx context.Context) error {
 		grpcweb.WithOriginFunc(loopbackOrigin),
 		grpcweb.WithCorsForRegisteredEndpointsOnly(false),
 	)
+	if hub, ok := voiceMedia.(*voice.MediaHub); ok {
+		hub.OnConnected = server.VoiceMediaConnected
+		hub.OnEnded = server.VoiceMediaEnded
+	}
 	baseHandler := server.Handler()
 	gatewayHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if wrappedGRPC.IsGrpcWebRequest(r) || wrappedGRPC.IsAcceptableGrpcCorsRequest(r) {
@@ -1326,7 +1335,9 @@ func (r *targetWorkerRunner) RunWorker(
 	ctx context.Context,
 	envelope executor.DispatchEnvelope,
 ) ([]jobstore.WorkerEvent, error) {
-	if _, ok := warmDaemonTargets[strings.TrimSpace(envelope.Job.Target)]; ok {
+	// Voice control jobs drive the browser through their own CDP client and
+	// must never run on the warm daemon's shared Playwright thread.
+	if _, ok := warmDaemonTargets[strings.TrimSpace(envelope.Job.Target)]; ok && !jobcore.IsReservedCommandType(envelope.Job.CommandType) {
 		return r.daemon.RunWorker(ctx, envelope)
 	}
 	return r.fallback.RunWorker(ctx, envelope)
