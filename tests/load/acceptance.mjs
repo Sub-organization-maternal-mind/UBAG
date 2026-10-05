@@ -9,6 +9,7 @@
  *     node tests/load/acceptance.mjs --i-understand-this-is-load --scenario queue-1000
  *
  * Scenarios: queue-1000 | clients-100 | duplicates | steady-state | overload | metrics-snapshot | all
+ * Opt-in (never part of "all"): audio-upload (workloads/audio-upload.json; needs a target that accepts audio attachments)
  *
  * Integrity gates (fail closed): completed jobs have their result body and event
  * log re-fetched and verified; a second tenant (UBAG_LOAD_API_KEY_B) must not be
@@ -22,10 +23,13 @@ import { arch, platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { loadWorkload, multipartBody, sha256Hex, syntheticWav } from './workloads.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const API_VERSION = '2026-05-22';
-export const SCENARIOS = ['queue-1000', 'clients-100', 'duplicates', 'steady-state', 'overload', 'metrics-snapshot'];
+export const SCENARIOS = ['queue-1000', 'clients-100', 'duplicates', 'steady-state', 'overload', 'metrics-snapshot', 'audio-upload'];
+// Scenarios that need a specific kind of target are never part of "all".
+const OPT_IN = new Set(['audio-upload']);
 export const ACK_FLAG = 'i-understand-this-is-load';
 
 // completed_with_warnings is NOT a success: it is counted separately (warning_jobs) and gated.
@@ -176,8 +180,9 @@ const NUM = { // flag: [cfgKey, default, min, max]
   'steady-seconds': ['steadySeconds', 30, 1, 3600], 'steady-rate': ['steadyRate', 5, 1, 200],
   'steady-read-rate': ['steadyReadRate', 20, 1, 1000], 'steady-seed-jobs': ['steadySeedJobs', 10, 1, 1000],
   'tenant-probe-samples': ['tenantProbeSamples', 10, 0, 1000],
+  'audio-jobs': ['audioJobs', 5, 1, 1000],
 };
-const STR = { target: 'target', 'command-type': 'commandType', 'docker-stats-container': 'dockerContainer', 'cgroup-containers': 'cgroupContainers', 'out-dir': 'outDir', thresholds: 'thresholds', goals: 'goals' };
+const STR = { target: 'target', 'command-type': 'commandType', 'docker-stats-container': 'dockerContainer', 'cgroup-containers': 'cgroupContainers', 'out-dir': 'outDir', thresholds: 'thresholds', goals: 'goals', 'audio-profile': 'audioProfile' };
 const FLAGS = new Set([ACK_FLAG, 'with-upload', 'require-goals']);
 
 export function parseArgs(argv, env = process.env) {
@@ -216,7 +221,7 @@ export function parseArgs(argv, env = process.env) {
   // Order matters: the acknowledgement is checked before anything touches the target.
   if (!acknowledged) throw new Error(`this tool generates load against a live gateway; pass --${ACK_FLAG} to proceed (see docs/load-testing.md)`);
   if (!cfg.scenarios.length) throw new Error(`--scenario is required (${SCENARIOS.join(' | ')} | all)`);
-  if (cfg.scenarios.includes('all')) cfg.scenarios = [...SCENARIOS];
+  if (cfg.scenarios.includes('all')) cfg.scenarios = SCENARIOS.filter((s) => !OPT_IN.has(s));
   for (const s of cfg.scenarios) if (!SCENARIOS.includes(s)) throw new Error(`unknown scenario "${s}"`);
   cfg.scenarios = [...new Set(cfg.scenarios)];
   if (!env.UBAG_LOAD_BASE_URL) throw new Error('UBAG_LOAD_BASE_URL is required');
@@ -327,6 +332,7 @@ export class Recorder {
       terminal_event_violations: c('terminal_event_violations'), events_verified: c('events_verified'),
       cross_tenant_leaks: c('cross_tenant_leaks'), tenant_probe_unexpected: c('tenant_probe_unexpected'), tenant_probe_requests: c('tenant_probe_requests'),
       facade_image_failures: c('facade_image_failures'),
+      audio_upload_violations: c('audio_upload_violations'), audio_artifacts_verified: c('audio_artifacts_verified'),
       create_p95_ms: createOk.length ? summarize(createOk).p95 : undefined,
       steady_create_p95_ms: p95Of('steady-state/create'), steady_read_p95_ms: p95Of('steady-state/read'),
       ...extra,
@@ -792,7 +798,47 @@ async function snapshotScenario(ctx) {
   return { idle_window_seconds: ctx.cfg.snapshotSeconds };
 }
 
-const RUNNERS = { 'queue-1000': queue1000, 'clients-100': clients100, duplicates, 'steady-state': steadyState, overload, 'metrics-snapshot': snapshotScenario };
+/**
+ * Opt-in uploaded-audio workload (workloads/audio-upload.json): a synthetic WAV sent as a native
+ * multipart POST /v1/jobs. Fails closed: a target that does not accept audio attachments (the mock
+ * adapter declares no attachments policy) is a violation, never a silent pass.
+ */
+async function audioUpload(ctx) {
+  const { cfg, rec } = ctx;
+  const wl = loadWorkload('audio-upload'); const fx = wl.fixture;
+  const profile = cfg.audioProfile ?? fx.default_profile;
+  const wav = syntheticWav(fx, profile); const sha = sha256Hex(wav);
+  const bad = (why) => rec.violation('audio_upload_violations', why);
+  const jobs = (await pool(range(cfg.audioJobs), cfg.createConcurrency, async (i) => {
+    const key = idemKey(ctx, 'a', i); const fileKey = `audio-${i}.wav`; const prompt = `${wl.prompt} [${key}]`;
+    const envelope = jobPayload(cfg, key, prompt);
+    envelope.job.input.attachments = [{ key: fileKey, filename: fileKey, content_type: fx.content_type, kind: fx.attachment_kind }];
+    const { body, contentType } = multipartBody([
+      { name: 'job', data: JSON.stringify(envelope), contentType: 'application/json' },
+      { name: fileKey, filename: fileKey, data: wav, contentType: fx.content_type },
+    ]);
+    const t0 = now();
+    const { res } = await callWithRetry(ctx, 'audio_create', () => ctx.request('POST', '/v1/jobs', { body, headers: { 'Content-Type': contentType, 'Idempotency-Key': key }, timeoutMs: cfg.facadeTimeoutMs }));
+    if (!((res.status === 200 || res.status === 202) && typeof res.json?.job_id === 'string')) {
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) bad(`audio create rejected: HTTP ${res.status} ${res.json?.error?.code ?? ''} (target "${cfg.target}" must accept ${fx.content_type} as ${fx.attachment_kind}; try ${wl.target_requirements.suggested_targets.join('|')})`);
+      else rec.count('unaccepted_jobs');
+      return null;
+    }
+    rec.latency('audio_create_incl_retries', now() - t0); ctx.jobIds.add(res.json.job_id);
+    const arts = await ctx.request('GET', `/v1/jobs/${encodeURIComponent(res.json.job_id)}/artifacts`);
+    rec.observe('audio_artifacts', arts);
+    const stored = Array.isArray(arts.json?.data) ? arts.json.data.find((a) => a?.key === fileKey) : undefined;
+    if (!stored) bad(`${res.json.job_id}: uploaded audio artifact "${fileKey}" is not listed`);
+    else if (stored.size_bytes !== wav.length) bad(`${res.json.job_id}: stored ${stored.size_bytes} bytes, uploaded ${wav.length}`);
+    else if (stored.checksum && stored.checksum !== sha) bad(`${res.json.job_id}: stored checksum differs from the uploaded fixture`);
+    else rec.count('audio_artifacts_verified');
+    return { ok: true, jobId: res.json.job_id, key, prompt, acceptedAt: now() };
+  })).filter(Boolean);
+  const { out } = await settleJobs(ctx, jobs);
+  return { profile, bytes: wav.length, sha256: sha, requested: cfg.audioJobs, accepted: jobs.length, final: out.byStatus };
+}
+
+const RUNNERS = { 'queue-1000': queue1000, 'clients-100': clients100, duplicates, 'steady-state': steadyState, overload, 'metrics-snapshot': snapshotScenario, 'audio-upload': audioUpload };
 
 // -------------------------------------------------------------------- driver
 
@@ -873,6 +919,8 @@ export function renderMarkdown(report) {
   if (d && !d.error) lines.push('## duplicates', '', table(['key', 'responses', 'accepted', 'distinct jobs', 'original', 'replays'], d.per_key.map((p) => [p.key, p.responses, p.accepted, p.distinct_jobs, p.non_replay, p.replays])), '', `cancel outcomes: \`${JSON.stringify(d.cancel_outcomes)}\``, '');
   const st = report.scenarios['steady-state'];
   if (st && !st.error) lines.push('## steady-state', '', `${st.seconds}s at ${st.create_rate} creates/s and ${st.read_rate} reads/s; accepted ${st.accepted}/${st.creates}; final states: \`${JSON.stringify(st.final)}\``, '');
+  const au = report.scenarios['audio-upload'];
+  if (au && !au.error) lines.push('## audio-upload', '', `profile ${au.profile} (${au.bytes} bytes, sha256 ${au.sha256}); accepted ${au.accepted}/${au.requested}; final states: \`${JSON.stringify(au.final)}\``, '');
   const o = report.scenarios.overload;
   if (o && !o.error) lines.push('## overload', '', `rejected responses: ${o.rejected_responses}; recovered: ${o.recovered}`, o.note ? `note: ${o.note}` : '', '');
   lines.push('## Gateway metrics (before -> after)', '');

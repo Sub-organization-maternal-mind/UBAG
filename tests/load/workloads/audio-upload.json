@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "name": "audio-upload",
+  "kind": "audio-upload",
+  "description": "Uploaded-audio job: a synthetic PCM WAV attached to a native multipart POST /v1/jobs, dispatched to a provider adapter that accepts audio attachments. Measures accept latency, artifact integrity (size and sha256 as stored) and job completion. The audio is a deterministic tone, not speech, so completion is checked structurally, never for transcript content.",
+  "synthetic": true,
+  "route": "native_multipart",
+  "prompt": "Transcribe the attached audio verbatim. Return plain text only, no commentary.",
+  "target_requirements": {
+    "attachment_kinds": ["audio", "voice"],
+    "content_types": ["audio/wav"],
+    "suggested_targets": ["chatgpt_web", "gemini_web", "mistral_lechat"]
+  },
+  "fixture": {
+    "generator": "synthetic-wav",
+    "attachment_kind": "audio",
+    "content_type": "audio/wav",
+    "sample_rate_hz": 16000,
+    "channels": 1,
+    "bits_per_sample": 16,
+    "max_bytes": 25165824,
+    "default_profile": "short",
+    "profiles": {
+      "short": { "duration_s": 5 },
+      "medium": { "duration_s": 120 },
+      "large": { "duration_s": 780 }
+    }
+  }
+}

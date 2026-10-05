@@ -57,6 +57,12 @@ Select with `--scenario a,b` or `--scenario all` (repeat or comma separate).
 | `overload` | Upload-memory burst (`--burst` x `--burst-body-bytes` facade bodies), an in-flight burst (`--inflight-burst` cheap authenticated GETs), then recovery: health/ready 200 and `--recovery-requests` normal jobs complete. Every 429/503 must carry `Retry-After` and body `retry_after_ms`. |
 | `metrics-snapshot` | `/v1/metrics` is scraped before and after every run (and sampled every `--metrics-interval-ms` for gauge maxima); this scenario adds an optional idle window (`--snapshot-seconds`). `--cgroup-containers role=container,...` (e.g. `gateway=..,browser=..,worker=..`; legacy `--docker-stats-container <name>` is a one-container alias) reads cgroup files with a read-only `docker exec` every `--docker-interval-ms` (default 5 s), plus one closing sample; a container that cannot be read is skipped with a note (see Resource sampling below). |
 
+Opt-in scenario (never part of `all`):
+
+| Scenario | What it does |
+| --- | --- |
+| `audio-upload` | Workload `tests/load/workloads/audio-upload.json` (schema: `workload.schema.json`, checked by `tests/load/workloads.mjs`). Sends `--audio-jobs` (5) native multipart `POST /v1/jobs` carrying a deterministic synthetic WAV (`--audio-profile` short 5 s / medium 120 s / large 780 s, default short), re-lists each job's artifacts and requires the stored size and sha256 to match, then settles the jobs like any other. It needs a `--target` whose adapter manifest accepts audio attachments (chatgpt_web, gemini_web, mistral_lechat); `mock` has no attachments policy, so the gateway answers 400 and the run FAILS (`max_audio_upload_violations`). Real providers need an operator-logged-in session: never aim this at the shared VPS. See `docs/perf-fleet/slices/P0.15.md` for the traced path and its gaps. |
+
 Notes:
 
 - The default job command is `chat.prompt` (the mock adapter's supported
@@ -151,7 +157,8 @@ VPS. 1/2/5/10/20-workload step runs are a separate slice (P7.2).
 pnpm test:load:offline
 ```
 
-Runs `tests/load/acceptance.test.mjs` only: aggregation math, Retry-After
+Runs `tests/load/acceptance.test.mjs` and `tests/load/workloads.test.mjs` only
+(manifest schema check, synthetic fixtures): aggregation math, Retry-After
 backoff, host allowlist, thresholds, a smoke run of every scenario against
 an in-process fake gateway on `127.0.0.1`, and negative cases that must FAIL
 (wrong/truncated/duplicated result, duplicated terminal event, cross-tenant leak,

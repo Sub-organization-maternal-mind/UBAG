@@ -2,6 +2,7 @@
 // every network scenario runs against an in-process fake gateway on 127.0.0.1.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -45,9 +46,23 @@ after(() => Promise.all(fakes.map((f) => new Promise((r) => { f.server.closeAllC
 
 // ------------------------------------------------------------- fake gateway
 
+/** Minimal multipart/form-data parser: [{name, contentType, data}]. */
+function splitMultipart(buf, boundary) {
+  const delim = Buffer.from(`--${boundary}`); const out = []; let at = buf.indexOf(delim);
+  while (at !== -1) {
+    const start = at + delim.length; const next = buf.indexOf(delim, start);
+    if (next === -1 || buf.subarray(start, start + 2).toString() === '--') break;
+    const seg = buf.subarray(start + 2, next - 2); const split = seg.indexOf('\r\n\r\n');
+    const head = seg.subarray(0, split).toString('utf8');
+    out.push({ name: /name="([^"]*)"/.exec(head)?.[1], contentType: /Content-Type: (.*)/i.exec(head)?.[1]?.trim(), data: seg.subarray(split + 4) });
+    at = next;
+  }
+  return out;
+}
+
 async function startFake(opts = {}) {
   const o = { maxBody: 4096, rejectFirstCreates: 0, facadeLimit: Infinity, maxInflight: Infinity, omitRetryAfter: false, dupBug: false, facadeNoBodyMs: false, resultBug: null, dupTerminal: false, leak: false, facadeBad: false, finalStatus: 'completed', slowGetMs: 5, ...opts };
-  const st = { requests: 0, jobs: new Map(), byKey: new Map(), seq: 0, inflight: 0, facadeInflight: 0, creates: 0, completed: 0, rejections: { inflight_requests: 0, upload_memory: 0 }, uploadBytes: 0 };
+  const st = { uploads: [], requests: 0, jobs: new Map(), byKey: new Map(), seq: 0, inflight: 0, facadeInflight: 0, creates: 0, completed: 0, rejections: { inflight_requests: 0, upload_memory: 0 }, uploadBytes: 0 };
   const json = (res, status, body, headers = {}) => { res.writeHead(status, { 'Content-Type': 'application/json', ...headers }); res.end(JSON.stringify(body)); };
   const overload = (res, reason, facade = false) => {
     st.rejections[reason] += 1;
@@ -85,6 +100,23 @@ async function startFake(opts = {}) {
     st.inflight += 1; res.on('close', () => { st.inflight -= 1; });
     if (st.inflight > o.maxInflight) { req.resume(); return overload(res, 'inflight_requests'); }
 
+    if (path === '/v1/jobs' && req.method === 'POST' && /^multipart\/form-data/.test(req.headers['content-type'] ?? '')) {
+      const chunks = []; req.on('data', (c) => chunks.push(c));
+      return req.on('end', () => {
+        const idem = req.headers['idempotency-key'];
+        if (!/^[\w.:-]{16,128}$/.test(idem ?? '')) return json(res, 400, { error: { code: 'UBAG-VALIDATION-IDEMPOTENCY-KEY-001' } });
+        const parts = splitMultipart(Buffer.concat(chunks), /boundary=(.+)$/.exec(req.headers['content-type'])[1]);
+        const envelope = JSON.parse(parts.find((p) => p.name === 'job')?.data.toString('utf8') ?? '{}');
+        if (!o.acceptAudio) return json(res, 400, { error: { code: 'UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001' } });
+        const files = parts.filter((p) => p.name !== 'job');
+        const declared = envelope.job?.input?.attachments ?? [];
+        if (declared.length !== files.length || declared.some((d) => !files.some((f) => f.name === d.key && f.contentType === d.content_type))) return json(res, 400, { error: { code: 'UBAG-VALIDATION-MULTIPART-PART-MISSING-001' } });
+        const id = `job_${++st.seq}`; st.creates += 1; st.uploads.push(...files.map((f) => f.data.length));
+        const artifacts = files.map((f) => ({ job_id: id, key: f.name, content_type: f.contentType, size_bytes: f.data.length - (o.artifactBug === 'short' ? 1 : 0), checksum: o.artifactBug === 'checksum' ? 'f'.repeat(64) : createHash('sha256').update(f.data).digest('hex') }));
+        st.jobs.set(id, { status: 'queued', polls: 0, target: envelope.job?.target, prompt: envelope.job?.input?.prompt, tenant, artifacts }); st.byKey.set(idem, id);
+        return json(res, 202, { job_id: id, status: 'queued', idempotent_replay: false });
+      });
+    }
     if (path === '/v1/jobs' && req.method === 'POST') {
       if (Number(req.headers['content-length'] ?? 0) > o.maxBody) { req.resume(); return json(res, 413, { error: { code: 'UBAG-VALIDATION-BODY-TOO-LARGE-001' } }); }
       return readBody(req, (text) => {
@@ -120,7 +152,7 @@ async function startFake(opts = {}) {
     if (m && m[2] === 'artifacts' && req.method === 'GET') {
       req.resume();
       if (!visible(m[1])) return json(res, 404, { error: { code: 'UBAG-JOB-NOT-FOUND-001' } });
-      return json(res, 200, { job_id: m[1], kind: 'artifacts', data: [] });
+      return json(res, 200, { job_id: m[1], kind: 'artifacts', data: st.jobs.get(m[1]).artifacts ?? [] });
     }
     if (m && !(m[2]) && req.method === 'GET') {
       req.resume();
@@ -633,5 +665,52 @@ describe('acceptance integrity gates fail closed', () => {
     const t = JSON.parse(readFileSync(join(here, 'thresholds.json'), 'utf8'));
     assert.equal(t.max_create_p95_ms, 2000);
     assert.ok(t.min_overload_rejections >= 1);
+  });
+});
+
+describe('audio-upload workload scenario (opt-in)', () => {
+  const AUDIO = ['--scenario', 'audio-upload', '--target', 'chatgpt_web', '--audio-jobs', '3'];
+  const failed = (report) => report.thresholds.results.filter((r) => !r.ok).map((r) => r.name);
+  const env = { UBAG_LOAD_BASE_URL: 'http://127.0.0.1:1', UBAG_LOAD_API_KEY: 'k' };
+
+  it('is not part of "all" and must be requested by name', () => {
+    assert.ok(!parseArgs([`--${ACK_FLAG}`, '--scenario', 'all'], env).scenarios.includes('audio-upload'));
+    assert.deepEqual(parseArgs([`--${ACK_FLAG}`, '--scenario', 'audio-upload'], env).scenarios, ['audio-upload']);
+  });
+
+  it('uploads the synthetic WAV, verifies the stored size and sha256, and passes against a healthy fake', async () => {
+    const fake = await startFake({ acceptAudio: true });
+    const report = await run(cfgFor(fake, AUDIO));
+    assert.equal(report.summary.audio_upload_violations, 0, JSON.stringify(report.violations));
+    assert.equal(report.summary.audio_artifacts_verified, 3);
+    assert.equal(fake.st.uploads.length, 3);
+    assert.ok(fake.st.uploads.every((n) => n === 44 + 5 * 16000 * 2)); // short profile: 5 s, 16 kHz, mono, 16-bit
+    assert.equal(report.scenarios['audio-upload'].accepted, 3);
+    assert.equal(report.thresholds.passed, true, JSON.stringify(report.thresholds.results.filter((r) => !r.ok)));
+    assert.match(renderMarkdown(report), /## audio-upload/);
+  });
+
+  it('a target that rejects audio attachments (e.g. mock) is a FAIL, never a silent pass', async () => {
+    const fake = await startFake(); // acceptAudio off: UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001
+    const report = await run(cfgFor(fake, ['--scenario', 'audio-upload', '--audio-jobs', '2']));
+    assert.equal(report.summary.audio_upload_violations, 2);
+    assert.ok(failed(report).includes('max_audio_upload_violations'));
+    assert.match(report.violations[0].detail, /must accept audio\/wav/);
+  });
+
+  for (const bug of ['short', 'checksum']) {
+    it(`corrupted stored audio (${bug}) is a FAIL`, async () => {
+      const fake = await startFake({ acceptAudio: true, artifactBug: bug });
+      const report = await run(cfgFor(fake, AUDIO));
+      assert.equal(report.summary.audio_upload_violations, 3);
+      assert.ok(failed(report).includes('max_audio_upload_violations'));
+    });
+  }
+
+  it('rejects an unknown fixture profile instead of guessing', async () => {
+    const fake = await startFake({ acceptAudio: true });
+    const report = await run(cfgFor(fake, [...AUDIO, '--audio-profile', 'huge']));
+    assert.match(report.scenarios['audio-upload'].error, /unknown fixture profile/);
+    assert.ok(failed(report).includes('max_scenario_errors'));
   });
 });
