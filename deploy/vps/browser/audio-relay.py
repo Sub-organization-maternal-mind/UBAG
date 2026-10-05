@@ -177,8 +177,40 @@ def ensure_audio_devices() -> None:
     run_checked("pactl", "set-default-sink", SPEAKER_SINK)
 
 
+_devices_ready = threading.Event()
+
+
+def ensure_devices_forever() -> None:
+    """Keep the virtual audio devices present for the process lifetime.
+
+    A boot where PulseAudio answers late must not leave the relay serving
+    sessions with no devices (observed live); instead the ensure step runs
+    with retries until it succeeds, and sessions wait on the ready event.
+    """
+    while not _devices_ready.is_set():
+        try:
+            ensure_audio_devices()
+            sources = subprocess.run(["pactl", "list", "short", "sources"],
+                                     capture_output=True, text=True, timeout=5).stdout
+            if MIC_SOURCE in sources:
+                _devices_ready.set()
+                print("audio-relay: audio devices ready", file=sys.stderr)
+                return
+            print("audio-relay: device ensure incomplete; retrying", file=sys.stderr)
+        except (OSError, subprocess.SubprocessError) as exc:
+            print(f"audio-relay: device ensure failed: {exc}; retrying", file=sys.stderr)
+        time.sleep(3)
+
+
 def handle_session(conn: socket.socket) -> None:
     """One voice session's bidirectional audio pump."""
+    if not _devices_ready.wait(timeout=15):
+        print("audio-relay: session rejected — audio devices not ready", file=sys.stderr)
+        try:
+            conn.close()
+        except Exception:
+            pass
+        return
     mic_proc: subprocess.Popen | None = None
     monitor_proc: subprocess.Popen | None = None
     procs: list[subprocess.Popen] = []
@@ -277,8 +309,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="UBAG voice audio relay")
     parser.add_argument("--addr", default=os.environ.get("UBAG_VOICE_RELAY_ADDR", "127.0.0.1:9099"))
     args = parser.parse_args()
-    ensure_audio_devices()
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    threading.Thread(target=ensure_devices_forever, daemon=True).start()
     serve(args.addr)
     return 0
 
