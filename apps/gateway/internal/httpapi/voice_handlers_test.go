@@ -45,7 +45,7 @@ func voiceTestServer(t *testing.T, mutate func(*Config)) (*Server, http.Handler,
 	cfg.Topology.(interface {
 		AddContext(topology.ProviderContext)
 	}).AddContext(topology.ProviderContext{
-		ContextID: "ctx-1", TenantID: "tenant_edge", TargetID: "chatgpt_web",
+		ContextID: "ctx-1", InstanceID: "browser-1", TenantID: "tenant_edge", TargetID: "chatgpt_web",
 		IdentityRef: "acct-chatgpt-1", LoginState: "authenticated",
 	})
 	media := &fakeMediaNegotiator{answer: "v=0\r\no=- answer\r\n"}
@@ -285,5 +285,116 @@ func TestVoiceConnectWithoutMediaPlane(t *testing.T) {
 	rec = doJSON(handler, http.MethodPost, "/v1/voice/sessions/"+created.Session.ID+"/connect", `{"sdp_offer":"v=0"}`, authHeaders(""))
 	if rec.Code != http.StatusNotImplemented {
 		t.Fatalf("connect without media = %d, want 501", rec.Code)
+	}
+}
+
+// addVoiceEnvironment registers a second browser environment hosting its own
+// authenticated ChatGPT account.
+func addVoiceEnvironment(c *Config, n string) {
+	st := c.Topology.(*topology.MemoryStore)
+	st.AddInstance(topology.BrowserInstance{InstanceID: "browser-" + n, TenantID: "tenant_edge", State: "ready"})
+	st.AddContext(topology.ProviderContext{ContextID: "ctx-" + n, InstanceID: "browser-" + n, TenantID: "tenant_edge",
+		TargetID: "chatgpt_web", IdentityRef: "acct-chatgpt-" + n, LoginState: "authenticated"})
+}
+
+func createVoice(t *testing.T, h http.Handler, body string) (int, voice.Session) {
+	t.Helper()
+	rec := doJSON(h, http.MethodPost, "/v1/voice/sessions", body, authHeaders(""))
+	var out struct {
+		Session voice.Session `json:"session"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec.Code, out.Session
+}
+
+// cap=1 with two free environments must queue the second session.
+func TestVoiceActiveBudgetQueuesWithTwoEnvironments(t *testing.T) {
+	_, h, _ := voiceTestServer(t, func(c *Config) {
+		c.VoiceMaxSessionsPerTenant, c.VoiceMaxQueuedPerTenant = 1, 1
+		addVoiceEnvironment(c, "2")
+	})
+	if code, _ := createVoice(t, h, voiceBody("chatgpt_web")); code != http.StatusCreated {
+		t.Fatalf("first = %d", code)
+	}
+	if code, sess := createVoice(t, h, voiceBody("chatgpt_web")); code != http.StatusAccepted || sess.Status != voice.StatusQueued {
+		t.Fatalf("cap=1 must queue the second session, got %d %s", code, sess.Status)
+	}
+	rec := doJSON(h, http.MethodPost, "/v1/voice/sessions", voiceBody("chatgpt_web"), authHeaders(""))
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("queue-full = %d retry-after=%q body=%s", rec.Code, rec.Header().Get("Retry-After"), rec.Body.String())
+	}
+}
+
+// A caller-named identity is only a preference: an account the tenant does
+// not own resolves to nothing and never becomes a lease.
+func TestVoiceUnknownIdentityIsNotProofOfOwnership(t *testing.T) {
+	_, h, _ := voiceTestServer(t, nil)
+	_, sess := createVoice(t, h, `{"target":"chatgpt_web","identity_ref":"someone-elses-account"}`)
+	if sess.IdentityRef == "someone-elses-account" {
+		t.Fatalf("caller-supplied identity became a lease: %+v", sess)
+	}
+	if sess.IdentityRef != "acct-chatgpt-1" {
+		t.Fatalf("server must resolve its own account, got %+v", sess)
+	}
+}
+
+// Contexts are paired with the instance that hosts them: an authenticated
+// context whose instance does not exist cannot be leased.
+func TestVoiceContextWithoutHostingInstanceQueues(t *testing.T) {
+	_, h, _ := voiceTestServer(t, func(c *Config) {
+		c.Topology = topology.NewMemoryStore()
+		c.Topology.(*topology.MemoryStore).AddContext(topology.ProviderContext{ContextID: "orphan", InstanceID: "missing",
+			TenantID: "tenant_edge", TargetID: "chatgpt_web", IdentityRef: "acct", LoginState: "authenticated"})
+	})
+	if code, sess := createVoice(t, h, voiceBody("chatgpt_web")); code != http.StatusAccepted || sess.IdentityRef != "" {
+		t.Fatalf("got %d %+v", code, sess)
+	}
+}
+
+func TestVoiceSubtreeActionsRejectWrongMethods(t *testing.T) {
+	_, h, media := voiceTestServer(t, nil)
+	_, sess := createVoice(t, h, voiceBody("chatgpt_web"))
+	for _, action := range []string{"connect", "mute", "renew", "terminate"} {
+		for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+			rec := doJSON(h, method, "/v1/voice/sessions/"+sess.ID+"/"+action, `{"sdp_offer":"v=0","muted":true}`, authHeaders(""))
+			if rec.Code != http.StatusMethodNotAllowed {
+				t.Fatalf("%s %s = %d, want 405", method, action, rec.Code)
+			}
+		}
+	}
+	if len(media.offers) != 0 {
+		t.Fatal("wrong-method connect reached the media plane")
+	}
+	rec := doJSON(h, http.MethodGet, "/v1/voice/sessions/"+sess.ID, "", authHeaders(""))
+	var got struct {
+		Session voice.Session `json:"session"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if got.Session.Status != voice.StatusConnecting || got.Session.Muted {
+		t.Fatalf("rejected requests changed state: %+v", got.Session)
+	}
+}
+
+func TestVoiceOversizedBodyIs413AndMediaErrorsAreRedacted(t *testing.T) {
+	_, h, media := voiceTestServer(t, nil)
+	rec := doJSON(h, http.MethodPost, "/v1/voice/sessions", `{"target":"chatgpt_web","pad":"`+strings.Repeat("x", 20<<10)+`"}`, authHeaders(""))
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized create = %d, want 413", rec.Code)
+	}
+	_, sess := createVoice(t, h, voiceBody("chatgpt_web"))
+	media.err = fmt.Errorf("dial tcp 172.28.0.10:9099: connection refused")
+	rec = doJSON(h, http.MethodPost, "/v1/voice/sessions/"+sess.ID+"/connect", `{"sdp_offer":"v=0"}`, authHeaders(""))
+	if rec.Code != http.StatusServiceUnavailable || strings.Contains(rec.Body.String(), "172.28") {
+		t.Fatalf("media failure = %d body=%s (must not leak internals)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestVoiceRenewOfTerminatedSessionConflicts(t *testing.T) {
+	_, h, _ := voiceTestServer(t, nil)
+	_, sess := createVoice(t, h, voiceBody("chatgpt_web"))
+	doJSON(h, http.MethodPost, "/v1/voice/sessions/"+sess.ID+"/terminate", `{}`, authHeaders(""))
+	rec := doJSON(h, http.MethodPost, "/v1/voice/sessions/"+sess.ID+"/renew", `{}`, authHeaders(""))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("renew after terminate = %d, want 409", rec.Code)
 	}
 }

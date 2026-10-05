@@ -57,8 +57,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_voice_active_account
 // browser instance (the virtual microphone and speaker monitor are
 // instance-wide devices).
 const sqliteCreateVoiceInstanceIndex = `
-CREATE UNIQUE INDEX IF NOT EXISTS uq_voice_active_instance
-	ON gateway_voice_sessions (tenant_id, instance_ref)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_voice_active_instance_global
+	ON gateway_voice_sessions (instance_ref)
 	WHERE status IN ('queued','connecting','connected') AND instance_ref <> ''`
 
 const sqliteCreateVoiceTenantIndex = `
@@ -73,6 +73,9 @@ func (s *SQLiteStore) Ready(ctx context.Context) error {
 		return err
 	}
 	for _, stmt := range []string{
+		// The original index was tenant-scoped; the environment is a physical
+		// resource, so exclusivity is now global.
+		"DROP INDEX IF EXISTS uq_voice_active_instance",
 		sqliteCreateVoiceSessionsTable,
 		sqliteCreateVoiceAccountIndex,
 		sqliteCreateVoiceInstanceIndex,
@@ -116,7 +119,9 @@ func formatSQLiteTime(t time.Time) string {
 	if t.IsZero() {
 		return ""
 	}
-	return t.UTC().Format(time.RFC3339Nano)
+	// Fixed width so lexicographic order equals chronological order (the
+	// sweeper and renew guards compare these strings in SQL).
+	return t.UTC().Format("2006-01-02T15:04:05.000000000Z")
 }
 
 func (s *SQLiteStore) Reserve(ctx context.Context, req ReserveRequest) (Session, error) {
@@ -147,53 +152,45 @@ func (s *SQLiteStore) Reserve(ctx context.Context, req ReserveRequest) (Session,
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return Session{}, err
 	}
+	mode := req.Mode
+	if strings.TrimSpace(mode) == "" {
+		mode = ModeLive
+	}
 	status := StatusQueued
 	identity, instance := "", ""
-	for _, candID := range req.IdentityCandidates {
-		candID = strings.TrimSpace(candID)
-		if candID == "" {
-			continue
-		}
-		var taken int
-		if err := tx.QueryRowContext(ctx, `
-SELECT COUNT(1) FROM gateway_voice_sessions
-WHERE tenant_id = ? AND target = ? AND identity_ref = ?
-  AND status IN ('connecting','connected')`,
-			req.TenantID, req.Target, candID).Scan(&taken); err != nil {
+	if mode == ModeLive {
+		var leased, queued int
+		if err := tx.QueryRowContext(ctx, sqliteCountsQuery, req.TenantID).Scan(&leased, &queued); err != nil {
 			return Session{}, err
 		}
-		if taken > 0 {
-			continue
-		}
-		claimedInstance := ""
-		for _, candInst := range req.InstanceCandidates {
-			candInst = strings.TrimSpace(candInst)
-			if candInst == "" {
-				continue
-			}
-			var instanceTaken int
-			if err := tx.QueryRowContext(ctx, `
+		if req.MaxActive <= 0 || leased < req.MaxActive {
+			for _, p := range req.Placements {
+				p, ok := p.clean()
+				if !ok {
+					continue
+				}
+				var taken int
+				if err := tx.QueryRowContext(ctx, `
 SELECT COUNT(1) FROM gateway_voice_sessions
-WHERE tenant_id = ? AND instance_ref = ? AND status IN ('connecting','connected')`,
-				req.TenantID, candInst).Scan(&instanceTaken); err != nil {
-				return Session{}, err
-			}
-			if instanceTaken == 0 {
-				claimedInstance = candInst
-				break
+WHERE status IN ('connecting','connected')
+  AND ((tenant_id = ? AND target = ? AND identity_ref = ?) OR instance_ref = ?)`,
+					req.TenantID, req.Target, p.Identity, p.Instance).Scan(&taken); err != nil {
+					return Session{}, err
+				}
+				if taken == 0 {
+					identity, instance, status = p.Identity, p.Instance, StatusConnecting
+					break
+				}
 			}
 		}
-		if claimedInstance == "" {
-			continue // never hold an account without its exclusive environment
+		if identity == "" && req.MaxQueued > 0 && queued >= req.MaxQueued {
+			return Session{}, ErrQueueFull
 		}
-		identity, instance = candID, claimedInstance
-		status = StatusConnecting
-		break
 	}
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO gateway_voice_sessions (`+sqliteVoiceColumns+`)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		req.SessionID, req.TenantID, req.AppID, req.Target, req.Mode, req.JobID,
+		req.SessionID, req.TenantID, req.AppID, req.Target, mode, req.JobID,
 		string(status), 0, identity, instance, "",
 		formatSQLiteTime(now), formatSQLiteTime(now),
 		formatSQLiteTime(now.Add(req.LeaseTTL)), "",
@@ -212,77 +209,69 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	}
 	return Session{
 		ID: req.SessionID, TenantID: req.TenantID, AppID: req.AppID, Target: req.Target,
-		Status: status, IdentityRef: identity, InstanceRef: instance,
+		Mode: mode, JobID: req.JobID, Status: status, IdentityRef: identity, InstanceRef: instance,
 		CreatedAt: now, UpdatedAt: now, LeaseExpires: now.Add(req.LeaseTTL),
 	}, nil
 }
 
-func (s *SQLiteStore) Claim(ctx context.Context, tenantID, sessionID string, identityCandidates, instanceCandidates []string, leaseTTL time.Duration, now time.Time) (Session, error) {
+const sqliteCountsQuery = `
+SELECT
+  COALESCE(SUM(status IN ('connecting','connected')), 0),
+  COALESCE(SUM(status = 'queued'), 0)
+FROM gateway_voice_sessions WHERE tenant_id = ? AND mode <> 'utterance'`
+
+func (s *SQLiteStore) Claim(ctx context.Context, req ClaimRequest) (Session, error) {
+	now := req.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
 	var target string
 	if err := s.db.QueryRowContext(ctx,
 		"SELECT target FROM gateway_voice_sessions WHERE session_id = ? AND tenant_id = ?",
-		sessionID, tenantID).Scan(&target); err != nil {
+		req.SessionID, req.TenantID).Scan(&target); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Session{}, ErrNotFound
 		}
 		return Session{}, err
 	}
-	// Try each candidate pair; the NOT EXISTS guards inside the UPDATE are
-	// the shared atomic check (plus the partial unique indexes behind them),
-	// so two replicas racing on the same account cannot both win.
-	for _, candID := range identityCandidates {
-		candID = strings.TrimSpace(candID)
-		if candID == "" {
+	// Each attempt is ONE statement: the NOT EXISTS / budget guards inside the
+	// UPDATE and the partial unique indexes behind them are the shared atomic
+	// check, so racing replicas cannot both win.
+	for _, p := range req.Placements {
+		p, ok := p.clean()
+		if !ok {
 			continue
 		}
-		for _, candInst := range instanceCandidates {
-			candInst = strings.TrimSpace(candInst)
-			if candInst == "" {
-				continue
-			}
-			res, err := s.db.ExecContext(ctx, `
+		res, err := s.db.ExecContext(ctx, `
 UPDATE gateway_voice_sessions
 SET status = 'connecting', identity_ref = ?, instance_ref = ?, lease_expires_at = ?, updated_at = ?
 WHERE session_id = ? AND tenant_id = ? AND status = 'queued'
+  AND (? <= 0 OR (
+    SELECT COUNT(1) FROM gateway_voice_sessions c
+    WHERE c.tenant_id = ? AND c.mode <> 'utterance' AND c.status IN ('connecting','connected')) < ?)
   AND NOT EXISTS (
     SELECT 1 FROM gateway_voice_sessions other
-    WHERE other.tenant_id = gateway_voice_sessions.tenant_id
-      AND other.target = gateway_voice_sessions.target
-      AND other.identity_ref = ?
+    WHERE other.status IN ('connecting','connected')
       AND other.session_id <> gateway_voice_sessions.session_id
-      AND other.status IN ('connecting','connected')
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM gateway_voice_sessions other2
-    WHERE other2.tenant_id = gateway_voice_sessions.tenant_id
-      AND other2.instance_ref = ?
-      AND other2.session_id <> gateway_voice_sessions.session_id
-      AND other2.status IN ('connecting','connected')
+      AND ((other.tenant_id = gateway_voice_sessions.tenant_id
+            AND other.target = gateway_voice_sessions.target AND other.identity_ref = ?)
+           OR other.instance_ref = ?)
   )`,
-				candID, candInst, formatSQLiteTime(now.Add(leaseTTL)), formatSQLiteTime(now),
-				sessionID, tenantID, candID, candInst)
-			if err != nil {
-				if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(strings.ToLower(err.Error()), "constraint") {
-					continue // lease lost to a concurrent replica; try next pair
-				}
-				return Session{}, err
+			p.Identity, p.Instance, formatSQLiteTime(now.Add(req.LeaseTTL)), formatSQLiteTime(now),
+			req.SessionID, req.TenantID, req.MaxActive, req.TenantID, req.MaxActive, p.Identity, p.Instance)
+		if err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(strings.ToLower(err.Error()), "constraint") {
+				continue // lease lost to a concurrent replica; try next pair
 			}
-			n, err := res.RowsAffected()
-			if err != nil {
-				return Session{}, err
-			}
-			if n == 0 {
-				continue // queued row moved or the pair was taken
-			}
-			return Session{
-				ID: sessionID, TenantID: tenantID, Target: target, Status: StatusConnecting,
-				IdentityRef: candID, InstanceRef: candInst,
-				LeaseExpires: now.Add(leaseTTL), UpdatedAt: now,
-			}, nil
+			return Session{}, err
 		}
+		if n, err := res.RowsAffected(); err != nil {
+			return Session{}, err
+		} else if n == 0 {
+			continue // queued row moved, budget spent, or the pair was taken
+		}
+		sess, _, err := s.Get(ctx, req.TenantID, req.SessionID)
+		return sess, err
 	}
 	return Session{}, ErrConflict
 }
@@ -378,8 +367,9 @@ WHERE session_id = ? AND tenant_id = ? AND status <> 'terminated'`,
 func (s *SQLiteStore) RenewLease(ctx context.Context, tenantID, sessionID string, until time.Time, now time.Time) error {
 	res, err := s.db.ExecContext(ctx, `
 UPDATE gateway_voice_sessions SET lease_expires_at = ?, updated_at = ?
-WHERE session_id = ? AND tenant_id = ? AND status IN ('connecting','connected')`,
-		formatSQLiteTime(until), formatSQLiteTime(now), sessionID, tenantID)
+WHERE session_id = ? AND tenant_id = ? AND status IN ('connecting','connected')
+  AND lease_expires_at > ?`,
+		formatSQLiteTime(until), formatSQLiteTime(now), sessionID, tenantID, formatSQLiteTime(now))
 	if err != nil {
 		return err
 	}
@@ -387,36 +377,28 @@ WHERE session_id = ? AND tenant_id = ? AND status IN ('connecting','connected')`
 }
 
 func (s *SQLiteStore) SweepExpired(ctx context.Context, now time.Time) ([]string, error) {
+	// One atomic statement: expiry and status are rechecked as the row is
+	// terminated, so a concurrent renewal can never be swept.
 	rows, err := s.db.QueryContext(ctx, `
-SELECT session_id FROM gateway_voice_sessions
+UPDATE gateway_voice_sessions
+SET status = 'terminated', updated_at = ?, terminated_at = ?, last_error = 'lease_expired',
+    identity_ref = '', instance_ref = ''
 WHERE status IN ('connecting','connected')
-  AND lease_expires_at <> '' AND lease_expires_at <= ?`, formatSQLiteTime(now))
+  AND lease_expires_at <> '' AND lease_expires_at <= ?
+RETURNING session_id`, formatSQLiteTime(now), formatSQLiteTime(now), formatSQLiteTime(now))
 	if err != nil {
 		return nil, err
 	}
-	var ids []string
+	defer rows.Close()
+	ids := []string{}
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			rows.Close()
 			return nil, err
 		}
 		ids = append(ids, id)
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for _, id := range ids {
-		if _, err := s.db.ExecContext(ctx, `
-UPDATE gateway_voice_sessions
-SET status = 'terminated', updated_at = ?, terminated_at = ?, last_error = 'lease_expired',
-    identity_ref = '', instance_ref = ''
-WHERE session_id = ? AND status IN ('connecting','connected')`, formatSQLiteTime(now), formatSQLiteTime(now), id); err != nil {
-			return nil, err
-		}
-	}
-	return ids, nil
+	return ids, rows.Err()
 }
 
 func (s *SQLiteStore) GlobalSessionCounts(ctx context.Context) (int, int, error) {
@@ -431,20 +413,10 @@ FROM gateway_voice_sessions`).Scan(&active, &queued); err != nil {
 	return active, queued, nil
 }
 
-func (s *SQLiteStore) ActiveCount(ctx context.Context, tenantID, target string) (int, error) {
-	query := `
-SELECT COUNT(1) FROM gateway_voice_sessions
-WHERE tenant_id = ? AND status IN ('queued','connecting','connected')`
-	args := []any{tenantID}
-	if target != "" {
-		query += " AND target = ?"
-		args = append(args, target)
-	}
-	var count int
-	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
-		return 0, err
-	}
-	return count, nil
+func (s *SQLiteStore) TenantCounts(ctx context.Context, tenantID string) (int, int, error) {
+	var leased, queued int
+	err := s.db.QueryRowContext(ctx, sqliteCountsQuery, tenantID).Scan(&leased, &queued)
+	return leased, queued, err
 }
 
 func requireSQLiteChange(res sql.Result) error {

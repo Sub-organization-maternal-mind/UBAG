@@ -498,7 +498,10 @@ func NewServer(config Config) *Server {
 		config.VoiceMaxQueuedPerTenant = parseEnvInt("UBAG_VOICE_MAX_QUEUED_PER_TENANT", defaultVoiceMaxQueuedPerTenant)
 	}
 	if config.VoiceSessionTTL <= 0 {
-		config.VoiceSessionTTL = defaultVoiceSessionTTL
+		config.VoiceSessionTTL = time.Duration(parseEnvInt("UBAG_VOICE_SESSION_TTL_SECONDS", int(defaultVoiceSessionTTL.Seconds()))) * time.Second
+		if config.VoiceSessionTTL < minVoiceSessionTTL || config.VoiceSessionTTL > maxVoiceSessionTTL {
+			config.VoiceSessionTTL = defaultVoiceSessionTTL
+		}
 	}
 	if config.MaxQueueDepth <= 0 {
 		config.MaxQueueDepth = parseEnvInt("UBAG_MAX_QUEUE_DEPTH", 10000)

@@ -91,16 +91,41 @@ type ReserveRequest struct {
 	// claim leases and carry JobID.
 	Mode  string
 	JobID string
-	// IdentityCandidates are the provider accounts to try claiming, most
-	// preferred first (the caller derives them from topology). Each is
-	// attempted atomically; the first claim wins. Empty means the caller has
-	// no account preference and the session queues until one is named via
-	// Claim.
-	IdentityCandidates []string
-	// InstanceCandidates are the browser/audio environments to try claiming.
-	InstanceCandidates []string
-	LeaseTTL           time.Duration
-	Now                time.Time
+	// Placements are the server-resolved (provider account, browser
+	// environment) pairs this session may hold, most preferred first. The
+	// caller derives them from topology (an authenticated context and the
+	// instance that actually hosts it) — never from client input. Each pair
+	// is attempted atomically; the first free pair wins. Empty means the
+	// session queues until a pair is named via Claim.
+	Placements []Placement
+	// MaxActive caps lease-holding live sessions for the tenant and MaxQueued
+	// caps its queued live sessions (0 = unlimited). Both are enforced inside
+	// the admission transaction, so concurrent creates and replicas cannot
+	// overshoot them.
+	MaxActive int
+	MaxQueued int
+	LeaseTTL  time.Duration
+	Now       time.Time
+}
+
+// Placement is one provider-account + browser-environment pair.
+type Placement struct {
+	Identity string
+	Instance string
+}
+
+// ClaimRequest promotes one queued session.
+type ClaimRequest struct {
+	TenantID, SessionID string
+	Placements          []Placement
+	MaxActive           int
+	LeaseTTL            time.Duration
+	Now                 time.Time
+}
+
+func (p Placement) clean() (Placement, bool) {
+	p.Identity, p.Instance = strings.TrimSpace(p.Identity), strings.TrimSpace(p.Instance)
+	return p, p.Identity != "" && p.Instance != ""
 }
 
 // ErrConflict is returned/checked when a lease claim lost a race. Callers
@@ -109,6 +134,10 @@ var ErrConflict = errors.New("voice: lease conflict")
 
 // ErrNotFound is returned when a session ID does not exist for the scope.
 var ErrNotFound = errors.New("voice: session not found")
+
+// ErrQueueFull is returned by Reserve when the tenant's queued-session budget
+// is spent.
+var ErrQueueFull = errors.New("voice: queue budget reached")
 
 // Store is the shared voice-session store. All methods are tenant-scoped by
 // the Session's TenantID; callers must pass the trusted gateway tenant.
@@ -127,7 +156,7 @@ type Store interface {
 	// candidates, exactly like Reserve's claim step. It fails with
 	// ErrConflict when the session is no longer queued (the caller re-reads
 	// to see the truth).
-	Claim(ctx context.Context, tenantID, sessionID string, identityCandidates, instanceCandidates []string, leaseTTL time.Duration, now time.Time) (Session, error)
+	Claim(ctx context.Context, req ClaimRequest) (Session, error)
 
 	// Get returns one session (tenant-scoped).
 	Get(ctx context.Context, tenantID, sessionID string) (Session, bool, error)
@@ -154,9 +183,9 @@ type Store interface {
 	// It must be safe to run from any replica (idempotent, CAS-guarded).
 	SweepExpired(ctx context.Context, now time.Time) ([]string, error)
 
-	// ActiveCount counts active (lease-holding or queued) sessions for the
-	// tenant, optionally per target (empty target = all).
-	ActiveCount(ctx context.Context, tenantID, target string) (int, error)
+	// TenantCounts returns the tenant's live-mode (leased, queued) session
+	// counts; utterance sessions hold no resources and are not counted.
+	TenantCounts(ctx context.Context, tenantID string) (leased, queued int, err error)
 
 	// GlobalSessionCounts returns (active, queued) across ALL tenants for
 	// the unauthenticated metrics endpoint (which must never split by
@@ -200,42 +229,31 @@ func (m *MemoryStore) Reserve(ctx context.Context, req ReserveRequest) (Session,
 	if _, exists := m.sessions[req.SessionID]; exists {
 		return Session{}, ErrConflict
 	}
-	active := m.activeIndex()
-	identity, instance := "", ""
-	for _, candID := range req.IdentityCandidates {
-		candID = strings.TrimSpace(candID)
-		if candID == "" {
-			continue
-		}
-		if _, taken := active[leaseKey(req.TenantID, req.Target, candID)]; taken {
-			continue
-		}
-		identity = candID
-		break
+	mode := req.Mode
+	if strings.TrimSpace(mode) == "" {
+		mode = ModeLive
 	}
-	if identity != "" {
-		for _, candInst := range req.InstanceCandidates {
-			candInst = strings.TrimSpace(candInst)
-			if candInst == "" {
-				continue
+	identity, instance := "", ""
+	if mode == ModeLive {
+		leased, queued := m.counts(req.TenantID)
+		if req.MaxActive <= 0 || leased < req.MaxActive {
+			active := m.activeIndex()
+			for _, p := range req.Placements {
+				p, ok := p.clean()
+				if !ok || !placementFree(active, req.TenantID, req.Target, p) {
+					continue
+				}
+				identity, instance = p.Identity, p.Instance
+				break
 			}
-			if _, taken := active[instanceKey(req.TenantID, candInst)]; taken {
-				continue
-			}
-			instance = candInst
-			break
 		}
-		if instance == "" {
-			identity = "" // cannot hold a half reservation: account without its environment
+		if identity == "" && req.MaxQueued > 0 && queued >= req.MaxQueued {
+			return Session{}, ErrQueueFull
 		}
 	}
 	status := StatusQueued
 	if identity != "" {
 		status = StatusConnecting
-	}
-	mode := req.Mode
-	if strings.TrimSpace(mode) == "" {
-		mode = ModeLive
 	}
 	session := &Session{
 		ID:           req.SessionID,
@@ -255,45 +273,60 @@ func (m *MemoryStore) Reserve(ctx context.Context, req ReserveRequest) (Session,
 	return *session, nil
 }
 
-func (m *MemoryStore) Claim(ctx context.Context, tenantID, sessionID string, identityCandidates, instanceCandidates []string, leaseTTL time.Duration, now time.Time) (Session, error) {
+func (m *MemoryStore) Claim(ctx context.Context, req ClaimRequest) (Session, error) {
+	now := req.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s, ok := m.sessions[sessionID]
-	if !ok || s.TenantID != tenantID {
+	s, ok := m.sessions[req.SessionID]
+	if !ok || s.TenantID != req.TenantID {
 		return Session{}, ErrNotFound
 	}
 	if s.Status != StatusQueued {
 		return Session{}, ErrConflict
 	}
+	if leased, _ := m.counts(req.TenantID); req.MaxActive > 0 && leased >= req.MaxActive {
+		return Session{}, ErrConflict
+	}
 	active := m.activeIndex()
-	for _, candID := range identityCandidates {
-		candID = strings.TrimSpace(candID)
-		if candID == "" {
+	for _, p := range req.Placements {
+		p, ok := p.clean()
+		if !ok || !placementFree(active, req.TenantID, s.Target, p) {
 			continue
 		}
-		if _, taken := active[leaseKey(tenantID, s.Target, candID)]; taken {
-			continue
-		}
-		for _, candInst := range instanceCandidates {
-			candInst = strings.TrimSpace(candInst)
-			if candInst == "" {
-				continue
-			}
-			if _, taken := active[instanceKey(tenantID, candInst)]; taken {
-				continue
-			}
-			s.Status = StatusConnecting
-			s.IdentityRef = candID
-			s.InstanceRef = candInst
-			s.LeaseExpires = now.Add(leaseTTL)
-			s.UpdatedAt = now
-			return *s, nil
-		}
+		s.Status = StatusConnecting
+		s.IdentityRef = p.Identity
+		s.InstanceRef = p.Instance
+		s.LeaseExpires = now.Add(req.LeaseTTL)
+		s.UpdatedAt = now
+		return *s, nil
 	}
 	return Session{}, ErrConflict
+}
+
+func placementFree(active map[string]struct{}, tenantID, target string, p Placement) bool {
+	_, accountTaken := active[leaseKey(tenantID, target, p.Identity)]
+	_, instanceTaken := active[instanceKey(p.Instance)]
+	return !accountTaken && !instanceTaken
+}
+
+// counts reports the tenant's live-mode leased and queued sessions. Callers
+// hold m.mu.
+func (m *MemoryStore) counts(tenantID string) (leased, queued int) {
+	for _, s := range m.sessions {
+		if s.TenantID != tenantID || s.Mode == ModeUtterance {
+			continue
+		}
+		switch s.Status {
+		case StatusConnecting, StatusConnected:
+			leased++
+		case StatusQueued:
+			queued++
+		}
+	}
+	return leased, queued
 }
 
 // leaseKey / instanceKey are also the SQL stores' unique-index keys.
@@ -301,8 +334,11 @@ func leaseKey(tenantID, target, identity string) string {
 	return tenantID + "\x00" + target + "\x00" + identity
 }
 
-func instanceKey(tenantID, instance string) string {
-	return tenantID + "\x00" + instance
+// instanceKey is deliberately NOT tenant-scoped: the virtual microphone and
+// speaker monitor are properties of the physical browser environment, so two
+// tenants can never hold the same one at once.
+func instanceKey(instance string) string {
+	return "instance\x00" + instance
 }
 
 func (m *MemoryStore) activeIndex() map[string]struct{} {
@@ -315,7 +351,7 @@ func (m *MemoryStore) activeIndex() map[string]struct{} {
 			active[leaseKey(s.TenantID, s.Target, s.IdentityRef)] = struct{}{}
 		}
 		if s.InstanceRef != "" {
-			active[instanceKey(s.TenantID, s.InstanceRef)] = struct{}{}
+			active[instanceKey(s.InstanceRef)] = struct{}{}
 		}
 	}
 	return active
@@ -413,7 +449,7 @@ func (m *MemoryStore) RenewLease(_ context.Context, tenantID, sessionID string, 
 	if !ok || s.TenantID != tenantID {
 		return ErrNotFound
 	}
-	if s.Status == StatusTerminated {
+	if s.Status == StatusTerminated || s.Status == StatusQueued || !s.LeaseExpires.After(now) {
 		return ErrConflict
 	}
 	s.LeaseExpires = until
@@ -461,18 +497,9 @@ func (m *MemoryStore) GlobalSessionCounts(_ context.Context) (int, int, error) {
 	return active, queued, nil
 }
 
-func (m *MemoryStore) ActiveCount(_ context.Context, tenantID, target string) (int, error) {
+func (m *MemoryStore) TenantCounts(_ context.Context, tenantID string) (int, int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	count := 0
-	for _, s := range m.sessions {
-		if s.TenantID != tenantID || s.Status == StatusTerminated {
-			continue
-		}
-		if target != "" && s.Target != target {
-			continue
-		}
-		count++
-	}
-	return count, nil
+	leased, queued := m.counts(tenantID)
+	return leased, queued, nil
 }

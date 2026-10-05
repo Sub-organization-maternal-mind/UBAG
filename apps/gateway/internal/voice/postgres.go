@@ -33,7 +33,7 @@ func (s *PostgresStore) Ready(ctx context.Context) error {
 	if err := s.db.PingContext(ctx); err != nil {
 		return err
 	}
-	for _, object := range []string{"gateway_voice_sessions", "uq_voice_active_account", "uq_voice_active_instance"} {
+	for _, object := range []string{"gateway_voice_sessions", "uq_voice_active_account", "uq_voice_active_instance_global"} {
 		var exists bool
 		if err := s.db.QueryRowContext(ctx,
 			`SELECT EXISTS (SELECT 1 FROM pg_class WHERE relname = $1)`, object,
@@ -41,7 +41,7 @@ func (s *PostgresStore) Ready(ctx context.Context) error {
 			return err
 		}
 		if !exists {
-			return fmt.Errorf("voice: postgres schema object %q is missing; apply migrations/postgres/0019_voice_sessions.sql", object)
+			return fmt.Errorf("voice: postgres schema object %q is missing; apply migrations/postgres/0019_voice_sessions.sql and 0020_voice_instance_global.sql", object)
 		}
 	}
 	return nil
@@ -85,6 +85,11 @@ func (s *PostgresStore) Reserve(ctx context.Context, req ReserveRequest) (Sessio
 		return Session{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Serialize this tenant's admissions across replicas so budget counts
+	// and the placement check are atomic with the insert.
+	if err := lockTenant(ctx, tx, req.TenantID); err != nil {
+		return Session{}, err
+	}
 	var exists string
 	if err := tx.QueryRowContext(ctx,
 		`SELECT session_id FROM gateway_voice_sessions WHERE session_id = $1 FOR UPDATE`,
@@ -93,54 +98,46 @@ func (s *PostgresStore) Reserve(ctx context.Context, req ReserveRequest) (Sessio
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return Session{}, err
 	}
+	mode := req.Mode
+	if strings.TrimSpace(mode) == "" {
+		mode = ModeLive
+	}
 	status := StatusQueued
 	identity, instance := "", ""
-	for _, candID := range req.IdentityCandidates {
-		candID = strings.TrimSpace(candID)
-		if candID == "" {
-			continue
-		}
-		var taken int
-		if err := tx.QueryRowContext(ctx, `
-SELECT COUNT(1) FROM gateway_voice_sessions
-WHERE tenant_id = $1 AND target = $2 AND identity_ref = $3
-  AND status IN ('connecting','connected')`,
-			req.TenantID, req.Target, candID).Scan(&taken); err != nil {
+	if mode == ModeLive {
+		var leased, queued int
+		if err := tx.QueryRowContext(ctx, postgresCountsQuery, req.TenantID).Scan(&leased, &queued); err != nil {
 			return Session{}, err
 		}
-		if taken > 0 {
-			continue
-		}
-		claimedInstance := ""
-		for _, candInst := range req.InstanceCandidates {
-			candInst = strings.TrimSpace(candInst)
-			if candInst == "" {
-				continue
-			}
-			var instanceTaken int
-			if err := tx.QueryRowContext(ctx, `
+		if req.MaxActive <= 0 || leased < req.MaxActive {
+			for _, p := range req.Placements {
+				p, ok := p.clean()
+				if !ok {
+					continue
+				}
+				var taken int
+				if err := tx.QueryRowContext(ctx, `
 SELECT COUNT(1) FROM gateway_voice_sessions
-WHERE tenant_id = $1 AND instance_ref = $2 AND status IN ('connecting','connected')`,
-				req.TenantID, candInst).Scan(&instanceTaken); err != nil {
-				return Session{}, err
-			}
-			if instanceTaken == 0 {
-				claimedInstance = candInst
-				break
+WHERE status IN ('connecting','connected')
+  AND ((tenant_id = $1 AND target = $2 AND identity_ref = $3) OR instance_ref = $4)`,
+					req.TenantID, req.Target, p.Identity, p.Instance).Scan(&taken); err != nil {
+					return Session{}, err
+				}
+				if taken == 0 {
+					identity, instance, status = p.Identity, p.Instance, StatusConnecting
+					break
+				}
 			}
 		}
-		if claimedInstance == "" {
-			continue // never hold an account without its exclusive environment
+		if identity == "" && req.MaxQueued > 0 && queued >= req.MaxQueued {
+			return Session{}, ErrQueueFull
 		}
-		identity, instance = candID, claimedInstance
-		status = StatusConnecting
-		break
 	}
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO gateway_voice_sessions (`+postgresVoiceColumns+`)
 VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, $8, $9, '', $10, $10, $11, $11)`,
 		req.SessionID, req.TenantID, req.AppID, req.Target,
-		req.Mode, req.JobID, string(status),
+		mode, req.JobID, string(status),
 		identity, instance, now,
 		now.Add(req.LeaseTTL),
 	)
@@ -155,73 +152,94 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, $8, $9, '', $10, $10, $11, $11)`,
 	}
 	return Session{
 		ID: req.SessionID, TenantID: req.TenantID, AppID: req.AppID, Target: req.Target,
-		Status: status, IdentityRef: identity, InstanceRef: instance,
+		Mode: mode, JobID: req.JobID, Status: status, IdentityRef: identity, InstanceRef: instance,
 		CreatedAt: now, UpdatedAt: now, LeaseExpires: now.Add(req.LeaseTTL),
 	}, nil
 }
 
-func (s *PostgresStore) Claim(ctx context.Context, tenantID, sessionID string, identityCandidates, instanceCandidates []string, leaseTTL time.Duration, now time.Time) (Session, error) {
+const postgresCountsQuery = `
+SELECT
+  COUNT(1) FILTER (WHERE status IN ('connecting','connected')),
+  COUNT(1) FILTER (WHERE status = 'queued')
+FROM gateway_voice_sessions WHERE tenant_id = $1 AND mode <> 'utterance'`
+
+// lockTenant takes a transaction-scoped advisory lock keyed by tenant so
+// admissions for one tenant serialize across every gateway replica.
+func lockTenant(ctx context.Context, tx *sql.Tx, tenantID string) error {
+	_, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, "voice:"+tenantID)
+	return err
+}
+
+func (s *PostgresStore) Claim(ctx context.Context, req ClaimRequest) (Session, error) {
+	now := req.Now
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	var target string
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT target FROM gateway_voice_sessions WHERE session_id = $1 AND tenant_id = $2`,
-		sessionID, tenantID).Scan(&target); err != nil {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Session{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := lockTenant(ctx, tx, req.TenantID); err != nil {
+		return Session{}, err
+	}
+	var status Status
+	if err := tx.QueryRowContext(ctx,
+		`SELECT status FROM gateway_voice_sessions WHERE session_id = $1 AND tenant_id = $2 FOR UPDATE`,
+		req.SessionID, req.TenantID).Scan(&status); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Session{}, ErrNotFound
 		}
 		return Session{}, err
 	}
-	for _, candID := range identityCandidates {
-		candID = strings.TrimSpace(candID)
-		if candID == "" {
+	if status != StatusQueued {
+		return Session{}, ErrConflict
+	}
+	var leased, queued int
+	if err := tx.QueryRowContext(ctx, postgresCountsQuery, req.TenantID).Scan(&leased, &queued); err != nil {
+		return Session{}, err
+	}
+	if req.MaxActive > 0 && leased >= req.MaxActive {
+		return Session{}, ErrConflict
+	}
+	for _, p := range req.Placements {
+		p, ok := p.clean()
+		if !ok {
 			continue
 		}
-		for _, candInst := range instanceCandidates {
-			candInst = strings.TrimSpace(candInst)
-			if candInst == "" {
-				continue
-			}
-			res, err := s.db.ExecContext(ctx, `
+		res, err := tx.ExecContext(ctx, `
 UPDATE gateway_voice_sessions
 SET status = 'connecting', identity_ref = $3, instance_ref = $4, lease_expires_at = $5, updated_at = $6
 WHERE session_id = $1 AND tenant_id = $2 AND status = 'queued'
   AND NOT EXISTS (
     SELECT 1 FROM gateway_voice_sessions other
-    WHERE other.tenant_id = gateway_voice_sessions.tenant_id
-      AND other.target = gateway_voice_sessions.target
-      AND other.identity_ref = $3
+    WHERE other.status IN ('connecting','connected')
       AND other.session_id <> gateway_voice_sessions.session_id
-      AND other.status IN ('connecting','connected')
-  )
-  AND NOT EXISTS (
-    SELECT 1 FROM gateway_voice_sessions other2
-    WHERE other2.tenant_id = gateway_voice_sessions.tenant_id
-      AND other2.instance_ref = $4
-      AND other2.session_id <> gateway_voice_sessions.session_id
-      AND other2.status IN ('connecting','connected')
+      AND ((other.tenant_id = gateway_voice_sessions.tenant_id
+            AND other.target = gateway_voice_sessions.target AND other.identity_ref = $3)
+           OR other.instance_ref = $4)
   )`,
-				sessionID, tenantID, candID, candInst, now.Add(leaseTTL), now)
-			if err != nil {
-				if isUniqueViolation(err) {
-					continue
-				}
-				return Session{}, err
+			req.SessionID, req.TenantID, p.Identity, p.Instance, now.Add(req.LeaseTTL), now)
+		if err != nil {
+			if isUniqueViolation(err) {
+				return Session{}, ErrConflict // lost a cross-tenant race; the tx is aborted
 			}
-			n, err := res.RowsAffected()
-			if err != nil {
-				return Session{}, err
-			}
-			if n == 0 {
-				continue
-			}
-			return Session{
-				ID: sessionID, TenantID: tenantID, Target: target, Status: StatusConnecting,
-				IdentityRef: candID, InstanceRef: candInst,
-				LeaseExpires: now.Add(leaseTTL), UpdatedAt: now,
-			}, nil
+			return Session{}, err
 		}
+		if n, err := res.RowsAffected(); err != nil {
+			return Session{}, err
+		} else if n == 0 {
+			continue
+		}
+		row := tx.QueryRowContext(ctx, `SELECT `+postgresVoiceColumns+` FROM gateway_voice_sessions WHERE session_id = $1`, req.SessionID)
+		sess, err := scanPostgresVoiceSession(row)
+		if err != nil {
+			return Session{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return Session{}, ErrConflict
+		}
+		return sess, nil
 	}
 	return Session{}, ErrConflict
 }
@@ -311,7 +329,8 @@ WHERE session_id = $1 AND tenant_id = $2 AND status <> 'terminated'`,
 func (s *PostgresStore) RenewLease(ctx context.Context, tenantID, sessionID string, until time.Time, now time.Time) error {
 	res, err := s.db.ExecContext(ctx, `
 UPDATE gateway_voice_sessions SET lease_expires_at = $3, updated_at = $4
-WHERE session_id = $1 AND tenant_id = $2 AND status IN ('connecting','connected')`,
+WHERE session_id = $1 AND tenant_id = $2 AND status IN ('connecting','connected')
+  AND lease_expires_at > $4`,
 		sessionID, tenantID, until, now)
 	if err != nil {
 		return err
@@ -357,20 +376,10 @@ FROM gateway_voice_sessions`).Scan(&active, &queued); err != nil {
 	return active, queued, nil
 }
 
-func (s *PostgresStore) ActiveCount(ctx context.Context, tenantID, target string) (int, error) {
-	query := `
-SELECT COUNT(1) FROM gateway_voice_sessions
-WHERE tenant_id = $1 AND status IN ('queued','connecting','connected')`
-	args := []any{tenantID}
-	if target != "" {
-		query += " AND target = $2"
-		args = append(args, target)
-	}
-	var count int
-	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
-		return 0, err
-	}
-	return count, nil
+func (s *PostgresStore) TenantCounts(ctx context.Context, tenantID string) (int, int, error) {
+	var leased, queued int
+	err := s.db.QueryRowContext(ctx, postgresCountsQuery, tenantID).Scan(&leased, &queued)
+	return leased, queued, err
 }
 
 func requirePostgresChange(res sql.Result) error {

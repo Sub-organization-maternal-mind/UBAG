@@ -31,16 +31,19 @@ func newSQLiteStore(t *testing.T) *SQLiteStore {
 	return store
 }
 
+func claimReq(id string, now time.Time, placements ...Placement) ClaimRequest {
+	return ClaimRequest{TenantID: "tenant_a", SessionID: id, Placements: placements, LeaseTTL: time.Minute, Now: now}
+}
+
 func reserveRequest(id string) ReserveRequest {
 	return ReserveRequest{
-		SessionID:          id,
-		TenantID:           "tenant_a",
-		AppID:              "app_a",
-		Target:             "chatgpt_web",
-		IdentityCandidates: []string{"acct-1", "acct-2"},
-		InstanceCandidates: []string{"browser-1"},
-		LeaseTTL:           5 * time.Minute,
-		Now:                time.Now().UTC(),
+		SessionID:  id,
+		TenantID:   "tenant_a",
+		AppID:      "app_a",
+		Target:     "chatgpt_web",
+		Placements: []Placement{{"acct-1", "browser-1"}, {"acct-2", "browser-1"}},
+		LeaseTTL:   5 * time.Minute,
+		Now:        time.Now().UTC(),
 	}
 }
 
@@ -48,6 +51,98 @@ func reserveRequest(id string) ReserveRequest {
 func TestVoiceStoreContract(t *testing.T) {
 	t.Run("memory", func(t *testing.T) { testVoiceStoreContract(t, newMemoryStore(t)) })
 	t.Run("sqlite", func(t *testing.T) { testVoiceStoreContract(t, newSQLiteStore(t)) })
+}
+
+func eachStore(t *testing.T, fn func(t *testing.T, store Store)) {
+	t.Helper()
+	t.Run("memory", func(t *testing.T) { fn(t, newMemoryStore(t)) })
+	t.Run("sqlite", func(t *testing.T) { fn(t, newSQLiteStore(t)) })
+}
+
+// A physical environment is exclusive across tenants, not just within one.
+func TestVoiceInstanceExclusiveAcrossTenants(t *testing.T) {
+	eachStore(t, func(t *testing.T, st Store) {
+		req := reserveRequest("a")
+		req.Placements = []Placement{{"account", "physical-browser"}}
+		a, err := st.Reserve(t.Context(), req)
+		if err != nil || a.Status != StatusConnecting {
+			t.Fatalf("a = %+v err=%v", a, err)
+		}
+		req.SessionID, req.TenantID = "b", "tenant_b"
+		b, err := st.Reserve(t.Context(), req)
+		if err != nil || b.Status != StatusQueued {
+			t.Fatalf("same physical environment must queue the second tenant, got %+v err=%v", b, err)
+		}
+	})
+}
+
+// An expired lease cannot be revived by RenewLease before the sweeper runs.
+func TestVoiceExpiredLeaseCannotBeRenewed(t *testing.T) {
+	eachStore(t, func(t *testing.T, st Store) {
+		now := time.Now().UTC()
+		req := reserveRequest("a")
+		req.LeaseTTL, req.Now = time.Minute, now
+		if _, err := st.Reserve(t.Context(), req); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.RenewLease(t.Context(), "tenant_a", "a", now.Add(3*time.Minute), now.Add(2*time.Minute)); err == nil {
+			t.Fatal("expired lease revived")
+		}
+		swept, err := st.SweepExpired(t.Context(), now.Add(2*time.Minute))
+		if err != nil || len(swept) != 1 {
+			t.Fatalf("swept = %v err=%v", swept, err)
+		}
+	})
+}
+
+// MaxActive=1 with two free environments: the second session queues, and the
+// queue itself is bounded; Claim honors the active budget too.
+func TestVoiceBudgetsEnforcedAtAdmission(t *testing.T) {
+	eachStore(t, func(t *testing.T, st Store) {
+		two := []Placement{{"acct-1", "browser-1"}, {"acct-2", "browser-2"}}
+		req := func(id string) ReserveRequest {
+			r := reserveRequest(id)
+			r.Placements, r.MaxActive, r.MaxQueued = two, 1, 1
+			return r
+		}
+		first, err := st.Reserve(t.Context(), req("a"))
+		if err != nil || first.Status != StatusConnecting {
+			t.Fatalf("first = %+v err=%v", first, err)
+		}
+		second, err := st.Reserve(t.Context(), req("b"))
+		if err != nil || second.Status != StatusQueued {
+			t.Fatalf("cap=1 must queue the second session, got %+v err=%v", second, err)
+		}
+		if _, err := st.Reserve(t.Context(), req("c")); !errors.Is(err, ErrQueueFull) {
+			t.Fatalf("third = %v, want ErrQueueFull", err)
+		}
+		claim := claimReq("b", time.Now().UTC(), two...)
+		claim.MaxActive = 1
+		if _, err := st.Claim(t.Context(), claim); !errors.Is(err, ErrConflict) {
+			t.Fatalf("claim over the active budget = %v, want ErrConflict", err)
+		}
+		leased, queued, err := st.TenantCounts(t.Context(), "tenant_a")
+		if err != nil || leased != 1 || queued != 1 {
+			t.Fatalf("counts = %d/%d err=%v", leased, queued, err)
+		}
+	})
+}
+
+// Utterance sessions hold no resources and never consume the live budgets.
+func TestVoiceUtteranceSessionsAreNotBudgeted(t *testing.T) {
+	eachStore(t, func(t *testing.T, st Store) {
+		r := reserveRequest("u")
+		r.Mode, r.Placements, r.MaxQueued = ModeUtterance, nil, 1
+		for _, id := range []string{"u1", "u2"} {
+			r.SessionID = id
+			if _, err := st.Reserve(t.Context(), r); err != nil {
+				t.Fatalf("%s: %v", id, err)
+			}
+		}
+		if leased, queued, _ := st.TenantCounts(t.Context(), "tenant_a"); leased != 0 || queued != 0 {
+			t.Fatalf("utterance sessions counted: %d/%d", leased, queued)
+		}
+	})
 }
 
 type voiceStore interface {
@@ -81,6 +176,7 @@ func testVoiceStoreContract(t *testing.T, store Store) {
 	// A different tenant shares nothing: its own lease set.
 	other := reserveRequest("voice_other")
 	other.TenantID = "tenant_b"
+	other.Placements = []Placement{{"acct-1", "browser-other"}}
 	otherRes, err := store.Reserve(ctx, other)
 	if err != nil {
 		t.Fatalf("reserve other tenant: %v", err)
@@ -98,7 +194,7 @@ func testVoiceStoreContract(t *testing.T, store Store) {
 	if err := store.Terminate(ctx, "tenant_a", "voice_1", now.Add(time.Second), "client_disconnect"); err != nil {
 		t.Fatalf("terminate: %v", err)
 	}
-	claimed, err := store.Claim(ctx, "tenant_a", "voice_2", []string{"acct-1", "acct-2"}, []string{"browser-1"}, time.Minute, now.Add(2*time.Second))
+	claimed, err := store.Claim(ctx, claimReq("voice_2", now.Add(2*time.Second), Placement{"acct-1", "browser-1"}, Placement{"acct-2", "browser-1"}))
 	if err != nil {
 		t.Fatalf("claim after terminate: %v", err)
 	}
@@ -107,7 +203,7 @@ func testVoiceStoreContract(t *testing.T, store Store) {
 	}
 
 	// Claim is CAS: claiming again conflicts.
-	if _, err := store.Claim(ctx, "tenant_a", "voice_2", []string{"acct-1"}, []string{"browser-1"}, time.Minute, now.Add(3*time.Second)); !errors.Is(err, ErrConflict) {
+	if _, err := store.Claim(ctx, claimReq("voice_2", now.Add(3*time.Second), Placement{"acct-1", "browser-1"})); !errors.Is(err, ErrConflict) {
 		t.Fatalf("re-claim = %v, want ErrConflict", err)
 	}
 
@@ -158,16 +254,16 @@ func testVoiceStoreContract(t *testing.T, store Store) {
 		t.Fatalf("sweep must catch the lapsed session, got %v", swept)
 	}
 	// The freed environment lets the queued session claim.
-	if _, err := store.Claim(ctx, "tenant_a", "voice_3", []string{"acct-2"}, []string{"browser-1"}, time.Minute, now.Add(5*time.Minute)); err != nil {
+	if _, err := store.Claim(ctx, claimReq("voice_3", now.Add(5*time.Minute), Placement{"acct-2", "browser-1"})); err != nil {
 		t.Fatalf("claim after sweep: %v", err)
 	}
 
-	count, err := store.ActiveCount(ctx, "tenant_a", "")
+	leased, queued, err := store.TenantCounts(ctx, "tenant_a")
 	if err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("active count = %d, want 1", count)
+	if leased != 1 || queued != 0 {
+		t.Fatalf("counts = %d leased / %d queued, want 1/0", leased, queued)
 	}
 }
 
@@ -178,15 +274,13 @@ func TestVoiceReserveSkipsHalfReservations(t *testing.T) {
 	ctx := t.Context()
 
 	req := reserveRequest("voice_full")
-	req.IdentityCandidates = []string{"acct-1"}
-	req.InstanceCandidates = []string{"browser-1"}
+	req.Placements = []Placement{{"acct-1", "browser-1"}}
 	if _, err := store.Reserve(ctx, req); err != nil {
 		t.Fatalf("reserve: %v", err)
 	}
 	// No environments free at all → must queue even though accounts remain.
 	req2 := reserveRequest("voice_queued")
-	req2.IdentityCandidates = []string{"acct-2"}
-	req2.InstanceCandidates = []string{}
+	req2.Placements = []Placement{{"acct-2", ""}}
 	got, err := store.Reserve(ctx, req2)
 	if err != nil {
 		t.Fatalf("reserve queued: %v", err)

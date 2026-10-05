@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -144,32 +145,13 @@ func newVoiceSessionID(now time.Time) string {
 	return fmt.Sprintf("voice_%d_%s", now.Unix(), hex.EncodeToString(entropy[:]))
 }
 
-// voiceIdentityCandidates derives the provider accounts this tenant may use
-// for the target: topology contexts whose last worker-detected login state is
-// authenticated, with an explicit caller preference first. A caller naming an
-// identity_ref it does not own still only ever claims leases inside its own
-// tenant (the store scopes every claim by tenant).
-func (s *Server) voiceIdentityCandidates(ctx context.Context, tenantID, target, preferred string) []string {
-	var candidates []string
-	if preferred = strings.TrimSpace(preferred); preferred != "" {
-		candidates = append(candidates, preferred)
-	}
-	if s.topology != nil {
-		contexts, err := s.topology.ListContexts(ctx, topology.ContextFilter{TenantID: tenantID, Limit: 1000})
-		if err == nil {
-			for _, candidate := range contexts {
-				ref := strings.TrimSpace(candidate.IdentityRef)
-				if candidate.TargetID == target && candidate.LoginState == "authenticated" &&
-					ref != "" && !containsString(candidates, ref) {
-					candidates = append(candidates, ref)
-				}
-			}
-		}
-	}
-	return candidates
-}
-
-func (s *Server) voiceInstanceCandidates(ctx context.Context, tenantID string) []string {
+// voicePlacements resolves, server-side, the (provider account, browser
+// environment) pairs this tenant may hold for the target: an authenticated
+// topology context paired with the usable instance that actually hosts it.
+// A caller-supplied identity_ref is only a PREFERENCE among these pairs — it
+// is never proof of ownership, so naming an account the tenant does not own
+// (or one without a hosting environment) resolves to nothing.
+func (s *Server) voicePlacements(ctx context.Context, tenantID, target, preferred string) []voice.Placement {
 	if s.topology == nil {
 		return nil
 	}
@@ -177,10 +159,32 @@ func (s *Server) voiceInstanceCandidates(ctx context.Context, tenantID string) [
 	if err != nil {
 		return nil
 	}
-	out := make([]string, 0, len(instances))
+	usable := map[string]bool{}
 	for _, instance := range instances {
-		if strings.TrimSpace(instance.InstanceID) != "" {
-			out = append(out, instance.InstanceID)
+		switch strings.ToLower(strings.TrimSpace(instance.State)) {
+		case "failed", "unhealthy", "draining", "recycling", "stopped", "terminated":
+		default:
+			if id := strings.TrimSpace(instance.InstanceID); id != "" {
+				usable[id] = true
+			}
+		}
+	}
+	contexts, err := s.topology.ListContexts(ctx, topology.ContextFilter{TenantID: tenantID, Limit: 1000})
+	if err != nil {
+		return nil
+	}
+	preferred = strings.TrimSpace(preferred)
+	var out []voice.Placement
+	for _, c := range contexts {
+		identity, instance := strings.TrimSpace(c.IdentityRef), strings.TrimSpace(c.InstanceID)
+		if c.TargetID != target || c.LoginState != "authenticated" || identity == "" || !usable[instance] {
+			continue
+		}
+		p := voice.Placement{Identity: identity, Instance: instance}
+		if identity == preferred {
+			out = append([]voice.Placement{p}, out...)
+		} else {
+			out = append(out, p)
 		}
 	}
 	return out
@@ -202,7 +206,7 @@ func (s *Server) handleVoiceSessions(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s.handleVoiceSessionList(w, r)
 	default:
-		s.writeMethodNotAllowed(w, r, http.MethodPost)
+		s.writeMethodNotAllowed(w, r, http.MethodPost, http.MethodGet)
 	}
 }
 
@@ -297,41 +301,26 @@ func (s *Server) handleVoiceSessionCreate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Budgets, enforced BEFORE the reservation with the same accounting the
-	// sweeper and store use: a tenant may hold voiceMaxSessionsPerTenant
-	// lease-holding sessions and voiceMaxQueuedPerTenant queued ones. When
-	// the active budget is spent the new session can only queue, so the
-	// queued budget is what governs; the total bound still applies so a
-	// claim cannot bypass a full queue.
-	activeCount, err := s.voice.ActiveCount(ctx, tenantID, "")
-	if s.mapVoiceStoreError(w, r, err) {
-		return
-	}
-	queuedCount := s.countVoiceQueued(ctx, tenantID)
-	if activeCount >= s.voiceMaxSessionsPerTenant {
-		if queuedCount >= s.voiceMaxQueuedPerTenant {
-			s.voiceError(w, r, http.StatusTooManyRequests, "UBAG-VOICE-QUEUE-FULL-004",
-				fmt.Sprintf("voice-session queue budget reached (%d)", s.voiceMaxQueuedPerTenant),
-				true, ptrInt(int(defaultVoiceSessionTTL.Milliseconds())))
-			return
-		}
-	} else if activeCount+queuedCount >= s.voiceMaxSessionsPerTenant+s.voiceMaxQueuedPerTenant {
-		s.voiceError(w, r, http.StatusTooManyRequests, "UBAG-VOICE-SESSION-LIMIT-003",
-			fmt.Sprintf("voice-session budgets reached (%d active / %d queued); terminate a session or wait for lease expiry", s.voiceMaxSessionsPerTenant, s.voiceMaxQueuedPerTenant),
-			true, ptrInt(int(defaultVoiceSessionTTL.Milliseconds())))
-		return
-	}
-
+	// Budgets (active leases and queued backlog per tenant) are enforced INSIDE
+	// the store's admission transaction, so concurrent creates and replicas
+	// cannot overshoot them: with the active budget spent a session can only
+	// queue, and a spent queue budget is an explicit, retryable overload.
 	reserved, err := s.voice.Reserve(ctx, voice.ReserveRequest{
-		SessionID:          newVoiceSessionID(now),
-		TenantID:           tenantID,
-		AppID:              appID,
-		Target:             target,
-		IdentityCandidates: s.voiceIdentityCandidates(ctx, tenantID, target, req.IdentityRef),
-		InstanceCandidates: s.voiceInstanceCandidates(ctx, tenantID),
-		LeaseTTL:           ttl,
-		Now:                now,
+		SessionID:  newVoiceSessionID(now),
+		TenantID:   tenantID,
+		AppID:      appID,
+		Target:     target,
+		Placements: s.voicePlacements(ctx, tenantID, target, req.IdentityRef),
+		MaxActive:  s.voiceMaxSessionsPerTenant,
+		MaxQueued:  s.voiceMaxQueuedPerTenant,
+		LeaseTTL:   ttl,
+		Now:        now,
 	})
+	if errors.Is(err, voice.ErrQueueFull) {
+		s.voiceOverloaded(w, r, "UBAG-VOICE-QUEUE-FULL-004",
+			fmt.Sprintf("voice-session queue budget reached (%d)", s.voiceMaxQueuedPerTenant))
+		return
+	}
 	if s.mapVoiceStoreError(w, r, err) {
 		return
 	}
@@ -348,18 +337,12 @@ func (s *Server) handleVoiceSessionCreate(w http.ResponseWriter, r *http.Request
 	})
 }
 
-func (s *Server) countVoiceQueued(ctx context.Context, tenantID string) int {
-	sessions, err := s.voice.List(ctx, tenantID, "", 0)
-	if err != nil {
-		return 0
-	}
-	queued := 0
-	for _, session := range sessions {
-		if session.Status == voice.StatusQueued {
-			queued++
-		}
-	}
-	return queued
+// voiceOverloaded answers an admission overload with explicit retry guidance
+// (both the header and the structured retry_after_ms).
+func (s *Server) voiceOverloaded(w http.ResponseWriter, r *http.Request, code, message string) {
+	retry := s.voiceLeaseTTL()
+	w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())))
+	s.voiceError(w, r, http.StatusTooManyRequests, code, message, true, ptrInt(int(retry.Milliseconds())))
 }
 
 func (s *Server) handleVoiceSessionList(w http.ResponseWriter, r *http.Request) {
@@ -443,6 +426,18 @@ func (s *Server) handleVoiceSessionSubtree(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	switch action {
+	case "connect", "mute", "renew", "terminate":
+		// Every action mutates state: enforce the documented method BEFORE
+		// any side effect (a GET with a body must never open media).
+		if r.Method != http.MethodPost {
+			s.writeMethodNotAllowed(w, r, http.MethodPost)
+			return
+		}
+	default:
+		s.writeNotFound(w, r)
+		return
+	}
+	switch action {
 	case "connect":
 		s.handleVoiceSessionConnect(w, r, sessionID)
 	case "mute":
@@ -451,8 +446,6 @@ func (s *Server) handleVoiceSessionSubtree(w http.ResponseWriter, r *http.Reques
 		s.handleVoiceSessionRenew(w, r, sessionID)
 	case "terminate":
 		s.handleVoiceSessionTerminate(w, r, sessionID)
-	default:
-		s.writeNotFound(w, r)
 	}
 }
 
@@ -515,10 +508,14 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 		// Promote: claim the first free account+environment now that the
 		// caller is actually connecting. A conflict here is an honest
 		// overload answer: the session stays queued, nothing is held.
-		claimed, err := s.voice.Claim(ctx, tenantID, sessionID,
-			s.voiceIdentityCandidates(ctx, tenantID, session.Target, session.IdentityRef),
-			s.voiceInstanceCandidates(ctx, tenantID),
-			s.voiceLeaseTTLFor(session), now)
+		claimed, err := s.voice.Claim(ctx, voice.ClaimRequest{
+			TenantID:   tenantID,
+			SessionID:  sessionID,
+			Placements: s.voicePlacements(ctx, tenantID, session.Target, ""),
+			MaxActive:  s.voiceMaxSessionsPerTenant,
+			LeaseTTL:   s.voiceLeaseTTL(),
+			Now:        now,
+		})
 		if errors.Is(err, voice.ErrConflict) {
 			s.voiceError(w, r, http.StatusConflict, "UBAG-VOICE-SESSION-STATE-005",
 				"no provider account or browser environment is free; the session remains queued", true, ptrInt(int(time.Second.Milliseconds())))
@@ -544,13 +541,28 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 
 	answer, err := s.voiceMedia.HandleOffer(ctx, session, req.SDPOffer)
 	if err != nil {
+		// Diagnostics stay server-side: internal addresses and implementation
+		// detail never reach the client.
+		slog.Warn("voice media negotiation failed", "session_id", sessionID, "error", err)
 		s.voiceError(w, r, http.StatusServiceUnavailable, "UBAG-VOICE-MEDIA-UNAVAILABLE-007",
-			"media plane cannot accept this connection: "+err.Error(), true, ptrInt(1000))
+			"media plane cannot accept this connection", true, ptrInt(1000))
 		return
 	}
 	// A negotiated connection is a real appointment: refresh the lease so
-	// the sweeper cannot reap the session mid-handshake.
-	_ = s.voice.RenewLease(ctx, tenantID, sessionID, now.Add(s.voiceLeaseTTLFor(session)), now)
+	// the sweeper cannot reap the session mid-handshake. A failed renewal
+	// means the lease is gone — tear the media down rather than hand out an
+	// answer for a session that no longer owns its resources.
+	if err := s.voice.RenewLease(ctx, tenantID, sessionID, now.Add(s.voiceLeaseTTL()), now); err != nil {
+		s.dropVoiceMedia(sessionID)
+		if errors.Is(err, voice.ErrNotFound) || errors.Is(err, voice.ErrConflict) {
+			s.voiceError(w, r, http.StatusConflict, "UBAG-VOICE-SESSION-STATE-005",
+				"voice session lease is no longer held", true, nil)
+			return
+		}
+		slog.Error("voice lease renewal failed", "session_id", sessionID, "error", err)
+		s.writeError(w, r, http.StatusInternalServerError, internalError("voice session store error"))
+		return
+	}
 	expires := now.Add(voiceMediaCredentialTTL)
 	s.writeJSON(w, http.StatusOK, voiceSessionConnectResponse{
 		SessionID:       sessionID,
@@ -562,15 +574,22 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-func (s *Server) voiceLeaseTTLFor(session voice.Session) time.Duration {
-	ttl := time.Until(session.LeaseExpires)
-	if ttl < minVoiceSessionTTL || ttl > maxVoiceSessionTTL {
-		if s.voiceSessionTTL > 0 {
-			return s.voiceSessionTTL
-		}
-		return defaultVoiceSessionTTL
+// voiceLeaseTTL is the configured lease window applied at claim and on every
+// renewal. It is deliberately NOT derived from the session's remaining
+// lifetime (which shrinks toward zero); ttl_seconds on create sets only the
+// first lease window.
+func (s *Server) voiceLeaseTTL() time.Duration {
+	if s.voiceSessionTTL > 0 {
+		return s.voiceSessionTTL
 	}
-	return ttl
+	return defaultVoiceSessionTTL
+}
+
+// dropVoiceMedia closes any live media connection for the session.
+func (s *Server) dropVoiceMedia(sessionID string) {
+	if dropper, ok := s.voiceMedia.(interface{ Disconnect(sessionID string) }); ok {
+		dropper.Disconnect(sessionID)
+	}
 }
 
 func (s *Server) handleVoiceSessionMute(w http.ResponseWriter, r *http.Request, sessionID string) {
@@ -600,19 +619,25 @@ func (s *Server) handleVoiceSessionRenew(w http.ResponseWriter, r *http.Request,
 	if !s.authorizeGatewayAction(w, r, "job:create") {
 		return
 	}
-	session, ok := s.voiceSessionOrWrite(w, r, sessionID)
-	if !ok {
+	if _, ok := s.voiceSessionOrWrite(w, r, sessionID); !ok {
 		return
 	}
 	tenantID, _ := requestScope(r)
 	now := time.Now().UTC()
-	if err := s.voice.RenewLease(r.Context(), tenantID, sessionID, now.Add(s.voiceLeaseTTLFor(session)), now); s.mapVoiceStoreError(w, r, err) {
+	until := now.Add(s.voiceLeaseTTL())
+	if err := s.voice.RenewLease(r.Context(), tenantID, sessionID, until, now); err != nil {
+		// An expired or released lease cannot be revived: surface the state
+		// conflict, never a silent success.
+		if errors.Is(err, voice.ErrNotFound) {
+			err = voice.ErrConflict
+		}
+		_ = s.mapVoiceStoreError(w, r, err)
 		return
 	}
 	s.writeJSON(w, http.StatusOK, map[string]any{
 		"session_id":       sessionID,
 		"kind":             "voice_session_control",
-		"lease_expires_at": now.Add(s.voiceLeaseTTLFor(session)),
+		"lease_expires_at": until,
 	})
 }
 
@@ -629,15 +654,19 @@ func (s *Server) handleVoiceSessionTerminate(w http.ResponseWriter, r *http.Requ
 	if err := s.voice.Terminate(r.Context(), tenantID, sessionID, time.Now().UTC(), "terminated_by_client"); s.mapVoiceStoreError(w, r, err) {
 		return
 	}
-	if dropper, ok := s.voiceMedia.(interface{ Disconnect(sessionID string) }); ok {
-		dropper.Disconnect(sessionID)
-	}
+	s.dropVoiceMedia(sessionID)
 	s.writeJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "status": "terminated", "kind": "voice_session"})
 }
 
 // decodeVoiceJSON reads a bounded JSON body into out for voice mutations.
 func (s *Server) decodeVoiceJSON(w http.ResponseWriter, r *http.Request, out any, limit int64) bool {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		s.voiceError(w, r, http.StatusRequestEntityTooLarge, "UBAG-VOICE-SESSION-STATE-005",
+			fmt.Sprintf("request body exceeds %d bytes", limit), false, nil)
+		return false
+	}
 	if err != nil || len(strings.TrimSpace(string(body))) == 0 {
 		s.voiceError(w, r, http.StatusBadRequest, "UBAG-VOICE-SESSION-STATE-005",
 			"request body must be JSON", false, nil)
