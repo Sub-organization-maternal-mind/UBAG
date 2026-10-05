@@ -2,13 +2,19 @@
 
 The adapter deliberately avoids clocks, randomness, network calls, and external
 packages so local worker tests can run the same way on Python 3.9 and 3.12.
+
+The one exception is opt-in stage timing: with UBAG_WORKER_STAGE_TIMINGS truthy
+the ``completed`` event gains ``data.timings_ms`` (monotonic perf_counter marks,
+never event ``created_at``). Off by default, so the stream stays deterministic.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
@@ -101,7 +107,13 @@ class MockAdapter:
     version = "0.1.0"
 
     def iter_events(self, payload: Mapping[str, Any]) -> Iterable[JsonObject]:
+        t0 = time.perf_counter()
+        timings_on = os.environ.get("UBAG_WORKER_STAGE_TIMINGS", "").strip().lower() in (
+            "1", "true", "yes", "on",
+        )
         job = _normalize_payload(payload)
+        t_ready = time.perf_counter()
+        t_first = t_last = None
         sequence = 1
 
         yield _event(
@@ -127,6 +139,8 @@ class MockAdapter:
         sequence += 1
 
         for token_index, token in enumerate(job.tokens):
+            if t_first is None:
+                t_first = time.perf_counter()
             yield _event(
                 job,
                 sequence,
@@ -138,6 +152,7 @@ class MockAdapter:
                 },
             )
             sequence += 1
+            t_last = time.perf_counter()
 
         # A conversation key with no bound thread yet binds a fresh, deterministic
         # chat URL. A payload that already carries a thread_ref is a resume and
@@ -164,19 +179,24 @@ class MockAdapter:
         if job.model_settings:
             metadata["model_settings"] = dict(job.model_settings)
 
-        yield _event(
-            job,
-            sequence,
-            "completed",
-            "completed",
-            {
-                "result": {
-                    "type": "text",
-                    "text": job.result_text,
-                },
-                "metadata": metadata,
+        body: JsonObject = {
+            "result": {
+                "type": "text",
+                "text": job.result_text,
             },
-        )
+            "metadata": metadata,
+        }
+        if timings_on:
+            # Mirrors job-event.schema.json data.timings_ms (closed key set).
+            t_done = time.perf_counter()
+            body["timings_ms"] = {
+                "worker_start": round((t_ready - t0) * 1000.0, 3),
+                "first_token": round((t_first - t_ready) * 1000.0, 3),
+                "provider_stream": round((t_last - t_first) * 1000.0, 3),
+                "extraction": round((t_done - t_last) * 1000.0, 3),
+            }
+
+        yield _event(job, sequence, "completed", "completed", body)
 
     def run(self, payload: Mapping[str, Any]) -> List[JsonObject]:
         return list(self.iter_events(payload))

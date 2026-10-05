@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from typing import TYPE_CHECKING, Any, Callable, Iterator, List, Mapping, Optional
 
 from .envelope import (
@@ -51,6 +52,8 @@ from .events import (
     CONVERSATION_THREAD_BROKEN_EVENT_TYPE,
     CONVERSATION_THREAD_REBOUND_EVENT_TYPE,
     JsonObject,
+    StageTimer,
+    stage_timings_enabled,
     worker_event,
 )
 from .page_driver import (
@@ -183,10 +186,13 @@ class LiveSessionEngine:
                 % self._selectors.provider_id
             )
 
+        t_start = time.perf_counter()
+        timer = StageTimer()
         job = _normalize_payload(payload, self._selectors.provider_id)
         owns_driver = driver is None
         if driver is None:
             driver = create_default_driver(job.options)
+        timer.add("worker_start", time.perf_counter() - t_start)
 
         # Orchestration state (only used when an orchestrator was injected). The
         # lease is acquired *after* authentication so a manual-login block never
@@ -219,11 +225,12 @@ class LiveSessionEngine:
                 "message": "job accepted by live manual-session worker",
             })
 
-            driver.open(
-                target_url=self._selectors.target_url,
-                user_data_dir=job.user_data_dir,
-                headless=job.headless,
-            )
+            with timer.span("browser_prep"):
+                driver.open(
+                    target_url=self._selectors.target_url,
+                    user_data_dir=job.user_data_dir,
+                    headless=job.headless,
+                )
             yield emit("session.opening", {
                 "status": "opening",
                 "target": job.target,
@@ -234,6 +241,7 @@ class LiveSessionEngine:
                 "message": "opened user-owned persistent browser session",
             })
 
+            t_auth = time.perf_counter()
             login_state = driver.detect_login_state(self._selectors)
             if login_state != AUTHENTICATED:
                 # A freshly-opened SPA page often has not rendered its authenticated
@@ -255,6 +263,8 @@ class LiveSessionEngine:
                 login_state = driver.wait_until_authenticated(
                     self._selectors, timeout_s=_login_ready_extended_s()
                 )
+            # Read-only detection/polling only; a human login wait is excluded.
+            timer.add("auth_check", time.perf_counter() - t_auth)
             if login_state != AUTHENTICATED:
                 session_id = job.session_id
                 yield emit("session.manual_action_required", {
@@ -342,7 +352,7 @@ class LiveSessionEngine:
             attempts = _interaction_attempts()
             for attempt in range(1, attempts + 1):
                 try:
-                    interaction = self._run_interaction(driver, job)
+                    interaction = self._run_interaction(driver, job, timer)
                     break
                 except (DriftDetectedError, ManualActionRequired, LiveSessionError):
                     raise
@@ -363,7 +373,10 @@ class LiveSessionEngine:
                 })
                 return
 
+            timings_on = stage_timings_enabled()
             for event_type, data in (interaction["events"] if interaction else []):
+                if timings_on and event_type == "completed":
+                    data = {**data, "timings_ms": timer.as_dict()}
                 yield emit(event_type, data)
 
         except ConversationThreadNotFoundError as exc:
@@ -461,7 +474,12 @@ class LiveSessionEngine:
                 except Exception:  # noqa: BLE001 - never mask the primary error
                     pass
 
-    def _run_interaction(self, driver: PageDriver, job: "_NormalizedJob") -> JsonObject:
+    def _run_interaction(
+        self,
+        driver: PageDriver,
+        job: "_NormalizedJob",
+        timer: Optional[StageTimer] = None,
+    ) -> JsonObject:
         """Run the buffered pre-submit + submit + read interaction.
 
         Returns ``{"events": [(type, data), ...], "blocked": {...} | None}``.
@@ -471,6 +489,7 @@ class LiveSessionEngine:
         use case (Fix / Cross-Check) this is functionally identical to streaming.
         """
         events: List = []
+        timer = timer if timer is not None else StageTimer()
 
         # Conversation affinity. Runs BEFORE start_new_chat. When the gateway
         # injected no conversation block (conversations disabled, or the job
@@ -483,7 +502,8 @@ class LiveSessionEngine:
             thread_ref = job.conversation_thread_ref
             if thread_ref:
                 # A bound thread exists: resume it so the end user keeps context.
-                resumed = driver.resume_thread(self._selectors, thread_ref)
+                with timer.span("browser_prep"):
+                    resumed = driver.resume_thread(self._selectors, thread_ref)
                 if not resumed:
                     if job.conversation_on_missing == "restart":
                         # Opt-in self-healing: fall through to a fresh chat and
@@ -508,7 +528,8 @@ class LiveSessionEngine:
         # Skip start_new_chat when we resumed a bound thread — starting a new chat
         # would discard exactly the context we just navigated back to.
         if not resumed and job.new_chat_enabled and self._selectors.new_chat is not None:
-            started_new_chat = driver.start_new_chat(self._selectors)
+            with timer.span("browser_prep"):
+                started_new_chat = driver.start_new_chat(self._selectors)
             events.append(("session.new_chat", {
                 "status": "new_chat" if started_new_chat else "new_chat_skipped",
                 "target": job.target,
@@ -522,9 +543,10 @@ class LiveSessionEngine:
             }))
 
         if job.config_enabled and self._selectors.settings:
-            applied_settings = driver.ensure_provider_config(
-                self._selectors, overrides=job.provider_config
-            )
+            with timer.span("browser_prep"):
+                applied_settings = driver.ensure_provider_config(
+                    self._selectors, overrides=job.provider_config
+                )
             events.append(("session.configured", {
                 "status": "configured",
                 "target": job.target,
@@ -587,7 +609,8 @@ class LiveSessionEngine:
             # A missing/drifted file input raises DriftDetectedError, caught by the
             # existing drift handler — never a silent hang. attach_files takes the
             # full list, so all files land in one operation.
-            driver.attach_files(self._selectors, attach_paths)
+            with timer.span("attachment_materialize"):
+                driver.attach_files(self._selectors, attach_paths)
             attached_keys = [item["key"] for item in job.attachments]
             if not attached_keys and job.audio_artifact_key:
                 attached_keys = [job.audio_artifact_key]
@@ -603,7 +626,8 @@ class LiveSessionEngine:
                 "count": len(attach_paths),
             }))
 
-        driver.submit_prompt(self._selectors, job.prompt)
+        with timer.span("provider_submit"):
+            driver.submit_prompt(self._selectors, job.prompt)
 
         # Reasoning modes need a longer ceiling; use the reasoning floor only when
         # this provider enables a slow thinking mode and config is on.
@@ -612,7 +636,15 @@ class LiveSessionEngine:
             stream_timeout_s = max(stream_timeout_s, _reasoning_response_timeout_s())
 
         token_index = 0
+        # first_token = submit -> first delta (blocked inside the generator's first
+        # next()); provider_stream = first delta -> end of stream. A stream with no
+        # deltas books its whole wait under provider_stream.
+        t_wait = time.perf_counter()
+        t_first = None
         for delta in driver.stream_response(self._selectors, timeout_s=stream_timeout_s):
+            if t_first is None:
+                t_first = time.perf_counter()
+                timer.add("first_token", t_first - t_wait)
             events.append(("token", {
                 "status": "token_streaming",
                 "target": job.target,
@@ -621,9 +653,13 @@ class LiveSessionEngine:
             }))
             token_index += 1
 
+        t_end = time.perf_counter()
+        timer.add("provider_stream", t_end - (t_first if t_first is not None else t_wait))
+
         return_mode = str((job.options or {}).get("return_mode") or "final")
-        result_text = driver.read_final_response(self._selectors, return_mode=return_mode)
-        dom_signature = driver.dom_signature(self._selectors)
+        with timer.span("extraction"):
+            result_text = driver.read_final_response(self._selectors, return_mode=return_mode)
+            dom_signature = driver.dom_signature(self._selectors)
 
         events.append(("completed", {
             "status": "completed",
