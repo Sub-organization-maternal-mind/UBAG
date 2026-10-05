@@ -14,13 +14,14 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const KEY = 'test-key-not-secret';
+const KEY_B = 'test-key-b-not-secret';
 const fakes = [];
 after(() => Promise.all(fakes.map((f) => new Promise((r) => { f.server.closeAllConnections?.(); f.server.close(r); }))));
 
 // ------------------------------------------------------------- fake gateway
 
 async function startFake(opts = {}) {
-  const o = { maxBody: 4096, rejectFirstCreates: 0, facadeLimit: Infinity, maxInflight: Infinity, omitRetryAfter: false, dupBug: false, facadeNoBodyMs: false, ...opts };
+  const o = { maxBody: 4096, rejectFirstCreates: 0, facadeLimit: Infinity, maxInflight: Infinity, omitRetryAfter: false, dupBug: false, facadeNoBodyMs: false, resultBug: null, dupTerminal: false, leak: false, facadeBad: false, finalStatus: 'completed', slowGetMs: 5, ...opts };
   const st = { requests: 0, jobs: new Map(), byKey: new Map(), seq: 0, inflight: 0, facadeInflight: 0, creates: 0, completed: 0, rejections: { inflight_requests: 0, upload_memory: 0 }, uploadBytes: 0 };
   const json = (res, status, body, headers = {}) => { res.writeHead(status, { 'Content-Type': 'application/json', ...headers }); res.end(JSON.stringify(body)); };
   const overload = (res, reason, facade = false) => {
@@ -34,7 +35,8 @@ async function startFake(opts = {}) {
   const server = createServer((req, res) => {
     st.requests += 1;
     const url = new URL(req.url, 'http://x'); const path = url.pathname;
-    if (req.headers.authorization !== `Bearer ${KEY}`) { req.resume(); return json(res, 401, { error: { code: 'UBAG-AUTH-MISSING-001' } }); }
+    const tenant = req.headers.authorization === `Bearer ${KEY}` ? 'a' : req.headers.authorization === `Bearer ${KEY_B}` ? 'b' : null;
+    if (!tenant) { req.resume(); return json(res, 401, { error: { code: 'UBAG-AUTH-MISSING-001' } }); }
     if (path === '/v1/health' || path === '/v1/ready') { req.resume(); return json(res, 200, { status: 'ok' }); }
     if (path === '/v1/metrics') {
       req.resume(); res.writeHead(200, { 'Content-Type': 'text/plain' });
@@ -71,26 +73,53 @@ async function startFake(opts = {}) {
         }
         if (!o.dupBug && st.byKey.has(key)) return json(res, 200, { job_id: st.byKey.get(key), status: st.jobs.get(st.byKey.get(key)).status, idempotent_replay: true });
         const id = `job_${++st.seq}`; st.creates += 1;
-        st.jobs.set(id, { status: 'queued', polls: 0, target: body.job?.target }); st.byKey.set(key, id);
+        st.jobs.set(id, { status: 'queued', polls: 0, target: body.job?.target, prompt: body.job?.input?.prompt, tenant }); st.byKey.set(key, id);
         json(res, 202, { job_id: id, status: 'queued', idempotent_replay: false });
       });
     }
-    const m = /^\/v1\/jobs\/([^/]+)(?:\/(cancel|artifacts\/.+))?$/.exec(path);
+    if (path === '/v1/jobs' && req.method === 'GET') {
+      req.resume();
+      const mine = [...st.jobs.entries()].filter(([, j]) => o.leak || j.tenant === tenant).slice(0, 100);
+      return json(res, 200, { jobs: mine.map(([id, j]) => ({ job_id: id, status: j.status })), next_cursor: null });
+    }
+    const m = /^\/v1\/jobs\/([^/]+)(?:\/(cancel|events|artifacts(?:\/.+)?))?$/.exec(path);
+    const visible = (id) => { const j = st.jobs.get(id); return j && (o.leak || j.tenant === tenant) ? j : null; };
+    if (m && m[2] === 'events' && req.method === 'GET') {
+      req.resume();
+      const job = visible(m[1]);
+      if (!job) return json(res, 404, { error: { code: 'UBAG-JOB-NOT-FOUND-001' } });
+      const types = ['queued', 'running', 'token', ...(job.status === 'cancelled' ? ['cancelled'] : job.polls >= 3 ? [o.finalStatus] : [])];
+      if (o.dupTerminal && job.polls >= 3) types.push(o.finalStatus);
+      return json(res, 200, { job_id: m[1], events: types.map((type, i) => ({ job_id: m[1], type, sequence: i + 1 })), next_cursor: null });
+    }
+    if (m && m[2] === 'artifacts' && req.method === 'GET') {
+      req.resume();
+      if (!visible(m[1])) return json(res, 404, { error: { code: 'UBAG-JOB-NOT-FOUND-001' } });
+      return json(res, 200, { job_id: m[1], kind: 'artifacts', data: [] });
+    }
     if (m && !(m[2]) && req.method === 'GET') {
       req.resume();
       return setTimeout(() => {
-        const job = st.jobs.get(m[1]);
+        const job = visible(m[1]);
         if (!job) return json(res, 404, { error: { code: 'UBAG-JOB-NOT-FOUND-001' } });
         job.polls += 1;
-        if (job.status !== 'cancelled') job.status = job.polls === 1 ? 'queued' : job.polls === 2 ? 'running' : 'completed';
+        if (job.status !== 'cancelled') job.status = job.polls === 1 ? 'queued' : job.polls === 2 ? 'running' : o.finalStatus;
         if (job.status === 'completed' && !job.counted) { job.counted = true; st.completed += 1; }
-        json(res, 200, { job_id: m[1], status: job.status });
-      }, 5);
+        const body = { job_id: m[1], status: job.status };
+        if (job.status === 'completed' || job.status === 'completed_with_warnings') {
+          const full = `Mock response for chat.prompt on mock (${m[1]}): ${job.prompt}`;
+          const text = o.resultBug === 'wrong' ? `Mock response for chat.prompt on mock (job_other): ${job.prompt}`
+            : o.resultBug === 'truncated' ? full.slice(0, full.length - 8)
+              : o.resultBug === 'duplicated' ? `${full} ${job.prompt}` : full;
+          body.result = { output: { text } };
+        }
+        json(res, 200, body);
+      }, o.slowGetMs);
     }
     if (m && m[2] === 'cancel' && req.method === 'POST') {
       return readBody(req, () => {
         if (!/^[\w.:-]{16,128}$/.test(req.headers['idempotency-key'] ?? '')) return json(res, 400, { error: { code: 'UBAG-VALIDATION-IDEMPOTENCY-KEY-001' } });
-        const job = st.jobs.get(m[1]);
+        const job = visible(m[1]);
         if (!job) return json(res, 404, { error: { code: 'UBAG-JOB-NOT-FOUND-001' } });
         if (job.status !== 'completed') job.status = 'cancelled';
         json(res, 202, { job_id: m[1], status: job.status, idempotent_replay: false });
@@ -99,6 +128,7 @@ async function startFake(opts = {}) {
     if (m && m[2]?.startsWith('artifacts/') && req.method === 'PUT') { req.resume(); return json(res, 400, { error: { code: 'UBAG-VALIDATION-ARTIFACT-NOT-DECLARED-001' } }); }
     if (path === '/v1/openai/chat/completions' && req.method === 'POST') {
       if (st.facadeInflight >= o.facadeLimit) { req.resume(); return overload(res, 'upload_memory', true); }
+      if (o.facadeBad) { req.resume(); return json(res, 400, { error: { code: 'invalid_request' } }); }
       st.facadeInflight += 1;
       return readBody(req, (text, size) => {
         setTimeout(() => {
@@ -113,7 +143,7 @@ async function startFake(opts = {}) {
     req.resume(); json(res, 404, { error: { code: 'UBAG-NOT-FOUND-001' } });
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  const fake = { server, st, port: server.address().port, env: { UBAG_LOAD_BASE_URL: `http://127.0.0.1:${server.address().port}`, UBAG_LOAD_API_KEY: KEY } };
+  const fake = { server, st, port: server.address().port, env: { UBAG_LOAD_BASE_URL: `http://127.0.0.1:${server.address().port}`, UBAG_LOAD_API_KEY: KEY, UBAG_LOAD_API_KEY_B: KEY_B } };
   fakes.push(fake);
   return fake;
 }
@@ -247,7 +277,7 @@ describe('host allowlist refusal', () => {
     assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--jobs', '0'], env), /--jobs/);
     assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--bogus'], env), /unknown option/);
     const ok = parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--docker-stats-container', 'ubag-gateway'], env);
-    assert.equal(ok.scenarios.length, 5); assert.equal(ok.dockerContainer, 'ubag-gateway');
+    assert.equal(ok.scenarios.length, 6); assert.equal(ok.dockerContainer, 'ubag-gateway');
     assert.throws(() => parseArgs([`--${ACK_FLAG}`, '--scenario', 'all', '--docker-stats-container', '--privileged'], env), /requires a value|invalid name/);
   });
 
@@ -396,19 +426,130 @@ describe('scenario smoke runs against the in-process fake gateway', () => {
   it('main(): all scenarios write report.json + summary.md and exit 0; bad gateway exits 1', async () => {
     const fake = await startFake({ facadeLimit: 3 });
     const dir = outDir();
-    const args = [`--${ACK_FLAG}`, ...FAST, '--scenario', 'all', '--jobs', '20', '--rate', '5000', '--clients', '8', '--iterations', '2', '--dup-keys', '2', '--dup-concurrency', '5', '--cancel-races', '3', '--burst', '15', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2', '--out-dir', dir];
+    const args = [`--${ACK_FLAG}`, ...FAST, '--scenario', 'all', '--jobs', '20', '--rate', '5000', '--clients', '8', '--iterations', '2', '--dup-keys', '2', '--dup-concurrency', '5', '--cancel-races', '3', '--burst', '15', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2', '--steady-seconds', '1', '--steady-rate', '5', '--steady-read-rate', '20', '--steady-seed-jobs', '2', '--out-dir', dir];
     const logs = []; const orig = console.log; console.log = (...a) => logs.push(a.join(' '));
     let code; try { code = await main(args, fake.env); } finally { console.log = orig; }
     assert.equal(code, 0, logs.join('\n'));
     const [stamp] = readdirSync(dir);
     assert.ok(existsSync(join(dir, stamp, 'report.json')) && existsSync(join(dir, stamp, 'summary.md')));
     const report = JSON.parse(readFileSync(join(dir, stamp, 'report.json'), 'utf8'));
-    assert.equal(Object.keys(report.scenarios).length, 5);
+    assert.equal(Object.keys(report.scenarios).length, 6);
     assert.match(readFileSync(join(dir, stamp, 'summary.md'), 'utf8'), /verdict: \*\*PASS\*\*/);
 
     const broken = await startFake({ dupBug: true });
     const origErr = console.log; console.log = () => {};
     let code2; try { code2 = await main([`--${ACK_FLAG}`, ...FAST, '--scenario', 'duplicates', '--dup-keys', '1', '--dup-concurrency', '3', '--cancel-races', '0', '--out-dir', outDir()], broken.env); } finally { console.log = origErr; }
     assert.equal(code2, 1);
+  });
+});
+
+// ------------------------------------------------ integrity gates (P0.5)
+
+describe('acceptance integrity gates fail closed', () => {
+  const QUICK = ['--scenario', 'queue-1000', '--jobs', '6', '--rate', '5000'];
+  const failed = (report) => report.thresholds.results.filter((r) => !r.ok).map((r) => r.name);
+
+  it('a clean run verifies every result and event log and probes the second tenant', async () => {
+    const fake = await startFake();
+    const report = await run(cfgFor(fake, QUICK));
+    assert.equal(report.summary.results_verified, 6);
+    assert.equal(report.summary.events_verified, 6);
+    assert.ok(report.summary.tenant_probe_requests > 0);
+    assert.equal(report.summary.cross_tenant_leaks, 0);
+    assert.equal(report.thresholds.passed, true, JSON.stringify(failed(report)));
+    assert.ok(!JSON.stringify(report).includes(KEY_B), 'second tenant key must never appear in the report');
+  });
+
+  for (const bug of ['wrong', 'truncated', 'duplicated']) {
+    it(`a ${bug} result body is a FAIL`, async () => {
+      const fake = await startFake({ resultBug: bug });
+      const report = await run(cfgFor(fake, QUICK));
+      assert.equal(report.summary.result_mismatches, 6, bug);
+      assert.equal(report.summary.results_verified, 0);
+      assert.equal(report.thresholds.passed, false);
+      assert.ok(failed(report).includes('max_result_mismatches'));
+    });
+  }
+
+  it('a duplicated terminal event is a FAIL', async () => {
+    const fake = await startFake({ dupTerminal: true });
+    const report = await run(cfgFor(fake, QUICK));
+    assert.equal(report.summary.terminal_event_violations, 6);
+    assert.ok(failed(report).includes('max_terminal_event_violations'));
+  });
+
+  it('a cross-tenant read is a FAIL', async () => {
+    const fake = await startFake({ leak: true });
+    const report = await run(cfgFor(fake, QUICK));
+    assert.ok(report.summary.cross_tenant_leaks > 0);
+    assert.ok(failed(report).includes('max_cross_tenant_leaks'));
+  });
+
+  it('an unusable second-tenant credential is not silently accepted', async () => {
+    const fake = await startFake();
+    const report = await run(cfgFor(fake, QUICK, { UBAG_LOAD_API_KEY_B: 'not-a-valid-key' }));
+    assert.ok(report.summary.tenant_probe_unexpected > 0); // 401 is neither 403 nor 404
+    assert.ok(failed(report).includes('max_tenant_probe_unexpected'));
+    assert.throws(() => cfgFor(fake, QUICK, { UBAG_LOAD_API_KEY_B: KEY }), /must differ/);
+  });
+
+  it('completed_with_warnings is counted separately and is not a success', async () => {
+    const fake = await startFake({ finalStatus: 'completed_with_warnings' });
+    const report = await run(cfgFor(fake, QUICK));
+    assert.equal(report.summary.warning_jobs, 6);
+    assert.equal(report.summary.failed_jobs, 0);
+    assert.equal(report.summary.results_verified, 0);
+    assert.ok(failed(report).includes('max_warning_jobs'));
+  });
+
+  it('facade_image failures are gated', async () => {
+    const fake = await startFake({ facadeBad: true });
+    const report = await run(cfgFor(fake, ['--scenario', 'clients-100', '--clients', '4', '--iterations', '2']));
+    assert.ok(report.summary.facade_image_failures > 0);
+    assert.ok(failed(report).includes('max_facade_image_failures'));
+  });
+
+  it('an overload scenario that produces zero rejections is a FAIL', async () => {
+    const fake = await startFake(); // no limits: nothing is ever rejected
+    const report = await run(cfgFor(fake, ['--scenario', 'overload', '--burst', '5', '--burst-body-bytes', '1024', '--inflight-burst', '5', '--recovery-requests', '1']));
+    assert.equal(report.summary.overload_rejections, 0);
+    assert.ok(failed(report).includes('min_overload_rejections'));
+  });
+
+  it('--require-goals turns every unmeasured threshold into a FAIL', async () => {
+    assert.equal(evaluateThresholds({}, { max_x: 1 }, { strict: true }).passed, false);
+    assert.equal(evaluateThresholds({}, { max_x: 1 }).passed, true);
+    const fake = await startFake();
+    const report = await run(cfgFor(fake, [...QUICK, '--require-goals']));
+    const unmeasured = report.thresholds.results.filter((r) => !r.ok && /not measured/.test(r.note ?? '')).map((r) => r.name);
+    assert.ok(unmeasured.includes('max_steady_create_p95_ms') && unmeasured.includes('max_steady_read_p95_ms'), JSON.stringify(unmeasured));
+    assert.equal(report.thresholds.passed, false);
+    assert.equal(report.thresholds.goals_required, true);
+    assert.match(renderMarkdown(report), /--require-goals/);
+  });
+
+  it('--require-goals fails when the second tenant is not configured', async () => {
+    const fake = await startFake();
+    const report = await run(cfgFor(fake, [...QUICK, '--require-goals'], { UBAG_LOAD_API_KEY_B: '' }));
+    assert.equal(report.summary.tenant_probe_requests, 0);
+    assert.ok(failed(report).includes('min_tenant_probe_requests'));
+  });
+
+  it('steady-state measures its own create and read p95; a full --require-goals run passes against a healthy fake', async () => {
+    const fake = await startFake({ facadeLimit: 3 });
+    const report = await run(cfgFor(fake, ['--scenario', 'all', '--require-goals', '--jobs', '12', '--rate', '5000', '--clients', '8', '--iterations', '2', '--dup-keys', '2', '--dup-concurrency', '5', '--cancel-races', '3', '--burst', '15', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2', '--steady-seconds', '1', '--steady-rate', '5', '--steady-read-rate', '20', '--steady-seed-jobs', '2']));
+    assert.ok(Number.isFinite(report.summary.steady_create_p95_ms));
+    assert.ok(Number.isFinite(report.summary.steady_read_p95_ms));
+    assert.ok(report.ops['steady-state/read'].ok.count >= 15);
+    assert.equal(report.thresholds.passed, true, JSON.stringify(report.thresholds.results.filter((r) => !r.ok)));
+  });
+
+  it('ships the plan goals in thresholds.goals.json and keeps 2000 ms as the separate burst limit', () => {
+    const g = JSON.parse(readFileSync(join(here, 'thresholds.goals.json'), 'utf8'));
+    assert.equal(g.max_steady_create_p95_ms, 200);
+    assert.equal(g.max_steady_read_p95_ms, 100);
+    const t = JSON.parse(readFileSync(join(here, 'thresholds.json'), 'utf8'));
+    assert.equal(t.max_create_p95_ms, 2000);
+    assert.ok(t.min_overload_rejections >= 1);
   });
 });
