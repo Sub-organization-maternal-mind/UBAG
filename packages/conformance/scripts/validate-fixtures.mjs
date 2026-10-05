@@ -260,6 +260,7 @@ function schemaErrors(schema, value) {
 }
 
 await validateWorkerDaemonFixture();
+await validateNodeAllocationFixture();
 await validateBodiesAgainstOpenApi();
 
 if (errors.length > 0) {
@@ -272,6 +273,29 @@ console.log(`Validated ${fixture.scenarios.length} conformance scenarios from ${
 function requireString(value, field) {
   if (typeof value !== "string" || value.length === 0) {
     errors.push(`${field} must be a non-empty string`);
+  }
+}
+
+// Node allocation consumer schema (P2.4): every fixture verdict must match the schema.
+async function validateNodeAllocationFixture() {
+  const schemaDir = join(currentDir, "..", "..", "shared-schemas", "schemas");
+  const schema = JSON.parse(await readFile(join(schemaDir, "node-allocation.schema.json"), "utf8"));
+  const ajv = new Ajv2020({ strict: false, allErrors: true });
+  addFormats(ajv);
+  const validateOne = ajv.compile(schema);
+  const validateList = ajv.compile({ $ref: `${schema.$id}#/$defs/allocation_list` });
+  const fx = JSON.parse(await readFile(join(currentDir, "..", "fixtures", "node-allocation", "v1.json"), "utf8"));
+  if (fx.suite !== "ubag.node-allocation.v1" || fx.schema_version !== 1) {
+    errors.push("node-allocation fixture must be suite ubag.node-allocation.v1, schema_version 1");
+  }
+  for (const [cases, validate, label] of [[fx.allocations, validateOne, "allocation"], [fx.lists, validateList, "list"]]) {
+    const seen = new Set();
+    for (const c of cases ?? []) {
+      if (seen.has(c.id)) errors.push(`node-allocation ${label} ${c.id} duplicated`);
+      seen.add(c.id);
+      if (validate(c.json) !== c.valid) errors.push(`node-allocation ${label} ${c.id}: schema verdict != valid:${c.valid}`);
+    }
+    if (!seen.size) errors.push(`node-allocation fixture has no ${label} cases`);
   }
 }
 
