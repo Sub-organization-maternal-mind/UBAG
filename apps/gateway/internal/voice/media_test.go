@@ -67,7 +67,7 @@ func readRelayFrame(conn net.Conn) (byte, []byte, error) {
 		return 0, nil, err
 	}
 	length := binary.LittleEndian.Uint32(header)
-	if length < 2 || length > maxRelayFrameBytes {
+	if length < 1 || length > maxRelayFrameBytes {
 		return 0, nil, errors.New("bad frame length")
 	}
 	frame := make([]byte, length)

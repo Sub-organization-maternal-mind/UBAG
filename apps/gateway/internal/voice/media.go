@@ -218,12 +218,17 @@ func (c *TCPFrameConn) readFrame() (byte, []byte, error) {
 		return 0, nil, err
 	}
 	length := binary.LittleEndian.Uint32(header)
-	if length < 2 || length > maxRelayFrameBytes {
+	// Protocol v2 (conformance/fixtures/voice-relay/v2.json): length counts the
+	// type byte, so 1 (empty payload) is a valid frame; 0 and > max are not.
+	if length < 1 || length > maxRelayFrameBytes {
 		return 0, nil, errors.New("voice: relay protocol violation (frame length)")
 	}
 	frame := make([]byte, length)
 	if _, err := io.ReadFull(c.conn, frame); err != nil {
 		return 0, nil, err
+	}
+	if frame[0] != relayTypeAudio && frame[0] != relayTypeControl {
+		return 0, nil, errors.New("voice: relay protocol violation (frame type)")
 	}
 	return frame[0], frame[1:], nil
 }
@@ -249,6 +254,9 @@ func (c *TCPFrameConn) Recv(ctx context.Context) ([]byte, error) {
 		}
 		switch kind {
 		case relayTypeAudio:
+			if len(payload) == 0 {
+				continue // empty audio packet: dropped, never a protocol error
+			}
 			return payload, nil
 		case relayTypeControl:
 			var msg struct{ Op, Reason string }
