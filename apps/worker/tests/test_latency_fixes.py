@@ -385,3 +385,57 @@ class TestAttachmentStateClearIsOneRoundTrip:
         log = []
         _driver(self._page(True, log)).clear_attachment_state()
         assert log == ["evaluate_all"] + [("set_input_files", [])] * 5
+
+
+class _HeapPage(_WarmPage):
+    """_WarmPage that also answers the JS-heap probe used by the opt-in deferral."""
+
+    def __init__(self, selectors, heap):
+        super().__init__(selectors)
+        self.heap = heap
+
+    def evaluate(self, _js):
+        if isinstance(self.heap, Exception):
+            raise self.heap
+        return self.heap
+
+
+class TestWarmReloadHeapGate:
+    """UBAG_WARM_RELOAD_HEAP_MB defers the Nth-job reload while the heap is small."""
+
+    MB = 1024 * 1024
+
+    def _run(self, monkeypatch, heap, jobs, budget_mb="100"):
+        monkeypatch.setenv("UBAG_WARM_RELOAD_EVERY", "3")
+        if budget_mb is None:
+            monkeypatch.delenv("UBAG_WARM_RELOAD_HEAP_MB", raising=False)
+        else:
+            monkeypatch.setenv("UBAG_WARM_RELOAD_HEAP_MB", budget_mb)
+        page = _HeapPage(CHATGPT_WEB, heap)
+        driver = _driver(page)
+        for _ in range(jobs):
+            page.prior_turn_visible = True
+            # The emptiness proof is unchanged: still required on every job.
+            assert driver.prepare_for_next_job(CHATGPT_WEB) is True
+        return page
+
+    def test_default_off_reloads_every_nth_job_even_with_a_tiny_heap(self, monkeypatch):
+        page = self._run(monkeypatch, 1 * self.MB, 3, budget_mb=None)
+        assert page.goto_calls == [CHATGPT_WEB.target_url]
+
+    def test_small_heap_defers_the_reload(self, monkeypatch):
+        page = self._run(monkeypatch, 10 * self.MB, 5)
+        assert page.goto_calls == []
+
+    def test_deferral_is_capped_at_four_times_the_cadence(self, monkeypatch):
+        page = self._run(monkeypatch, 10 * self.MB, 12)  # 4 x 3 jobs
+        assert page.goto_calls == [CHATGPT_WEB.target_url]
+
+    def test_large_heap_reloads_at_the_nth_job(self, monkeypatch):
+        page = self._run(monkeypatch, 500 * self.MB, 3)
+        assert page.goto_calls == [CHATGPT_WEB.target_url]
+
+    def test_unreadable_heap_reloads(self, monkeypatch):
+        assert self._run(monkeypatch, 0, 3).goto_calls == [CHATGPT_WEB.target_url]
+        err = self._run(monkeypatch, RuntimeError("cdp"), 3)
+        assert err.goto_calls == [CHATGPT_WEB.target_url]

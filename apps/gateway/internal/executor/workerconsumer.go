@@ -118,6 +118,13 @@ type WorkerConsumer struct {
 	// target. Optional; nil disables login-state projection.
 	LoginState   topology.LoginStateWriter
 	PollInterval time.Duration
+	// IdlePollMax, when greater than PollInterval, lets an idle lease loop back
+	// off its fallback poll (doubling per consecutive empty poll) up to this
+	// cap, and snap back to PollInterval after any work or error. The enqueue
+	// wake channel still pre-empts the wait, so same-process enqueues are not
+	// delayed; the cap only bounds pickup latency for enqueues the wake channel
+	// cannot see. Zero keeps the fixed PollInterval.
+	IdlePollMax time.Duration
 	// PoolSize is the number of parallel lease-process workers in Run.
 	// 0/negative means 1 (legacy serial behavior). Clamped to 32 in workerCount.
 	// Each worker loops RunOnce independently; FileSpool rename-CAS and NATS
@@ -284,12 +291,27 @@ func (c *WorkerConsumer) Inflight() int64 {
 	return c.inflight.Load()
 }
 
+// idlePollWait returns the fallback poll wait after streak consecutive empty
+// polls: base doubled per empty poll, capped at max. max <= base keeps the
+// fixed base interval.
+func idlePollWait(base, max time.Duration, streak int) time.Duration {
+	if max <= base || streak <= 0 {
+		return base
+	}
+	wait := base << min(streak, 16)
+	if wait <= 0 || wait > max {
+		return max
+	}
+	return wait
+}
+
 func (c *WorkerConsumer) runSerial(ctx context.Context) error {
 	pollInterval := c.PollInterval
 	if pollInterval <= 0 {
 		pollInterval = defaultWorkerPollInterval
 	}
 	consecutiveErrors := 0
+	idleStreak := 0
 	for {
 		processed, err := c.RunOnce(ctx)
 		if err != nil {
@@ -320,9 +342,11 @@ func (c *WorkerConsumer) runSerial(ctx context.Context) error {
 		}
 		consecutiveErrors = 0
 		if processed {
+			idleStreak = 0
 			continue
 		}
-		timer := time.NewTimer(pollInterval)
+		timer := time.NewTimer(idlePollWait(pollInterval, c.IdlePollMax, idleStreak))
+		idleStreak++
 		// Wake immediately when the queue signals a fresh enqueue instead of
 		// waiting out the full poll interval. The ticker remains the
 		// correctness fallback: the notification is a hint (cap-1, lossy), so
@@ -1193,6 +1217,13 @@ func (r ProcessWorkerRunner) materializeAttachments(ctx context.Context, envelop
 		}
 		tmpDirs = append(tmpDirs, tmpDir)
 		tmpPath := filepath.Join(tmpDir, filename)
+		if linkArtifactLocally(ctx, r.Artifacts, envelope.JobID, key, tmpPath) {
+			_ = rc.Close()
+			tmpPaths = append(tmpPaths, tmpPath)
+			localPaths = append(localPaths, tmpPath)
+			pathByKey[key] = tmpPath
+			continue
+		}
 		tmp, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err != nil {
 			_ = rc.Close()
@@ -1228,6 +1259,38 @@ func (r ProcessWorkerRunner) materializeAttachments(ctx context.Context, envelop
 		}
 	}
 	return cleanup, nil
+}
+
+// attachmentHardlinkEnabled gates the hardlink fast path. Off by default: the
+// copy path is the long-standing behaviour. A hardlink shares the artifact's
+// inode, so it is only safe because the worker reads attachments (browser file
+// upload) and never writes to them.
+func attachmentHardlinkEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_ATTACHMENT_HARDLINK"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// linkArtifactLocally hardlinks the artifact's on-disk object to dst when the
+// flag is on and the store keeps objects as local files. It reports false on any
+// doubt (flag off, store without local paths, cross-device, link refused) so the
+// caller falls back to the streaming copy. The path comes from the same
+// tenant/job-scoped lookup GetArtifact uses.
+func linkArtifactLocally(ctx context.Context, store artifacts.ArtifactStore, jobID, key, dst string) bool {
+	if !attachmentHardlinkEnabled() {
+		return false
+	}
+	pather, ok := store.(artifacts.LocalObjectPather)
+	if !ok {
+		return false
+	}
+	src, _, err := pather.LocalObjectPath(ctx, jobID, key)
+	if err != nil {
+		return false
+	}
+	return os.Link(src, dst) == nil
 }
 
 func materializedAttachmentFilename(att attachments.Attachment, contentType string) string {
@@ -1715,6 +1778,7 @@ func minimalWorkerEnv() []string {
 		"UBAG_REASONING_SETTLE_S":             {},
 		"UBAG_INDICATOR_GONE_GRACE_S":         {},
 		"UBAG_WARM_RELOAD_EVERY":              {},
+		"UBAG_WARM_RELOAD_HEAP_MB":            {},
 		"UBAG_PROFILE_DIR":                    {},
 		"UBAG_BROWSER_ENGINE":                 {},
 		"UBAG_BROWSER_HEADED":                 {},

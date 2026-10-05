@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 )
@@ -221,6 +222,117 @@ func TestAttachmentMIMEExtensionFallbacks(t *testing.T) {
 	for contentType, want := range tests {
 		if got := extForContentType(contentType); got != want {
 			t.Errorf("extForContentType(%q) = %q, want %q", contentType, got, want)
+		}
+	}
+}
+
+func materializeOne(t *testing.T, store artifacts.ArtifactStore, jobID, key string) (string, func()) {
+	t.Helper()
+	runner := ProcessWorkerRunner{Artifacts: store}
+	env := &DispatchEnvelope{
+		JobID: jobID,
+		Job:   DispatchJob{Input: map[string]any{"audio_artifact_key": key}},
+	}
+	cleanup, err := runner.materializeAttachments(context.Background(), env)
+	if err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	p, _ := env.Job.Input["audio_local_path"].(string)
+	if p == "" || cleanup == nil {
+		t.Fatalf("no path/cleanup injected: %q", p)
+	}
+	return p, cleanup
+}
+
+// With UBAG_ATTACHMENT_HARDLINK on, a local-fs artifact is hardlinked (same
+// file, no second copy of the bytes); cleanup removes only the link.
+func TestMaterializeHardlinksLocalFSArtifactWhenEnabled(t *testing.T) {
+	t.Setenv("UBAG_ATTACHMENT_HARDLINK", "1")
+	store, err := artifacts.NewLocalFSArtifactStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	want := []byte("fake-opus-bytes")
+	if _, err := store.PutArtifact(ctx, "job_h", "a.webm", "audio/webm", bytes.NewReader(want), int64(len(want))); err != nil {
+		t.Fatal(err)
+	}
+	p, cleanup := materializeOne(t, store, "job_h", "a.webm")
+
+	src, _, err := store.(artifacts.LocalObjectPather).LocalObjectPath(ctx, "job_h", "a.webm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcInfo, _ := os.Stat(src)
+	dstInfo, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(srcInfo, dstInfo) {
+		t.Fatal("expected the materialized attachment to be a hardlink of the artifact object")
+	}
+	if got, _ := os.ReadFile(p); !bytes.Equal(got, want) {
+		t.Fatalf("bytes = %q", got)
+	}
+	cleanup()
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatalf("cleanup should remove the link, err = %v", err)
+	}
+	if got, err := os.ReadFile(src); err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("artifact object must survive cleanup: %v %q", err, got)
+	}
+}
+
+// Default (flag unset) keeps the copy path: a distinct file, and stores
+// without local paths (memory) always copy.
+func TestMaterializeCopiesByDefaultAndForNonLocalStores(t *testing.T) {
+	store, err := artifacts.NewLocalFSArtifactStore(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := store.PutArtifact(ctx, "job_c", "a.webm", "audio/webm", strings.NewReader("xyz"), 3); err != nil {
+		t.Fatal(err)
+	}
+	p, cleanup := materializeOne(t, store, "job_c", "a.webm")
+	defer cleanup()
+	src, _, _ := store.(artifacts.LocalObjectPather).LocalObjectPath(ctx, "job_c", "a.webm")
+	srcInfo, _ := os.Stat(src)
+	dstInfo, _ := os.Stat(p)
+	if os.SameFile(srcInfo, dstInfo) {
+		t.Fatal("flag off must copy, not hardlink")
+	}
+
+	t.Setenv("UBAG_ATTACHMENT_HARDLINK", "1")
+	mem := artifacts.NewMemoryArtifactStore()
+	if _, err := mem.PutArtifact(ctx, "job_m", "a.webm", "audio/webm", strings.NewReader("xyz"), 3); err != nil {
+		t.Fatal(err)
+	}
+	p2, cleanup2 := materializeOne(t, mem, "job_m", "a.webm")
+	defer cleanup2()
+	if got, _ := os.ReadFile(p2); string(got) != "xyz" {
+		t.Fatalf("memory store fallback copy bytes = %q", got)
+	}
+}
+
+func TestIdlePollWait(t *testing.T) {
+	base, ceiling := 75*time.Millisecond, 600*time.Millisecond
+	cases := []struct {
+		streak int
+		max    time.Duration
+		want   time.Duration
+	}{
+		{0, ceiling, base},
+		{1, ceiling, 150 * time.Millisecond},
+		{2, ceiling, 300 * time.Millisecond},
+		{3, ceiling, ceiling},
+		{99, ceiling, ceiling},
+		{5, 0, base},    // off by default
+		{5, base, base}, // cap not above base: fixed interval
+	}
+	for _, c := range cases {
+		if got := idlePollWait(base, c.max, c.streak); got != c.want {
+			t.Errorf("streak=%d max=%v: got %v want %v", c.streak, c.max, got, c.want)
 		}
 	}
 }

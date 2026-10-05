@@ -1480,6 +1480,13 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 	if err != nil {
 		return nil, err
 	}
+	// Opt-in idle backoff for the lease loop's fallback poll (default off: the
+	// fixed UBAG_WORKER_POLL_INTERVAL_MS stays). The enqueue wake still fires
+	// immediately for same-process enqueues.
+	idlePollMax, err := idlePollMaxFromEnv()
+	if err != nil {
+		return nil, err
+	}
 	maxRuntime, err := durationFromMillisEnv("UBAG_WORKER_MAX_RUNTIME_MS", 30*time.Second)
 	if err != nil {
 		return nil, err
@@ -1538,6 +1545,7 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 		Topology:         topologyIngestor,
 		LoginState:       loginStateWriter,
 		PollInterval:     pollInterval,
+		IdlePollMax:      idlePollMax,
 		PoolSize:         workerConcurrency,
 		Runner:           runner,
 	}, nil
@@ -1712,6 +1720,14 @@ func intFromEnv(key string, fallback int) (int, error) {
 		return 0, fmt.Errorf("%s must be a positive integer", key)
 	}
 	return value, nil
+}
+
+// idlePollMaxFromEnv reads UBAG_WORKER_IDLE_POLL_MAX_MS; unset means 0 (off).
+func idlePollMaxFromEnv() (time.Duration, error) {
+	if strings.TrimSpace(os.Getenv("UBAG_WORKER_IDLE_POLL_MAX_MS")) == "" {
+		return 0, nil
+	}
+	return durationFromMillisEnv("UBAG_WORKER_IDLE_POLL_MAX_MS", 0)
 }
 
 func durationFromMillisEnv(key string, fallback time.Duration) (time.Duration, error) {

@@ -156,6 +156,35 @@ func (s *LocalFSArtifactStore) GetArtifact(ctx context.Context, jobID, key strin
 	return file, rec, nil
 }
 
+// LocalObjectPath resolves the on-disk path backing (jobID, key) after the same
+// metadata lookup and root-containment check GetArtifact performs. The file is
+// opened read-only by callers; see LocalObjectPather.
+func (s *LocalFSArtifactStore) LocalObjectPath(ctx context.Context, jobID, key string) (string, ArtifactRecord, error) {
+	mapKey, err := makeArtifactMapKey(jobID, key)
+	if err != nil {
+		return "", ArtifactRecord{}, err
+	}
+	rec, err := s.meta.Get(ctx, mapKey.jobID, mapKey.key)
+	if err != nil {
+		return "", ArtifactRecord{}, err
+	}
+	objectKey := rec.ObjectKey
+	if objectKey == "" {
+		objectKey = legacyLocalFSObjectKey(mapKey.jobID, mapKey.key)
+	}
+	fullPath, err := s.resolve(objectKey)
+	if err != nil {
+		return "", ArtifactRecord{}, err
+	}
+	if _, err := os.Stat(fullPath); err != nil {
+		if os.IsNotExist(err) {
+			return "", ArtifactRecord{}, &ErrArtifactNotFound{JobID: mapKey.jobID, Key: mapKey.key}
+		}
+		return "", ArtifactRecord{}, fmt.Errorf("localfs: stat object: %w", err)
+	}
+	return fullPath, rec, nil
+}
+
 // ListArtifacts returns metadata for all artifacts stored for jobID.
 func (s *LocalFSArtifactStore) ListArtifacts(ctx context.Context, jobID string) ([]ArtifactRecord, error) {
 	return s.meta.List(ctx, jobID)
