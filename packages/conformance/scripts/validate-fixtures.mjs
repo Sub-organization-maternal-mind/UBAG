@@ -259,6 +259,7 @@ function schemaErrors(schema, value) {
   return out;
 }
 
+await validateWorkerDaemonFixture();
 await validateBodiesAgainstOpenApi();
 
 if (errors.length > 0) {
@@ -272,6 +273,116 @@ function requireString(value, field) {
   if (typeof value !== "string" || value.length === 0) {
     errors.push(`${field} must be a non-empty string`);
   }
+}
+
+// Worker daemon protocol v2 vectors (P2.2): every line validates against its
+// schema, event ids follow the attempt-scoped derivation, tokens are provisional
+// (result only from a terminal), and an abandoned attempt commits nothing.
+async function validateWorkerDaemonFixture() {
+  const { createHash } = await import("node:crypto");
+  const schemaDir = join(currentDir, "..", "..", "shared-schemas", "schemas");
+  const load = async (name) => JSON.parse(await readFile(join(schemaDir, name), "utf8"));
+  const [requestSchema, endSchema, eventSchema] = await Promise.all([
+    load("worker-daemon-request.schema.json"),
+    load("worker-daemon-job-end.schema.json"),
+    load("job-event.schema.json")
+  ]);
+  const ajv = new Ajv2020({ strict: false, allErrors: true });
+  addFormats(ajv);
+  const validateRequest = ajv.compile(requestSchema);
+  const validateEnd = ajv.compile(endSchema);
+  const validateReply = ajv.compile({ $ref: `${endSchema.$id}#/$defs/control_reply` });
+  const validateEvent = ajv.compile(eventSchema);
+
+  const fx = JSON.parse(await readFile(join(currentDir, "..", "fixtures", "worker-daemon", "v2.json"), "utf8"));
+  if (fx.suite !== "ubag.worker-daemon.v2" || fx.protocol_version !== 2) {
+    errors.push("worker-daemon fixture must be suite ubag.worker-daemon.v2, protocol_version 2");
+  }
+  const expectVerdicts = (cases, validate, label) => {
+    const seen = new Set();
+    for (const c of cases ?? []) {
+      if (seen.has(c.id)) errors.push(`worker-daemon ${label} ${c.id} duplicated`);
+      seen.add(c.id);
+      if (validate(c.json) !== c.valid) errors.push(`worker-daemon ${label} ${c.id}: schema verdict != valid:${c.valid}`);
+    }
+    if (!seen.size) errors.push(`worker-daemon fixture has no ${label} cases`);
+  };
+  expectVerdicts(fx.requests, validateRequest, "request");
+  expectVerdicts(fx.job_ends, validateEnd, "job_end");
+  expectVerdicts(fx.control_replies, validateReply, "control_reply");
+
+  const eventId = (e) =>
+    "evt_" + createHash("sha256").update(`${e.job_id}:${e.data.attempt_id ?? ""}${e.data.attempt_id ? ":" : ""}${e.sequence}`).digest("hex").slice(0, 16);
+
+  // Returns the validated events and the JOB_END marker (if any) of a stdout transcript.
+  const parseRun = (lines, label) => {
+    const events = [];
+    let marker = null;
+    for (const line of lines) {
+      if (line.__ubag_job_end__ === true) {
+        if (marker) errors.push(`${label}: more than one JOB_END`);
+        marker = line;
+        if (!validateEnd(line)) errors.push(`${label}: JOB_END invalid: ${ajv.errorsText(validateEnd.errors)}`);
+        continue;
+      }
+      if (marker) errors.push(`${label}: event after JOB_END`);
+      if (!validateEvent(line)) errors.push(`${label}: event seq ${line.sequence} invalid: ${ajv.errorsText(validateEvent.errors)}`);
+      if (line.event_id !== eventId(line)) errors.push(`${label}: event seq ${line.sequence} event_id is not the attempt-scoped derivation`);
+      if (events.length && line.sequence !== events[events.length - 1].sequence + 1) errors.push(`${label}: sequence not monotonic at ${line.sequence}`);
+      events.push(line);
+    }
+    return { events, marker };
+  };
+  const isToken = (e) => e.type === "token" || e.type === "token_streaming";
+  const terminals = new Set(["completed", "completed_with_warnings", "failed_retryable", "failed_terminal", "timed_out", "cancelled", "dead_letter"]);
+  const checkCommitted = (run, label, attemptId, resultSeq) => {
+    const { events, marker } = run;
+    if (!marker || marker.status !== "completed") errors.push(`${label}: committed run needs JOB_END status completed`);
+    if (marker && marker.attempt_id !== attemptId) errors.push(`${label}: JOB_END attempt_id mismatch`);
+    const done = events.filter((e) => terminals.has(e.type));
+    if (done.length !== 1) errors.push(`${label}: exactly one terminal event required`);
+    for (const e of events) {
+      if (e.data.attempt_id !== attemptId) errors.push(`${label}: event seq ${e.sequence} missing attempt_id`);
+      if (isToken(e) && "result" in e.data) errors.push(`${label}: token event seq ${e.sequence} must not carry a result`);
+    }
+    if (done[0] && (done[0].sequence !== resultSeq || !done[0].data.result)) errors.push(`${label}: result must come from terminal seq ${resultSeq}`);
+  };
+
+  const s = fx.streamed_job;
+  if (!validateRequest(s.request_line) || s.request_line.proto !== 2) errors.push("worker-daemon streamed_job request_line must be a valid proto:2 job line");
+  const streamed = parseRun(s.stdout_lines, "streamed_job");
+  checkCommitted(streamed, "streamed_job", s.request_line.attempt.id, s.expect.result_from_sequence);
+  const tokenSeqs = streamed.events.filter(isToken).map((e) => e.sequence);
+  if (JSON.stringify(tokenSeqs) !== JSON.stringify(s.expect.provisional_sequences)) errors.push("worker-daemon streamed_job provisional_sequences do not match the token events");
+
+  const idsByAttempt = [];
+  for (const a of fx.abandoned_attempt.attempts) {
+    const label = `abandoned_attempt/${a.attempt_id}`;
+    const run = parseRun(a.stdout_lines, label);
+    idsByAttempt.push(new Set(run.events.map((e) => e.event_id)));
+    if (a.expect.outcome === "abandoned") {
+      if (run.marker || run.events.some((e) => terminals.has(e.type))) errors.push(`${label}: an abandoned attempt has no terminal event and no JOB_END`);
+      if (!run.events.some(isToken)) errors.push(`${label}: abandoned fixture must have streamed tokens`);
+    } else {
+      checkCommitted(run, label, a.attempt_id, a.expect.result_from_sequence);
+    }
+  }
+  if (idsByAttempt.length === 2 && [...idsByAttempt[0]].some((id) => idsByAttempt[1].has(id))) {
+    errors.push("abandoned_attempt: attempts must not share event ids even with equal sequence numbers");
+  }
+
+  for (const f of fx.failure_semantics ?? []) {
+    const label = `failure_semantics/${f.id}`;
+    const { events, marker } = parseRun(f.stdout_lines, label);
+    const last = events[events.length - 1];
+    if (!marker || marker.status === "completed") errors.push(`${label}: JOB_END must not be completed`);
+    if (!last || !terminals.has(last.type) || last.type === "completed") errors.push(`${label}: must end with a non-completed terminal event`);
+    if (last?.type === "timed_out" && (!last.data.partial || "result" in last.data)) errors.push(`${label}: timed_out needs data.partial and no result`);
+    if (last?.data.reconcile_required && (last.type !== "failed_terminal" || last.data.submitted !== true)) errors.push(`${label}: reconcile_required needs failed_terminal + submitted:true`);
+  }
+  // Schema-level guard: reconcile_required without submitted:true is rejected.
+  const bad = { ...fx.failure_semantics[1].stdout_lines[2], data: { reconcile_required: true } };
+  if (validateEvent(bad)) errors.push("job-event schema must reject reconcile_required without submitted:true");
 }
 
 // Ajv body validation: browser, concurrency and jobs scenarios must match the

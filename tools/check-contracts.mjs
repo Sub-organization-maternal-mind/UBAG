@@ -254,6 +254,40 @@ for (const schemaFile of requiredSchemaFiles) {
   }
 }
 
+// Worker daemon protocol v2 (P2.2): opt-in, so v1 lines must stay valid and the
+// job-event data docs must carry the attempt/provisional/reconcile vocabulary.
+for (const schemaFile of ['worker-daemon-request.schema.json', 'worker-daemon-job-end.schema.json']) {
+  const path = join('packages', 'shared-schemas', 'schemas', schemaFile);
+  const schema = parseJson(path);
+  if (schema && schema.$schema !== 'https://json-schema.org/draft/2020-12/schema') {
+    failures.push(`${path} must use JSON Schema Draft 2020-12`);
+  }
+  if (schema && schemaFile === 'worker-daemon-request.schema.json') {
+    const job = schema.$defs?.job_request;
+    if (JSON.stringify(job?.required) !== '["job_id","payload"]') {
+      failures.push(`${path} job line must keep the v1 required set (job_id, payload)`);
+    }
+    if (job?.properties?.proto?.const !== 2) failures.push(`${path} job line proto must be opt-in const 2`);
+  }
+  if (schema && schemaFile === 'worker-daemon-job-end.schema.json') {
+    if (JSON.stringify(schema.required) !== '["__ubag_job_end__","job_id","status"]') {
+      failures.push(`${path} must keep the v1 required set (__ubag_job_end__, job_id, status)`);
+    }
+    for (const field of ['attempt_id', 'slot_id', 'pid', 'warm_key', 'outcome_signal', 'submitted']) {
+      if (!schema.properties?.[field]) failures.push(`${path} missing v2 field ${field}`);
+    }
+  }
+}
+const jobEventSchema = parseJson('packages/shared-schemas/schemas/job-event.schema.json');
+if (jobEventSchema) {
+  if (jobEventSchema.additionalProperties !== false) {
+    failures.push('job-event.schema.json envelope must stay additionalProperties:false (attempt data goes in data)');
+  }
+  for (const field of ['attempt_id', 'stream_end_reason', 'partial', 'submitted', 'reconcile_required']) {
+    if (!jobEventSchema.properties?.data?.properties?.[field]) failures.push(`job-event.schema.json data missing ${field}`);
+  }
+}
+
 const jobProto = requireFile('packages/proto/proto/ubag/v1/jobs.proto');
 if (jobProto) {
   for (const rpc of ['CreateJob', 'ListJobs', 'GetJob', 'CancelJob', 'RetryJob', 'ListJobEvents', 'StreamJobEvents']) {
