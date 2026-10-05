@@ -60,6 +60,16 @@ type FileSpoolDispatcher struct {
 	// matching the NATS consumer's §14.6 scheduling. notBefore caches the
 	// parsed time per pending file so a deferred envelope is read once, not on
 	// every poll.
+	// terminalIDs indexes the job IDs present in done/failed/cancelled so the
+	// duplicate check on every enqueue is a map lookup instead of a Stat+Glob
+	// per terminal dir (cost grew linearly with the terminal backlog, P0.8).
+	// nil = not loaded yet; it is built lazily by one ReadDir pass, kept current
+	// by this process's own moves, and rebuilt after a retention sweep deletes
+	// files. Files dropped into the terminal dirs by another process after the
+	// load are not seen until then (the job store is authoritative; a terminal
+	// job is never re-enqueued).
+	terminalMu  sync.Mutex
+	terminalIDs map[string]struct{}
 	honorNotBefore atomic.Bool
 	notBeforeMu    sync.Mutex
 	notBefore      map[string]time.Time
@@ -651,6 +661,9 @@ func (d *FileSpoolDispatcher) SweepRetention(now time.Time) (int, error) {
 		}
 		removed++
 	}
+	if removed > 0 {
+		d.invalidateTerminal()
+	}
 	return removed, nil
 }
 
@@ -700,6 +713,7 @@ func (d *FileSpoolDispatcher) movePendingToCancelled(jobID string) (bool, error)
 		}
 		return false, err
 	}
+	d.noteTerminal(filepath.Base(source))
 	return true, nil
 }
 
@@ -735,7 +749,11 @@ func (d *FileSpoolDispatcher) writeCancellationMarker(job jobstore.Job, reason s
 		return err
 	}
 	payload = append(payload, '\n')
-	return writeFileExclusive(filepath.Join(d.cancelledDir(), job.ID+".json"), payload)
+	if err := writeFileExclusive(filepath.Join(d.cancelledDir(), job.ID+".json"), payload); err != nil {
+		return err
+	}
+	d.noteTerminal(job.ID + ".json")
+	return nil
 }
 
 func (d *FileSpoolDispatcher) moveLeasePath(source string, destinationDir string) error {
@@ -752,6 +770,8 @@ func (d *FileSpoolDispatcher) moveLeasePath(source string, destinationDir string
 		}
 		return err
 	}
+	// Every caller moves into done/failed/cancelled.
+	d.noteTerminal(filepath.Base(source))
 	return nil
 }
 
@@ -790,12 +810,53 @@ func (d *FileSpoolDispatcher) jobExistsInAnyState(jobID string) bool {
 }
 
 func (d *FileSpoolDispatcher) jobExistsInTerminalState(jobID string) bool {
-	for _, dir := range []string{d.doneDir(), d.failedDir(), d.cancelledDir()} {
-		if _, ok := d.findJobPath(jobID, dir); ok {
-			return true
+	d.terminalMu.Lock()
+	defer d.terminalMu.Unlock()
+	if d.terminalIDs == nil {
+		ids := map[string]struct{}{}
+		for _, dir := range []string{d.doneDir(), d.failedDir(), d.cancelledDir()} {
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				continue // missing dir == nothing terminal there
+			}
+			for _, entry := range entries {
+				addTerminalName(ids, entry.Name())
+			}
+		}
+		d.terminalIDs = ids
+	}
+	_, ok := d.terminalIDs[jobID]
+	return ok
+}
+
+// addTerminalName indexes a terminal file name `<jobID>.json` or
+// `<jobID>.<leaseID>.json` under every ID the old `<jobID>.json` / `<jobID>.*.json`
+// lookup would have matched.
+func addTerminalName(ids map[string]struct{}, name string) {
+	base, ok := strings.CutSuffix(name, ".json")
+	if !ok {
+		return
+	}
+	ids[base] = struct{}{}
+	for i := 0; i < len(base); i++ {
+		if base[i] == '.' {
+			ids[base[:i]] = struct{}{}
 		}
 	}
-	return false
+}
+
+func (d *FileSpoolDispatcher) noteTerminal(name string) {
+	d.terminalMu.Lock()
+	defer d.terminalMu.Unlock()
+	if d.terminalIDs != nil { // not loaded yet: the load will see the file
+		addTerminalName(d.terminalIDs, name)
+	}
+}
+
+func (d *FileSpoolDispatcher) invalidateTerminal() {
+	d.terminalMu.Lock()
+	d.terminalIDs = nil
+	d.terminalMu.Unlock()
 }
 
 func (d *FileSpoolDispatcher) findJobPath(jobID string, dir string) (string, bool) {

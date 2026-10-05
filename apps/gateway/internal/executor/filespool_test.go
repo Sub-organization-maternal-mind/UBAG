@@ -575,3 +575,48 @@ func TestFileSpoolLeaseNextIgnoresNotBeforeByDefault(t *testing.T) {
 		t.Fatalf("legacy behaviour (flag off) must lease immediately: ok=%v err=%v", ok, err)
 	}
 }
+
+func TestFileSpoolEnqueueTerminalIndex(t *testing.T) {
+	ctx := context.Background()
+	dispatcher := NewFileSpoolDispatcher(t.TempDir())
+	if err := dispatcher.Ready(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-existing terminal files (loaded lazily by the first enqueue).
+	writeSpoolFile(t, dispatcher.doneDir(), "job_000000000001.7.json", time.Now())
+	writeSpoolFile(t, dispatcher.cancelledDir(), "job_000000000002.json", time.Now())
+	pending := func(id string) bool {
+		_, err := os.Stat(filepath.Join(dispatcher.pendingDir(), id+".json"))
+		return err == nil
+	}
+	enqueueSpoolJobs(t, dispatcher, "job_000000000001", "job_000000000002", "job_000000000003", "job_00000000000")
+	if pending("job_000000000001") || pending("job_000000000002") {
+		t.Fatal("terminal job was re-enqueued")
+	}
+	if !pending("job_000000000003") || !pending("job_00000000000") {
+		t.Fatal("non-terminal job (incl. an ID that is only a prefix of a terminal one) must enqueue")
+	}
+
+	// This process's own moves keep the loaded index current.
+	lease, ok, err := dispatcher.LeaseNext(ctx)
+	if err != nil || !ok {
+		t.Fatalf("LeaseNext ok=%v err=%v", ok, err)
+	}
+	if err := dispatcher.CompleteLease(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+	enqueueSpoolJobs(t, dispatcher, lease.JobID)
+	if pending(lease.JobID) {
+		t.Fatalf("completed job %s was re-enqueued", lease.JobID)
+	}
+
+	// Retention deletion invalidates the index: an expired envelope is gone.
+	dispatcher.SetRetention(SpoolRetentionConfig{TTL: time.Hour})
+	if _, err := dispatcher.SweepRetention(time.Now().Add(48 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	enqueueSpoolJobs(t, dispatcher, "job_000000000002")
+	if !pending("job_000000000002") {
+		t.Fatal("job whose terminal envelope was swept should enqueue again")
+	}
+}
