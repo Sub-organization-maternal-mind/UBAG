@@ -1,0 +1,2250 @@
+{
+ "baseline-01": {
+  "id": "baseline-01",
+  "title": "Sync local checkout to origin/main (e0667b5) and retire the stale voice-branch/stash ambiguity",
+  "plan_phase": 0,
+  "files": [
+   "(git) main -> origin/main e0667b5",
+   "PROGRESS.md",
+   "AGENT_HANDOFF.md"
+  ],
+  "size": "S",
+  "test_approach": "git rev-parse HEAD equals origin/main; git diff --stat main..origin/main is empty; git status clean. Needs user OK (git mutation).",
+  "risk": "All later work must be built on e0667b5, not 4c4c52f; HEAD-based reads mislead (no voice/admission code)."
+ },
+ "baseline-02": {
+  "id": "baseline-02",
+  "title": "Read-only production parity probe: build commit, env, container limits, applied migrations, CI run",
+  "plan_phase": 0,
+  "files": [
+   "tools/vps-ubag-probe.sh"
+  ],
+  "size": "S",
+  "depends_on": [
+   "baseline-01"
+  ],
+  "test_approach": "Run on the VPS (bash -n locally). It prints UBAG_BUILD_COMMIT, UBAG_WORKER_DAEMON, UBAG_WORKER_CONCURRENCY, UBAG_WORKER_POLL_INTERVAL_MS, UBAG_VOICE_*, UBAG_ADMISSION_*, docker inspect NanoCpus/Memory/PidsLimit for gateway and browser, the max applied migration, docker stats --no-stream, free -m and uptime, plus gh run list for gateway-image.yml. Output is recorded in PROGRESS.md. It must not print secrets (names and lengths only).",
+  "risk": "Shared box (OET and radiology): read-only commands only, no load."
+ },
+ "baseline-03": {
+  "id": "baseline-03",
+  "title": "Reconcile ledger vs reality for voice/admission rollout; decide whether shared admission and exec leases need an inert-by-default flag",
+  "plan_phase": 0,
+  "files": [
+   "apps/gateway/internal/serve/serve.go",
+   "apps/gateway/internal/topology/concurrency.go",
+   "PROGRESS.md",
+   "AGENT_HANDOFF.md"
+  ],
+  "size": "M",
+  "flag": "UBAG_ADMISSION_SHARED (proposed, only if the user wants it gated)",
+  "depends_on": [
+   "baseline-01",
+   "baseline-02"
+  ],
+  "contract_first": [
+   "None (no API change). If gated, document the flag in deploy/vps/env.example first."
+  ],
+  "test_approach": "Targeted go test ./internal/serve ./internal/topology ./internal/executor. With the flag off, the in-process counters are used (existing memory path); with it on, the SQL backend. Then update the ledger with the actual deployed SHA, applied migrations 0019-0021, lane cap default 100->2000 (UBAG_ADMISSION_DEFAULT_LANE_CAP) and the 'no live voice evidence' status.",
+  "risk": "Gating changes behaviour that may already be live. The gate and the production env.local default must be agreed with the user first (see open_questions)."
+ },
+ "baseline-04": {
+  "id": "baseline-04",
+  "title": "Fix resource-budget drift in vps compose header and README; assert the baseline numbers in the deployment check",
+  "plan_phase": 0,
+  "files": [
+   "docker-compose.vps.yml",
+   "deploy/vps/README.md",
+   "deploy/vps/env.example",
+   "tools/check-small-deployment.mjs"
+  ],
+  "size": "S",
+  "test_approach": "Run node tools/check-small-deployment.mjs (cheap, no build). Add assertions: gateway cpus 1.00 / 1300m / GOMAXPROCS 1; browser 2.0 / 4096m / pids 1024; worker concurrency default 1; daemon default false; executor mode file; store postgres. The README table must match: 3.25 CPU, about 5.6 GiB.",
+  "risk": "Comment-only plus check; no runtime change."
+ },
+ "baseline-05": {
+  "id": "baseline-05",
+  "title": "Repair run-load.mjs false-pass: fail on k6 error, missing metric, or p95 of 0; refresh baselines to the plan targets",
+  "plan_phase": 0,
+  "files": [
+   "tests/load/run-load.mjs",
+   "tests/load/baselines.json",
+   "tests/load/k6.js"
+  ],
+  "size": "S",
+  "test_approach": "Run run-load.mjs with k6 absent: it must exit non-zero. Run with a fake summary lacking job_create_duration: non-zero. Targets: job_create_p95_ms 200 and health_p95_ms 100, with the date bumped.",
+  "risk": "CI that relied on the silent pass may start failing; check usage with grep for run-load before merging."
+ },
+ "baseline-06": {
+  "id": "baseline-06",
+  "title": "Harden acceptance harness gates: unmeasured is a failure for selected scenarios; add read-p95 and plan-aligned accept-p95 thresholds; add step runs for 1/2/5/10/20 workloads",
+  "plan_phase": 0,
+  "files": [
+   "tests/load/acceptance.mjs",
+   "tests/load/acceptance.test.mjs",
+   "tests/load/thresholds.json",
+   "docs/load-testing.md"
+  ],
+  "size": "M",
+  "depends_on": [
+   "baseline-01"
+  ],
+  "test_approach": "pnpm test:load:offline (in-process fake gateway; the new cases include a missing metric => FAIL and completed_with_warnings counted as non-success). Real runs only against an isolated local stack, never the shared VPS. Keep the current 2000 ms limit as a separate burst/100-client threshold; add max_create_p95_ms at 200 for steady state and max_read_p95_ms at 100.",
+  "risk": "Existing local results show the 100-client create p95 (1.13s) exceeds 200 ms, so a steady-state gate needs its own scenario definition."
+ },
+ "baseline-07": {
+  "id": "baseline-07",
+  "title": "benchmark.mjs: stop treating completed_with_warnings as success in acceptance scenarios",
+  "plan_phase": 0,
+  "files": [
+   "tools/benchmark/benchmark.mjs",
+   "tools/benchmark/test/benchmark.test.mjs"
+  ],
+  "size": "S",
+  "test_approach": "node --test tools/benchmark/test/benchmark.test.mjs (add a case: a completed_with_warnings terminal fails the acceptance scenario, passes mock-e2e only with --allow-warnings).",
+  "risk": "Low."
+ },
+ "baseline-08": {
+  "id": "baseline-08",
+  "title": "Record measured baselines on an isolated stack plus a read-only VPS headroom snapshot",
+  "plan_phase": 0,
+  "files": [
+   "PROGRESS.md",
+   "tests/load/results/ (git-ignored, not committed)"
+  ],
+  "size": "M",
+  "depends_on": [
+   "baseline-02",
+   "baseline-06"
+  ],
+  "test_approach": "Run the harness with --docker-stats-container on a throwaway local gateway: the mock target at 1/2/5/10/20 concurrent workloads, then the 100-client and 1000-job runs. Compare against the mock results already seen (create p95 79.5 ms for queue-1000). Pair with the baseline-02 snapshot to compute the >=20% memory-headroom budget. Record numbers, commit SHA and caveats (mock worker, single box) in the ledger.",
+  "risk": "Never aim load or the overload scenario at the shared VPS. Mock numbers say nothing about provider, browser or voice cost."
+ },
+ "baseline-09": {
+  "id": "baseline-09",
+  "title": "Opt-in pprof listener (loopback, off by default) so later hotspot work is profile-driven",
+  "plan_phase": 0,
+  "files": [
+   "apps/gateway/internal/serve/serve.go",
+   "deploy/vps/env.example"
+  ],
+  "size": "S",
+  "flag": "UBAG_PPROF_ADDR (unset = inert)",
+  "test_approach": "Targeted go test ./internal/serve with a case: unset => no listener, non-loopback address => refused. Manual curl on loopback.",
+  "risk": "Must refuse non-loopback binds; no new auth surface."
+ },
+ "baseline-10": {
+  "id": "baseline-10",
+  "title": "Baseline CPU/memory/latency of the Python Opus relay per active call (the Rust gate's reference)",
+  "plan_phase": 0,
+  "files": [
+   "deploy/vps/browser/tests/bench_audio_relay.py"
+  ],
+  "size": "M",
+  "depends_on": [
+   "baseline-01"
+  ],
+  "test_approach": "pytest-style synthetic loop on an isolated container: N=1/5/10 sessions of 20 ms Opus frames through the framed HMAC protocol, measuring relay CPU, RSS and p95 frame turnaround. The result goes in the ledger as the control for the >=20% / >=25% Rust rule. It is a test only: no runtime change, no flag.",
+  "risk": "Synthetic frames do not prove provider-side voice, which still has no live evidence."
+ },
+ "baseline-11": {
+  "id": "baseline-11",
+  "title": "Glossary and ADR deltas before contracts: helper node vs the existing worker Fleet, and the attempt-lease contract vs the existing exec lease",
+  "plan_phase": 0,
+  "files": [
+   "CONTEXT.md",
+   "docs/adr/ (new ADR for the attempt/lease contract and the helper-node naming)"
+  ],
+  "size": "S",
+  "depends_on": [
+   "baseline-01"
+  ],
+  "contract_first": [
+   "packages/proto and packages/shared-schemas helper-execution contracts must adopt the ADR's terms (a later phase)."
+  ],
+  "test_approach": "Docs only. Check that CONTEXT.md terms are used consistently with grep. The ADR records the delta: the existing 90s TTL / 10s heartbeat / token-per-job lease vs the plan's 120s / 20s / generation fencing / input fingerprint.",
+  "risk": "The worker-side 'Fleet' name collides with the shared fleet manager; pick distinct terms before any proto work."
+ },
+ "executor-contract-helper-proto": {
+  "id": "executor-contract-helper-proto",
+  "title": "Contract first: helper gRPC service and attempt event identity",
+  "plan_phase": 1,
+  "files": [
+   "packages/proto/proto/ubag/v1/helper.proto (new)",
+   "packages/proto/gen/go/ubag/v1/ (regenerate)",
+   "tools/check-proto-contracts.mjs",
+   "docs/adr/0006-helper-execution-attempts.md (new)"
+  ],
+  "size": "M",
+  "contract_first": [
+   "helper.proto: RegisterNode/ReportCapacity (15s heartbeat), RunAttempt (server-stream events), RenewAttempt, CancelAttempt, InspectAttempt, StageManifest; Attempt{job_id,attempt_id,node_id,lease_generation,expires_at,input_fingerprint,workload_version}",
+   "event key = attempt_id:sequence; prompt_submitted (already in job-event.schema.json) is the submission boundary",
+   "staging HTTPS lives on the mTLS listener, not under /v1 (check-contracts.mjs:165-194)"
+  ],
+  "flag": "none (contract only)",
+  "test_approach": "pnpm lint:proto with the checker generalized past jobs.proto:3; buf breaking (FILE)."
+ },
+ "executor-bench-baseline": {
+  "id": "executor-bench-baseline",
+  "title": "Executor baseline benchmarks (none exist today)",
+  "plan_phase": 1,
+  "files": [
+   "apps/gateway/internal/executor/bench_test.go (new)"
+  ],
+  "size": "S",
+  "depends_on": [],
+  "test_approach": "go test -bench for FileSpool Enqueue/LeaseNext with 0/1k/10k terminal files, RunOnce with WorkerRunFunc, daemon line protocol; record numbers in PROGRESS.md before touching the hot path."
+ },
+ "executor-spool-correctness": {
+  "id": "executor-spool-correctness",
+  "title": "File-spool gaps that affect local and helper dispatch",
+  "plan_phase": 1,
+  "files": [
+   "apps/gateway/internal/executor/filespool.go",
+   "apps/gateway/internal/executor/filespool_test.go",
+   "apps/gateway/internal/executor/workerconsumer.go"
+  ],
+  "size": "M",
+  "depends_on": [
+   "executor-bench-baseline"
+  ],
+  "flag": "UBAG_SPOOL_PRIORITY_LANES (inert default); honoring not_before is a contract bug fix",
+  "risk": "Behavior change for scheduled jobs; confirm fix-in-track.",
+  "test_approach": "Unit tests: not_before respected, lost-race LeaseNext tries next candidate (291-297), enqueue cost flat vs terminal-dir size (replace 5 Globs, 678-707)."
+ },
+ "executor-attempt-ledger": {
+  "id": "executor-attempt-ledger",
+  "title": "Attempt ledger with lease generation and fenced commits in job stores",
+  "plan_phase": 1,
+  "files": [
+   "apps/gateway/internal/jobs/store.go",
+   "apps/gateway/internal/jobs/memory.go",
+   "apps/gateway/internal/jobs/sqlite.go",
+   "apps/gateway/internal/jobs/postgres.go",
+   "migrations/postgres/0019_gateway_job_attempts.sql",
+   "migrations/sqlite/0014_gateway_job_attempts.sql",
+   "apps/gateway/internal/sqlitestore/schema.sql",
+   "apps/gateway/internal/sqlitestore/migrate.go"
+  ],
+  "size": "L",
+  "depends_on": [
+   "executor-contract-helper-proto"
+  ],
+  "contract_first": [
+   "Optional AttemptStore capability (store.go:163-184 pattern): BeginAttempt (CAS bump generation), Renew, MarkSubmitted, CommitEvents(attempt,gen,events) rejecting stale generation or inactive attempt, Expire"
+  ],
+  "flag": "UBAG_EXECUTOR_ATTEMPTS (inert; local path keeps plain ApplyWorkerEvent)",
+  "risk": "Three-store parity; Postgres integration tests are skipped by default (pnpm test:gateway:postgres).",
+  "test_approach": "Mirror memory_test/sqlite_cas_test/postgres_cas_test; sqlitetest parity; concurrent stale-generation commit must be rejected and idempotent replays no-op."
+ },
+ "executor-lease-ttl-renew-reaper": {
+  "id": "executor-lease-ttl-renew-reaper",
+  "title": "Lease TTL (120s) with renewal (20s), expiry reclaim, attempt-aware reaper",
+  "plan_phase": 1,
+  "files": [
+   "apps/gateway/internal/executor/filespool.go",
+   "apps/gateway/internal/executor/workerconsumer.go",
+   "apps/gateway/internal/executor/natsconsumer.go",
+   "apps/gateway/internal/executor/reaper.go",
+   "apps/gateway/internal/serve/serve.go"
+  ],
+  "size": "M",
+  "depends_on": [
+   "executor-attempt-ledger"
+  ],
+  "flag": "UBAG_EXECUTOR_LEASE_TTL_MS (0 = legacy no-expiry)",
+  "contract_first": [
+   "Optional LeaseRenewer capability on WorkerLease (like changeNotifier, workerconsumer.go:163) so NATS/fakes stay unchanged"
+  ],
+  "test_approach": "filespool_test expiry reclaim generalizing RecoverOrphanLeases; natsconsumer_test uses fakeNATSMsg.InProgress (:175); reaper_test with injected Now; reaped job also cancels its running worker."
+ },
+ "executor-submission-boundary": {
+  "id": "executor-submission-boundary",
+  "title": "Submission marker and failure classification (reassign vs reconcile)",
+  "plan_phase": 1,
+  "files": [
+   "apps/gateway/internal/executor/workerconsumer.go",
+   "apps/gateway/internal/executor/daemonrunner.go",
+   "apps/worker/ubag_worker/live/engine.py"
+  ],
+  "size": "M",
+  "depends_on": [
+   "executor-attempt-ledger"
+  ],
+  "flag": "UBAG_EXECUTOR_ATTEMPTS",
+  "risk": "engine.py buffers turn events until interaction end (366-367) and retries whole interaction up to 3x (343-352); emitting prompt_submitted at :606 needs a callback/generator change owned by the worker area.",
+  "test_approach": "WorkerRunFunc returning typed ErrNotSubmitted/ErrAmbiguous: pre-submit -> new attempt; post-submit -> no lease.Retry, job fails closed for reconcile; shutdown path 389-392 no longer replays after submission."
+ },
+ "executor-stream-ingest": {
+  "id": "executor-stream-ingest",
+  "title": "Incremental event ingestion, provisional until one valid terminal",
+  "plan_phase": 2,
+  "files": [
+   "apps/gateway/internal/executor/workerconsumer.go",
+   "apps/gateway/internal/executor/daemonrunner.go",
+   "apps/gateway/internal/executor/daemonrunner_test.go"
+  ],
+  "size": "L",
+  "depends_on": [
+   "executor-attempt-ledger"
+  ],
+  "flag": "UBAG_WORKER_STREAM_EVENTS (inert)",
+  "contract_first": [
+   "Optional StreamingWorkerRunner/EventSink beside WorkerRunner (:151); batch RunWorker stays as adapter so existing behavior is byte-identical"
+  ],
+  "test_approach": "Re-exec fake daemon (daemonrunner_test.go): stream ending without __ubag_job_end__ must fail; keep exactly-one-terminal rule (450-470) incrementally; per-attempt event/byte budgets replace 512/1MiB; stale attempt events dropped."
+ },
+ "executor-helper-service": {
+  "id": "executor-helper-service",
+  "title": "Go helper execution service with bounded isolated worker pool",
+  "plan_phase": 2,
+  "files": [
+   "apps/gateway/internal/helper/server.go (new)",
+   "apps/gateway/internal/helper/pool.go (new)",
+   "apps/gateway/cmd/ubag-helper/main.go (new)"
+  ],
+  "size": "XL",
+  "depends_on": [
+   "executor-contract-helper-proto",
+   "executor-lease-ttl-renew-reaper",
+   "executor-stream-ingest",
+   "executor-asset-staging"
+  ],
+  "flag": "separate binary; not started by default",
+  "risk": "Importing internal/executor pulls alerts/plugins/topology into helper binary; measure, extract a runner subpackage only if justified. Refuse antigravity_* (needs primary-local store/sockets, workerconsumer.go:1216-1298).",
+  "test_approach": "bufconn gRPC with fake runner; -race; per-provider-identity lock; renew/cancel/inspect; helper holds no DB creds and uses minimalWorkerEnv."
+ },
+ "executor-remote-runner": {
+  "id": "executor-remote-runner",
+  "title": "Primary-side remote runner, eligibility picker, mTLS listener, cancel registry",
+  "plan_phase": 2,
+  "files": [
+   "apps/gateway/internal/executor/helperrunner.go (new)",
+   "apps/gateway/internal/executor/helperpicker.go (new)",
+   "apps/gateway/internal/serve/serve.go",
+   "apps/gateway/internal/executor/workerconsumer.go"
+  ],
+  "size": "L",
+  "depends_on": [
+   "executor-attempt-ledger",
+   "executor-lease-ttl-renew-reaper",
+   "executor-submission-boundary",
+   "executor-stream-ingest",
+   "executor-helper-service"
+  ],
+  "flag": "UBAG_HELPER_EXECUTION=0 (inert); ineligible targets fall back to local runner",
+  "contract_first": [
+   "HelperPicker interface only; real OET fleet adaptor is out of repo",
+   "Separate mTLS grpc listener, not the plaintext UBAG_GRPC_ADDR one (serve.go:301,355)"
+  ],
+  "test_approach": "Chaos tests (tests/chaos): helper lost pre-submit -> reassigned; post-submit -> reconcile; stale generation rejected; fleet manager down keeps in-flight attempts; in-process cancel registry replaces 250ms Jobs.Get poll."
+ },
+ "executor-asset-staging": {
+  "id": "executor-asset-staging",
+  "title": "Streamed, checksummed attachment staging to helpers",
+  "plan_phase": 2,
+  "files": [
+   "apps/gateway/internal/helper/staging.go (new)",
+   "apps/gateway/internal/executor/workerconsumer.go"
+  ],
+  "size": "M",
+  "depends_on": [
+   "executor-contract-helper-proto",
+   "executor-attempt-ledger"
+  ],
+  "contract_first": [
+   "Public attachment manifest unchanged (attachments.go:66-72); size/sha256 come from ArtifactRecord (store.go:24)"
+  ],
+  "flag": "rides UBAG_HELPER_EXECUTION",
+  "test_approach": "Helper-side read-only ArtifactStore adapter injected into ProcessWorkerRunner.Artifacts (:190) so materializeAttachments is reused; tokens bound to attempt_id+generation+key and expire with lease; temp dir must keep ubag-attach- prefix (envelope.py:479-517); checksum mismatch fails closed."
+ },
+ "worker-00": {
+  "id": "worker-00",
+  "title": "Measure slot cost and worker CPU share before sizing the pool",
+  "plan_phase": 0,
+  "files": [
+   "apps/worker/tests/bench/measure_slots.py",
+   "PROGRESS.md"
+  ],
+  "size": "S",
+  "flag": "none (manual tool, not in CI)",
+  "depends_on": [],
+  "contract_first": [],
+  "risk": "Needs real Chrome for provider timings; use MockPageDriver for protocol overhead and bare sync_playwright().start() RSS. Gateway cgroup is 1300m (docker-compose.vps.yml:76) so Python + Node driver per slot may cap slots at 2-3.",
+  "test_approach": "Script prints RSS/CPU of 1,2,4 daemon processes (idle, warm, mid-stream), first-event latency, py-spy CPU split; output pasted into PROGRESS.md. Also records Rust-gate evidence: expected 'no worker-runtime candidate' (time is CDP RTT + sleeps 0.1-0.4s)."
+ },
+ "worker-01": {
+  "id": "worker-01",
+  "title": "Contracts: daemon protocol v2, attempt block, provisional token semantics",
+  "plan_phase": 1,
+  "files": [
+   "packages/shared-schemas/schemas/worker-daemon-request.schema.json",
+   "packages/shared-schemas/schemas/worker-daemon-job-end.schema.json",
+   "packages/shared-schemas/schemas/job-event.schema.json",
+   "packages/openapi/openapi.yaml",
+   "tools/check-contracts.mjs",
+   "packages/conformance/fixtures/v0/"
+  ],
+  "size": "M",
+  "flag": "none (docs/schema only)",
+  "depends_on": [],
+  "contract_first": [
+   "Request adds optional proto:2, attempt:{id,lease_generation,expires_at}, slot_id, probe/hello control lines (opt-in: old Go<->new Python and new Go<->old Python must both work)",
+   "JOB_END adds optional attempt_id, slot_id, pid, warm_key (hash only, never raw profile path), outcome_signal (drift|manual_action|captcha|timeout|none), submitted (bool)",
+   "job-event data docs: token events carry attempt_id, are provisional; result only from terminal; stream_end_reason; submitted/reconcile_required on failed; event_id MUST include attempt_id when present (pattern ^evt_[A-Za-z0-9]+$ already allows); top-level job-event stays additionalProperties:false so attempt goes in data"
+  ],
+  "risk": "Schema top-level additionalProperties:false (job-event.schema.json:8) forbids adding top-level fields.",
+  "test_approach": "pnpm check:contracts + pnpm test:schema; add conformance fixture for a streamed job (tokens then terminal then JOB_END) and for an abandoned attempt."
+ },
+ "worker-02": {
+  "id": "worker-02",
+  "title": "Warn/clamp UBAG_WORKER_CONCURRENCY>1 for live targets in per-job mode (existing sibling-tab-kill hazard)",
+  "plan_phase": 0,
+  "files": [
+   "apps/gateway/internal/serve/serve.go"
+  ],
+  "size": "S",
+  "flag": "clamp only when env UBAG_WORKER_LIVE_CONCURRENCY_GUARD is truthy; warn always",
+  "depends_on": [],
+  "contract_first": [],
+  "risk": "Behavior change if someone already runs >1 intentionally (see open questions). Per-job live workers share one registry file and _close_stale_pages kills siblings' tabs (page_driver.py:812,1862-1882).",
+  "test_approach": "serve_test: concurrency 2 + UBAG_WORKER_SCRIPT=run_live_worker.py logs warning; guard flag clamps to 1."
+ },
+ "worker-03": {
+  "id": "worker-03",
+  "title": "Slot-scoped page registry, physical-session key, cross-process identity lock",
+  "plan_phase": 4,
+  "files": [
+   "apps/worker/ubag_worker/live/page_driver.py",
+   "apps/worker/ubag_worker/live/identity_lock.py",
+   "apps/worker/ubag_worker/live/envelope.py",
+   "apps/worker/ubag_worker/live/daemon.py",
+   "apps/worker/tests/test_slot_isolation.py",
+   "apps/worker/tests/test_page_registry.py"
+  ],
+  "size": "M",
+  "flag": "UBAG_WORKER_SLOT_ID (unset = byte-identical to today); identity lock auto-on only in slot mode",
+  "depends_on": [],
+  "contract_first": [],
+  "risk": "Registry orphan files when pool shrinks (slot id >= N) are never reaped by the new slots - supervisor must reap on start. flock is POSIX-only (workers run Linux); make Windows a no-op with warning. Lock key must be physical (sha(CDP endpoint or realpath(user_data_dir) + target), NO tenant) so two tenants mapped to one account still serialize while warm key keeps tenant.",
+  "test_approach": "(a) _page_registry_path() includes slot suffix, two slots never close each other's ids; (b) _registry_update uses lock/unique tmp name; (c) real two-subprocess test with UBAG_ADAPTER_OFFLINE=1: second holder of same key blocks, different key proceeds, lock freed on SIGKILL of holder."
+ },
+ "worker-04": {
+  "id": "worker-04",
+  "title": "Incremental engine streaming: pre-submit buffered, post-submit live, no resubmit, attempt-scoped event ids",
+  "plan_phase": 4,
+  "files": [
+   "apps/worker/ubag_worker/live/engine.py",
+   "apps/worker/ubag_worker/live/events.py",
+   "apps/worker/ubag_worker/live/envelope.py",
+   "apps/worker/ubag_worker/live/daemon.py",
+   "apps/worker/tests/test_live_adapters.py",
+   "apps/worker/tests/test_stream_events.py"
+  ],
+  "size": "L",
+  "flag": "UBAG_WORKER_STREAM_EVENTS (off = current buffered path, byte-identical)",
+  "depends_on": [
+   "worker-01"
+  ],
+  "contract_first": [
+   "worker-01 attempt block + event_id rule"
+  ],
+  "risk": "Order changes: thread_bound/cap_changed follow the terminal event (engine.py:431-457,652-664) so JOB_END, not the terminal event, must mark end of stream. Post-submit exception must become terminal failed{submitted:true,retryable:false,reconcile_required:true} carrying current_thread_url, never a retry. Stream cap: Go 512-event limit (workerconsumer.go:99) can be hit by long reasoning streams at ~2.5 events/s.",
+  "test_approach": "MockPageDriver recording call order: tokens yielded before read_final_response; submit_prompt called exactly once even when stream_response raises; pre-submit failures still retry 3x; event_id differs across attempt_id, stable within; flag off output identical to golden (existing tests unchanged)."
+ },
+ "worker-05": {
+  "id": "worker-05",
+  "title": "Truncation guard: expose stream end reason, never report deadline-cut stream as completed",
+  "plan_phase": 4,
+  "files": [
+   "apps/worker/ubag_worker/live/page_driver.py",
+   "apps/worker/ubag_worker/live/engine.py",
+   "apps/worker/tests/test_stream_end_reason.py"
+  ],
+  "size": "S",
+  "flag": "UBAG_WORKER_STRICT_STREAM_END (default off until live-verified, then ledger)",
+  "depends_on": [],
+  "contract_first": [
+   "job-event docs: timed_out data.partial=true, partial_text_chars (partial text NOT placed in result)"
+  ],
+  "risk": "Status choice (timed_out vs completed_with_warnings+truncated) needs product decision; selector re-baselines must be checked on live DOM (CLAUDE.md gotcha).",
+  "test_approach": "PageDriver.stream_end_reason in {settled,indicator_gone,deadline}; MockPageDriver gains scripted reason; deadline -> timed_out terminal, settled -> completed; warm daemon discards driver on deadline."
+ },
+ "worker-06": {
+  "id": "worker-06",
+  "title": "Daemon protocol v2 (Python side): opt-in handshake, attempt/slot echo, warm-key hash, outcome signal",
+  "plan_phase": 4,
+  "files": [
+   "apps/worker/ubag_worker/live/daemon_protocol.py",
+   "apps/worker/ubag_worker/live/daemon.py",
+   "apps/worker/run_worker_daemon.py",
+   "apps/worker/tests/test_warm_daemon_protocol.py"
+  ],
+  "size": "M",
+  "flag": "v2 fields only emitted when request carries proto:2; slot mode refuses UBAG_ORCHESTRATOR_ENABLED (per-process AIMD would emit conflicting caps)",
+  "depends_on": [
+   "worker-01",
+   "worker-03"
+  ],
+  "contract_first": [
+   "worker-daemon-request/job-end schemas"
+  ],
+  "risk": "Any unsolicited stdout line breaks old Go (parseWorkerJSONL needs type). Keep os._exit(75) per-slot only.",
+  "test_approach": "v1 request -> byte-identical output; v2 request -> JOB_END has attempt_id/slot_id/warm_key/outcome_signal; hello only on explicit hello request; one-marker invariant test retained."
+ },
+ "worker-07": {
+  "id": "worker-07",
+  "title": "Wire chat-ledger sink into daemon; forward slot/stream env to workers",
+  "plan_phase": 4,
+  "files": [
+   "apps/worker/ubag_worker/live/daemon.py",
+   "apps/worker/run_worker_daemon.py",
+   "apps/gateway/internal/executor/workerconsumer.go",
+   "apps/worker/tests/test_chat_ledger.py"
+  ],
+  "size": "S",
+  "flag": "UBAG_CHAT_LEDGER_ENABLED (existing)",
+  "depends_on": [],
+  "contract_first": [],
+  "risk": "Allowlist (workerconsumer.go:1617-1660) must add UBAG_WORKER_SLOT_ID, UBAG_WORKER_IDENTITY_LOCK, UBAG_WORKER_STREAM_EVENTS, UBAG_WORKER_STRICT_STREAM_END; deliberately NOT UBAG_ORCHESTRATOR_ENABLED. Ledger path is node-local on helpers so primary reaper cannot see helper chats.",
+  "test_approach": "daemon test with fake engine factory asserts chat_sink passed when flag on and absent when off; Go env test for allowlist."
+ },
+ "worker-08": {
+  "id": "worker-08",
+  "title": "Go DaemonPool: N isolated daemon slots, identity gate, warm-affinity routing, bounded wait",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/executor/daemonpool.go",
+   "apps/gateway/internal/executor/daemonrunner.go",
+   "apps/gateway/internal/executor/daemonrunner_test.go",
+   "apps/gateway/internal/serve/serve.go"
+  ],
+  "size": "L",
+  "flag": "UBAG_WORKER_POOL_SIZE (default 1 = today)",
+  "depends_on": [
+   "worker-03",
+   "worker-06",
+   "worker-07"
+  ],
+  "contract_first": [
+   "worker-01 JOB_END warm_key/slot_id"
+  ],
+  "risk": "Co-owned with gateway agent. Move runCtx timeout to after slot acquisition (daemonrunner.go:293 vs 307). A failure/cancel must kill only its slot (discardDaemon 265). Identity gate must be physical-session keyed. Saturation returns bounded retryable overload, not unbounded queue. Drain = close slot stdin after active job (serve loop already exits on EOF). Pool size must be capped by worker-00 numbers.",
+  "test_approach": "Update TestDaemonRunnerSerializesConcurrentJobs: pool=1 serializes, pool=2 distinct identities overlap, same identity serializes, cancel kills one slot only, saturated queue returns overload; re-exec fake daemon pattern from TestHelperDaemon."
+ },
+ "worker-09": {
+  "id": "worker-09",
+  "title": "Go streaming sink and provisional-until-terminal ingestion",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/executor/daemonrunner.go",
+   "apps/gateway/internal/executor/workerconsumer.go",
+   "apps/gateway/internal/executor/executor.go",
+   "apps/gateway/internal/jobs/memory.go",
+   "apps/gateway/internal/jobs/sqlite.go",
+   "apps/gateway/internal/jobs/postgres.go"
+  ],
+  "size": "XL",
+  "flag": "UBAG_WORKER_STREAM_INGEST (default off; RunWorker stays a collecting wrapper)",
+  "depends_on": [
+   "worker-01",
+   "worker-04",
+   "worker-06",
+   "worker-08"
+  ],
+  "contract_first": [
+   "DispatchAttempt{id,lease_generation,expires_at} added to DispatchEnvelope with omitempty (executor.go:29-48)",
+   "event_key becomes attempt-scoped so a retry attempt's events are not dropped by ON CONFLICT DO NOTHING (postgres.go:442-452)"
+  ],
+  "risk": "Gateway-owned; touches fencing/lease work. Telemetry intercepts (workerconsumer.go:476-502) must also run on the streaming path; events after terminal are dropped by the store (postgres.go:457) so telemetry stays intercepted. Replace count-based 512 cap with byte budget for streams.",
+  "test_approach": "Go tests with fake daemon: tokens applied live, terminal+JOB_END commits result, missing JOB_END or 0/2 terminals abandons attempt and appends failure, stale-generation events rejected, retry attempt after streamed partial still completes (regression for event_id collision)."
+ },
+ "worker-10": {
+  "id": "worker-10",
+  "title": "Conversation-hot warm fast path (skip new-chat gate when resuming the page's current thread)",
+  "plan_phase": 4,
+  "files": [
+   "apps/worker/ubag_worker/live/daemon.py",
+   "apps/worker/ubag_worker/live/page_driver.py",
+   "apps/worker/tests/test_warm_reuse.py"
+  ],
+  "size": "M",
+  "flag": "UBAG_WARM_RESUME_FASTPATH (default off; measure-first)",
+  "depends_on": [
+   "worker-00",
+   "worker-03",
+   "worker-06"
+  ],
+  "contract_first": [],
+  "risk": "Safety: only skip when same warm key AND current_thread_url == payload conversation.thread_ref; any mismatch keeps full gate (daemon.py:141-160). Verify against live DOM before enabling (CLAUDE.md selector gotcha). Today resumed jobs pay new-chat click + 1.5s emptiness wait then goto + up to 20s resume confirm.",
+  "test_approach": "Mock driver: same-thread resume skips start_new_chat; different tenant/key or URL mismatch runs full prepare_for_next_job; clear_attachment_state still runs."
+ },
+ "worker-11": {
+  "id": "worker-11",
+  "title": "Read-only provider readiness probe request (no login, no prompt)",
+  "plan_phase": 5,
+  "files": [
+   "apps/worker/ubag_worker/live/daemon_protocol.py",
+   "apps/worker/ubag_worker/live/daemon.py",
+   "packages/shared-schemas/schemas/worker-daemon-request.schema.json",
+   "apps/worker/tests/test_warm_daemon_protocol.py"
+  ],
+  "size": "M",
+  "flag": "proto:2 probe request only",
+  "depends_on": [
+   "worker-01",
+   "worker-06"
+  ],
+  "contract_first": [
+   "worker-daemon-request probe type; response {target,login_state:authenticated|login_required|unknown,selector_version}"
+  ],
+  "risk": "Must reuse driver.open + detect_login_state only; never type credentials, never submit; must take the same identity lock so a probe cannot overlap a job. Keeps provider readiness separate from host health for the fleet manager.",
+  "test_approach": "Mock driver: probe returns login_state without calling submit_prompt/fill; probe on locked identity waits/returns busy; manual login required maps to login_required."
+ },
+ "events-01": {
+  "id": "events-01",
+  "title": "Contract first: SSE/gRPC event-stream semantics",
+  "plan_phase": 4,
+  "files": [
+   "packages/openapi/openapi.yaml",
+   "packages/proto/proto/ubag/v1/jobs.proto",
+   "packages/shared-schemas (job event schema)",
+   "packages/conformance/fixtures/v0/scenarios.json",
+   "packages/sdk-typescript/src/generated/contract-manifest.ts",
+   "packages/sdk-go/generated_contract_manifest.go"
+  ],
+  "size": "M",
+  "depends_on": [],
+  "contract_first": [
+   "openapi.yaml:1516-1542 (/v1/sse/jobs/{job_id})",
+   "jobs.proto:14,73-78"
+  ],
+  "flag": "none",
+  "risk": "Changing existing SSE behavior can break external EventSource clients: reconnecting after a server close replays from 0 today, and HTTP 204 is the only response that stops EventSource reconnects. Token events become provisional until a terminal event (needed for events-09).",
+  "test_approach": "Run pnpm check:contracts, lint:openapi, test:sdk and test:conformance. Extend the streaming.sse-ordered-events scenario with: per-job strictly increasing sequence; at-least-once, dedupe by event id; resume via Last-Event-ID or after_sequence; 204 when resumed past a terminal event."
+ },
+ "events-02": {
+  "id": "events-02",
+  "title": "Characterization tests before any behavior change",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/jobs/wait_events_test.go",
+   "apps/gateway/internal/jobs/postgres_wait_events_test.go",
+   "apps/gateway/internal/grpcapi/server_test.go",
+   "apps/gateway/internal/executor/workerconsumer_ingest_test.go",
+   "apps/gateway/internal/httpapi/server_test.go"
+  ],
+  "size": "M",
+  "depends_on": [],
+  "flag": "none",
+  "risk": "The Postgres file must match the *postgres*_test.go discovery in tools/run-postgres-roundtrip-tests.mjs:126-135 and uses UBAG_TEST_POSTGRES_DSN. CI runs it (ci.yml:166-196).",
+  "test_approach": "Pin the current behavior across memory, sqlite and postgres stores. WaitEvents: returns on a new event; (nil,false) for a missing job; (nil,true,ctx.Err()) on cancel; honors limit and ordering; a duplicate worker event adds no event. StreamJobEvents: closes on terminal. SSE: replays from 0, never closes on terminal, ping on idle. Consumer: no events, malformed JSONL, zero or two terminals, and a truncated stream must all become failed, never completed."
+ },
+ "events-03": {
+  "id": "events-03",
+  "title": "Per-job wake hub for all three stores, with a bounded fallback poll",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/jobs/notify.go",
+   "apps/gateway/internal/jobs/memory.go",
+   "apps/gateway/internal/jobs/sqlite.go",
+   "apps/gateway/internal/jobs/postgres.go",
+   "apps/gateway/internal/serve/serve.go"
+  ],
+  "size": "M",
+  "depends_on": [
+   "events-02"
+  ],
+  "flag": "UBAG_EVENT_NOTIFY=off|local|postgres (default off; fallback stays 50ms). UBAG_EVENT_FALLBACK_MS defaults to 2000 when on.",
+  "risk": "Lost wake-up unless the waiter subscribes before the first read. Use a cap-1 non-blocking channel per waiter and unregister via defer. Notify only after a successful commit at the event-writing sites (sqlite.go:142,202,408,512; postgres.go:124,194,395,501). Waiters must be registered only after auth, because the hub carries job ids and no data.",
+  "test_approach": "Unit tests with fake stores plus -race: subscribe, read, wait, then notify wakes within about 10ms; a dropped notify is recovered by the fallback; 1k waiters across 100 jobs wake only the matching ones; cancel leaks no goroutines. Then re-run the events-02 suite with the flag on."
+ },
+ "events-04": {
+  "id": "events-04",
+  "title": "Postgres LISTEN/NOTIFY for multi-replica deployments",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/jobs/postgres.go",
+   "apps/gateway/internal/jobs/postgres_notify.go",
+   "apps/gateway/internal/serve/serve.go",
+   "deploy/vps/env.example",
+   "deploy/small/env.example",
+   "deploy/helm/ubag/values.yaml"
+  ],
+  "size": "L",
+  "depends_on": [
+   "events-03"
+  ],
+  "flag": "UBAG_EVENT_NOTIFY=postgres. Optional UBAG_EVENT_NOTIFY_DSN for a direct, non-pooled connection.",
+  "risk": "Fold pg_notify('ubag_job_events', job_id) into the insert statement via a CTE in insertEvent (postgres.go:645-656) so it adds no round trip. Use a dedicated pgx.Connect listener outside the 20-connection pool, with reconnect backoff and NotifyAll after reconnect. LISTEN is incompatible with transaction-mode pgbouncer. NOTIFY serializes at commit, so cap the token event rate. A stalled listener grows the server's notify queue, so dispatch must be non-blocking. The shared platform Postgres has an unknown connection budget.",
+  "test_approach": "Postgres test: two stores on one database, so the write on store A wakes a waiter on store B in under 100ms. Kill the listener with pg_terminate_backend and check that waiters recover via the fallback and a resync. Check that a rolled-back tx sends no notify, and that a duplicate worker event sends none."
+ },
+ "events-05": {
+  "id": "events-05",
+  "title": "One-query listEvents fast path (SQL stores)",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/jobs/postgres.go",
+   "apps/gateway/internal/jobs/sqlite.go"
+  ],
+  "size": "S",
+  "depends_on": [
+   "events-02"
+  ],
+  "flag": "none (behavior-preserving)",
+  "risk": "Must keep the found=false contract: run the EXISTS check only when the SELECT returns zero rows.",
+  "test_approach": "The events-02 contract tests. Count queries with a sql driver wrapper: a hit costs 1 query and an idle miss costs 2."
+ },
+ "events-06": {
+  "id": "events-06",
+  "title": "SSE handler: hub wait, resume, close on terminal, stream cap, metrics",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/httpapi/server.go",
+   "apps/gateway/internal/httpapi/server_test.go"
+  ],
+  "size": "M",
+  "depends_on": [
+   "events-01",
+   "events-03"
+  ],
+  "flag": "UBAG_SSE_CLOSE_ON_TERMINAL (default off). UBAG_SSE_MAX_STREAMS (default 0 = unlimited).",
+  "risk": "Close-on-terminal without Last-Event-ID plus 204 causes EventSource reconnect loops. A cap needs a 503 with Retry-After. Keep the existing 10s write deadline for slow readers (server.go:1676). The ubag_sse_connections_current gauge (server.go:947) must keep working. Add ubag_event_wakeups_total{source=local|notify|fallback} and an event-to-frame lag histogram.",
+  "test_approach": "httptest streaming test (not only snapshot=true): events arrive without polling delay; resume skips already-seen events; a terminal event closes the stream; Last-Event-ID past terminal gives 204; a stalled reader is dropped after the deadline; the cap returns 503."
+ },
+ "events-07": {
+  "id": "events-07",
+  "title": "gRPC stream and facade/cancel waiters on the hub",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/grpcapi/server.go",
+   "apps/gateway/internal/httpapi/openai_facade.go",
+   "apps/gateway/internal/executor/workerconsumer.go"
+  ],
+  "size": "S",
+  "depends_on": [
+   "events-03"
+  ],
+  "flag": "UBAG_EVENT_NOTIFY (same flag)",
+  "risk": "The facade must keep the 'store error != client disconnect' rule (PROGRESS.md:1191). The cancel-watch must still catch a cancel that lands between wakes, so keep a 2s fallback Get.",
+  "test_approach": "Extend the events-02 gRPC test: drop the extra Get by using isTerminalEvent, and add an idle-stream TTL or heartbeat. Facade tests (done, timeout, abort, error) stay green. Cancel test: the worker context is cancelled within about 100ms of a cancel."
+ },
+ "events-08": {
+  "id": "events-08",
+  "title": "Incremental worker-event streaming with provisional tokens (plan item 3)",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/executor/workerconsumer.go",
+   "apps/gateway/internal/executor/daemonrunner.go",
+   "apps/gateway/internal/jobs/store.go",
+   "apps/gateway/internal/jobs/postgres.go",
+   "apps/gateway/internal/jobs/sqlite.go",
+   "apps/gateway/internal/jobs/memory.go",
+   "apps/worker/ubag_worker/live/engine.py"
+  ],
+  "size": "XL",
+  "depends_on": [
+   "events-01",
+   "events-02",
+   "events-03"
+  ],
+  "contract_first": [
+   "optional StreamingWorkerRunner next to WorkerRunner (workerconsumer.go:151)",
+   "Store.ApplyWorkerEvents batch (store.go:159)"
+  ],
+  "flag": "UBAG_WORKER_STREAM_EVENTS (default off). Engine streaming is a separate Python flag.",
+  "risk": "The runner needs StdoutPipe plus a line reader to replace command.Run, and the daemon must emit per line. Apply non-terminal events live, and hold the single terminal event until the daemon JOB_END status is 'completed' (or the process exits 0). Anything else goes through applyFailure, never success. The pre-apply gate at workerconsumer.go:450 disappears, so the 'false truncation' guarantee must be re-proved. Coalesce token deltas before the cap: maxWorkerEvents=512 (workerconsumer.go:99), and each ApplyWorkerEvent is one transaction with a FOR UPDATE, so batch with one notify per batch. The engine's whole-interaction retry (engine.py:464-472) can re-emit tokens, and workerEventKey dedupe would drop them, so tokens must carry an attempt marker or streaming must begin after the last retry point. Ingestion metrics change meaning (observeIngestion events and duration). Lease renewal must cover long ingestion.",
+  "test_approach": "Fake runner emits live non-terminal events, and the test asserts the store sees them before RunWorker returns. Kill the daemon mid-stream: the job ends failed, with no completed. Duplicate and out-of-order events. Cancel mid-stream. Python test in apps/worker/tests with an injected driver that fails once mid-stream. Keep the existing TestDaemonJob* tests green."
+ },
+ "events-09": {
+  "id": "events-09",
+  "title": "Event-delivery load and acceptance scenario; repair k6 SSE probe",
+  "plan_phase": 2,
+  "files": [
+   "tests/load/k6.js",
+   "tests/load/run-load.mjs",
+   "tests/load/baselines.json",
+   "PROGRESS.md"
+  ],
+  "size": "M",
+  "depends_on": [
+   "events-03"
+  ],
+  "flag": "none",
+  "risk": "The current SSE 'TTFB' measurement is a list endpoint, so any reported SSE number is not valid. Do not use the (created_at,id) cursor for lag measurement. Compare notify off vs local vs postgres, one variable at a time.",
+  "test_approach": "Scenarios at 1/2/5/10/20 active jobs plus 100 SSE clients and 1000 queued jobs. Measure event-to-frame lag p50/p95, DB queries per second (pg_stat_statements), pool wait, gateway CPU at GOMAXPROCS=1, and job-accept and read p95. Record results in PROGRESS.md."
+ },
+ "events-10": {
+  "id": "events-10",
+  "title": "Ledger and operator docs",
+  "plan_phase": 4,
+  "files": [
+   "PROGRESS.md",
+   "AGENT_HANDOFF.md",
+   "docker-compose.vps.yml",
+   "deploy/vps/README.md",
+   "apps/docs/src/content/docs/operations/deployment.md"
+  ],
+  "size": "S",
+  "depends_on": [
+   "events-04",
+   "events-06"
+  ],
+  "flag": "none",
+  "risk": "Document single-replica 'local' versus Helm multi-replica 'postgres' mode, the pooler incompatibility, and the rollback (set UBAG_EVENT_NOTIFY=off to return to the 50ms poll).",
+  "test_approach": "pnpm test:docs and pnpm check:blueprint (targeted only)."
+ },
+ "voice-0-sync-ledger": {
+  "id": "voice-0-sync-ledger",
+  "title": "Fast-forward local main to origin/main; record merge status in ledger",
+  "plan_phase": 0,
+  "files": [
+   "PROGRESS.md",
+   "AGENT_HANDOFF.md"
+  ],
+  "size": "S",
+  "depends_on": [],
+  "test_approach": "git rev-list HEAD..origin/main == 0; docs-only.",
+  "risk": "origin/main may already auto-deploy voice routes with memory store; confirm deploy state."
+ },
+ "voice-0-store-default": {
+  "id": "voice-0-store-default",
+  "title": "Voice store follows gateway store in VPS compose; warn on memory with SQL gateway",
+  "plan_phase": 0,
+  "files": [
+   "docker-compose.vps.yml",
+   "apps/gateway/internal/serve/serve.go",
+   "tools/check-small-deployment.mjs"
+  ],
+  "size": "S",
+  "depends_on": [
+   "voice-0-sync-ledger"
+  ],
+  "test_approach": "serve_test env-resolution unit test; check-small-deployment assertion.",
+  "flag": "UBAG_VOICE_STORE (default change only)"
+ },
+ "voice-0-reconcile-mute-failsafe": {
+  "id": "voice-0-reconcile-mute-failsafe",
+  "title": "Reconciler syncs Muted to hub and stops media after bounded consecutive store errors",
+  "plan_phase": 0,
+  "files": [
+   "apps/gateway/internal/serve/serve.go",
+   "apps/gateway/internal/voice/media.go",
+   "apps/gateway/internal/serve/serve_test.go"
+  ],
+  "size": "S",
+  "depends_on": [
+   "voice-0-sync-ledger"
+  ],
+  "test_approach": "fake store flips Muted; assert hub.SetMuted; error-injection test disconnects after grace."
+ },
+ "voice-0-latency-baseline": {
+  "id": "voice-0-latency-baseline",
+  "title": "Voice relay p95/jitter harness reusing fakeRelay; add voice scenario to acceptance harness",
+  "plan_phase": 0,
+  "files": [
+   "apps/gateway/internal/voice/media_test.go",
+   "tests/load/acceptance.mjs",
+   "tests/load/thresholds.json",
+   "docs/load-testing.md"
+  ],
+  "size": "M",
+  "depends_on": [
+   "voice-0-sync-ledger"
+  ],
+  "test_approach": "in-process loopback PC to fakeRelay, record enqueue-to-Send and relay-to-WriteSample p50/p95/p99; gate max_voice_relay_p95_ms=100; baseline needed before any Rust relay decision.",
+  "contract_first": [
+   "define the two measurement points in docs/load-testing.md"
+  ]
+ },
+ "voice-0-activation-probe": {
+  "id": "voice-0-activation-probe",
+  "title": "Human-supervised in-call probe to populate ready_controls (unblocks connected state)",
+  "plan_phase": 0,
+  "files": [
+   "tools/provider-refresh/voice-probe.mjs",
+   "apps/worker/ubag_worker/live/selectors.py"
+  ],
+  "size": "M",
+  "depends_on": [],
+  "test_approach": "test_voice_runner.py with captured DOM; live probe stays human-run (safe-mode, no automated login).",
+  "risk": "Gemini 'Listen' unbacked by captures; may block Gemini."
+ },
+ "voice-3-proto-contract": {
+  "id": "voice-3-proto-contract",
+  "title": "Helper voice RPCs: offer/answer, control (mute/terminate/renew), event stream",
+  "plan_phase": 3,
+  "files": [
+   "packages/proto/proto/ubag/v1/helper_voice.proto",
+   "packages/proto/gen/go/ubag/v1"
+  ],
+  "size": "M",
+  "depends_on": [],
+  "test_approach": "buf lint/breaking via pnpm lint:proto; no OpenAPI change (connect response identical).",
+  "contract_first": [
+   "fields: session_id, tenant_id, attempt_id, node_id, lease_generation, expiry, per-attempt relay key, primary-minted ICE creds",
+   "coordinate with the execution-contract area's helper.proto; do not fork it"
+  ]
+ },
+ "voice-3-lease-generation": {
+  "id": "voice-3-lease-generation",
+  "title": "Add node_id, lease_generation, media lease expiry and internal 'terminating' hold to voice store",
+  "plan_phase": 3,
+  "files": [
+   "migrations/postgres/0022_voice_lease_generation.sql",
+   "apps/gateway/internal/voice/voice.go",
+   "apps/gateway/internal/voice/postgres.go",
+   "apps/gateway/internal/voice/sqlite.go",
+   "apps/gateway/internal/voice/postgres_test.go"
+  ],
+  "size": "L",
+  "depends_on": [
+   "voice-3-proto-contract"
+  ],
+  "test_approach": "store contract + Postgres parity incl. stale-generation commit rejected, renew-vs-sweep, terminating blocks reuse until deactivate ack/45s.",
+  "contract_first": [
+   "keep generation/node json:\"-\" (OpenAPI session object is open but must not leak node ids)",
+   "confirm migration number with fleet area"
+  ],
+  "flag": "UBAG_VOICE_HELPER_MEDIA=0 (schema additive; behavior inert)",
+  "risk": "fixes lease-released-before-deactivate race (voice_handlers.go:673-676)."
+ },
+ "voice-3-remote-negotiator": {
+  "id": "voice-3-remote-negotiator",
+  "title": "RemoteMediaNegotiator over helper gRPC; helper reuses voice.MediaHub on loopback relay",
+  "plan_phase": 3,
+  "files": [
+   "apps/gateway/internal/voice/remote.go",
+   "apps/gateway/internal/httpapi/voice_handlers.go",
+   "apps/gateway/internal/serve/serve.go",
+   "apps/gateway/internal/voice/media.go"
+  ],
+  "size": "XL",
+  "depends_on": [
+   "voice-3-proto-contract",
+   "voice-3-lease-generation",
+   "voice-3-credentials"
+  ],
+  "test_approach": "fake helper stream: offer routes by session.NodeID, mute/terminate forwarded, stale-generation event rejected, helper self-fences at media-lease expiry without renew.",
+  "flag": "UBAG_VOICE_HELPER_MEDIA=1 (inert default)"
+ },
+ "voice-3-credentials": {
+  "id": "voice-3-credentials",
+  "title": "Per-attempt derived relay/media/TURN credentials so helpers hold no global secret",
+  "plan_phase": 3,
+  "files": [
+   "apps/gateway/internal/voice/media.go",
+   "apps/gateway/internal/httpapi/voice_handlers.go",
+   "apps/gateway/internal/voice/ice.go",
+   "deploy/vps/browser/audio-relay.py"
+  ],
+  "size": "M",
+  "depends_on": [
+   "voice-3-proto-contract"
+  ],
+  "test_approach": "extend TestRelayTokenMatchesPythonRelay cross-language vector with node+generation binding; control-channel credential verify without appSecret.",
+  "contract_first": [
+   "relay hello gains optional bound fields; document in audio-relay.py protocol docstring"
+  ]
+ },
+ "voice-3-job-voice-exclusion": {
+  "id": "voice-3-job-voice-exclusion",
+  "title": "Voice lease excludes text/file jobs on the same identity/instance via shared lane token",
+  "plan_phase": 3,
+  "files": [
+   "apps/gateway/internal/voice/voice.go",
+   "apps/gateway/internal/topology/concurrency.go",
+   "apps/gateway/internal/executor/workerconsumer.go",
+   "apps/gateway/internal/httpapi/voice_handlers.go"
+  ],
+  "size": "L",
+  "depends_on": [
+   "voice-0-sync-ledger"
+  ],
+  "test_approach": "integration: active voice session blocks/queues a job for the same lane and vice versa; zcode P1 acceptance.",
+  "risk": "must align with worker pool 'one active op per provider identity'."
+ },
+ "voice-3-fleet-placement": {
+  "id": "voice-3-fleet-placement",
+  "title": "Node-aware voice placement and node-lane admission",
+  "plan_phase": 3,
+  "files": [
+   "apps/gateway/internal/httpapi/voice_handlers.go",
+   "apps/gateway/internal/voice/voice.go",
+   "apps/gateway/internal/topology/store.go",
+   "apps/gateway/internal/topology/admission_sql.go"
+  ],
+  "size": "L",
+  "depends_on": [
+   "voice-3-lease-generation"
+  ],
+  "test_approach": "unknown-reservation node ineligible; call consumes one node workload; provider readiness (login_state) kept separate from host health.",
+  "contract_first": [
+   "topology node fields come from fleet area; no fleet logic in UBAG"
+  ]
+ },
+ "voice-3-context-and-relay-isolation": {
+  "id": "voice-3-context-and-relay-isolation",
+  "title": "Pass context index in control jobs; per-environment relay port and device namespace",
+  "plan_phase": 3,
+  "files": [
+   "apps/gateway/internal/httpapi/voice_control.go",
+   "apps/gateway/internal/serve/serve.go",
+   "deploy/vps/browser/audio-relay.py",
+   "deploy/vps/browser/entrypoint.sh"
+  ],
+  "size": "M",
+  "depends_on": [],
+  "test_approach": "voice_control_test with multi-context placement; test_audio_relay.py with env-id-derived FIFO/device names; resolver test for two instances on one host."
+ },
+ "voice-4-age-bounded-queues": {
+  "id": "voice-4-age-bounded-queues",
+  "title": "Bound mic/speaker queues by frame age as well as count",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/voice/media.go",
+   "apps/gateway/internal/voice/metrics.go",
+   "deploy/vps/browser/audio-relay.py",
+   "apps/gateway/internal/voice/media_relay_test.go",
+   "deploy/vps/browser/tests/test_audio_relay.py"
+  ],
+  "size": "M",
+  "depends_on": [
+   "voice-0-latency-baseline"
+  ],
+  "test_approach": "stalled-relay test: frames older than max age dropped and counted (mic_age, speaker); count bound still holds for 120ms packets.",
+  "flag": "UBAG_VOICE_QUEUE_MAX_AGE_MS (0 = current count-only behavior)",
+  "contract_first": [
+   "stamp age locally; no relay wire change"
+  ]
+ },
+ "voice-4-jitter-telemetry": {
+  "id": "voice-4-jitter-telemetry",
+  "title": "Low-cardinality jitter, loss, forward-latency and queue-depth metrics",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/voice/media.go",
+   "apps/gateway/internal/voice/metrics.go",
+   "apps/gateway/internal/httpapi/server.go"
+  ],
+  "size": "M",
+  "depends_on": [
+   "voice-0-latency-baseline"
+  ],
+  "test_approach": "loopback test asserts pc.GetStats inbound jitter sampled and histogram emitted; no per-session labels."
+ },
+ "fleet-01": {
+  "id": "fleet-01",
+  "title": "Helper protocol: ubag.helper.v1 HelperService proto",
+  "plan_phase": 1,
+  "files": [
+   "packages/proto/proto/ubag/helper/v1/helper.proto",
+   "packages/proto/gen/go/ubag/helper/v1/helper.pb.go",
+   "packages/proto/gen/go/ubag/helper/v1/helper_grpc.pb.go",
+   "tools/check-proto-contracts.mjs"
+  ],
+  "size": "M",
+  "test_approach": "Generalize check-proto-contracts to every .proto (required RPCs, no field-number reuse, Fence fields present); go build the gen module; golden roundtrip test",
+  "contract_first": [
+   "Primary is gRPC client, helper is server. RPCs: Handshake (protocol and workload version, node_id from cert), GetCapacity (15s heartbeat), RunAttempt (server stream of AttemptEvent with a SUBMITTED marker), RenewAttempt, CancelAttempt, InspectAttempt, Drain, StageAsset (sha256, streamed), OfferVoice, ControlVoice (mute/interrupt/reconnect/terminate/renew)",
+   "Fence{job_id, attempt_id, node_id, lease_generation, lease_expires_at, input_fingerprint, workload_version} on every mutating RPC",
+   "Separate package so breaking-change policy is independent of public ubag.v1"
+  ],
+  "depends_on": [],
+  "flag": "none (contract only)",
+  "risk": "Generated code is checked in, so protoc-gen-go and protoc-gen-go-grpc must be available. Direction (push vs helper-pull) is an open question."
+ },
+ "fleet-02": {
+  "id": "fleet-02",
+  "title": "Consumer contracts: allocation JSON schema, read-only /v1/nodes, error codes, node:read",
+  "plan_phase": 1,
+  "files": [
+   "packages/shared-schemas/schemas/node-allocation.schema.json",
+   "packages/openapi/openapi.yaml",
+   "packages/shared-schemas/errors.json",
+   "packages/shared-schemas/schemas/error.schema.json",
+   "apps/gateway/internal/authz/authz.go",
+   "tools/check-contracts.mjs"
+  ],
+  "size": "M",
+  "test_approach": "pnpm test:schema (check:contracts, lint:openapi, lint:schemas) plus authz table test",
+  "contract_first": [
+   "node-allocation fields: schema_version, node_id, region, endpoint (WireGuard addr:port), cert identity, cpu_millis and memory_bytes already net of OET reservations, reservation_state(known|unknown), state(active|draining|revoked), max_browser_workloads, voice_capable, udp port range and nat ip, valid_until, generation",
+   "GET /v1/nodes and /v1/nodes/{id} are operator-only and cross-tenant, with no job or tenant ids",
+   "New codes: UBAG-WORKER-NODE-FENCED (non-retryable), UBAG-WORKER-OVERLOAD (retryable); reuse UBAG-WORKER-UNAVAILABLE-001"
+  ],
+  "depends_on": [
+   "phase0: merge feat/multimodal-voice-hardening (external to this area)"
+  ],
+  "flag": "none",
+  "risk": "openapi.yaml, errors.json and error.schema.json are also edited on the voice branch, so edit only after merging it"
+ },
+ "fleet-03": {
+  "id": "fleet-03",
+  "title": "Node, allocation and attempt-ledger store (Postgres plus memory)",
+  "plan_phase": 1,
+  "files": [
+   "migrations/postgres/0022_helper_nodes.sql",
+   "apps/gateway/internal/nodes/types.go",
+   "apps/gateway/internal/nodes/store.go",
+   "apps/gateway/internal/nodes/memory.go",
+   "apps/gateway/internal/nodes/postgres.go",
+   "apps/gateway/internal/nodes/store_test.go"
+  ],
+  "size": "L",
+  "test_approach": "Memory unit tests plus optional Postgres roundtrip (skipped without UBAG_TEST_POSTGRES_DSN, existing pattern)",
+  "contract_first": [
+   "fleet-01",
+   "fleet-02"
+  ],
+  "depends_on": [
+   "fleet-01",
+   "fleet-02"
+  ],
+  "flag": "UBAG_HELPER_NODES (default off)",
+  "risk": "Migration must be 0022 or later (voice uses 0019-0021). Additive only; partial unique index allows one active attempt per job; lease_generation is monotonic per job; SQLite edge profile refuses helper mode."
+ },
+ "fleet-04": {
+  "id": "fleet-04",
+  "title": "Pure eligibility, pressure hysteresis and ceiling logic",
+  "plan_phase": 1,
+  "files": [
+   "apps/gateway/internal/nodes/eligibility.go",
+   "apps/gateway/internal/nodes/pressure.go",
+   "apps/gateway/internal/nodes/ceiling.go",
+   "apps/gateway/internal/nodes/logic_test.go"
+  ],
+  "size": "M",
+  "test_approach": "Table tests with injected clock: 3 missed 15s heartbeats stop assignment; CPU>80% or mem<20% reduce, recovery only after 2 min under 60% and over 25%; reservation_state unknown means ineligible; 2c/4G=1.5/2.5GiB, 4c/8G=3/5, else 75%/62.5%; effective cap = min(grant, ceiling); start at 1",
+  "contract_first": [
+   "fleet-02"
+  ],
+  "depends_on": [
+   "fleet-02"
+  ],
+  "flag": "none (pure functions)",
+  "risk": "Do not recompute OET reservations locally; trust the grant and clamp only to the static ceiling"
+ },
+ "fleet-05": {
+  "id": "fleet-05",
+  "title": "AllocationSource: poll manager grants with last-known-good",
+  "plan_phase": 1,
+  "files": [
+   "apps/gateway/internal/nodes/allocation_source.go",
+   "apps/gateway/internal/nodes/allocation_source_test.go"
+  ],
+  "size": "M",
+  "test_approach": "Fake HTTP server: etag, parse failure fail-closed, manager down keeps running attempts and last grant for bounded stale-grace but grants no increases",
+  "contract_first": [
+   "fleet-02"
+  ],
+  "depends_on": [
+   "fleet-02",
+   "fleet-03",
+   "fleet-04"
+  ],
+  "flag": "UBAG_FLEET_MANAGER_URL, UBAG_FLEET_POLL_SECONDS, UBAG_FLEET_GRANT_STALE_GRACE_SECONDS",
+  "risk": "EXTERNAL: manager endpoint and auth are undefined. No SSH, provisioning or WireGuard code in this repo (ADR in fleet-12)."
+ },
+ "fleet-06": {
+  "id": "fleet-06",
+  "title": "ubag-helper service: mTLS gRPC server with isolated attempt pool",
+  "plan_phase": 2,
+  "files": [
+   "apps/gateway/cmd/ubag-helper/main.go",
+   "apps/gateway/internal/helper/server.go",
+   "apps/gateway/internal/helper/attempts.go",
+   "apps/gateway/internal/helper/pool.go",
+   "apps/gateway/internal/helper/assets.go",
+   "apps/gateway/internal/helper/server_test.go"
+  ],
+  "size": "XL",
+  "test_approach": "In-process gRPC with test certs (deploy/mtls/gen-certs.sh style) and a fake WorkerRunner: stream events, local expiry kills attempt without renew, InspectAttempt after crash, reject wrong cert or stale generation",
+  "contract_first": [
+   "fleet-01"
+  ],
+  "depends_on": [
+   "fleet-01"
+  ],
+  "flag": "binary runs only when deployed; listen only on UBAG_HELPER_LISTEN (WireGuard address); no DB creds or app secret in its env",
+  "risk": "Reuses executor.ProcessWorkerRunner locally and replaces the single DaemonWorkerRunner mutex with a bounded process pool (one op per provider identity, daemonrunner.go:23-31). Chrome needs about 2 CPU/4 GB in prod, so 2c/4G helpers are marginal; start at 1 workload. EXTERNAL: cert issuance and Docker limits."
+ },
+ "fleet-07": {
+  "id": "fleet-07",
+  "title": "RemoteWorkerRunner and fenced idempotent commit",
+  "plan_phase": 2,
+  "files": [
+   "apps/gateway/internal/executor/remoterunner.go",
+   "apps/gateway/internal/jobs/store.go",
+   "apps/gateway/internal/jobs/postgres.go",
+   "apps/gateway/internal/jobs/memory.go",
+   "apps/gateway/internal/executor/workerconsumer.go",
+   "apps/gateway/internal/executor/remoterunner_test.go"
+  ],
+  "size": "XL",
+  "test_approach": "Fake helper: duplicate completion is a no-op, stale generation rejected with ErrFenced and the job left untouched, lease renew every 20s and 120s expiry; extend tests/chaos for helper lost mid-run",
+  "contract_first": [
+   "fleet-01",
+   "fleet-03"
+  ],
+  "depends_on": [
+   "fleet-01",
+   "fleet-03",
+   "fleet-06"
+  ],
+  "flag": "UBAG_HELPER_DISPATCH (default false)",
+  "risk": "Add an optional FencedApplier capability next to ScopedStore, matching the repo's optional-interface pattern. Fence check and event-key dedupe must share one transaction. WorkerRunner returns a slice, so this initially collects events; incremental streaming is another area's item."
+ },
+ "fleet-08": {
+  "id": "fleet-08",
+  "title": "Prober, placer and serve.go wiring",
+  "plan_phase": 2,
+  "files": [
+   "apps/gateway/internal/nodes/prober.go",
+   "apps/gateway/internal/nodes/placer.go",
+   "apps/gateway/internal/serve/serve.go",
+   "apps/gateway/internal/executor/workerconsumer.go",
+   "apps/gateway/internal/conversations/postgres.go"
+  ],
+  "size": "L",
+  "test_approach": "Placer table tests (eligible, slot free, identity lane, conversation affinity, no capacity); ErrNoCapacity leads to lease.Retry; consumer test with fake nodes",
+  "contract_first": [
+   "fleet-04",
+   "fleet-05"
+  ],
+  "depends_on": [
+   "fleet-04",
+   "fleet-05",
+   "fleet-07"
+  ],
+  "flag": "UBAG_HELPER_DISPATCH; with it on, derive PoolSize from total capacity instead of the clamp of 32 (serve.go:1345, workerconsumer.go:242)",
+  "risk": "Place after LeaseNext, because the target and identity are only known from the envelope; bounded overload surfaces at create time. Conversation bindings need an additive node_id. Metrics labels must stay low-cardinality (tools/check-metrics-cardinality.mjs)."
+ },
+ "fleet-09": {
+  "id": "fleet-09",
+  "title": "Attempt reconciliation: helper lost, gateway restart, no blind resubmit",
+  "plan_phase": 2,
+  "files": [
+   "apps/gateway/internal/nodes/reconciler.go",
+   "apps/gateway/internal/executor/filespool.go",
+   "apps/gateway/internal/serve/serve.go",
+   "apps/gateway/internal/nodes/reconciler_test.go"
+  ],
+  "size": "L",
+  "test_approach": "Cases: lost before SUBMITTED means reassign with generation+1; lost after SUBMITTED means InspectAttempt and never resubmit; stale helper result rejected; manager down",
+  "contract_first": [
+   "fleet-01",
+   "fleet-03"
+  ],
+  "depends_on": [
+   "fleet-07"
+  ],
+  "flag": "UBAG_HELPER_DISPATCH",
+  "risk": "RecoverOrphanLeases (serve.go:509) must consult the ledger first. The worker emits no 'prompt submitted' marker today, so the Python page_driver needs an informational attempt.submitted event, ignored like session.new_chat (workerconsumer.go:58-92); this is a cross-area change."
+ },
+ "fleet-10": {
+  "id": "fleet-10",
+  "title": "Helper workload manifest, image and CI (inert)",
+  "plan_phase": 2,
+  "files": [
+   "deploy/helper/workload-manifest.json",
+   "deploy/helper/Dockerfile",
+   "deploy/helper/README.md",
+   ".github/workflows/helper-image.yml",
+   "tools/check-helper-deploy.mjs",
+   "package.json"
+  ],
+  "size": "M",
+  "test_approach": "check-helper-deploy.mjs wired into test:deployment: manifest schema, no secrets, ports bound to the WireGuard address, resource requests only",
+  "contract_first": [
+   "fleet-02"
+  ],
+  "depends_on": [
+   "fleet-02",
+   "fleet-06"
+  ],
+  "flag": "none (artifacts only)",
+  "risk": "EXTERNAL: the manager pulls the image, applies Docker limits and firewall rules; UBAG supplies only the manifest. Operator noVNC login access over WireGuard or SSH tunnel is human-only and out of scope."
+ },
+ "fleet-11": {
+  "id": "fleet-11",
+  "title": "Remote voice: node-pinned control jobs and gRPC media negotiator",
+  "plan_phase": 3,
+  "files": [
+   "apps/gateway/internal/voice/remote.go",
+   "apps/gateway/internal/httpapi/voice_control.go",
+   "apps/gateway/internal/httpapi/voice_handlers.go",
+   "apps/gateway/internal/helper/voice.go"
+  ],
+  "size": "XL",
+  "test_approach": "Fake helper: OfferVoice returns an SDP answer, mute/terminate/renew forwarded, helper dead-man ends the call without renew, fenced stale control rejected; reuse the voice Postgres parity tests",
+  "contract_first": [
+   "fleet-01"
+  ],
+  "depends_on": [
+   "phase0: voice branch merged",
+   "fleet-06",
+   "fleet-07",
+   "fleet-08"
+  ],
+  "flag": "UBAG_HELPER_VOICE (default false); node voice_capable plus RTT policy",
+  "risk": "Phase number is assumed. EXTERNAL: manager must open the bounded UDP range, set NAT1To1 IP and provide TURN. Helper-hosted instances must carry no WAN CDP endpoint in topology."
+ },
+ "fleet-12": {
+  "id": "fleet-12",
+  "title": "ADR and ledger: UBAG consumes grants, never provisions",
+  "plan_phase": 1,
+  "files": [
+   "docs/adr/0006-helper-nodes-consume-manager-grants.md",
+   "PROGRESS.md",
+   "CONTEXT.md"
+  ],
+  "size": "S",
+  "test_approach": "check:blueprint and docs checks only",
+  "contract_first": [],
+  "depends_on": [],
+  "flag": "none",
+  "risk": "CLAUDE.md requires PROGRESS.md updates when scope changes"
+ },
+ "bench-01": {
+  "id": "bench-01",
+  "title": "Reconcile local main with origin/main and bring in the acceptance harness",
+  "plan_phase": 0,
+  "files": [
+   "package.json",
+   "tests/load/acceptance.mjs",
+   "tests/load/acceptance.test.mjs",
+   "tests/load/thresholds.json",
+   "docs/load-testing.md",
+   "PROGRESS.md"
+  ],
+  "size": "S",
+  "test_approach": "After the merge, run only `pnpm test:load:offline` (offline fake gateway). Never run against the VPS.",
+  "risk": "origin PROGRESS.md says do not merge until live voice evidence exists and main auto-deploys. User decision needed."
+ },
+ "bench-02": {
+  "id": "bench-02",
+  "title": "Delete or fail-closed the stale k6/Locust/run-load scripts",
+  "plan_phase": 0,
+  "files": [
+   "tests/load/run-load.mjs",
+   "tests/load/k6.js",
+   "tests/load/locustfile.py",
+   "tests/load/baselines.json",
+   "docs/load-testing.md"
+  ],
+  "size": "S",
+  "test_approach": "Default is to delete; acceptance.mjs supersedes them. If kept: non-zero exit on k6 failure or missing summary, valid contract payload (target mock, chat.prompt, job_id), poll to terminal, 403 is a failure. Verify with grep for dangling references.",
+  "depends_on": [
+   "bench-01"
+  ]
+ },
+ "bench-03": {
+  "id": "bench-03",
+  "title": "Remove remaining false-green paths in benchmark, e2e, monitor and chaos CI",
+  "plan_phase": 0,
+  "files": [
+   "tools/benchmark/benchmark.mjs",
+   "tools/benchmark/test/benchmark.test.mjs",
+   "tests/e2e/adapter-drift.spec.ts",
+   "tools/synthetic-monitor/monitor.mjs",
+   ".github/workflows/chaos.yml",
+   "tests/chaos/harness/runner.py"
+  ],
+  "size": "S",
+  "test_approach": "`pnpm test:benchmark`. benchmark.mjs: verify the result text against the expected marker, add --concurrency, label the acceptance scenario accept-only. Drift/e2e: fail when the secret is missing, send a valid payload, assert completion. Monitor: valid target plus terminal status. chaos.yml: drop the tautological assert and rename the jobs to schema-check."
+ },
+ "bench-04": {
+  "id": "bench-04",
+  "title": "Harden acceptance verdict and integrity checks, add goal thresholds",
+  "plan_phase": 0,
+  "files": [
+   "tests/load/acceptance.mjs",
+   "tests/load/thresholds.json",
+   "tests/load/thresholds.goals.json",
+   "tests/load/acceptance.test.mjs",
+   "docs/load-testing.md"
+  ],
+  "size": "M",
+  "test_approach": "Extend the offline self-tests with a fake gateway that returns wrong/truncated/duplicated results and a cross-tenant leak; assert FAIL for each. Add result fetch and verification (job_id/nonce/sentinel), terminal-event uniqueness, count completed_with_warnings separately, and a second-tenant probe (UBAG_LOAD_API_KEY_B) on GET/events/artifacts/list. Gate facade_image failures, require min overload rejections when the overload scenario runs, and add a --require-goals mode (unmeasured = FAIL) with goal thresholds create p95<=200 and read p95<=100 (read measured on a dedicated GET mix).",
+  "depends_on": [
+   "bench-01"
+  ]
+ },
+ "bench-05": {
+  "id": "bench-05",
+  "title": "Stage-timing contract plus worker instrumentation",
+  "plan_phase": 0,
+  "files": [
+   "packages/shared-schemas/schemas/job-event.schema.json",
+   "packages/openapi/openapi.yaml",
+   "apps/worker/ubag_worker/live/engine.py",
+   "apps/worker/ubag_worker/live/events.py",
+   "adapters/mock/ubag_mock_adapter/adapter.py",
+   "apps/worker/tests/test_stage_timings.py"
+  ],
+  "size": "M",
+  "contract_first": [
+   "job-event.schema.json: document optional data.timings_ms with a closed key set (worker_start, browser_prep, auth_check, attachment_materialize, provider_submit, first_token, provider_stream, extraction). `data` is already additionalProperties:true, so this is additive; denylist redaction at jobs/memory.go:626 passes numeric timings through.",
+   "openapi: JobResponse.metadata doc note"
+  ],
+  "test_approach": "Targeted pytest only (test_stage_timings.py plus the existing mock/engine tests). Use time.perf_counter marks. Do not derive stages from event created_at (replayed after the run, engine.py:464-473)."
+ },
+ "bench-06": {
+  "id": "bench-06",
+  "title": "Gateway stage and read/write metrics; remove misleading zero stubs",
+  "plan_phase": 0,
+  "files": [
+   "apps/gateway/internal/executor/workerconsumer.go",
+   "apps/gateway/internal/httpapi/server.go",
+   "apps/gateway/internal/httpapi/overload.go",
+   "tools/check-metrics-cardinality.mjs",
+   "packages/observability"
+  ],
+  "size": "M",
+  "test_approach": "`go test ./internal/httpapi ./internal/executor -run Metric`, `pnpm test:observability`, `node tools/check-metrics-cardinality.mjs`. Record spawn/startup (workerconsumer.go:431-433), parse timings_ms, and expose `ubag_job_stage_duration_seconds{stage,adapter_family}` (closed label set). Add a bounded method class to the route latency histogram (overload.go:116-132). Remove or make real the hard-coded zero series (server.go:978-983,1114-1124) and a real webhook delivery histogram.",
+  "contract_first": [
+   "packages/observability metric contract entries before the Go emitters"
+  ],
+  "depends_on": [
+   "bench-05"
+  ]
+ },
+ "bench-07": {
+  "id": "bench-07",
+  "title": "Go runtime and process metrics plus inert pprof",
+  "plan_phase": 0,
+  "files": [
+   "apps/gateway/internal/serve/serve.go",
+   "apps/gateway/internal/serve/pprof.go",
+   "apps/gateway/internal/httpapi/server.go",
+   "apps/docs/src/content/docs/operations/observability.md",
+   "tools/check-alert-metrics.mjs"
+  ],
+  "size": "M",
+  "flag": "UBAG_PPROF_ADDR (unset = no listener; loopback-only enforced)",
+  "test_approach": "Unit test: unset means no listener, a non-loopback address is refused. Render go_goroutines, heap, GC pause, fds and process_resident_memory_bytes/cpu_seconds, since check-alert-metrics treats process_* as external. Targeted go test only."
+ },
+ "bench-08": {
+  "id": "bench-08",
+  "title": "cgroup, throttle and host-pressure sampler in the harness",
+  "plan_phase": 0,
+  "files": [
+   "tests/load/acceptance.mjs",
+   "tests/load/lib/cgroup.mjs",
+   "tests/load/acceptance.test.mjs",
+   "tests/load/thresholds.goals.json"
+  ],
+  "size": "M",
+  "test_approach": "Replace `docker stats --no-stream` (acceptance.mjs:418-420) with `docker exec cat` of cpu.stat, memory.current/peak/max/events, cpu/memory.pressure and /proc/meminfo per gateway, browser and worker container. Report throttled %, memory headroom % (goal >=20), oom_kill, and the helper rules (CPU>80%, mem avail<20%, recover <60%/>25% for 2 min) as sampled booleans. Fixture-based offline tests; cgroup v1 fallback.",
+  "depends_on": [
+   "bench-04"
+  ]
+ },
+ "bench-09": {
+  "id": "bench-09",
+  "title": "Recorded workload manifest and run provenance",
+  "plan_phase": 0,
+  "files": [
+   "tests/load/workloads/text.json",
+   "tests/load/workloads/attachment.json",
+   "tests/load/workloads/audio-upload.json",
+   "tests/load/workloads/mixed.json",
+   "tests/load/workloads/voice.json",
+   "tests/load/workload.schema.json",
+   "tests/load/acceptance.mjs",
+   "docs/benchmarks/README.md"
+  ],
+  "size": "M",
+  "contract_first": [
+   "tests/load/workload.schema.json (mix weights, payload sizes, think time, provider scenario, ladder steps)"
+  ],
+  "test_approach": "Offline schema validation test. report.meta gains the gateway commit (from ubag_gateway_info), a non-secret allowlist of env knobs (UBAG_WORKER_CONCURRENCY, UBAG_WORKER_DAEMON, UBAG_WORKER_POLL_INTERVAL_MS, UBAG_ADMISSION_*, UBAG_GATEWAY_MAX_INFLIGHT_REQUESTS, store type), host spec, container limits, harness git sha and manifest hash. Publish under docs/benchmarks (tests/load/results is gitignored).",
+  "depends_on": [
+   "bench-04"
+  ]
+ },
+ "bench-10": {
+  "id": "bench-10",
+  "title": "Event-delivery latency and idle-activity scenarios (SSE, DB, dashboard)",
+  "plan_phase": 0,
+  "files": [
+   "tests/load/acceptance.mjs",
+   "tests/load/acceptance.test.mjs"
+  ],
+  "size": "M",
+  "test_approach": "Offline fake-gateway tests. Add `events-latency`: N SSE subscribers on /v1/events or per-job, latency = receive time minus event created_at, calibrated with the Date header; optional pg_stat_statements delta. Extend metrics-snapshot (:689) to record `ubag_gateway_http_requests_total` deltas by route. Add that metric and the worker/job histograms to TRACKED (:329-334), and generalise the histogram list (:374, which handles only 2 names).",
+  "depends_on": [
+   "bench-06"
+  ]
+ },
+ "bench-11": {
+  "id": "bench-11",
+  "title": "Gated synthetic knobs on the mock adapter (gateway-overhead scenarios)",
+  "plan_phase": 0,
+  "files": [
+   "adapters/mock/ubag_mock_adapter/adapter.py",
+   "adapters/mock/tests/test_adapter.py",
+   "apps/gateway/internal/executor/workerconsumer.go"
+  ],
+  "size": "S",
+  "flag": "UBAG_MOCK_SYNTHETIC=1 (inert by default; must be passed through minimalWorkerEnv)",
+  "test_approach": "Adapter tests: mock_delay_ms, mock_fail, mock_result_bytes honored only with the env set; the default path stays byte-identical. Use a long-output case (>512 words) to confirm the maxWorkerEvents failure is explicit, not a silent truncation (workerconsumer.go:99,1464).",
+  "depends_on": [
+   "bench-05"
+  ]
+ },
+ "bench-12": {
+  "id": "bench-12",
+  "title": "synthetic_chat browser fixture so scenarios exercise the warm-daemon path",
+  "plan_phase": 6,
+  "files": [
+   "tools/synthetic-provider/server.mjs",
+   "adapters/synthetic_chat/manifest.json",
+   "adapters/registry.synthetic.json",
+   "apps/worker/ubag_worker/live/selectors.py",
+   "tests/load/workloads/mixed.json"
+  ],
+  "size": "L",
+  "flag": "UBAG_SYNTHETIC_PROVIDER=1; not in adapters/registry.json by default",
+  "test_approach": "Fixture-server unit test, then worker pytest against the local origin. Scenarios: slow think, streaming cadence, long output, truncated stream, dropped connection, signed-out page asserting manual_login_required fail-closed, slow attachment accept. Safe-mode: local origin only, no login or CAPTCHA behavior.",
+  "risk": "adapter-registry and blueprint checks must tolerate the overlay.",
+  "depends_on": [
+   "bench-05",
+   "bench-11"
+  ]
+ },
+ "bench-13": {
+  "id": "bench-13",
+  "title": "Voice frame-age metric and in-process relay latency bench (gateway side)",
+  "plan_phase": 0,
+  "files": [
+   "apps/gateway/internal/voice/media.go",
+   "apps/gateway/internal/voice/metrics.go",
+   "apps/gateway/internal/voice/media_bench_test.go",
+   "apps/gateway/internal/httpapi/server.go"
+  ],
+  "size": "M",
+  "test_approach": "`go test ./internal/voice -run Latency -bench`. Stamp enqueue time on the mic chan (media.go:64,381), observe at dequeue (:668) and speaker WriteSample (:707). Add `ubag_voice_relay_frame_age_seconds{direction}` (buckets 5ms..1.28s) and finally count speaker drops. Reuse fakeRelay echo and the pion test client; ramp 1/5/10/20 sessions at 20ms pacing and report p50/p95/p99 against the <=100ms goal.",
+  "contract_first": [
+   "observability metric contract entry"
+  ]
+ },
+ "bench-14": {
+  "id": "bench-14",
+  "title": "Relay-side stats op and real-libopus CPU bench (Rust-gate baseline)",
+  "plan_phase": 6,
+  "files": [
+   "deploy/vps/browser/audio-relay.py",
+   "deploy/vps/browser/tests/bench_relay.py",
+   "apps/gateway/internal/voice/media.go",
+   "apps/docs/src/content/docs/guides/live-voice.md"
+  ],
+  "size": "M",
+  "contract_first": [
+   "Relay protocol v2 comment (media.go:38-45) and live-voice.md: additive control op `stats`. Older relays ignore unknown ops (audio-relay.py:493)."
+  ],
+  "test_approach": "bench_relay.py runs inside the browser image with real libopus (conftest FakeLib is unusable) and reports CPU us/frame, thread wake lag and FIFO-full drops (currently stderr-only, :523-525). Python tests for the stats op. Inert unless the gateway requests it.",
+  "depends_on": [
+   "bench-13"
+  ]
+ },
+ "bench-15": {
+  "id": "bench-15",
+  "title": "1/2/5/10/20 workload ladder plus capacity report",
+  "plan_phase": 6,
+  "files": [
+   "tests/load/ladder.mjs",
+   "tests/load/acceptance.test.mjs",
+   "docs/benchmarks/capacity-template.md",
+   "PROGRESS.md"
+  ],
+  "size": "L",
+  "test_approach": "Offline ladder test against the fake gateway. Closed-loop N active workloads per manifest, plus modes for 100 clients and 1000 queued with the consumer paused. Per-step stage p50/p95, accept and read p95, overload rate, cgroup stats, voice frame age, integrity counters. Report the highest N that meets every goal. Run only on an isolated Linux stack with compose cpus/mem_limit matching 2c/4G -> 1.5 CPU/2.5GiB and 4c/8G -> 3 CPU/5GiB. The acceptance host guard (acceptance.mjs:129-143) stays on.",
+  "depends_on": [
+   "bench-04",
+   "bench-08",
+   "bench-09",
+   "bench-12",
+   "bench-13"
+  ]
+ },
+ "bench-16": {
+  "id": "bench-16",
+  "title": "Rust-gate evaluator (profile-selected candidate only)",
+  "plan_phase": 6,
+  "files": [
+   "tools/benchmark/rust-gate.mjs",
+   "tools/benchmark/test/rust-gate.test.mjs"
+  ],
+  "size": "S",
+  "test_approach": "Unit tests with fixture bench JSON: go only if UBAG-controlled overhead improves >=20% or CPU/mem >=25%, the share is material in the mixed ladder, there is no regression, and golden Opus/RelayToken vectors match (media_relay_test.go:204). No Rust is written before this passes.",
+  "depends_on": [
+   "bench-14",
+   "bench-15"
+  ]
+ },
+ "dashboard-00": {
+  "id": "dashboard-00",
+  "title": "Merge feat/multimodal-voice-hardening into the integration base before any contract edit",
+  "plan_phase": 0,
+  "files": [
+   "packages/openapi/openapi.yaml",
+   "packages/shared-schemas/errors.json",
+   "packages/shared-schemas/schemas/error.schema.json",
+   "packages/sdk-typescript/src/{client,types,index}.ts",
+   "packages/sdk-go/client.go",
+   "packages/sdk-go/generated_contract_manifest.go",
+   "packages/sdk-typescript/src/generated/contract-manifest.ts"
+  ],
+  "size": "M",
+  "depends_on": [],
+  "risk": "Both sides edit the generated manifests and the closed error enum; resolve by re-running generate-manifest, not hand-merging.",
+  "test_approach": "pnpm check:sdk-freshness, test:schema and test:conformance only after the merge; no full suite."
+ },
+ "dashboard-01": {
+  "id": "dashboard-01",
+  "title": "Close existing dashboard/contract/fixture drift before adding fields",
+  "plan_phase": 1,
+  "files": [
+   "apps/dashboard/src/routes/browser/+page.svelte",
+   "apps/dashboard/src/lib/api/types.ts",
+   "apps/dashboard/src/routes/users/+page.svelte",
+   "apps/dashboard/src/lib/api/groupb-routes.test.ts",
+   "packages/conformance/fixtures/v0/scenarios.json",
+   "packages/conformance/scripts/validate-fixtures.mjs"
+  ],
+  "size": "M",
+  "depends_on": [
+   "dashboard-00"
+  ],
+  "contract_first": [
+   "Fix the fixtures to the OpenAPI field names, then add Ajv body validation for browser/concurrency/jobs scenarios in validate-fixtures.mjs; also have groupb-routes.test.ts assert dashboard paths against UBAG_ENDPOINTS."
+  ],
+  "test_approach": "vitest groupb-routes plus pnpm test:conformance; no Playwright."
+ },
+ "dashboard-02": {
+  "id": "dashboard-02",
+  "title": "Additive tenant-safe job fields: queue_reason (enum, nullable) + queue_reason_since; node-qualified metadata.worker",
+  "plan_phase": 1,
+  "files": [
+   "packages/shared-schemas/schemas/job-response.schema.json",
+   "packages/shared-schemas/errors.json",
+   "packages/openapi/openapi.yaml",
+   "packages/sdk-typescript/src/generated/contract-manifest.ts",
+   "packages/sdk-go/generated_contract_manifest.go",
+   "packages/conformance/fixtures/v0/scenarios.json",
+   "apps/docs/src/content/docs/contracts/job-lifecycle.md",
+   "apps/docs/src/content/docs/contracts/error-catalog.md"
+  ],
+  "size": "M",
+  "depends_on": [
+   "dashboard-00"
+  ],
+  "flag": "Field omitted while null; gateway fills it only when UBAG_FLEET_MODE is set (inert by default).",
+  "risk": "Fine-grained reasons such as oet_reservation reveal other projects to tenants; expose a coarse tenant value and the full reason only on the operator endpoint (open question). Do not add event types or error categories: reuse queued/blocked with data.reason and UBAG-QUEUE-BACKPRESSURE-002.",
+  "contract_first": [
+   "Edit the schema, then run `node tools/make-sdks/generate-manifest.mjs` (job-response fingerprint changes, so check:sdk-freshness fails until regenerated); add a jobs.get.queued-reason scenario; TS UbagJobMetadata and Go need no type change."
+  ],
+  "test_approach": "pnpm lint:schemas, check:sdk-freshness, test:conformance."
+ },
+ "dashboard-03": {
+  "id": "dashboard-03",
+  "title": "Operator-scoped fleet read API: GET /v1/fleet/nodes (+ /v1/fleet/summary), action fleet:read",
+  "plan_phase": 1,
+  "files": [
+   "packages/openapi/openapi.yaml",
+   "apps/gateway/internal/authz/authz.go",
+   "packages/security/src/rbac.ts",
+   "apps/gateway/internal/httpapi/routes.go",
+   "packages/sdk-typescript/src/{client,types,index}.ts",
+   "packages/sdk-go/client.go",
+   "packages/sdk-typescript/test/conformance.test.mjs",
+   "packages/sdk-go/client_conformance_test.go",
+   "packages/conformance/fixtures/v0/scenarios.json",
+   "apps/docs/src/content/docs/reference/api.md"
+  ],
+  "size": "L",
+  "depends_on": [
+   "dashboard-00",
+   "dashboard-02"
+  ],
+  "flag": "UBAG_FLEET_MODE; 501 NotImplemented when no fleet source, the same pattern as the topology and concurrency handlers.",
+  "risk": "Cross-tenant and cross-project leakage. Return opaque node_id and label only, no IPs, hostnames or remote_endpoint. fleet:read goes to operator and admin only, not developer. Redact BrowserInstance.remote_endpoint for helper-hosted instances. Node fields: state (eligible|ineligible|draining|lost|unknown_reservation), heartbeat_at, grant, usage, pressure {admission_reduced, recover_at}, readiness[] kept separate from host state.",
+  "contract_first": [
+   "OpenAPI paths and closed FleetNode schemas first; regenerate manifest (UBAG_ENDPOINTS); hand-write SDK methods; add route mappings in the TS (conformance.test.mjs:219-241) and Go conformance harnesses; add fixtures and a validate-fixtures requiredEndpointIds entry."
+  ],
+  "test_approach": "pnpm test:schema, check:sdk-freshness, test:conformance."
+ },
+ "dashboard-04": {
+  "id": "dashboard-04",
+  "title": "Truthful queue depth: GET /v1/jobs/summary (counts_by_status, queued_by_reason, oldest_queued_at); stop deriving totals from limit=100",
+  "plan_phase": 1,
+  "files": [
+   "packages/openapi/openapi.yaml",
+   "apps/dashboard/src/routes/+page.svelte",
+   "apps/dashboard/src/routes/metrics/+page.svelte",
+   "apps/dashboard/src/routes/failed/+page.svelte",
+   "apps/dashboard/src/lib/api/types.ts"
+  ],
+  "size": "M",
+  "depends_on": [
+   "dashboard-02"
+  ],
+  "contract_first": [
+   "OpenAPI path then manifest regeneration; SDK method optional."
+  ],
+  "test_approach": "vitest on the summary parsing; Playwright snapshots unaffected (dead gateway renders the error panel)."
+ },
+ "dashboard-05": {
+  "id": "dashboard-05",
+  "title": "Surface queue reasons, placement and assigned capacity on existing pages (no new nav route)",
+  "plan_phase": 2,
+  "files": [
+   "apps/dashboard/src/routes/jobs/+page.svelte",
+   "apps/dashboard/src/routes/browser/+page.svelte",
+   "apps/dashboard/src/routes/quotas/+page.svelte",
+   "apps/dashboard/src/routes/+page.svelte",
+   "apps/dashboard/src/lib/components/CapacityBar.svelte",
+   "apps/dashboard/src/lib/api/types.ts"
+  ],
+  "size": "L",
+  "depends_on": [
+   "dashboard-03",
+   "dashboard-04"
+  ],
+  "flag": "Sections render only when /v1/fleet/nodes returns 200; 501/404 hides them (mirror concurrencyUnavailable, browser/+page.svelte:74-82).",
+  "risk": "Keep NAJM tokens and radius <= 8px, show an em dash for unreported values (design.md forbids fabricated metrics), stay under the ~96KB dist headroom. Use the quotas bar pattern (barColor).",
+  "test_approach": "One mocked-route Playwright test like the Antigravity tests plus the axe loop; baselines unchanged."
+ },
+ "dashboard-06": {
+  "id": "dashboard-06",
+  "title": "Voice sessions and capabilities panel (supported/configured/verified/available, queued reason, placement)",
+  "plan_phase": 2,
+  "files": [
+   "apps/dashboard/src/lib/components/VoiceSessions.svelte",
+   "apps/dashboard/src/routes/browser/+page.svelte",
+   "apps/dashboard/src/lib/api/types.ts"
+  ],
+  "size": "M",
+  "depends_on": [
+   "dashboard-00",
+   "dashboard-03"
+  ],
+  "flag": "Hidden when /v1/voice/sessions or /v1/capabilities returns 501 or 404.",
+  "risk": "VoiceSessionResponse.session is an open object on the branch, so queue_reason and node_label can be added without a schema break; Session has identity_ref and instance_ref but no node field.",
+  "test_approach": "vitest for the mapper; mocked-route Playwright."
+ },
+ "dashboard-07": {
+  "id": "dashboard-07",
+  "title": "Harden pollWhileVisible: no start when hidden, immediate:false, in-flight guard, jittered backoff on 429/5xx honoring Retry-After; remove duplicate first loads",
+  "plan_phase": 4,
+  "files": [
+   "apps/dashboard/src/lib/poll.ts",
+   "apps/dashboard/src/lib/poll.test.ts",
+   "apps/dashboard/src/lib/api/client.ts",
+   "apps/dashboard/src/lib/api/types.ts",
+   "apps/dashboard/src/routes/jobs/+page.svelte",
+   "apps/dashboard/src/routes/failed/+page.svelte",
+   "apps/dashboard/src/routes/workflows/+page.svelte",
+   "apps/dashboard/src/routes/browser/+page.svelte",
+   "apps/dashboard/src/routes/webhooks/+page.svelte"
+  ],
+  "size": "S",
+  "depends_on": [],
+  "flag": "None; behavior-only, backward compatible defaults.",
+  "test_approach": "New vitest with fake timers and a visibilitychange stub; no Playwright."
+ },
+ "dashboard-08": {
+  "id": "dashboard-08",
+  "title": "Make remaining timers visibility-aware: Antigravity 3s interval (run only with an active login or pending verification), UpdatedAgo, LiveBrowser reconnect while hidden, mobile app views",
+  "plan_phase": 4,
+  "files": [
+   "apps/dashboard/src/routes/antigravity/+page.svelte",
+   "apps/dashboard/src/lib/components/UpdatedAgo.svelte",
+   "apps/dashboard/src/lib/components/LiveBrowser.svelte",
+   "apps/mobile/src/components/OverviewView.svelte",
+   "apps/mobile/src/components/JobsView.svelte",
+   "apps/mobile/src/components/JobDetailView.svelte",
+   "apps/mobile/src/components/AlertsView.svelte"
+  ],
+  "size": "S",
+  "depends_on": [
+   "dashboard-07"
+  ],
+  "test_approach": "Existing Antigravity Playwright tests (dashboard.spec.ts:120-241) plus a vitest on the shared helper; mobile is optional."
+ },
+ "dashboard-09": {
+  "id": "dashboard-09",
+  "title": "Cut heavy repeated reads: Overview, Metrics and Failed each pull 100 full job bodies; use summary, filter[status] and a shared TTL snapshot store",
+  "plan_phase": 4,
+  "files": [
+   "apps/dashboard/src/lib/stores/snapshot.ts",
+   "apps/dashboard/src/routes/+page.svelte",
+   "apps/dashboard/src/routes/metrics/+page.svelte",
+   "apps/dashboard/src/routes/failed/+page.svelte"
+  ],
+  "size": "M",
+  "depends_on": [
+   "dashboard-04",
+   "dashboard-07"
+  ],
+  "risk": "Do not use fields= or include=, which the gateway ignores.",
+  "test_approach": "vitest on the store TTL and dedupe."
+ },
+ "dashboard-10": {
+  "id": "dashboard-10",
+  "title": "Make the weight budget gate real: --strict fails on missing dist and runs after the dashboard build; per-route chunk cap",
+  "plan_phase": 4,
+  "files": [
+   "tools/check-weight.mjs",
+   ".github/workflows/ci.yml",
+   "apps/dashboard/vite.config.ts"
+  ],
+  "size": "S",
+  "depends_on": [],
+  "risk": "Gate may immediately fail if current dist exceeds 1000KB; measure first and move the step into node-suite after test:dashboard (ci.yml:303-312).",
+  "test_approach": "Run check-weight.mjs --strict once against a fresh local dashboard build; no full suite."
+ },
+ "dashboard-11": {
+  "id": "dashboard-11",
+  "title": "Docs and ledger for the operator surface",
+  "plan_phase": 1,
+  "files": [
+   "apps/docs/src/content/docs/dashboard/ux.md",
+   "apps/docs/src/content/docs/operations/operator-runbook.md",
+   "apps/docs/src/content/docs/contracts/job-lifecycle.md",
+   "apps/docs/src/content/docs/reference/api.md",
+   "apps/docs/astro.config.mjs",
+   "PROGRESS.md"
+  ],
+  "size": "S",
+  "depends_on": [
+   "dashboard-02",
+   "dashboard-03"
+  ],
+  "test_approach": "pnpm docs:build only if a page or sidebar entry is added."
+ },
+ "rust-01": {
+  "id": "rust-01",
+  "title": "Gate precondition and decision record: no Rust work until voice branch reconciled and instrumented",
+  "plan_phase": 0,
+  "files": [
+   "docs/adr/0006-rust-relay-adoption-gate.md",
+   "PROGRESS.md"
+  ],
+  "size": "S",
+  "contract_first": [],
+  "depends_on": [],
+  "flag": "none",
+  "risk": "Starting before merge compares against unstable code. Rust adds a third runtime after the SDK pruning (PROGRESS.md:3299-3305).",
+  "test_approach": "Docs only. Record the gate numbers, the pre-registered stop rule, the optimised-Python-baseline rule, and that the baseline is taken after merge of feat/multimodal-voice-hardening and live voice acceptance."
+ },
+ "rust-02": {
+  "id": "rust-02",
+  "title": "Relay protocol v2 contract and shared vectors consumed by Python, Go and (later) Rust",
+  "plan_phase": 5,
+  "files": [
+   "packages/conformance/fixtures/voice-relay/v2.json",
+   "packages/shared-schemas/schemas/voice-relay-control.schema.json",
+   "packages/conformance/scripts/validate-fixtures.mjs",
+   "deploy/vps/browser/tests/test_relay_vectors.py",
+   "apps/gateway/internal/voice/relay_vectors_test.go"
+  ],
+  "size": "M",
+  "contract_first": [
+   "fixture JSON: hex-encoded frame cases (valid, length 0/1/65536/65537, unknown type), the token vector for relay-test-secret/s1/1700000000, hello validation cases, the reply reason-code enum, timing constants",
+   "control-frame JSON schema (hello/ready/error/mute) with compact-JSON key-order note"
+  ],
+  "depends_on": [
+   "rust-01"
+  ],
+  "flag": "none",
+  "risk": "Pinning the Go (len<2) vs Python (len>=1) asymmetry may force a small behavior decision.",
+  "test_approach": "pytest and go test each assert the same fixture. Replace the Go-only vector at VB media_relay_test.go:204-209. validate-fixtures.mjs checks the schema. Targeted runs only."
+ },
+ "rust-03": {
+  "id": "rust-03",
+  "title": "Relay and gateway measurement hooks (opt-in): per-frame timings, queue depth, drops, frame transit",
+  "plan_phase": 5,
+  "files": [
+   "deploy/vps/browser/audio-relay.py",
+   "deploy/vps/browser/opus_bridge.py",
+   "apps/gateway/internal/voice/media.go",
+   "apps/gateway/internal/voice/metrics.go",
+   "deploy/vps/browser/tests/test_audio_relay.py"
+  ],
+  "size": "M",
+  "contract_first": [
+   "metric names (e.g. ubag_voice_relay_frame_transit_seconds, ubag_voice_media_frames_dropped{direction=speaker}) documented before code"
+  ],
+  "depends_on": [
+   "rust-01"
+  ],
+  "flag": "UBAG_VOICE_RELAY_STATS=1, off by default; relay logs a JSON summary every 10 s to /run/ubag/audio-relay.log; no protocol change",
+  "risk": "Timing calls add overhead, so keep them sampled. Implementing the speaker drop counter changes an existing series' meaning.",
+  "test_approach": "pytest with FakeLib/FakeProc asserts stats lines and the counters; a gateway unit test checks the speaker series is incremented."
+ },
+ "rust-04": {
+  "id": "rust-04",
+  "title": "Real-libopus golden tests and black-box seams in the Python relay",
+  "plan_phase": 5,
+  "files": [
+   "deploy/vps/browser/tests/test_opus_real.py",
+   "deploy/vps/browser/audio-relay.py"
+  ],
+  "size": "S",
+  "contract_first": [
+   "document the env seams: UBAG_VOICE_MIC_PIPE, UBAG_VOICE_PAREC, UBAG_VOICE_PACTL"
+  ],
+  "depends_on": [
+   "rust-02"
+  ],
+  "flag": "All seams default to current values (audio-relay.py:112,411,270,279); inert unless set",
+  "risk": "Encoder bytes depend on the libopus version, so record the version in the golden file.",
+  "test_approach": "pytest skips when libopus is absent; asserts decode/encode properties and golden packet bytes for the fixed corpus; runs in the Debian image only."
+ },
+ "rust-05": {
+  "id": "rust-05",
+  "title": "Identical-input A/B harness and gate evaluator",
+  "plan_phase": 5,
+  "files": [
+   "tools/voice-relay-bench/run.mjs",
+   "tools/voice-relay-bench/corpus.mjs",
+   "tools/voice-relay-bench/parec-shim.sh",
+   "tools/voice-relay-bench/report.mjs",
+   "tests/load/voice-relay-gate.json",
+   "tools/voice-relay-bench/run.test.mjs"
+  ],
+  "size": "L",
+  "contract_first": [
+   "gate thresholds JSON in the max_/min_ style of VB tests/load/thresholds.json: min_cpu_overhead_reduction_pct 20, min_rss_reduction_pct 25, max_p95_regression_pct 0, max_leaks 0",
+   "corpus manifest with seed and libopus version"
+  ],
+  "depends_on": [
+   "rust-02",
+   "rust-03",
+   "rust-04"
+  ],
+  "flag": "Manual run only; the offline self-test is the only CI-safe part",
+  "risk": "Noisy VPS or shared host gives false verdicts. Mock-provider only, and never a real provider login.",
+  "test_approach": "Offline self-test with the Python relay as both A and B must report 0% delta and pass the byte-compare. Real runs happen on a dedicated lab helper and the report is attached to PROGRESS.md."
+ },
+ "rust-06": {
+  "id": "rust-06",
+  "title": "Python-baseline fixes before any Rust verdict: reuse buffers, recv_into, single-join framing, pipe size cap, cheaper health loop",
+  "plan_phase": 5,
+  "files": [
+   "deploy/vps/browser/opus_bridge.py",
+   "deploy/vps/browser/audio-relay.py",
+   "deploy/vps/browser/tests/test_audio_relay.py",
+   "deploy/vps/browser/tests/test_opus_bridge.py"
+  ],
+  "size": "M",
+  "contract_first": [],
+  "depends_on": [
+   "rust-03"
+  ],
+  "flag": "Behavior-preserving fixes need none. The F_SETPIPE_SZ cap uses UBAG_VOICE_PIPE_BYTES (unset by default). A null-sink rate=48000 channels=1 change needs UBAG_VOICE_SINK_SPEC_PIN=1 and a live check first.",
+  "risk": "Pipe cap and sink spec change latency and Chrome behavior, so verify live. Buffer reuse must stay thread-safe under the per-codec lock.",
+  "test_approach": "Existing pytest stays green; add tests that output bytes are unchanged for the corpus; compare before/after with the rust-05 harness."
+ },
+ "rust-07": {
+  "id": "rust-07",
+  "title": "CONDITIONAL: Rust relay crate, env-selectable and rollbackable",
+  "plan_phase": 5,
+  "files": [
+   "packages/relay-rust/Cargo.toml",
+   "packages/relay-rust/src/main.rs",
+   "packages/relay-rust/tests/vectors.rs",
+   "deploy/vps/browser/Dockerfile",
+   "deploy/vps/browser/entrypoint.sh",
+   ".github/workflows/ci.yml"
+  ],
+  "size": "XL",
+  "contract_first": [
+   "rust-02 fixtures",
+   "protocol-v2 doc"
+  ],
+  "depends_on": [
+   "rust-05",
+   "rust-06"
+  ],
+  "flag": "UBAG_VOICE_RELAY_IMPL=python|rust, default python; fall back to python if the binary is missing",
+  "risk": "Only start if the gate says go. Vendored libopus can change encoder bytes; musl vs glibc; extra CI and toolchain cost; third runtime to maintain.",
+  "test_approach": "cargo test against the shared vectors; the same black-box suite and A/B harness run against both implementations; rollback drill flips the env and confirms the next call uses python with the gateway unchanged."
+ },
+ "rust-08": {
+  "id": "rust-08",
+  "title": "Gate verdict and rollback drill record",
+  "plan_phase": 5,
+  "files": [
+   "PROGRESS.md",
+   "docs/handoffs/rust-relay-gate-verdict.md"
+  ],
+  "size": "S",
+  "contract_first": [],
+  "depends_on": [
+   "rust-05"
+  ],
+  "flag": "none",
+  "risk": "A verdict from an unrepresentative host.",
+  "test_approach": "Attach the report JSON with libopus version, host class and CI lower bounds; state go/stop against the pre-registered rule."
+ },
+ "security-01": {
+  "id": "security-01",
+  "title": "Contracts: helper proto, authz actions, audit vocabulary, error codes",
+  "plan_phase": 0,
+  "files": [
+   "packages/proto/proto/ubag/helper/v1/helper.proto",
+   "packages/security/src/rbac.ts",
+   "packages/security/src/audit.ts",
+   "apps/gateway/internal/authz/authz.go",
+   "packages/security/test/security-contracts.test.mjs",
+   "packages/security/scripts/validate-security-contracts.mjs",
+   "packages/shared-schemas/errors.json",
+   "packages/openapi/openapi.yaml"
+  ],
+  "size": "M",
+  "depends_on": [],
+  "contract_first": [
+   "helper.proto (Register, ReportCapacity, RunAttempt stream, Renew/Cancel/Inspect, OpenViewer, voice control) with attempt_id, node_id, lease_generation, input_fingerprint, workload_version in every message",
+   "fleet:read, fleet:manage, browser:interact actions in rbac.ts and authz.go",
+   "audit event names plus actor type node",
+   "UBAG-HELPER-* error codes",
+   "OpenAPI: viewer ticket and fleet read endpoints"
+  ],
+  "flag": "none (vocabulary only)",
+  "test_approach": "pnpm test:security and check:contracts for role/action parity; buf lint and breaking; authz_test asserts viewer, developer and service lack fleet:* and browser:interact.",
+  "risk": "Parity gate fails if rbac.ts and authz.go diverge."
+ },
+ "security-02": {
+  "id": "security-02",
+  "title": "Pre-helper isolation fixes: tenant-keyed topology upsert, remote_endpoint redaction, tab context check, namespaced profile policy",
+  "plan_phase": 0,
+  "files": [
+   "apps/gateway/internal/topology/store.go",
+   "apps/gateway/internal/topology/sqlite.go",
+   "apps/gateway/internal/topology/postgres.go",
+   "apps/gateway/internal/httpapi/topology_handlers.go",
+   "apps/gateway/internal/executor/workerconsumer.go",
+   "apps/gateway/internal/httpapi/server.go",
+   "apps/worker/ubag_worker/live/envelope.py"
+  ],
+  "size": "M",
+  "depends_on": [],
+  "flag": "UBAG_PROFILE_OPTIONS_POLICY=legacy|namespaced (default legacy, inert)",
+  "test_approach": "Go tests: tenant B reporting tenant A's instance_id or context_id leaves A's row intact and drops B's tab; instanceToResponse omits remote_endpoint. Worker pytest: namespaced policy ignores user_data_dir and profile_dir options.",
+  "risk": "Redacting remote_endpoint may break the dashboard browser page; check the types.ts consumer first."
+ },
+ "security-03": {
+  "id": "security-03",
+  "title": "Helper trust plane: separate mTLS listener, URI-SAN node identity, node registry with pinned SPKI and per-RPC state check",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/helperauth/tlsconfig.go",
+   "apps/gateway/internal/helperauth/identity.go",
+   "apps/gateway/internal/helperauth/registry.go",
+   "apps/gateway/internal/helperauth/interceptor.go",
+   "apps/gateway/internal/serve/serve.go",
+   "migrations/postgres/0021_helper_nodes.sql",
+   "migrations/sqlite/0021_helper_nodes.sql",
+   "apps/gateway/internal/sqlitestore/schema.sql"
+  ],
+  "size": "L",
+  "depends_on": [
+   "security-01"
+  ],
+  "flag": "UBAG_HELPER_PLANE=off by default; no listener when off; UBAG_HELPER_GRPC_ADDR, UBAG_HELPER_CA_FILE",
+  "test_approach": "Go tests with generated certs: no cert, wrong CA, unknown SPKI, revoked, expired, CN spoof and message node_id mismatch are each rejected; revoking mid-stream ends the stream within one message; reflection absent; the old grpcServer never serves helper RPCs; sqlite migration-vs-bootstrap parity test.",
+  "risk": "Migration numbers 0019/0020 are taken on the voice branch; start at 0021 and re-check at merge."
+ },
+ "security-04": {
+  "id": "security-04",
+  "title": "Attempt capability tokens (RS256, separate key) and App-JWT audience guard",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/attemptcap/attemptcap.go",
+   "apps/gateway/internal/appjwt/appjwt.go",
+   "apps/gateway/internal/httpapi/server.go"
+  ],
+  "size": "M",
+  "depends_on": [
+   "security-01"
+  ],
+  "flag": "UBAG_HELPER_PLANE",
+  "test_approach": "Unit: an attempt token is rejected by resolveAppJWT, and an app JWT is rejected by the helper verifier. Expired, wrong node, wrong generation, wrong key set, and exp beyond the lease are rejected. Renewal keeps claims identical except exp.",
+  "risk": "Do not widen AppClaims."
+ },
+ "security-05": {
+  "id": "security-05",
+  "title": "HelperAttemptSpec projection and egress allowlist (no callbacks, client, local paths, profile options)",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/executor/helperspec.go",
+   "apps/gateway/internal/executor/workerconsumer.go",
+   "apps/gateway/internal/payloadpolicy/policy.go"
+  ],
+  "size": "M",
+  "depends_on": [
+   "security-01"
+  ],
+  "flag": "UBAG_HELPER_PLANE",
+  "test_approach": "Golden test: a spec built from a job with callbacks, client, context, attachment_local_paths and user_data_dir contains none of them. Property test: no key in the spec matches the payloadpolicy denylist. Env test: the helper env equals the allowlist minus the remote-browser and noVNC vars.",
+  "risk": "The shared allowlist refactor must not change local worker env behavior."
+ },
+ "security-06": {
+  "id": "security-06",
+  "title": "Helper-to-primary ingest validation: node, attempt and generation fencing, event-type allowlist, caps, node-namespaced projection",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/executor/helperingest.go",
+   "apps/gateway/internal/executor/workerconsumer.go",
+   "apps/gateway/internal/jobs/store.go",
+   "apps/gateway/internal/conversations/conversations.go"
+  ],
+  "size": "L",
+  "depends_on": [
+   "security-03",
+   "security-05"
+  ],
+  "flag": "UBAG_HELPER_PLANE",
+  "test_approach": "Go tests: a stale-generation commit is rejected and audited with no job mutation; cross-tenant job_id is rejected; oversize output fails the attempt; a duplicate commit is idempotent; secret-bearing event data is redacted by the store sanitizer.",
+  "risk": "Overlaps the execution-contract area, which owns the attempt table; agree on the schema first."
+ },
+ "security-07": {
+  "id": "security-07",
+  "title": "Scoped asset staging: manifest-bound get and put, sha256 and size verify, indistinguishable 404",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/helperapi/assets.go",
+   "apps/gateway/internal/attachments/attachments.go",
+   "apps/gateway/internal/artifacts/store.go"
+  ],
+  "size": "M",
+  "depends_on": [
+   "security-03",
+   "security-04"
+  ],
+  "flag": "UBAG_HELPER_PLANE",
+  "test_approach": "Go tests: key outside DeclaredAttachments, another job's key, a put on a get-only token, and an expired lease all return the same 404/403 shape; streamed bytes are verified against the sha256 and the size cap; helper uploads of undeclared artifact kinds are rejected.",
+  "risk": "ArtifactStore has no tenant parameter, so the check must be in the handler."
+ },
+ "security-08": {
+  "id": "security-08",
+  "title": "Profile and conversation affinity: tenant-owned profile_ref registry; node_id and profile_ref on conversations",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/helperauth/profilebind.go",
+   "apps/gateway/internal/conversations/conversations.go",
+   "apps/gateway/internal/conversations/postgres.go",
+   "apps/gateway/internal/conversations/sqlite.go",
+   "migrations/postgres/0022_helper_profiles.sql",
+   "migrations/sqlite/0022_helper_profiles.sql",
+   "apps/worker/ubag_worker/live/envelope.py"
+  ],
+  "size": "L",
+  "depends_on": [
+   "security-03",
+   "security-02"
+  ],
+  "flag": "UBAG_HELPER_PLANE",
+  "test_approach": "Go tests: tenant B can never be assigned tenant A's profile_ref; a conversation resumes only on its bound node and profile; a lost node marks the conversation broken with no migration. Worker pytest: helper mode derives the dir from profile_ref only.",
+  "risk": "Requires a primary-side binding UX for identities (operator-owned)."
+ },
+ "security-09": {
+  "id": "security-09",
+  "title": "Manual-login viewer broker: outbound OpenViewer stream, single-use ticket, WS proxy, MFA and RBAC, dashboard wiring",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/viewer/ticket.go",
+   "apps/gateway/internal/httpapi/viewer_handlers.go",
+   "apps/gateway/internal/httpapi/server.go",
+   "apps/gateway/internal/httpapi/routes.go",
+   "apps/dashboard/src/routes/browser/+page.svelte",
+   "apps/dashboard/src/lib/api/types.ts",
+   "deploy/mtls/README.md"
+  ],
+  "size": "L",
+  "depends_on": [
+   "security-03",
+   "security-01"
+  ],
+  "flag": "UBAG_HELPER_VIEWER=off by default",
+  "test_approach": "Go tests: ticket replay, expiry, wrong tenant, wrong operator and non-MFA session are denied; the ticket binds node, profile and provider; no helper-supplied URL is ever relayed; the loopback-only sanitizer is unchanged. Dashboard: NAJM design per design.md; vitest asserts non-loopback URLs are still rejected and only ticket paths embed.",
+  "risk": "Dashboard CSP is strict; the viewer must be same-origin through the gateway."
+ },
+ "security-10": {
+  "id": "security-10",
+  "title": "Fleet audit wiring and fail-closed append",
+  "plan_phase": 4,
+  "files": [
+   "apps/gateway/internal/audit/fleet.go",
+   "apps/gateway/internal/helperauth/interceptor.go",
+   "apps/gateway/internal/siem"
+  ],
+  "size": "S",
+  "depends_on": [
+   "security-01",
+   "security-03"
+  ],
+  "flag": "UBAG_HELPER_PLANE",
+  "test_approach": "Go tests: each event name is emitted with the _fleet tenant for node lifecycle and the job tenant for attempt events; a forced audit store error makes grant, enroll and viewer-open refuse; VerifyChain passes after a mixed sequence.",
+  "risk": "Chain contention on _fleet under many nodes; auth rejections must be aggregated, not per-attempt."
+ },
+ "security-11": {
+  "id": "security-11",
+  "title": "Node cert tooling and rotation runbook (short-lived, SPIFFE URI SAN, overlap window)",
+  "plan_phase": 4,
+  "files": [
+   "deploy/mtls/gen-certs.sh",
+   "deploy/mtls/gen-certs.ps1",
+   "deploy/mtls/README.md",
+   "docs/adr/0006-helper-trust-plane.md"
+  ],
+  "size": "S",
+  "depends_on": [
+   "security-03"
+  ],
+  "flag": "none (dev tooling)",
+  "test_approach": "Script emits a node cert with the URI SAN and <=72h validity; integration test rotates current to next with an active stream and no dropped attempt.",
+  "risk": "The production CA belongs to the fleet manager; this stays dev-only."
+ },
+ "security-12": {
+  "id": "security-12",
+  "title": "Voice helper control authz: derived TURN creds only, lease-fenced mute/interrupt/terminate",
+  "plan_phase": 5,
+  "files": [
+   "apps/gateway/internal/voice/ice.go",
+   "apps/gateway/internal/httpapi/voice_control.go",
+   "apps/gateway/internal/httpapi/voice_handlers.go"
+  ],
+  "size": "M",
+  "depends_on": [
+   "security-06"
+  ],
+  "flag": "UBAG_HELPER_VOICE=off",
+  "test_approach": "Go tests: the helper spec has no TURNSecret and its creds expire at the session TTL; control RPCs with a stale generation are rejected; cross-tenant session lookup returns the same not-found.",
+  "risk": "Blocked on reconciling feat/multimodal-voice-hardening into main (voice files absent on main)."
+ },
+ "security-13": {
+  "id": "security-13",
+  "title": "Acceptance isolation suite: cross-tenant, secret-leak, fenced-commit under 1/2/5/10/20 workloads",
+  "plan_phase": 6,
+  "files": [
+   "tests/chaos/tests/test_helper_isolation.py",
+   "apps/gateway/internal/helperauth/isolation_integration_test.go",
+   "tests/load"
+  ],
+  "size": "M",
+  "depends_on": [
+   "security-06",
+   "security-07",
+   "security-08",
+   "security-09"
+  ],
+  "flag": "none (tests)",
+  "test_approach": "Multi-tenant load asserts zero cross-tenant events or artifacts, zero duplicate committed results, no secret env in the helper process (env dump scan), and killed or partitioned helpers never produce a stale commit.",
+  "risk": "Needs two real or containerized helpers; reuse the existing acceptance harness."
+ }
+}

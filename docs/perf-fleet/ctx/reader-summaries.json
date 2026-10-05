@@ -1,0 +1,1397 @@
+[
+ {
+  "area": "baseline",
+  "summary": "The checkout is stale. Local main (4c4c52f, clean except untracked tests/load/results/) is 40 commits behind origin/main (e0667b5 = tip of feat/multimodal-voice-hardening, 150 files, +22671/-360). The reflog shows origin/main was updated \"by push\" five times, so voice, shared admission, exec leases and migrations 0019-0021 are already on main, which gateway-image.yml auto-deploys. The same branch's PROGRESS.md and AGENT_HANDOFF.md say \"do NOT merge to main until live voice evidence exists\", and no live ChatGPT/Gemini two-way voice has been run. Whether production runs e0667b5 cannot be shown offline. At HEAD there is no voice or Pion code, so every voice claim was checked with git show/git grep on origin/main. The compose/deploy rows of the starting point are mostly confirmed. The warm daemon being enabled and worker concurrency being 1 in production live only in the VPS-only env.local and cannot be verified from the repo. Benchmark harnesses have false-pass paths, the acceptance gate is 10x looser than the plan targets (create p95 2000 ms vs 200 ms), and there is no read-latency or voice-relay gate. Reconcile repo state, production parity and benchmark integrity before any optimisation.",
+  "claims": [
+   {
+    "claim": "Prod gateway 1 CPU / 1300MiB",
+    "status": "confirmed",
+    "evidence": "docker-compose.vps.yml:75-76 (cpus 1.00, mem_limit 1300m), GOMAXPROCS=1 (:80), GOMEMLIMIT 950MiB (:81). The live 10-05 audit saw 512MiB (PROGRESS.md:3458); PROGRESS.md:3506 says caps were later matched. Header comment (:19-24) and deploy/vps/README.md:61-67 still show browser 1.00 CPU/1900m."
+   },
+   {
+    "claim": "Browser 2 CPU / 4096MiB",
+    "status": "confirmed",
+    "evidence": "docker-compose.vps.yml:266-267 plus pids_limit 1024 (:270). Actual totals are about 3.25 CPU and 5.6 GiB, not the 2.25 CPU / 3.5G the README and header state. The box is 6 cores / 11-12 GB and shared with about 15 stacks (:19; docs/handoffs/ubag-perf-remediation-handoff.md:16-17)."
+   },
+   {
+    "claim": "File queue + PostgreSQL",
+    "status": "confirmed",
+    "evidence": "docker-compose.vps.yml:92 (UBAG_GATEWAY_STORE=postgres), :107 (UBAG_EXECUTOR_MODE=file), :158 (UBAG_WEBHOOK_OUTBOX=postgres). NATS is unused in prod (compose header :7-10)."
+   },
+   {
+    "claim": "Warm daemon enabled",
+    "status": "partial",
+    "evidence": "The code and compose default is OFF (serve.go:1212-1214, docker-compose.vps.yml:122, deploy/vps/README.md:74). Only older ledger text says production runs it ON via the VPS-only env.local (AGENT_HANDOFF.md:397-399, PROGRESS.md:1113). The 2026-10-05 audits never printed it. tools/vps-ubag-probe.sh:11 can."
+   },
+   {
+    "claim": "Worker concurrency 1",
+    "status": "partial",
+    "evidence": "The default is 1 (docker-compose.vps.yml:138, serve.go:1341). PROGRESS.md:804 records UBAG_WORKER_CONCURRENCY=2 in a .env.local on 2026-09-27; it is ambiguous whether that is prod or the local box. Live jobs serialize on the daemon mutex regardless (daemonrunner.go:307)."
+   },
+   {
+    "claim": "One shared warm daemon serializes jobs; provider/profile change evicts the warm page",
+    "status": "confirmed",
+    "evidence": "daemonrunner.go:32-35,46,307-308; daemon.py:12-14,94,128-139."
+   },
+   {
+    "claim": "Both worker runners collect events before returning",
+    "status": "confirmed",
+    "evidence": "ProcessWorkerRunner buffers stdout, then parseWorkerJSONL (workerconsumer.go:1253-1277,1373-1394). DaemonWorkerRunner returns the full slice (daemonrunner.go:343). The Python daemon already yields events incrementally (daemon.py:82-112), so only the Go side needs streaming."
+   },
+   {
+    "claim": "SQL event waiters poll every 50ms",
+    "status": "confirmed",
+    "evidence": "jobs/sqlite.go:17-20; jobs/postgres.go:24,326-348. There is no LISTEN/NOTIFY anywhere in apps/gateway/internal."
+   },
+   {
+    "claim": "Voice = Go/Pion WebRTC + Python/libopus relay",
+    "status": "partial",
+    "evidence": "Absent at HEAD (no apps/gateway/internal/voice, no pion in go.mod). Present on origin/main: go.mod:14 pion/webrtc/v4 v4.1.6, deploy/vps/browser/audio-relay.py and opus_bridge.py (ctypes libopus). It is voice-inert by default (UBAG_VOICE_AUDIO_ENABLED=0 in the origin/main compose)."
+   },
+   {
+    "claim": "Audio queue = 64 packets ~1.28s, count-bounded",
+    "status": "confirmed",
+    "evidence": "origin/main voice/media.go:64 (micBufferDepth=64, drop-oldest) with 20 ms frames (audio-relay.py:108); no age-based bound."
+   },
+   {
+    "claim": "Rust = Axum/Tokio localhost sidecar",
+    "status": "confirmed",
+    "evidence": "Cargo.toml:35-36; main.rs:21 (loopback unless --allow-non-loopback), :142-158. It does not touch jobs or audio, so there is no Rust baseline for the relay yet."
+   },
+   {
+    "claim": "NATS support + topology models exist; multi-region compose is a demo",
+    "status": "confirmed",
+    "evidence": "executor/nats.go and natsconsumer.go; topology package; deploy/multi-region/docker-compose.multiregion.yml:1-14 says 'TOPOLOGY DEMO'."
+   },
+   {
+    "claim": "Newer voice+admission work is reconciled and verified",
+    "status": "contradicted",
+    "evidence": "It lives only on origin/main. HEAD lacks it (git diff --stat main..origin/main: 150 files). The branch ledger says not to merge, yet origin/main equals the branch tip. Shared admission (serve.go:1128-1139) and exec leases (:1496-1501) switch on automatically with the postgres store, with no inert flag, and migrations 0019-0021 are applied as mandatory by deploy/small/gateway-entrypoint.sh:52-64. Live voice evidence: none (PROGRESS.md on origin/main, remaining gates 1-2)."
+   },
+   {
+    "claim": "Misleading benchmark success paths exist",
+    "status": "confirmed",
+    "evidence": "run-load.mjs:31-33 swallows k6 failure, :38 uses `?? 0` for p95, and :47-49 exits 0 when there is no summary. acceptance.mjs:321 (origin/main) marks an unmeasured threshold ok:true. benchmark.mjs:11 counts completed_with_warnings as success. All use target mock, so no provider, voice or attachment path is measured."
+   },
+   {
+    "claim": "Acceptance goals are encoded in the gates (read p95<=100ms, accept p95<=200ms, voice relay p95<=100ms)",
+    "status": "missing",
+    "evidence": "origin/main thresholds.json has only max_create_p95_ms=2000 and no read or voice threshold; baselines.json is dated 2026-06-02 (create p95 800). Local mock runs: 100 clients gave create p95 1.13s and 599 ms (clients-100 scenario); single-lane queue-1000 gave 79.5 ms."
+   },
+   {
+    "claim": "Working tree clean / HEAD known",
+    "status": "confirmed",
+    "evidence": "HEAD 4c4c52f on main; only untracked tests/load/results/ (7 runs, 2026-10-05T17:07-17:19Z, from a harness that exists only on the voice branch). Three of the seven FAILED (queue-1000: 7 unaccepted; two overload runs with hangs). origin/main .gitignore ignores that dir. stash@{0} is a July codex stash."
+   },
+   {
+    "claim": "Shared OET fleet manager integration, helper-node heartbeat 15s, OET reservations",
+    "status": "missing",
+    "evidence": "No code exists. 'fleet' hits are the worker-side browser Fleet/ChannelPool (orchestration/topology.py), a naming collision with the shared host fleet."
+   },
+   {
+    "claim": "120s leases renewed every 20s with generation fencing",
+    "status": "partial",
+    "evidence": "Existing exec lease on origin/main is a 90s TTL with a 10s heartbeat and an exclusive token per job, with no generation or input fingerprint (workerconsumer.go:154-155,398-415)."
+   },
+   {
+    "claim": "Dashboard polling is not visibility-aware",
+    "status": "partial",
+    "evidence": "poll.ts:10-40 already pauses on visibilitychange. Other timers (LiveBrowser.svelte, UpdatedAgo.svelte) were not audited. Bundle budgets are in tools/check-weight.mjs."
+   }
+  ],
+  "open_questions": [
+   "Is production currently running origin/main e0667b5 (voice, shared admission, exec leases, migrations 0019-0021)? The branch ledger said not to merge before live voice evidence, yet main was pushed and auto-deploys. Confirm with gh run list for gateway-image.yml and UBAG_BUILD_COMMIT on the VPS (baseline-02).",
+   "Actual production env.local values for UBAG_WORKER_DAEMON, UBAG_WORKER_CONCURRENCY and UBAG_WORKER_POLL_INTERVAL_MS (the ledger says 75 ms and daemon ON on 2026-09-07; the compose defaults are 150 ms and false). Needs read access to the VPS.",
+   "Should shared admission and exec leases be put behind an env flag that is off by default (repo rule) even though they may already be live, or recorded as accepted? This changes live behaviour.",
+   "Which machine and path is the source of truth (D:\\Projects\\UBAG vs the E:\\ path in CLAUDE.md)? Local main and origin/main diverged by 40 commits.",
+   "What are the real OET reservation numbers on the shared 6-core / 11-12 GB box (about 15 stacks)? Nothing in the repo measures headroom, which the >=20% memory goal needs.",
+   "Is the plan's steady-state accept p95<=200ms meant for a single client or for 100 clients? The local 100-client run measured p95 of 1.13s on the single admission lane."
+  ],
+  "existing": [
+   {
+    "what": "Warm daemon, Go side: single mutex serializes jobs, then returns the collected []WorkerEvent",
+    "file": "apps/gateway/internal/executor/daemonrunner.go:32-46,286-343"
+   },
+   {
+    "what": "Warm daemon, Python side: generator run_job yields events; one page per (tenant,provider,profile); other keys evicted",
+    "file": "apps/worker/ubag_worker/live/daemon.py:50-139"
+   },
+   {
+    "what": "Per-job ProcessWorkerRunner buffers stdout (bounded) then parseWorkerJSONL; PoolSize from UBAG_WORKER_CONCURRENCY (default 1, clamp 32)",
+    "file": "apps/gateway/internal/executor/workerconsumer.go:1215-1277; apps/gateway/internal/serve/serve.go:1341-1348"
+   },
+   {
+    "what": "Worker-side Fleet/ChannelPool/AIMD orchestration behind UBAG_ORCHESTRATOR_ENABLED; reuse for the bounded isolated pool",
+    "file": "apps/worker/ubag_worker/orchestration/*, apps/worker/ubag_worker/live/orchestrator.py, docs/adr/0005-orchestration-wired-behind-flag.md"
+   },
+   {
+    "what": "Voice (pion/webrtc v4.1.6 MediaHub, micBufferDepth=64), shared SQL admission TokenBackend, exec leases (90s TTL, 10s heartbeat), overload limiter, migrations 0019-0021. On origin/main only",
+    "file": "origin/main:apps/gateway/internal/voice/media.go:64; origin/main:apps/gateway/internal/topology/admission_sql.go; origin/main:apps/gateway/internal/executor/workerconsumer.go:154-155"
+   },
+   {
+    "what": "Browser audio relay: Python plus ctypes libopus, 20 ms frames (the first Rust candidate). On origin/main only",
+    "file": "origin/main:deploy/vps/browser/audio-relay.py:108; origin/main:deploy/vps/browser/opus_bridge.py"
+   },
+   {
+    "what": "Acceptance load harness (100 clients, 1000 jobs, overload, duplicates) with offline self-tests. On origin/main only",
+    "file": "origin/main:tests/load/acceptance.mjs, tests/load/thresholds.json, docs/load-testing.md"
+   },
+   {
+    "what": "Mock-only benchmark and k6 smoke runner",
+    "file": "tools/benchmark/benchmark.mjs, tests/load/run-load.mjs, tests/load/baselines.json"
+   },
+   {
+    "what": "Visibility-aware dashboard poll helper and bundle budgets (initial JS 150 KB, dist 1000 KB, css 120 KB)",
+    "file": "apps/dashboard/src/lib/poll.ts:10-40; tools/check-weight.mjs"
+   },
+   {
+    "what": "Production deploy, auto on push to main, with rollback; read-only probe prints daemon env",
+    "file": ".github/workflows/gateway-image.yml:9-30,153; deploy/small/ci-deploy.sh; tools/vps-ubag-probe.sh:11"
+   },
+   {
+    "what": "Rust Axum/Tokio loopback sidecar; not in the media or job path",
+    "file": "packages/sidecar-rust/Cargo.toml:35-36; packages/sidecar-rust/src/main.rs:21,142-158"
+   }
+  ]
+ },
+ {
+  "area": "executor",
+  "summary": "Executor/worker boundary is a clean, well-tested seam (WorkerRunner, workerconsumer.go:151) but has NO attempt identity, lease TTL/renewal, lease generation, or current-attempt fencing: spool lease = UnixNano rename-CAS with no expiry (filespool.go:260-337), NATS ack-wait 30s with InProgress never called, event dedupe only per (job_id,event_key) with deterministic non-attempt-scoped worker event ids (events.py:51-62), and failure is job-terminal (failed_retryable is terminal, vocabulary.go:24-30). Existing replay paths (shutdown Retry, orphan recovery, in-worker 3x interaction retry) can blindly resubmit prompts. A remote helper reuses runners, envelope, event normalization/ingestion, artifact checksums; it must add attempt ledger + fenced commits, lease TTL/renew, submission marker, streaming ingestion, mTLS gRPC (current gRPC is plaintext JobService only), and asset staging.",
+  "claims": [
+   {
+    "claim": "Prod gateway 1 CPU/1300MiB; browser 2 CPU/4096MiB",
+    "status": "confirmed",
+    "evidence": "Compose defaults docker-compose.vps.yml:75-76 (cpus 1.00, mem 1300m) and :266-267 (2.0, 4096m); live prod values unverifiable from repo."
+   },
+   {
+    "claim": "File queue + PostgreSQL; worker concurrency 1",
+    "status": "confirmed",
+    "evidence": "docker-compose.vps.yml:107-108,138; serve.go:495-514,1341 (default 1)."
+   },
+   {
+    "claim": "Warm daemon enabled",
+    "status": "partial",
+    "evidence": "Implemented but compose default is false (docker-compose.vps.yml:122) and PROGRESS.md:1961 says it remains opt-in false; actual prod setting unverifiable."
+   },
+   {
+    "claim": "One shared warm daemon serializes jobs; provider/profile change evicts warm page",
+    "status": "confirmed",
+    "evidence": "daemonrunner.go:36-46,307-308 (global mu); serve.go:1287-1293,1238; apps/worker/ubag_worker/live/daemon.py:94,128-139."
+   },
+   {
+    "claim": "Both worker runners collect events before returning",
+    "status": "confirmed",
+    "evidence": "workerconsumer.go:1253-1277 (command.Run + buffer), daemonrunner.go:100-138 (body buffer then parseWorkerJSONL), ingestion after return at 380,472-526. Caveat: Python live engine itself buffers token/completed events until interaction ends (engine.py:343-367,615-628), so Go-side streaming alone gives no live tokens."
+   },
+   {
+    "claim": "SQL event waiters poll every 50ms",
+    "status": "confirmed",
+    "evidence": "jobs/sqlite.go:17-20; jobs/postgres.go:326-347 (each poll = EXISTS + SELECT, 568,577)."
+   },
+   {
+    "claim": "Lease generation / current-attempt fencing already exists",
+    "status": "missing",
+    "evidence": "No attempt/generation concept in gateway Go (grep clean). Only LeaseID (UnixNano or NATS seq), job-level event-key dedupe, terminal absorption (postgres.go:442-462), envelope-vs-job validation (workerconsumer.go:1502)."
+   },
+   {
+    "claim": "120s lease renewed every 20s",
+    "status": "missing",
+    "evidence": "Spool lease has no expiry (filespool.go:82-89); NATS fixed AckWait 30s and no InProgress call outside a test fake (natsconsumer_test.go:175); compose max runtime 1500000ms (docker-compose.vps.yml:143)."
+   },
+   {
+    "claim": "Persist result before ack; at-least-once with fenced idempotent commits",
+    "status": "partial",
+    "evidence": "Persist-before-ack and key dedupe exist (workerconsumer.go:472-549; postgres.go:442-453) but worker event ids are deterministic evt_sha256(job:seq) (events.py:51-62), not attempt-scoped: a re-run's events collide with prior attempt keys and are silently dropped."
+   },
+   {
+    "claim": "Helper lost before submission => reassign; after => reconcile, never blind resubmit",
+    "status": "contradicted",
+    "evidence": "Current paths replay blindly: ctx-cancel Retry (workerconsumer.go:389-392), RecoverOrphanLeases (filespool.go:374-419, serve.go:509), in-worker 3x interaction retry resubmits (engine.py:86,343-352). Worker never emits prompt_submitted (absent in apps/worker) though it is in job-event.schema.json and vocabulary.go:45. Precedent for upfront-only retry: upfrontQuotaError (workerconsumer.go:1361-1371)."
+   },
+   {
+    "claim": "Stale helper result rejected",
+    "status": "partial",
+    "evidence": "Terminal jobs absorb late events (postgres.go:457-462); non-terminal jobs accept events from anyone with a fresh event id. Reaper timed_out does not stop the running worker (workerconsumer.go:939)."
+   },
+   {
+    "claim": "Helpers get no DB creds/global secret; commits go through primary",
+    "status": "partial",
+    "evidence": "Worker env allowlist already excludes secrets (workerconsumer.go:1617-1672) and ingestion is primary-side, but no mTLS/helper service exists; existing gRPC is plaintext (serve.go:301)."
+   },
+   {
+    "claim": "Bounded pool with one active op per provider identity",
+    "status": "missing",
+    "evidence": "Per-job runner has no identity lock (PoolSize loops overlap, workerconsumer.go:121-127); daemon serial only via global mutex; admission cap default 100 (concurrency.go:13). Spool LeaseNext ignores eligibility/priority so head-of-line job can block in the daemon mutex while holding a lease."
+   },
+   {
+    "claim": "Preserve REST/SDK contracts",
+    "status": "confirmed",
+    "evidence": "job-event data is additionalProperties:true (shared-schemas/schemas/job-event.schema.json) but attempt/node data should stay internal; /v1 routes are OpenAPI-gated (check-contracts.mjs:165-194)."
+   },
+   {
+    "claim": "Side finding: scheduled jobs (not_before) are honored on NATS only",
+    "status": "contradicted",
+    "evidence": "File spool LeaseNext and RunOnce never check NotBefore (grep: only natsconsumer.go:166); no consumer test covers it."
+   }
+  ],
+  "open_questions": [
+   "Phase mapping assumed: phase 1 = contracts + attempt/fencing/lease semantics on the primary (local path inert), phase 2 = helper service, remote runner, staging, streaming. Confirm.",
+   "Transport direction: primary dials helper (RunAttempt server-stream, assumed from plan wording) vs helper pulls from primary. This changes firewall and mTLS roles.",
+   "Is a worker-engine change in scope so prompt_submitted and token events are emitted mid-interaction (engine.py:343-367,606)? Without it the submission boundary and streaming are coarse.",
+   "Fix file-spool not_before/priority gaps (filespool.go, natsconsumer.go:166) inside this track, or as a separate bugfix?",
+   "Manual-action events carry a helper-local novnc_url (engine.py:415, workerconsumer.go:863); how do operators reach it given human-only logins via the shared fleet manager?",
+   "Antigravity targets need primary-local sockets/stores; exclude from helper eligibility?",
+   "Attempt ledger: Postgres only, or all three job stores (memory/sqlite/postgres)? Recommend all three for parity.",
+   "worker topology events carry no node id (workerconsumer.go:717-753); needs the topology workstream before multi-node reporting."
+  ],
+  "existing": [
+   {
+    "what": "Dispatch envelope: api_version, job_id, tenant_id, app_id, idempotency_key, trace_id, retry_of, not_before, job{target,command_type,conversation_id,template_id,input,options,callbacks,context}, optional conversation{key,thread_ref,on_missing}, client, created_at. No attempt/node/lease/fingerprint fields.",
+    "file": "apps/gateway/internal/executor/executor.go:29-69,119-145",
+    "note": "Consumer rebuilds envelope from persisted job (workerconsumer.go:362); spool copy is only validated (1502-1553), <=256KB (filespool.go:18). Pattern for additive omitempty blocks: Conversation."
+   },
+   {
+    "what": "Enqueue is non-atomic: jobs.Create then Dispatcher.EnqueueJob; failure rolls reservation back. Dispatch outbox field exists but nothing wires/relays it.",
+    "file": "apps/gateway/internal/httpapi/server.go:2076,1613,194,2059; attachments_gate.go:287-313; grpcapi/server.go:234",
+    "note": "gateway_outbox_events table has Append only (outbox/outbox.go, migration 0017)."
+   },
+   {
+    "what": "File-spool claim: rename pending->leased/<job>.<UnixNano>.json, oldest-first by job id; Complete/Fail/Cancel move to done/failed/cancelled; Retry moves back to pending immediately with no attempt count; orphans recovered only at process start. No TTL, heartbeat, priority, or not_before.",
+    "file": "apps/gateway/internal/executor/filespool.go:260-366,374-419; serve/serve.go:509",
+    "note": "EnqueueJob does 5 dir Stat+Glob scans per enqueue (filespool.go:160,678-707) with terminal dirs up to 10k files each."
+   },
+   {
+    "what": "NATS claim: JetStream pull consumer per priority lane, AckWait 30s (or max runtime+5s), MaxDeliver 5, NakWithDelay for not_before; LeaseID=stream:consumer:seq; dedupe via Nats-Msg-Id=job id.",
+    "file": "apps/gateway/internal/executor/natsconsumer.go:20-26,128-177,244-272,377-383; nats.go:121-207",
+    "note": "Safety is an invariant ackWait>maxRuntime (serve.go:1503), not heartbeats. Cancel notice subject is not in any consumer filter."
+   },
+   {
+    "what": "RunOnce: lease -> Jobs.Get -> validateLeaseEnvelope -> UpdateStatus(assigned) -> runWorkerWithCancellation -> normalize/apply events -> finish terminal (Complete/Fail/Cancel) -> terminal webhook notify. PoolSize<=32 parallel loops; enqueue wake channel plus poll.",
+    "file": "apps/gateway/internal/executor/workerconsumer.go:205-315,317-566",
+    "note": "Result persisted (ApplyWorkerEvent) before lease ack; ctx cancel -> lease.Retry (389-392) even if prompt already submitted."
+   },
+   {
+    "what": "Reaper: opt-in; job-store only (idle MaxLifetime 3600s from UpdatedAt, or options.timeout_seconds from CreatedAt) -> timed_out + token release. Not lease-aware; does not touch spool lease or stop the running worker.",
+    "file": "apps/gateway/internal/executor/reaper.go:28-137; serve/serve.go:1305-1330",
+    "note": "Consumer cancel poll only checks StatusCanceled every 250ms (workerconsumer.go:928-941), one Jobs.Get per running job per tick."
+   },
+   {
+    "what": "Result ingestion + idempotency: events applied only after runner returns; need >=1 event, exactly one terminal, job/api/trace match; telemetry types intercepted. Store dedupes (job_id,event_key) in one FOR UPDATE tx and absorbs events after terminal. Retry API creates a NEW job with retry_of.",
+    "file": "workerconsumer.go:415-526,1405-1431; jobs/postgres.go:401-505; jobs/memory.go:361-441,501-509; httpapi/server.go:2302-2364",
+    "note": "applyFailure event id embeds lease id (workerconsumer.go:961); non-terminal job accepts any event (no attempt check)."
+   },
+   {
+    "what": "Runners: ProcessWorkerRunner = one python process per job, stdout 1MiB/512 events cap; DaemonWorkerRunner = one mutex-serialized daemon with __ubag_job_end__ line marker (stream ending without marker is an error); routed by targetWorkerRunner; env scrubbed by allowlist.",
+    "file": "workerconsumer.go:94-100,1215-1298,1617-1672; daemonrunner.go:36-138,286-344; serve/serve.go:1217-1303",
+    "note": "Daemon runCtx timeout starts before mu.Lock (daemonrunner.go:293,307): queue wait eats job runtime."
+   },
+   {
+    "what": "Attachments: manifest in input.attachments (key/filename/content_type/kind, no size/hash); bytes in ArtifactStore keyed (jobID,key) with SHA-256 checksum; gate holds job in created until all keys present, CAS created->queued; runner copies each artifact per attempt into os.MkdirTemp(ubag-attach-*) and injects attachment_local_paths.",
+    "file": "attachments/attachments.go:66-72,103-182; artifacts/store.go:17-46; httpapi/attachments_gate.go:322-367; workerconsumer.go:1075-1159",
+    "note": "Worker rejects paths outside system tempdir or without ubag-attach- prefix (apps/worker/ubag_worker/live/envelope.py:479-517)."
+   },
+   {
+    "what": "Admission: in-memory ConcurrencyRegistry per (tenant,target,app), default cap 100, token released per job on terminal paths.",
+    "file": "apps/gateway/internal/topology/concurrency.go:13,138-247",
+    "note": "No provider-identity serialization across per-job processes."
+   },
+   {
+    "what": "gRPC surface: plaintext grpc.NewServer with JobService + reflection only; proto has no executor/helper service; proto checker hard-codes jobs.proto; check-contracts requires every /v1 route in routes.go to be in OpenAPI.",
+    "file": "serve/serve.go:301-314,352-364; packages/proto/proto/ubag/v1/jobs.proto:7-14; tools/check-proto-contracts.mjs:3; tools/check-contracts.mjs:165-194",
+    "note": "Helper endpoints must live on a separate mTLS listener outside /v1."
+   },
+   {
+    "what": "Store extension pattern: optional capability interfaces over memory/sqlite/postgres stores; migrations postgres to 0018, sqlite to 0013; sqlite parity harness.",
+    "file": "jobs/store.go:163-184; migrations/postgres; migrations/sqlite; sqlitestore/schema.sql; sqlitetest/parity.go",
+    "note": "New attempt table needs all three stores plus schema.sql/migrate.go parity."
+   }
+  ]
+ },
+ {
+  "area": "worker",
+  "summary": "Worker runtime today = one Go DaemonWorkerRunner (mutex) -> one Python daemon -> one sync-Playwright thread, strictly one job at a time. Python live path already writes events line-by-line, but (a) the engine buffers all pre-submit/token events until after read-back (engine.py:473,614-622,366-367) and (b) Go collects everything until the JOB_END marker (daemonrunner.go:104-128), so nothing is incremental. Recommended lazy design: do NOT thread/async the daemon (sync Playwright is thread-bound, one manager per thread, daemon.py:128-136). Pool = N independent copies of the existing daemon process (Go supervisor, existing stdio protocol unchanged per slot), each pinned to <=1 warm key, plus a physical-session identity gate (Go in-process + Python flock defence-in-depth). Streaming: split engine into pre-submit (buffered, retry-safe) and post-submit (live, never re-submitted). prompt_submitted (already in job-event schema and Go vocab, vocabulary.go:45, no status effect) marks the point of no resubmit. Token events carry attempt_id and are provisional; result comes only from terminal event; JOB_END(status=completed) + exactly one terminal commits, otherwise the attempt is abandoned and gateway appends a failure. Event ids MUST become attempt-scoped: today evt_<sha(job_id:sequence)> (events.py:67) plus ON CONFLICT DO NOTHING (jobs/postgres.go:442-452) would silently drop a retry attempt's events (incl. its terminal) once an earlier attempt streamed. Two contradicted plan assumptions found in worker code: false successful truncation (stream_response exits silently at deadline, page_driver.py:1652-1685, engine then emits completed) and blind resubmit (engine retries the whole interaction incl. submit_prompt on any non-drift exception, engine.py:343-352). Biggest hidden isolation hazard: the leaked-tab registry is one file per process ROLE (page_driver.py:1816-1820) and _close_stale_pages (1862-1882, called on every CDP open, 812) closes every registered tab not owned by this process - N same-role processes (pool slots, or UBAG_WORKER_CONCURRENCY>1 per-job live workers today) will kill each other's live tabs. Achievable parallelism is bounded by distinct (provider, physical session) pairs, not CPU: CDP mode reuses browser.contexts[0] and ignores user_data_dir (page_driver.py:805-816). No Rust candidate in this area; Python time is CDP round-trip waits and 0.1-0.4s polls. Plan phase numbers other than 4 are inferred (0 = measure/guard, 1 = contracts, 5 = helper integration).",
+  "claims": [
+   {
+    "claim": "Warm daemon enabled in prod",
+    "status": "unverifiable",
+    "evidence": "Code is opt-in: serve.go:1212-1215, 1256-1303. Repo default false: docker-compose.vps.yml:122; PROGRESS.md:1961 'remains opt-in'. PROGRESS.md:1113 shows ~140 MiB gateway with daemon was measured once. Live env not inspectable here."
+   },
+   {
+    "claim": "Worker concurrency 1",
+    "status": "confirmed",
+    "evidence": "serve.go:1341 default 1; docker-compose.vps.yml:138; docker-compose.small.yml:60; structurally also daemonrunner.go:46,307 and daemon_protocol.py:146-187. Note PoolSize up to 32 with per-job runner is NOT serial (workerconsumer.go:121-127)."
+   },
+   {
+    "claim": "One shared warm daemon serializes jobs",
+    "status": "confirmed",
+    "evidence": "daemonrunner.go:32-35,307-308; Python one job at a time daemon.py:12-14. Extra defect: timeout ctx starts before mutex (daemonrunner.go:293 vs 307)."
+   },
+   {
+    "claim": "Provider/profile change evicts the warm page",
+    "status": "confirmed",
+    "evidence": "daemon.py:94,128-139: any key change (tenant, target OR profile) closes every other warm page; reason is one Sync Playwright manager per thread (daemon.py:128-136). Switching providers back and forth = cold page each time."
+   },
+   {
+    "claim": "Both worker runners collect events before returning",
+    "status": "partial",
+    "evidence": "Go runners confirmed: daemonrunner.go:104-128, workerconsumer.go:1253-1277, interface returns slice 152. Python registry/mock runner confirmed: runner.py:20-31, adapter_registry.py:239-243. Python LIVE path streams per event (run_live_worker.py:173-177, daemon_protocol.py:181-183) but engine buffers interaction/token events until after read-back (engine.py:473,614-622,366-367)."
+   },
+   {
+    "claim": "Safe page-reset checks exist",
+    "status": "confirmed",
+    "evidence": "prepare_for_next_job page_driver.py:703-740 (live page, new_chat selector, composer visible, New chat click succeeded, response_container provably absent within 1500ms, reload every 10 jobs); daemon discards driver on any exception/blocked (daemon.py:113-126) and on clear_attachment_state failure (150-153). Gaps: composer draft text, extra popup tabs, model/option state rely on per-job ensure_provider_config; no cross-process proof."
+   },
+   {
+    "claim": "Conversation affinity",
+    "status": "partial",
+    "evidence": "Implemented as provider chat-URL binding (engine.py:482-506; page_driver.py:875-911). No slot/tab/node affinity anywhere in worker runtime; ChannelPool sticky routing exists but is unwired and not bound to real pages (channel_pool.py:13-14,161-173; engine.py:305-313)."
+   },
+   {
+    "claim": "stdin/stdout JSONL protocol",
+    "status": "partial",
+    "evidence": "Works and is tested (daemon_protocol.py; daemonrunner.go:82-175) but has no schema/contract file (grep packages/ found none) and no version/attempt/slot fields. An unknown extra stdout line before a job would corrupt the Go parse (parseWorkerJSONL requires type, workerconsumer.go:1391) so any hello/handshake must be opt-in by request field."
+   },
+   {
+    "claim": "Concurrency=1 / isolation is enforced only by the Go mutex",
+    "status": "confirmed",
+    "evidence": "No Python-side or key-based gate: identity keys differ (daemon.py:59 uses user_data_dir; orchestrator.py:145/engine.py:309 use account_binding_id); AIMD default start=2 (aimd.py:62-67) would permit 2 tabs if the orchestrator were ever active."
+   },
+   {
+    "claim": "Bounded pool of isolated worker processes replacing the mutex",
+    "status": "missing",
+    "evidence": "No pool code. Python orchestrator is per-process state (orchestrator.py:122-125) and unreachable from gateway-spawned workers because UBAG_ORCHESTRATOR_ENABLED is not in minimalWorkerEnv (workerconsumer.go:1617-1660)."
+   },
+   {
+    "claim": "Incremental event streaming, provisional until valid terminal",
+    "status": "missing",
+    "evidence": "Batch at engine and Go layers (see above). Blockers: attempt-agnostic event_id (events.py:67) + dedup ON CONFLICT DO NOTHING (jobs/postgres.go:442-452) drops retry attempt events; Go demands exactly one terminal in the whole batch before applying (workerconsumer.go:446-470); 512-event cap (99)."
+   },
+   {
+    "claim": "No false successful truncation",
+    "status": "contradicted",
+    "evidence": "stream_response loop ends silently at timeout (page_driver.py:1652-1685, no flag/raise); engine then calls read_final_response and emits completed (engine.py:624-638) with whatever is visible."
+   },
+   {
+    "claim": "After submission: reconcile, never blind resubmit",
+    "status": "contradicted",
+    "evidence": "engine.py:343-352 retries _run_interaction (which includes submit_prompt at 606) up to UBAG_INTERACTION_ATTEMPTS=3 on any non-drift exception after driver.reset, e.g. a CDP hiccup during stream_response -> duplicate prompt/turn."
+   },
+   {
+    "claim": "No WAN Playwright/CDP; Python/Playwright stays local to helper",
+    "status": "confirmed",
+    "evidence": "Driver attaches to UBAG_REMOTE_BROWSER_ENDPOINT (engines.py:65; page_driver.py:805-813), already forwarded to workers (workerconsumer.go:1651); endpoint must be an IP of a local browser (docker-compose.vps.yml:129-134). Helper needs its own local Chrome + human login; attachment paths must be helper-local temp (envelope.py:486-524)."
+   },
+   {
+    "claim": "Safe-mode: no automated login/credential handling in worker",
+    "status": "confirmed",
+    "evidence": "Login only detected (page_driver.py:144-171,1401-1441), human via noVNC; secret material rejected (engine.py:179-184). Benign consent/overlay auto-dismiss exists (page_driver.py:1509-1544); CAPTCHA raises ManualActionRequired (1468-1478)."
+   }
+  ],
+  "open_questions": [
+   "How many distinct logged-in accounts exist per provider, and are helper VPS browsers logged into the SAME accounts as primary? Parallelism is bounded by distinct (provider, physical session) pairs (5 providers x 1 account = max 5), so the 5-20 workload target needs either more accounts or approved same-identity multi-tab (AIMD>1, URL-model providers) verified per provider; if helpers share accounts, the identity lock must be a primary-held fenced global lock, not per-node.",
+   "When a stream hits the response timeout, which terminal is wanted: timed_out (recommended, no partial result) or completed_with_warnings with truncated=true?",
+   "After prompt submission fails ambiguously, confirm worker emits failed_terminal with submitted=true and reconcile_required (recommended) instead of any retryable status; who performs reconcile (read-only thread read job on the primary)?",
+   "Is UBAG_WORKER_DAEMON actually enabled in production (repo default is false) and is anyone running UBAG_WORKER_CONCURRENCY>1 with the per-job live worker today (sibling-tab-kill hazard, page_driver.py:812)? Should worker-02 clamp or only warn?",
+   "Pool memory budget: gateway cgroup is 1.0 CPU/1300m (docker-compose.vps.yml:75-76) and each slot adds a Python + Playwright Node driver; slot count on the primary must come from worker-00 measurements. Also confirm plan phase numbering (items use 0=measure/guard, 1=contracts, 4=runtime, 5=helper integration)."
+  ],
+  "existing": [
+   {
+    "what": "WarmWorkerDaemon: warm drivers keyed (tenant,target,user_data_dir); one job at a time; evicts all other keys before checkout; driver kept warm only after completed/completed_with_warnings, else closed",
+    "file": "apps/worker/ubag_worker/live/daemon.py",
+    "note": "key 50-59, _warm 76, run_job 82-126, _evict_other_keys 128-139 (Playwright sync manager constraint), _checkout 141-160. No chat_sink wired (96-101)."
+   },
+   {
+    "what": "stdin/stdout JSONL framing: request {job_id,payload,deadline_s}; engine events verbatim; exactly one {__ubag_job_end__} marker per job; hard os._exit(75) deadline timer",
+    "file": "apps/worker/ubag_worker/live/daemon_protocol.py",
+    "note": "serve 143-190 (sequential loop), _Deadline 99-132, _JobOutput 43-76. No formal schema in packages/ (only 'keep in sync' comment at daemonrunner.go:21-23)."
+   },
+   {
+    "what": "Go half: DaemonWorkerRunner with mu, single stdio pair, collects events to marker, discardDaemon on any failure/cancel",
+    "file": "apps/gateway/internal/executor/daemonrunner.go",
+    "note": "mu 46,307; runDaemonJob 82-138; timeout ctx created at 293 BEFORE mu.Lock at 307 (queue wait eats max runtime); attachments materialized before lock 298-305; discardDaemon 265."
+   },
+   {
+    "what": "Entrypoints: daemon (signal -> close warm pages -> exit 0) and per-job live worker (streams per event, chat_sink, orchestrator flag)",
+    "file": "apps/worker/run_worker_daemon.py; apps/worker/run_live_worker.py",
+    "note": "daemon 34-63; per-job 149-178. SIGTERM mid-job leaks the active (popped) page since only _warm is closed."
+   },
+   {
+    "what": "LiveSessionEngine.iter_events: queued/opening/auth events live; _run_interaction buffers config/attach/submit/tokens/completed then replays; retries whole interaction 3x with driver.reset",
+    "file": "apps/worker/ubag_worker/live/engine.py",
+    "note": "retry loop 341-352; buffer 473; submit 606; token loop 614-622; completed 628-638; thread_bound AFTER completed 652-664; cap_changed telemetry after terminal 431-457; sequence restarts at 1 per call 199."
+   },
+   {
+    "what": "Page reuse gate: prepare_for_next_job = reset/new-chat click/bounded wait-until-absent of response_container, reload every 10 jobs, any doubt -> cold page; clear_attachment_state on checkout",
+    "file": "apps/worker/ubag_worker/live/page_driver.py",
+    "note": "base 301-325; Playwright 703-740; _wait_until_absent 742-765; _WARM_RELOAD_EVERY=10 (80); clear_attachment_state 1585-1594; per-driver mutable state 607-616."
+   },
+   {
+    "what": "Conversation affinity = provider chat URL binding (https same-origin guard), resume via goto + wait up to 20s for prior turn; fail vs restart on missing; NO tab/slot pinning",
+    "file": "apps/worker/ubag_worker/live/engine.py; page_driver.py",
+    "note": "engine 482-506; resume_thread 875-911; warm gate runs new-chat BEFORE resume so resumed jobs pay both."
+   },
+   {
+    "what": "Leaked-tab registry on disk, one file per process role (argv[0]), unlocked read-modify-write, stale-close over /json/close",
+    "file": "apps/worker/ubag_worker/live/page_driver.py",
+    "note": "1758-1882; _close_stale_pages invoked on every CDP open (812); _LIVE_TARGET_IDS process-global 1767."
+   },
+   {
+    "what": "CDP attach reuses browser.contexts[0] (shared cookie jar) and opens a dedicated page; user_data_dir ignored in this mode; non-CDP uses persistent context pages[0]",
+    "file": "apps/worker/ubag_worker/live/page_driver.py",
+    "note": "open 767-865 (CDP 805-816, persistent 831-839, 849-853). Physical identity in prod = (CDP endpoint, target)."
+   },
+   {
+    "what": "Envelope normalization: tenant/account_binding_id/user_data_dir (default var/profiles/<target>/default), attachment local paths must resolve under worker temp dir",
+    "file": "apps/worker/ubag_worker/live/envelope.py",
+    "note": "82-208; 310-321; 486-524 (helper must stage attachments in its own temp dir)."
+   },
+   {
+    "what": "Orchestration stack (Fleet/ChannelPool/AIMD/pacer) wired behind UBAG_ORCHESTRATOR_ENABLED; pure state machine, engine ignores lease.assigned; AIMD start=2; per-process state; flag NOT forwarded by Go env allowlist",
+    "file": "apps/worker/ubag_worker/live/orchestrator.py; orchestration/channel_pool.py; orchestration/aimd.py; apps/gateway/internal/executor/workerconsumer.go",
+    "note": "orchestrator 122-125,145; engine 305-313; channel_pool 13-14; aimd 62-67; allowlist 1617-1660 (no UBAG_ORCHESTRATOR_ENABLED). Key shape differs from daemon key (daemon.py:59)."
+   },
+   {
+    "what": "Go consumer: PoolSize<=32 loops RunOnce; WorkerRunner returns []WorkerEvent; requires exactly 1 terminal event; max 512 events/1MiB; telemetry types intercepted",
+    "file": "apps/gateway/internal/executor/workerconsumer.go; apps/gateway/internal/serve/serve.go",
+    "note": "PoolSize 121-127; iface 151-153; terminal check 446-470; intercepts 476-502; caps 97-99; serve.go concurrency default 1 (1341), clamp 32 (1345), buildWorkerRunner 1256-1303."
+   },
+   {
+    "what": "Event store dedup by (job_id,event_key=id:<event_id>); events after terminal are no-ops; prompt_submitted known type with no status mapping",
+    "file": "apps/gateway/internal/jobs/postgres.go; vocabulary.go",
+    "note": "postgres.go 442-461; vocabulary.go 45,128-164."
+   },
+   {
+    "what": "Chat ledger (O_APPEND + process-local lock; mark_deleted rewrites file) and separate reaper",
+    "file": "apps/worker/ubag_worker/live/chat_ledger.py; apps/worker/run_chat_reaper.py",
+    "note": "ledger 46,112-114,173-210; only per-job path records chats (run_live_worker.py:159-171), warm daemon does not."
+   },
+   {
+    "what": "Existing tests to extend",
+    "file": "apps/worker/tests/test_warm_daemon.py; test_warm_daemon_protocol.py; test_warm_reuse.py; test_page_registry.py; test_orchestration_wiring.py; apps/gateway/internal/executor/daemonrunner_test.go",
+    "note": "Go TestDaemonRunnerSerializesConcurrentJobs (256) pins today's mutex behavior and must be updated, not deleted, by the pool item."
+   }
+  ]
+ },
+ {
+  "area": "events",
+  "summary": "The 50ms SQL poll is real, and no push mechanism exists anywhere. WaitEvents loops over a two-query listEvents on SQLite and Postgres. The memory store already wakes waiters with one global sync.Cond. Every event write funnels through insertEvent / insertSQLiteEvent, and Postgres assigns per-job sequences under SELECT ... FOR UPDATE. That gives a gap-free, commit-ordered per-job cursor, so a wake-up-then-reread design is safe. Recommended design: a per-job in-process wake hub (the existing WS-5 cap-1 lossy-hint pattern) in all three stores, a Postgres pg_notify on commit plus one dedicated pgx LISTEN connection for multi-replica deployments, and the poll kept as a jittered fallback of about 2s. All of it is gated by env flags that default off. Prod is single-replica (docker-compose.vps.yml) and Helm defaults to 2 replicas (values.yaml:8), so the `local` mode alone covers prod and `postgres` mode is only needed for Helm. Three findings cut the benefit and widen the scope. (a) Worker events reach the store only after the worker exits, and the Python engine itself buffers every token until the interaction ends, so item 3 (incremental streaming) must change the Python engine too, or notify buys nothing for live providers. (b) The SSE handler ignores Last-Event-ID and never closes after a terminal event. (c) There are no tests of WaitEvents, StreamJobEvents or the consumer's exactly-one-terminal validation, so characterization tests must come first.",
+  "claims": [
+   {
+    "claim": "SQL event waiters poll every 50ms (jobs/postgres stores)",
+    "status": "confirmed",
+    "evidence": "jobs/sqlite.go:20; postgres.go:326-347 and sqlite.go:339-360 (timer loop). jobcore has no waiters (jobcore.go)."
+   },
+   {
+    "claim": "Both worker runners collect events before returning",
+    "status": "confirmed",
+    "evidence": "ProcessWorkerRunner uses command.Run with a limitedBuffer and then parseWorkerJSONL (workerconsumer.go:1253-1277); runDaemonJob buffers to the JOB_END marker (daemonrunner.go:100-138); the consumer applies events only after RunWorker returns (workerconsumer.go:380,472-526)."
+   },
+   {
+    "claim": "Incremental streaming is a Go-side change",
+    "status": "partial",
+    "evidence": "The Python process flushes per line (daemon_protocol.py:38-40), but engine.py:464-472 buffers all events and replays tokens after the interaction. Real token streaming needs an engine change that drops or marks whole-interaction retry."
+   },
+   {
+    "claim": "Scoped cross-job events with SSE exist (CLAUDE.md)",
+    "status": "contradicted",
+    "evidence": "Only per-job SSE exists (server.go:1680). /v1/events is a REST page (server.go:1089-1134) and /v1/stream returns 501 (1313-1319)."
+   },
+   {
+    "claim": "NATS support exists",
+    "status": "partial",
+    "evidence": "NATS is only the JetStream worker queue (serve.go:1512). The prod VPS runs UBAG_EXECUTOR_MODE=file with a single gateway (docker-compose.vps.yml:107). NATS is not an event bus, so Postgres LISTEN/NOTIFY is the better cross-replica fit."
+   },
+   {
+    "claim": "Prod gateway 1 CPU / 1300MiB",
+    "status": "confirmed",
+    "evidence": "docker-compose.vps.yml:75-76,80 (GOMAXPROCS=1). Postgres is a shared platform instance serving other projects (lines 26-30), so connection budget and pooler type are unknown."
+   },
+   {
+    "claim": "Multi-replica correctness must be handled",
+    "status": "confirmed",
+    "evidence": "Helm replicaCount 2 with postgres and nats (deploy/helm/ubag/values.yaml:8,185,190; flux helmrelease.yaml:32). An in-process wake alone misses events ingested by another replica, so the fallback poll or LISTEN is required there."
+   },
+   {
+    "claim": "Replace polling with commit notifications plus a bounded fallback",
+    "status": "confirmed",
+    "evidence": "Feasible. Per-job sequences are assigned under FOR UPDATE (postgres.go:639-643) and are gap-free and commit-ordered. insertEvent is the only writer (postgres.go:645-656). The WS-5 lossy-wake plus ticker precedent exists (filespool.go:47-120)."
+   },
+   {
+    "claim": "No lost acked jobs / duplicate results / false truncation success (acceptance)",
+    "status": "partial",
+    "evidence": "The daemon marker plus the consumer's exactly-one-terminal check enforce it (daemonrunner.go:79-81; workerconsumer.go:450-470), but no test pins the consumer-level validation (grep for 'missing_terminal' and 'exactly one' in tests returned nothing). Incremental ingestion removes the pre-apply gate."
+   },
+   {
+    "claim": "Misleading benchmark success paths",
+    "status": "confirmed",
+    "evidence": "tests/load/k6.js:66-72 'SSE TTFB' hits /v1/jobs?stream=1, which is a list endpoint; the job target 'https://example.com' (k6.js:47) fails isTargetKey (server.go:1795)."
+   },
+   {
+    "claim": "WS-5 lease-notification work",
+    "status": "confirmed",
+    "evidence": "File-spool only (filespool.go:100-120). The NATS queue has no wake, and one cap-1 channel is shared across PoolSize workers, so only one worker is woken per enqueue."
+   }
+  ],
+  "open_questions": [
+   "Is prod staying single-replica for now? If so, ship `local` mode and the one-query fast path first and defer Postgres LISTEN/NOTIFY (events-04) until a Helm multi-replica rollout is actually targeted. Recommended: yes.",
+   "What is the shared platform Postgres (/opt/platform, outside this repo)? Is it behind pgbouncer in transaction mode? What is the max_connections budget, and may UBAG hold one extra direct connection for LISTEN?",
+   "Is a new SSE contract acceptable for external clients: Last-Event-ID resume, close after the terminal event, and 204 once resumed past terminal? The alternative is keep-open behavior, which leaves an idle-stream cost.",
+   "May the Python engine drop whole-interaction retry for the post-submit token segment (engine.py:464-472), or should tokens carry an attempt marker so consumers can discard superseded ones?",
+   "What event-latency target applies? The acceptance numbers cover API and voice p95 only. Is a fallback ceiling of 2s acceptable, or must it be 500ms or lower?",
+   "I assumed 'plan phase 4' means the performance priorities and that benchmark repair (events-09) is phase 2; please confirm the phase numbering."
+  ],
+  "existing": [
+   {
+    "what": "SQLite WaitEvents: 50ms poll loop; listEvents runs EXISTS + SELECT per tick; single-connection pool shared with writers",
+    "file": "apps/gateway/internal/jobs/sqlite.go:20,339-360,577-608; serve/serve.go:567",
+    "note": "each stream tick contends with job-create writes"
+   },
+   {
+    "what": "Postgres WaitEvents: same loop. Pool is 20 open / 5 idle by default. Each tick costs two queries.",
+    "file": "apps/gateway/internal/jobs/postgres.go:326-347,566-599; serve/serve.go:1117-1119",
+    "note": "arithmetic estimate, not measured: 100 idle streams is about 4,000 queries/s on a GOMAXPROCS=1 gateway (compose:80)"
+   },
+   {
+    "what": "Single event-write funnel plus per-job sequence lock and worker-event dedupe",
+    "file": "apps/gateway/internal/jobs/postgres.go:639-656,442-453; migrations/postgres/0001_gateway_stores.sql:75",
+    "note": "UNIQUE(job_id,sequence); ON CONFLICT DO NOTHING means duplicates insert no event, so they emit no notify"
+   },
+   {
+    "what": "Memory WaitEvents on one global sync.Cond (Broadcast on every append); listEventsLocked is O(events) per wake",
+    "file": "apps/gateway/internal/jobs/memory.go:247-278,303-324,498",
+    "note": "herd across all waiters on all jobs"
+   },
+   {
+    "what": "SSE handler: 15s heartbeat, 10min TTL, 10s write deadline. Always replays from sequence 0 and never closes after a terminal event. No stream cap, only a gauge.",
+    "file": "apps/gateway/internal/httpapi/server.go:1674-1772,3947",
+    "note": "Last-Event-ID is not handled anywhere. packages/cli WatchJob (internal/cli/client.go:187) blocks until TTL on finished jobs."
+   },
+   {
+    "what": "gRPC StreamJobEvents: WaitEvents on ctx only, closes on terminal, extra Jobs.Get per batch, no heartbeat or TTL",
+    "file": "apps/gateway/internal/grpcapi/server.go:454-500",
+    "note": "has no test"
+   },
+   {
+    "what": "OpenAI facade waitFacadeJob: WaitEvents(limit=1) followed by Get per event",
+    "file": "apps/gateway/internal/httpapi/openai_facade.go:856-908",
+    "note": "stream:true is rejected (409-410)"
+   },
+   {
+    "what": "Per-running-job 250ms Jobs.Get cancel-watch",
+    "file": "apps/gateway/internal/executor/workerconsumer.go:921-951",
+    "note": "another poll that can use the hub"
+   },
+   {
+    "what": "WS-5 lease wake: cap-1 non-blocking channel, ticker kept as the correctness fallback; shared by PoolSize workers",
+    "file": "apps/gateway/internal/executor/filespool.go:47-120; workerconsumer.go:159-165,294-313; PROGRESS.md:292-298",
+    "note": "pinned by filespool_test.go:255-287; the pattern to reuse"
+   },
+   {
+    "what": "Worker events are collected before the consumer applies them. Validation (exactly one terminal) runs before the first apply.",
+    "file": "apps/gateway/internal/executor/workerconsumer.go:380-470,472-526,1253-1277,151-153; executor/daemonrunner.go:82-138",
+    "note": "daemon reads line by line but buffers until the JOB_END marker. A stream that ends without the marker is an error (daemonrunner.go:79-81)."
+   },
+   {
+    "what": "Python already flushes each event line, but the engine buffers the whole interaction, tokens included, and replays it so it can retry the whole interaction",
+    "file": "apps/worker/ubag_worker/live/daemon_protocol.py:38-40; run_live_worker.py:173-177; ubag_worker/live/engine.py:366-367,464-472,614-622",
+    "note": "limits what Go-side streaming can deliver"
+   },
+   {
+    "what": "/v1/events is a paginated REST list ordered by (created_at,id), not SSE. /v1/stream returns 501.",
+    "file": "apps/gateway/internal/httpapi/server.go:1089-1134,1313-1319; jobs/postgres.go:294-299",
+    "note": "created_at is set before commit, so this cursor is not commit-ordered; do not reuse it for push"
+   },
+   {
+    "what": "Reusable plumbing: pgx/v5 is a direct dependency, the stdlib driver is registered, envBool exists, and the lifecycle ctx plus a closeStores hook exist",
+    "file": "apps/gateway/go.mod:9; serve/serve.go:25,114-118,539-558,1460",
+    "note": "no LISTEN/NOTIFY anywhere in the repo"
+   }
+  ]
+ },
+ {
+  "area": "voice",
+  "summary": "BASELINE CAVEAT: the voice code is NOT in the local checkout. Local main 4c4c52f is 0 ahead / 40 behind origin/main e0667b5 (= feat/multimodal-voice-hardening; origin/main reflog shows push updates). apps/worker/ubag_worker/voice/ holds only stale __pycache__. All cites below are origin/main:path:line (read via git show). PROGRESS.md/AGENT_HANDOFF.md on origin/main still say \"do NOT merge until live two-way demo\", which has NOT run.\n\nWhat exists. Public API: POST/GET /v1/voice/sessions, GET/DELETE /{id}, POST /{id}/connect|mute|renew|terminate (voice_handlers.go:23-37; routes.go). Signaling is HTTP-only, non-trickle ICE (media.go:33-36). Control: WebRTC data channel \"control\" (auth/mute/ping, credential HMAC over appSecret, media.go:439-483, voice_handlers.go:709-731) plus HTTP mute. Relay v2: 4B LE length + type byte (0x01 Opus, 0x02 JSON); hello {session_id,exp,token=HMAC-SHA256(secret,\"voice-relay|sid|exp\")}, ready/error, mute (audio-relay.py:15-71; media.go:99-103). Isolation: one live session per (tenant,target,identity) (0019:39-41) and ONE per instance across tenants (0020:9-11); placements are server-resolved from topology (voice_handlers.go:157-194); relay address = explicit map, else instance host:9099, else single addr (serve.go:1866-1903); relay has a global one-session lock and fixed Pulse/FIFO names (audio-relay.py:111-114,392). Atomicity: Postgres tenant advisory lock + partial unique indexes; budgets inside Reserve/Claim (voice/postgres.go:75-245). Per-account/tenant caps: 1 live per account, 4 active + 32 queued per tenant, 10-min lease (voice_handlers.go:43-57). Telemetry: only drop counters + session counters (media.go:85-89, server.go:1077-1099); no jitter/latency/queue-age.\n\nMemory claims. Repaired: voice-vs-voice exclusivity is shared and DB-enforced (Postgres/SQLite); budgets atomic. NOT repaired: Go default store is memory (serve.go:1744) and docker-compose.vps.yml:100 defaults memory; voiceLife (voice_control.go:42-70), MediaHub.sessions (media.go:292), and ConcurrencyRegistry maps (concurrency.go:51-77) are process-local; REST mute on a non-owning replica never reaches the relay (voice_handlers.go:629-633; reconcile ignores Muted, serve.go:1905-1925); reconcile fails OPEN on store errors (serve.go:1916); text jobs are not excluded from a voice-leased instance (zcode review P1 unmet; no voice refs in executor/jobs/daemon). reservation.go (job-create cleanup) and session/ (SSO) are NOT voice.\n\nHelper co-location would: (1) slot in at httpapi.MediaNegotiator (voice_handlers.go:64-68, optional ClientICEServers/Disconnect/SetMuted asserts at 572/601/629); connect response shape and SDK stay unchanged (OpenAPI 4155+). (2) Replace the plain-TCP primary-to-relay hop (media.go:154) with loopback, but move pion, the UDP range and NAT1To1IP (ice.go:24-45) to the helper: helper public UDP must open (or TURN via primary, hiding helper IPs). (3) Require per-attempt subkeys: helpers must not hold relay/app/TURN secrets (media.go:99, ice.go:29). (4) Turn OnConnected/OnEnded/OnClosed/OnMute DB writes (serve.go:1791-1822) into streamed events with fenced primary writes. (5) Need lease generation + helper self-fencing; voice.Session has none (voice.go:66-82). (6) Make activation helper-local: control jobs carry a topology CDP endpoint (voice_control.go:74-125), so no WAN CDP. (7) Add node affinity: ICE-restart re-offers (media.go:338) must reach the owning helper. (8) Count a call as one node workload; today there is no node/global voice cap. Do not return helper IPs/node ids in Session JSON (voice.go:76 exposes instance_ref today).",
+  "claims": [
+   {
+    "claim": "Voice = Go/Pion WebRTC + Python/libopus relay",
+    "status": "confirmed",
+    "evidence": "media.go:18; audio-relay.py:100; opus_bridge.py:4 (origin/main only; absent from local HEAD)"
+   },
+   {
+    "claim": "Reconcile/verify newer voice+admission work first",
+    "status": "confirmed",
+    "evidence": "git rev-list HEAD...origin/main = 0/40; PROGRESS.md still says do not merge; live two-way demo NOT RUN"
+   },
+   {
+    "claim": "Mic queue is 64 packets ~1.28s",
+    "status": "partial",
+    "evidence": "media.go:64 count=64; 1.28s only for 20ms packets, relay accepts up to 120ms (audio-relay.py:21) => up to ~7.7s; kernel FIFO/TCP/parec buffers add unbounded-by-age delay; speaker path has no bound"
+   },
+   {
+    "claim": "Session/signaling API lives in session/ and reservation.go",
+    "status": "contradicted",
+    "evidence": "reservation.go:10-63 is job-create cleanup; session/session.go is SSO; voice is internal/voice + httpapi/voice_*.go"
+   },
+   {
+    "claim": "Reservation atomic across replicas",
+    "status": "partial",
+    "evidence": "confirmed for voice SQL stores (postgres.go:90,168; 0019/0020 indexes); memory default serve.go:1744 and docker-compose.vps.yml:100; media/lifecycle/mute process-local"
+   },
+   {
+    "claim": "Env collisions / process-local authority repaired",
+    "status": "partial",
+    "evidence": "global instance index + per-instance relay resolver repaired; two instances on one host still resolve to the same host:9099 without explicit map (serve.go:1866-1903); fixed device/FIFO names (audio-relay.py:111-114); job-vs-voice exclusion missing"
+   },
+   {
+    "claim": "Lease fencing / lease generation",
+    "status": "missing",
+    "evidence": "voice.Session (voice.go:66-82) has none; RenewLease only extends expiry; reconcile fails open (serve.go:1916); plan wants 120s/20s, existing exec lease 90s/10s unfenced"
+   },
+   {
+    "claim": "Per-account caps and bounded queues",
+    "status": "partial",
+    "evidence": "1 live/account, 4 active/32 queued per tenant; no per-app/global/node voice cap; queued sessions never expire"
+   },
+   {
+    "claim": "Jitter/drop telemetry exists",
+    "status": "partial",
+    "evidence": "drop counters only; 'speaker' series never incremented (metrics.go:61); tests assert no drop counts; no jitter, RTT or frame age"
+   },
+   {
+    "claim": "UBAG voice relay p95 <= 100ms",
+    "status": "unverifiable",
+    "evidence": "no latency harness or benchmark; acceptance.mjs has no voice scenario; thresholds.json has none"
+   },
+   {
+    "claim": "Voice/gRPC offer-control contract exists",
+    "status": "missing",
+    "evidence": "packages/proto has only jobs.proto; no voice/helper/node concepts in gateway"
+   },
+   {
+    "claim": "Browser 2 CPU/4096MiB, gateway 1 CPU/1300MiB",
+    "status": "confirmed",
+    "evidence": "docker-compose.vps.yml:75-76,279-280; but 2 CPU/4GiB exceeds helper ceilings (1.5 CPU/2.5GiB; 3/5GiB)"
+   }
+  ],
+  "open_questions": [
+   "Should helper-hosted voice terminate WebRTC on the helper's public UDP (needs per-helper port range and NAT1To1IP) or relay through a central coturn (hides helper IPs, adds a hop that counts against the 100ms p95)?",
+   "Does a live call count as one of a new helper's single active browser workloads (so a helper hosts one call or one text job), given the prod browser unit is 2 CPU/4GiB versus 1.5 CPU/2.5GiB helper ceilings?",
+   "origin/main already contains the voice branch although the ledger says do not merge until the live demo: is it auto-deployed, and is UBAG_VOICE_STORE=memory in production env.local (not in repo, unverifiable)?",
+   "Who owns helper.proto and migration number 0022 (execution-contract and fleet areas)?",
+   "Define the voice p95 measurement points (RTP-in to relay Send; relay Recv to WriteSample) before gating on 100ms.",
+   "Plan phase numbering: I tagged reconcile/measure as 0, helper voice as 3, queue/telemetry as 4; confirm."
+  ],
+  "existing": [
+   {
+    "what": "Voice session store (memory/SQLite/Postgres), exclusive account+instance leases, Reserve/Claim/Sweep",
+    "file": "apps/gateway/internal/voice/voice.go; voice/postgres.go; voice/sqlite.go; migrations/postgres/0019_voice_sessions.sql, 0020_voice_instance_global.sql (origin/main)",
+    "note": "CAS on status only; no lease generation or node_id; queued rows never expire (voice.go:468, postgres.go:349); Claim only called from /connect (voice_handlers.go:514), client-driven, no FIFO."
+   },
+   {
+    "what": "Pion MediaHub, relay dialer, 64-frame drop-oldest mic chan",
+    "file": "apps/gateway/internal/voice/media.go (origin/main)",
+    "note": "micBufferDepth=64 at :64; count-bound only, no frame age; speaker path has no queue or drop (:681-717); Recv/Write deadlines 5s."
+   },
+   {
+    "what": "ICE/TURN config: bounded UDP range, NAT 1:1, coturn REST creds",
+    "file": "apps/gateway/internal/voice/ice.go",
+    "note": "UDP4 only; TURN secret held by gateway (:29)."
+   },
+   {
+    "what": "Provider voice lifecycle via internal voice.activate/deactivate control jobs",
+    "file": "apps/gateway/internal/httpapi/voice_control.go; apps/worker/ubag_worker/voice/voice_job.py, voice_runner.py",
+    "note": "connected requires activated (voice_control.go:217) but ready_controls is unprobed so runner returns unverified_ready (voice_runner.py:260-266): sessions terminate activation_failed today. Lease released before deactivate finishes (voice_handlers.go:673-676 vs voice_control.go:297-315)."
+   },
+   {
+    "what": "Python libopus audio relay v2",
+    "file": "deploy/vps/browser/audio-relay.py; opus_bridge.py",
+    "note": "accepts 2.5-120ms packets (:21), idle 30s, fixed 9099/FIFO/device names, thread per pump; no relay-side age bound."
+   },
+   {
+    "what": "Wiring, sweeper (30s), reconciler (2s), relay resolver",
+    "file": "apps/gateway/internal/serve/serve.go:1733-1925",
+    "note": "hub callbacks write store directly (:1791-1822)."
+   },
+   {
+    "what": "Shared admission tokens (multi-lane, advisory lock) + per-job exec lease 90s/10s",
+    "file": "apps/gateway/internal/topology/admission_sql.go; concurrency.go; executor/workerconsumer.go:154-155,398-400",
+    "note": "Lane{Key,Cap,Dynamic}+PutLaneCap is the natural hook for node ceilings; exec lease has no generation, so stale commits are not fenced."
+   },
+   {
+    "what": "Capabilities voice view",
+    "file": "apps/gateway/internal/httpapi/capabilities.go:233-285",
+    "note": "free_resources uses tenant-only List(200) (:262): can overstate vs cross-tenant holds and miss old active sessions."
+   },
+   {
+    "what": "Conversation affinity",
+    "file": "apps/gateway/internal/conversations/conversations.go:44-54",
+    "note": "binds key to thread URL only; no node/context/identity, so helper affinity needs new fields."
+   },
+   {
+    "what": "Resource budgets",
+    "file": "docker-compose.vps.yml:75-76,279-280",
+    "note": "gateway 1 CPU/1300m, browser 2 CPU/4096m (header comment :19-24 stale)."
+   }
+  ]
+ },
+ {
+  "area": "fleet",
+  "summary": "UBAG has no node/fleet concept today. topology/ is read-only per-tenant browser Instance/Context/Tab observability (topology/store.go:108-115), region/ is in-memory region-level state (region.go:28,54-55), leases are local file/NATS leases with no generation/expiry/renewal (filespool.go:288, natsconsumer.go:22), gRPC is plaintext JobService on the global app secret (serve.go:301, grpcapi/server.go:592-595), mTLS exists only at the Caddy edge (deploy/mtls/README.md \"Trust model\"). Phases 1-2 are therefore all new, but the seam is clean: executor.WorkerRunner (workerconsumer.go:151) plus the targetWorkerRunner decorator pattern (serve.go:1229-1303). Recommended design: UBAG is a pure CONSUMER of manager-issued allocations (UBAG-defined JSON schema, polled), stored in a new Go package `internal/nodes` (avoid the name \"fleet\": Python topology.Fleet already means browser fleet) with node + allocation + attempt-ledger tables. The primary dials helpers over a separate mTLS gRPC service (new package ubag.helper.v1), so helpers hold no DB creds and no app secret. All of it is Postgres-only, off by default behind env flags. BLOCKERS: (1) voice/admission work is NOT on main; it sits on local branch feat/multimodal-voice-hardening (40 commits ahead, migrations 0019-0021, edits to openapi.yaml/errors.json), so fleet migrations must be 0022+ and contract edits must follow the merge. (2) voice control jobs pass the WAN CDP endpoint through the generic queue (branch voice_control.go:74-91), which breaks \"no WAN CDP\" on helpers. (3) UNIQUE(tenant,target,identity_ref) (migrations/postgres/0004:42) pins each provider identity to one browser instance, so helper capacity is bounded by human-logged-in identities per helper. EXTERNAL: the OET fleet manager (.NET 10, SQLite, Ansible/SSH, WireGuard, dashboard; OET doc lines 48-57, in the OET repo) owns onboarding, WireGuard, Docker limits, firewall/UDP ports, cert issuance and reservation accounting. The OET reference was readable, but it defines no project-facing allocation API, reservation model or workload manifest, so UBAG must publish the consumer contract it needs.",
+  "claims": [
+   {
+    "claim": "Prod gateway 1 CPU/1300MiB; browser 2 CPU/4096MiB",
+    "status": "confirmed",
+    "evidence": "docker-compose.vps.yml:75-76, 266-267"
+   },
+   {
+    "claim": "Worker concurrency 1",
+    "status": "partial",
+    "evidence": "Default 1 (serve.go:1341; docker-compose.vps.yml:138); prod env.local was set to 2 on 2026-09 (PROGRESS.md:804). Current prod value is not in repo."
+   },
+   {
+    "claim": "Warm daemon enabled in prod",
+    "status": "unverifiable",
+    "evidence": "Compose default false (docker-compose.vps.yml:122; deploy/vps/README.md:74; PROGRESS.md:1961) but PROGRESS.md:1113 mentions running with the daemon; depends on prod env.local"
+   },
+   {
+    "claim": "One shared warm daemon serializes jobs",
+    "status": "confirmed",
+    "evidence": "executor/daemonrunner.go:23-31 (mu, one profile)"
+   },
+   {
+    "claim": "NATS support and topology models exist; multi-region compose is a demo",
+    "status": "confirmed",
+    "evidence": "executor/nats.go:46; deploy/multi-region/README.md ('topology demo'); region.go:54-55 in-memory only"
+   },
+   {
+    "claim": "Node registry / capacity / allocation / heartbeat / drain concepts exist",
+    "status": "missing",
+    "evidence": "Only browser topology (store.go:108-115) and region-level drain (region.go:28); 'heartbeat' matches only SSE keepalive (httpapi/server.go:1675)"
+   },
+   {
+    "claim": "Versioned mTLS gRPC/Protobuf helper protocol",
+    "status": "missing",
+    "evidence": "Only JobService (jobs.proto:7); gateway gRPC has no TLS creds (serve.go:301) and uses the global app secret (grpcapi/server.go:592-595); mTLS is edge-only (deploy/mtls/README.md)"
+   },
+   {
+    "claim": "Attempt carries attempt ID, node ID, lease generation, expiry, input fingerprint, workload version; 120s lease renewed every 20s; fenced commits",
+    "status": "missing",
+    "evidence": "WorkerLease has only LeaseID (workerconsumer.go:139-149; unix-nano id filespool.go:288); NATS ack-wait 30s (natsconsumer.go:22); gateway_jobs has no attempt columns (0001:13-45). Only event-key dedupe exists (0001:84)."
+   },
+   {
+    "claim": "Persist result before ack",
+    "status": "confirmed",
+    "evidence": "Local path applies events then lease.Complete (workerconsumer.go:546-552)"
+   },
+   {
+    "claim": "Voice/admission work is newer work on main to reconcile",
+    "status": "contradicted",
+    "evidence": "main has no internal/voice and no /v1/voice. It lives only on local branch feat/multimodal-voice-hardening, 40 commits ahead (git rev-list), adding migrations 0019-0021 and openapi/errors changes"
+   },
+   {
+    "claim": "Helper voice can reuse existing flow without WAN CDP",
+    "status": "contradicted",
+    "evidence": "Branch voice_control.go:74-91 passes instance.RemoteEndpoint as cdp_endpoint via the generic queue; needs node-pinned on-helper execution. A relay hop over the measured 156-193 ms primary-helper RTT (OET doc line 30) would also exceed the 100 ms voice budget, so co-location is required."
+   },
+   {
+    "claim": "OET fleet reference supports plan numbers (3 CPU/5GiB at 4c/8G, 15s heartbeat/3 misses, 120s/20s lease, 80%/20% pressure, 2 min 60%/25% recovery, at-least-once fenced, no DB creds to helpers)",
+    "status": "confirmed",
+    "evidence": "OET doc lines 180, 182-183, 184, 186-187, 172, 202"
+   },
+   {
+    "claim": "2c/4G -> 1.5 CPU/2.5GiB, other 75%/62.5%; OET reservations deducted first; unknown reservation ineligible; new helper starts at 1 workload",
+    "status": "unverifiable",
+    "evidence": "Not in OET doc (only 4c/8G budget, line 180; 'Policies/priorities' screen line 98). Manager-side semantics. Risk: prod Chrome starved at 1 CPU/1.9 GB (PROGRESS.md:786-793; docker-compose.vps.yml:261-265), so a 2c/4G ceiling is marginal."
+   },
+   {
+    "claim": "Helper transport is mTLS gRPC",
+    "status": "partial",
+    "evidence": "OET doc specifies coarse HTTPS with streamed assets for helper traffic (line 253) and Rust gate 30%/40% (line 270) vs plan 20%/25%. UBAG's helper protocol is UBAG-owned so gRPC is allowed, but it is not what OET documents."
+   },
+   {
+    "claim": "Same provider login can scale across helpers",
+    "status": "contradicted",
+    "evidence": "UNIQUE (tenant_id, target_id, identity_ref) (migrations/postgres/0004:42); safe-mode forbids copying credentials, so each helper needs its own human login"
+   }
+  ],
+  "open_questions": [
+   "Dial direction: recommend primary dials helper over WireGuard (helper needs no credentials to primary; the plan's 'register' becomes Handshake). The OET doc uses a helper-claim model (lines 151-158). Confirm push vs pull.",
+   "How do grants reach UBAG? Recommend UBAG polls a manager endpoint on the same primary host (GET allocations for project=ubag) against a UBAG-owned schema. Also decide the manager-down policy: keep last grant for N minutes with no increases, or stop new assignments immediately?",
+   "Provider identity inventory: how many human-logged-in identities per target will each helper have? Identity-per-instance uniqueness and the ban on credential copying mean a new helper adds capacity only for identities logged in on it. May the same provider account be logged in on two nodes?",
+   "mTLS PKI: who issues and rotates helper and primary certs (manager vs deploy/mtls dev scripts), and how a cert maps to node_id? (EXTERNAL)",
+   "Voice on helpers: which regions may host live voice given the 156-193 ms primary-helper RTT, and who owns the UDP range, NAT IP and TURN on helpers? (EXTERNAL)",
+   "Confirm helper dispatch is Postgres-only (SQLite edge profile refuses it) and that the phase map assumed here holds: 0 reconcile, 1 contracts and models, 2 remote execution, 3 voice.",
+   "The OET manager has no documented API for project reservations or OET priority. Who writes the manager-side adapter that emits the UBAG node-allocation schema? (EXTERNAL)"
+  ],
+  "existing": [
+   {
+    "what": "Browser topology read model (tenant-scoped, read-only; instance WorkerID/State)",
+    "file": "apps/gateway/internal/topology/store.go",
+    "note": "No node entity or heartbeat. Prod Postgres store gets no worker topology (serve.go:1364); rows are seeded by psql script deploy/small/register-browser-topology.sh"
+   },
+   {
+    "what": "AIMD/lane in-flight ConcurrencyRegistry (process-local on main)",
+    "file": "apps/gateway/internal/topology/concurrency.go",
+    "note": "Reusable for per-node and per-identity lanes; shared SQL TokenBackend exists only on the voice branch"
+   },
+   {
+    "what": "Region state machine active/draining/disabled, in-memory",
+    "file": "apps/gateway/internal/region/region.go",
+    "note": "Pattern to copy for a local node cordon override; not node-level"
+   },
+   {
+    "what": "NATS region-subject routing and worker roaming",
+    "file": "apps/gateway/internal/executor/nats.go; apps/worker/ubag_worker/region.py",
+    "note": "Prod uses UBAG_EXECUTOR_MODE=file (docker-compose.vps.yml:107); not the grant path"
+   },
+   {
+    "what": "WorkerRunner seam, targetWorkerRunner decorator, buildWorkerRunner, PoolSize clamp 32",
+    "file": "apps/gateway/internal/executor/workerconsumer.go:151; apps/gateway/internal/serve/serve.go:1229,1256,1345",
+    "note": "Insertion point for a placement/remote runner"
+   },
+   {
+    "what": "File-spool lease and startup RecoverOrphanLeases",
+    "file": "apps/gateway/internal/executor/filespool.go:288,374; serve.go:509",
+    "note": "Requeues any orphan lease blindly; unsafe once remote attempts exist"
+   },
+   {
+    "what": "Event-key dedupe table (idempotent commits)",
+    "file": "migrations/postgres/0001_gateway_stores.sql:84",
+    "note": "No attempt/node/generation columns on gateway_jobs"
+   },
+   {
+    "what": "gRPC JobService only; hard-coded proto check",
+    "file": "packages/proto/proto/ubag/v1/jobs.proto:7; tools/check-proto-contracts.mjs:3",
+    "note": "gen/go is a separate checked-in module wired by replace in gateway go.mod"
+   },
+   {
+    "what": "Single RBAC role table",
+    "file": "apps/gateway/internal/authz/authz.go",
+    "note": "Add node:read here"
+   },
+   {
+    "what": "Artifact store with gateway-computed SHA-256 and PUT /v1/jobs/{id}/artifacts/{key} (32 MiB)",
+    "file": "apps/gateway/internal/artifacts/store.go; packages/openapi/openapi.yaml:1305",
+    "note": "Basis for content-hash asset staging"
+   },
+   {
+    "what": "Dev mTLS cert generator and NATS mTLS conf",
+    "file": "deploy/mtls/gen-certs.sh; deploy/mtls/nats/nats-mtls.conf",
+    "note": "Dev only; no gateway-process TLS"
+   },
+   {
+    "what": "Gateway image CI to GHCR",
+    "file": ".github/workflows/gateway-image.yml",
+    "note": "Model for a helper image workflow"
+   },
+   {
+    "what": "Voice branch seams (not on main): MediaNegotiator, RelayDialer, voice.Store leases with Placement{Identity,Instance}, TokenBackend",
+    "file": "feat/multimodal-voice-hardening:apps/gateway/internal/httpapi/voice_handlers.go:64; voice/media.go:106; voice/voice.go; topology/admission_sql.go",
+    "note": "Read via git show; this is the helper voice hook"
+   }
+  ]
+ },
+ {
+  "area": "bench",
+  "summary": "The newer acceptance harness exists only on origin/main. Local main is 40 commits behind (`git status`: [behind 40]); tests/load/acceptance.mjs, thresholds.json, acceptance.test.mjs and docs/load-testing.md arrive with commit afebfb7. The working tree has only the stale k6, Locust and run-load.mjs scripts plus 7 untracked result dirs from the harness. Every saved run targets `mock`, and none requested docker stats. The harness gates status codes, not output integrity, resource headroom or the plan's p95 goals: create p95 is capped at 2000 ms against the 200 ms goal, and no read gate exists. Several scripts report success on a bare 2xx or 4xx, or on a skipped step. The worker emits no stage timings and the voice path exports only drop counters. No pprof, Go runtime metrics or micro-benchmarks exist. Recommended path: reconcile and reuse acceptance.mjs, fail the false greens closed, add a worker stage-timing contract, cgroup sampling, a workload manifest, voice frame age, synthetic providers, then a 1/2/5/10/20 ladder and a Rust-gate evaluator.",
+  "claims": [
+   {
+    "claim": "Newer voice+admission work needs reconcile/verify",
+    "status": "confirmed",
+    "evidence": "HEAD 4c4c52f vs origin/main e0667b5 (== feat/multimodal-voice-hardening), 40 commits ahead. origin PROGRESS.md:3900-3925 says the release is INCOMPLETE until live voice and remote WebRTC evidence exist, yet the tracking ref already contains it."
+   },
+   {
+    "claim": "Benchmarks have misleading success paths",
+    "status": "confirmed",
+    "evidence": "run-load.mjs:31-33,38,47-49; locustfile.py:34,57,65; adapter-drift.spec.ts:61-64,82; monitor.mjs:128; chaos.yml:62-65. In acceptance.mjs, facade_image 75/75 returned 400 and the verdict was still PASS (run 17-12-06). Not-measured thresholds pass (:321). completed_with_warnings counts as success (:26). Overload passes with 0 rejections (note-only, :685)."
+   },
+   {
+    "claim": "A newer acceptance harness exists to reuse",
+    "status": "partial",
+    "evidence": "Exists on origin/main only and is solid on admission, retry, idempotency and cancel. It is mock-only, status-only, single-tenant, with no resource headroom or voice gates."
+   },
+   {
+    "claim": "Starting point: gateway 1 CPU/1300MiB, browser 2 CPU/4096MiB, worker concurrency 1",
+    "status": "confirmed",
+    "evidence": "docker-compose.vps.yml:75-76, 266-267, 138."
+   },
+   {
+    "claim": "Warm daemon enabled in prod",
+    "status": "partial",
+    "evidence": "AGENT_HANDOFF.md:398 says ON; compose default is false (docker-compose.vps.yml:122); PROGRESS.md:1961 calls it opt-in. Mock/generic fall back to the process runner (AGENT_HANDOFF.md:499), so mock numbers are not daemon-path numbers."
+   },
+   {
+    "claim": "SQL event waiters poll every 50ms",
+    "status": "partial",
+    "evidence": "origin/main:apps/gateway/internal/jobs/sqlite.go:20 defaultWaitEventsInterval = 50ms. The Postgres waiter was not located. Nothing in the harness measures event-delivery latency or idle DB load (no SSE consumer)."
+   },
+   {
+    "claim": "Worker runners collect events before returning",
+    "status": "confirmed",
+    "evidence": "workerconsumer.go:432 returns the full slice. engine.py:464-473 buffers interaction events, so token and completed created_at are stamped after the provider finishes and cannot split stages."
+   },
+   {
+    "claim": "Audio queue is 64 packets, about 1.28s",
+    "status": "confirmed",
+    "evidence": "media.go:64 micBufferDepth=64; media.go:66 20ms frames. The chan holds payload only, so there is no age metric."
+   },
+   {
+    "claim": "Rust = Axum/Tokio localhost sidecar",
+    "status": "confirmed",
+    "evidence": "packages/sidecar-rust/Cargo.toml (axum 0.8, tokio) and README. It is a loopback proxy, not on the voice path; no Rust relay or bench exists."
+   },
+   {
+    "claim": "Acceptance goals are measurable today (read p95<=100, accept p95<=200, relay p95<=100, headroom>=20%)",
+    "status": "missing",
+    "evidence": "thresholds.json: create p95<=2000 only. Saved runs: clients-100 create ok p95 600ms, poll p95 217-296ms. No relay latency metric, and no cgroup/memory-headroom capture in any saved run."
+   },
+   {
+    "claim": "100 clients + 1000 queued tested; no lost jobs, cross-tenant leakage, duplicate results or false truncation",
+    "status": "partial",
+    "evidence": "Lost jobs and duplicate idempotency keys are covered. No cross-tenant probe (single UBAG_LOAD_API_KEY, acceptance.mjs:208). No result-content or truncation check (results never read). 1000-job evidence is mock with 16 consumers on a Windows laptop (origin PROGRESS.md:3890-3900); production headroom was never measured."
+   },
+   {
+    "claim": "Gateway pprof/profiling hooks exist",
+    "status": "contradicted",
+    "evidence": "UBAG_PPROF_ADDR appears only in observability.md:90,94. No net/http/pprof or go_*/process_* metrics in Go; check-alert-metrics.mjs treats process_* as external."
+   }
+  ],
+  "open_questions": [
+   "Merge or fast-forward local main to origin/main (40 commits, includes the voice/admission work) now, or branch from feat/multimodal-voice-hardening? origin PROGRESS.md says do not merge until live voice evidence exists and main auto-deploys, yet origin/main already points at that tip.",
+   "Delete tests/load/{k6.js,locustfile.py,run-load.mjs,baselines.json} (recommended, acceptance.mjs supersedes them) or keep and repair them?",
+   "How is a second tenant credential provisioned on the isolated stack for the cross-tenant probe (PAT, app JWT, or a second UBAG_TENANT_ID stack)?",
+   "Where do ladder and capacity runs happen? Saved results came from a Windows laptop with no Docker (origin PROGRESS.md:3895), so cgroup and throttle numbers need an isolated Linux host sized like the 2c/4G and 4c/8G helpers.",
+   "Is a local fake-chat adapter (synthetic_chat, outside the default registry) acceptable, or should scenarios stay mock-option-only until fleet work lands?",
+   "Publish measured capacity in committed docs/benchmarks/ and PROGRESS.md (tests/load/results is gitignored), or PROGRESS.md only?"
+  ],
+  "existing": [
+   {
+    "what": "Acceptance harness (queue-1000, clients-100, duplicates+cancel races, overload+recovery, metrics-snapshot, host allowlist guard, 23 offline self-tests). Reuse, don't rewrite.",
+    "file": "origin/main:tests/load/acceptance.mjs (+acceptance.test.mjs, thresholds.json, docs/load-testing.md; script test:load:offline at origin/main:package.json:34)",
+    "note": "Absent from local main. Hardening gaps are at :26, :321, :329-334, :374, :418-420, :495, :685."
+   },
+   {
+    "what": "7 saved acceptance runs, all untracked. Latest full run (17-10-21): 1000/1000 completed, create p95 79.5ms, poll p95 279ms, db_pool_wait 2890 waits / 15.95s.",
+    "file": "tests/load/results/2026-10-05T17-*/report.json",
+    "note": "All target=mock; docker stats 'not requested' in every run. meta has no gateway commit, store type, worker concurrency or host/limits."
+   },
+   {
+    "what": "Legacy k6/Locust/run-load scripts and baselines.json. Stale contract and false-green paths.",
+    "file": "tests/load/run-load.mjs, k6.js, locustfile.py, baselines.json",
+    "note": "run-load.mjs:31-33 swallows k6 failure and :47-49 exits 0 without a summary. k6.js:47-49 sends target example.com / command_type fetch and :62 checks job.id (API returns job_id). locustfile.py:34,57,65 treat 403 as success."
+   },
+   {
+    "what": "tools/benchmark deterministic mock benchmark. Sequential, one sample at a time. 'acceptance' returns after the 202.",
+    "file": "tools/benchmark/benchmark.mjs:406,504-511",
+    "note": "FIXED_PROMPT (:9,:200) is never verified against the result. queue/worker timings come from event created_at (:361-370). Mock path only."
+   },
+   {
+    "what": "Gateway metrics: queue-wait, worker-run, ingestion and jobs-duration histograms. Route-only latency histogram, DB pool, admission, upload-memory, voice drop counters.",
+    "file": "origin/main:apps/gateway/internal/httpapi/server.go:977-1157 and overload.go:73-245",
+    "note": "Latency histogram has no method or status label (server.go:3971-3999). Hard-coded zeros at :978-983 and :1114-1124. Worker run is one black box (workerconsumer.go:431-433)."
+   },
+   {
+    "what": "Voice media plane: 64-packet mic chan (20ms frames) and drop counters. fakeRelay echo plus pion client fixtures are reusable for an in-process latency bench.",
+    "file": "origin/main:apps/gateway/internal/voice/media.go:64,66,381,668,707; media_test.go:22-35; media_relay_test.go:18",
+    "note": "The chan carries bare []byte, so no frame age. The speaker drop series is never incremented; only mic and mic_muted are."
+   },
+   {
+    "what": "Browser audio relay (Python + ctypes libopus). Pump loops have no timing; FIFO-full drops go to stderr only. Unknown control ops are ignored.",
+    "file": "origin/main:deploy/vps/browser/audio-relay.py:496-559,523-525,493",
+    "note": "conftest FakeLib replaces libopus, so it cannot be used for CPU cost."
+   },
+   {
+    "what": "Mock adapter: deterministic output 'Mock response for ... (job_id): prompt', options mock_tokens/mock_result. No latency or failure injection. Mock bypasses the warm daemon.",
+    "file": "adapters/mock/ubag_mock_adapter/adapter.py:308-345; AGENT_HANDOFF.md:499",
+    "note": "Mock benchmarks measure the cold process-runner path, not the live warm-daemon path."
+   },
+   {
+    "what": "Other false-green checks: e2e drift spec, synthetic monitor, chaos CI.",
+    "file": "tests/e2e/adapter-drift.spec.ts:31-35,61-64,82; tools/synthetic-monitor/monitor.mjs:104,128; .github/workflows/chaos.yml:57-68; tests/chaos/harness/runner.py",
+    "note": "Drift is a warn only. The e2e job step returns when the secret is unset and accepts any status <500. The monitor posts invalid target 'synthetic.health.v1' and counts any 2xx. chaos.yml sets CHAOS_SMOKE_PASSED=true unconditionally; the 'soak' re-runs unit tests; the runner is a skeleton."
+   },
+   {
+    "what": "Tracing is init-only (obs/otel.go). No spans, no pprof, no Go Benchmark funcs, no criterion.",
+    "file": "apps/gateway/internal/obs/otel.go; apps/docs/src/content/docs/operations/observability.md:94",
+    "note": "Docs promise UBAG_PPROF_ADDR but no Go code reads it."
+   },
+   {
+    "what": "Dashboard pollWhileVisible is already used on 6 routes. Bundle budgets exist.",
+    "file": "apps/dashboard/src/lib/poll.ts; tools/check-weight.mjs:9",
+    "note": "antigravity/+page.svelte:294 still uses a raw 3s setInterval. Reuse for the idle-activity measurement."
+   }
+  ]
+ },
+ {
+  "area": "dashboard",
+  "summary": "Dashboard is a static SvelteKit app that only polls (no EventSource). The gateway has no per-job SSE auth path the browser can use, and no fleet, queue-reason or placement surface anywhere. Voice and admission work is NOT on main: it lives on branch feat/multimodal-voice-hardening (40 commits ahead, 0 behind), so reconcile it before editing contracts. Contract schemas are closed (additionalProperties:false) and \"SDK regeneration\" is only a manifest generator plus hand-written types. Existing drift (dashboard vs OpenAPI vs fixtures) should be fixed first. Polling is mostly visibility-aware via pollWhileVisible, with real exceptions. The CI weight gate that guards bundle budgets is vacuous.",
+  "claims": [
+   {
+    "claim": "Newer voice + admission work exists to reconcile",
+    "status": "partial",
+    "evidence": "Absent from main working tree (no webrtc/pion/libopus/voice route hits). Present on branch feat/multimodal-voice-hardening: /v1/voice/sessions*, /v1/capabilities, UBAG-VOICE and UBAG-OVERLOAD errors, SDK voice.go and voice-media.ts. `git rev-list --count main..branch` = 40, `branch..main` = 0. Branch has no dashboard changes."
+   },
+   {
+    "claim": "Dashboard polling is visibility-aware (item 9)",
+    "status": "partial",
+    "evidence": "Layout and 5 pages use pollWhileVisible. Not covered: antigravity/+page.svelte:292-296 raw 3s setInterval; UpdatedAgo.svelte:12 10s timer runs hidden; LiveBrowser.svelte:138-141,325-327 reconnect keeps retrying; apps/mobile OverviewView/JobsView/JobDetailView/AlertsView use setInterval with no visibility handling; poll.ts:37 starts even if hidden."
+   },
+   {
+    "claim": "Bundle budgets are kept",
+    "status": "partial",
+    "evidence": "Budgets exist (check-weight.mjs:10-14) but ci.yml:107-108 runs `--strict` in the lint job with no dashboard build, dist/ is gitignored, and missing paths 'skip' (check-weight.mjs:73), so the dashboard budgets are never enforced."
+   },
+   {
+    "claim": "Queue reasons (OET reservation, pressure, missing login, account busy, voice env, network) can be surfaced",
+    "status": "missing",
+    "evidence": "No such vocabulary on main or the voice branch. Job `queued` carries no reason; JobResponse.metadata is closed (job-response.schema.json metadata). Capacity exhaustion today is a synchronous 429 UBAG-CONCURRENCY-001 (server.go:1545-1548). Only the voice branch overloadReasons list overlaps."
+   },
+   {
+    "claim": "Assigned capacity and session placement are visible",
+    "status": "missing",
+    "evidence": "Topology only has worker_id on BrowserInstance (topology/store.go:27) and per-(target,identity) caps. No node, grant or fleet concept. BrowserInstance.remote_endpoint is returned to tenants (openapi.yaml:3997); it must be redacted for helpers (no WAN CDP)."
+   },
+   {
+    "claim": "Changes can be additive and non-breaking",
+    "status": "partial",
+    "evidence": "Closed schemas: topology and job metadata have additionalProperties:false; error.schema.json category is a closed enum (voice branch had to add 'voice' and 'overload'); event type enum is closed (job-event.schema.json), mirrored in apps/mobile/src/lib/types.ts:38-58. Prefer new optional fields, reuse of existing event types (queued/blocked with data.reason) and existing error categories."
+   },
+   {
+    "claim": "Overview reflects 1000 queued jobs (acceptance load)",
+    "status": "contradicted",
+    "evidence": "Overview and metrics derive `jobs_total` from `jobsRes.data?.total ?? jobs.length` (+page.svelte:69, metrics:94) over limit=100. The gateway never returns total (models.go:253-256; openapi JobListResponse:4712-4728), so counts cap at 100."
+   },
+   {
+    "claim": "Cross-job events are streamed (SSE)",
+    "status": "contradicted",
+    "evidence": "/v1/events is a JSON list (CollectionResponse); only /v1/sse/jobs/{id} streams (openapi.yaml:1516), /v1/stream is a 501 stub (server.go:1318). Browser EventSource cannot send Bearer, so the dashboard stays on polling."
+   },
+   {
+    "claim": "Contract surface otherwise consistent with consumers",
+    "status": "contradicted",
+    "evidence": "Drift: users/+page.svelte:61,79 call /v1/scim/users but the gateway serves /v1/scim/v2/Users (routes.go:73-76); BrowserInstance.novnc_url in dashboard types.ts:116 is not in the contract; the TS SDK declares list-jobs `fields` and `include` that the gateway ignores (server.go:2105-2124)."
+   },
+   {
+    "claim": "Safe-mode: logins stay human-only on helpers",
+    "status": "unverifiable",
+    "evidence": "LiveBrowser dials one bridge URL (LiveBrowser.svelte:21-44) with no node selector. No per-helper login path exists in this repo; owned by the fleet manager plus the provider-refresh skill."
+   }
+  ],
+  "open_questions": [
+   "Plan phase numbering for items 2 and 5 is assumed (0 = reconcile, 1 = additive contract, 2 = fleet-backed UI, 4 = perf item 9); correct if the plan numbers them differently.",
+   "Should tenants see fine-grained queue reasons (oet_reservation, resource_pressure) or only a coarse capacity_wait, with the full reason on operator-only /v1/fleet? Recommended: coarse for tenants, full for operators.",
+   "Fleet source of truth: does the gateway proxy the shared OET fleet manager (UBAG-visible grants only) or ingest grants through the registration gRPC? This decides whether /v1/fleet/* is a thin proxy or a store-backed read.",
+   "Human login on helpers: LiveBrowser has a single bridge URL. Should the dashboard proxy per-node bridges via the primary (needs CSP and bridge routing) or keep helper logins as an out-of-band provider-refresh step?",
+   "Is a dedicated /fleet nav route wanted? It adds a nav entry, an ALL_ROUTES entry and win32+linux baselines, and eats dist headroom; extending Browser Sessions and Quotas avoids that."
+  ],
+  "existing": [
+   {
+    "what": "pollWhileVisible helper (pauses on hidden, fires on visible)",
+    "file": "apps/dashboard/src/lib/poll.ts:6-43",
+    "note": "start() runs unconditionally and ticks immediately; no in-flight guard, backoff or jitter; no tests"
+   },
+   {
+    "what": "30s health poll",
+    "file": "apps/dashboard/src/routes/+layout.svelte:98",
+    "note": "hits /v1/health only, never /v1/ready"
+   },
+   {
+    "what": "45s silent refresh on jobs/failed/workflows/browser/webhooks",
+    "file": "apps/dashboard/src/routes/{jobs:320,failed:85,workflows:248,browser:234,webhooks:196}/+page.svelte",
+    "note": "each also calls load() on mount, so the first fetch is duplicated"
+   },
+   {
+    "what": "Concurrency ceilings UI (nearest 'assigned capacity' surface)",
+    "file": "apps/dashboard/src/routes/browser/+page.svelte:57-82,400-438; quotas/+page.svelte:33-35,82-87",
+    "note": "browser page reads provider_id/lane/maximum; contract and Go emit target/identity_ref/min/max/in_flight (openapi.yaml:4088-4113, topology/concurrency.go:28-33); quotas page matches the contract"
+   },
+   {
+    "what": "Provider readiness proxy",
+    "file": "apps/dashboard/src/routes/jobs/+page.svelte:76-78,354; openapi.yaml ProviderContext:4016-4057",
+    "note": "login_state per context; /v1/targets and /v1/adapters are static catalogs (routes.go:57-58)"
+   },
+   {
+    "what": "Weight budgets: dist 1000KB, initial JS 150KB, css 120KB",
+    "file": "tools/check-weight.mjs:9-14; vite.config.ts:22",
+    "note": "PROGRESS.md records dist ~904KB after polish, so ~10% headroom; chart.js and xterm are lazy chunks"
+   },
+   {
+    "what": "SDK 'regeneration' = manifest only (endpoints, error codes, statuses, event types, job-request/response fingerprints)",
+    "file": "tools/make-sdks/generate-manifest.mjs:100-125",
+    "note": "TS/Go types are hand-written; UbagJobMetadata has an index signature (sdk-typescript/src/types.ts:122-134)"
+   },
+   {
+    "what": "Conformance validator checks structure only, never bodies against OpenAPI",
+    "file": "packages/conformance/scripts/validate-fixtures.mjs:56-153",
+    "note": "concurrency.list.ok and browser.contexts.ok bodies use provider/identity/min_tabs/inflight, diverging from the contract"
+   },
+   {
+    "what": "Playwright nav contract: one nav link per route, per-route desktop snapshots",
+    "file": "apps/dashboard/tests/dashboard.spec.ts:19-49,261-297",
+    "note": "a new route needs a nav entry, ALL_ROUTES entry and win32+linux baselines; extending existing pages avoids this"
+   },
+   {
+    "what": "RBAC actions",
+    "file": "apps/gateway/internal/authz/authz.go:68-107; packages/security/src/rbac.ts:31,81-83",
+    "note": "developer role already holds browser:read and concurrency:read, so host data needs a new operator/admin-only action"
+   }
+  ]
+ },
+ {
+  "area": "rust",
+  "summary": "RECOMMENDATION: do NOT start a Rust relay experiment yet. Order: (1) reconcile/merge the voice branch and finish live voice acceptance, (2) instrument the relay, (3) apply cheap Python/Go fixes and re-baseline, (4) profile with a pre-registered stop rule, (5) only then consider Rust. A Rust relay is technically plausible (thin glue, std threads, FFI to the same libopus0) but statically the likely gain is small.\n\nREF: all voice code lives only on branch feat/multimodal-voice-hardening (HEAD e0667b5), cited below as VB:path:line. Main has zero voice files and no UBAG_VOICE refs (git grep on main is empty). VB PROGRESS.md:3905-3923 marks the release INCOMPLETE and says do not merge. No relay CPU, memory or latency number exists anywhere; the canary ran 3 frames at 0.5 CPU / 1.5 GiB (VB PROGRESS.md:3765-3794).\n\nPER 20 ms FRAME (50 fps per direction, one session per relay process, VB audio-relay.py:392,655-661):\n- Mic (gateway to Chrome):\n  - read_frame does 2 recv calls, list+join, then a body[1:] copy (audio-relay.py:146-173).\n  - decode allocates a zeroed 11,520 B ctypes array for 1,920 B of output, plus a per-call lock (opus_bridge.py:115-124).\n  - native opus_decode runs next, then os.write to the FIFO (audio-relay.py:521).\n  - Muted frames are still decoded and discarded (audio-relay.py:512,518).\n- Speaker (Chrome to gateway):\n  - Reads 1920 B from the parec pipe (audio-relay.py:543).\n  - encode allocates an 11,520 B zeroed buffer, then out.raw[:n] copies the whole buffer and slices again (opus_bridge.py:146,155).\n  - native opus_encode runs with default ctls and APPLICATION_AUDIO (opus_bridge.py:29,134), 50 times a second even when the provider is silent.\n  - write_frame does 2 concatenations plus sendall (audio-relay.py:176-179,554).\n- Already native: libopus encode/decode (opus_bridge.py:43-62), PulseAudio, parec. HMAC runs once per session.\n- No resampling or channel conversion in the relay: everything is 48 kHz mono s16 (audio-relay.py:106-109,334,411-413).\n  - Hypothesis, unverifiable statically: the null sink is created without rate/channels (audio-relay.py:314-316), so PulseAudio may run it at its 44.1 kHz stereo default and resample/downmix in-daemon, possibly a 48k to 44.1k to 48k round trip with Chrome. Check `pactl list short sinks` in the canary. Fixing that is a config change, not Rust.\n- GIL contention is likely low and must be confirmed with py-spy --gil. ctypes CDLL calls and syscalls release the GIL, there are 2 pump threads, and the Python sections are tens of microseconds.\n- Idle cost: the health thread spawns 2 pactl processes every 5 s forever, and run() wakes every 0.5 s (audio-relay.py:279-293,385-387,464).\n- Hypothesis to verify: Python-owned glue is 10-30% of relay CPU and libopus encode dominates. Rust cannot shrink libopus because no mature pure-Rust Opus codec exists, so it would FFI the same library. Relay RSS is tens of MB against a 4096 MiB container capped at 2 CPU (VB docker-compose.vps.yml:279-280) dominated by Chrome. A 25% win on the relay process is therefore very unlikely to be material in a mixed workload.\n- p95 latency is queue-bound, not language-bound:\n  - Go mic channel is 64 x 20 ms with drop-oldest (VB media.go:64,421-436).\n  - TCP socket buffers have no age bound.\n  - The mic FIFO is about 64 KiB, roughly 680 ms, and on full it drops the NEWEST frame (audio-relay.py:522-525).\n  - The parec pipe holds about 680 ms.\n  - Cheap Python lever: fcntl.F_SETPIPE_SZ to shrink both pipes (Python 3.10+, bookworm ships 3.11; verify).\n\nBYTE-IDENTICAL CONTRACT (relay protocol v2, currently only in the docstring, audio-relay.py:15-81, and mirrored in Go media.go:47-73):\n- Framing: u32-LE length that includes the type byte, 1 <= len <= 65536, type 0x01 audio or 0x02 control, anything else closes the connection.\n- hello JSON fields and validation: session_id str of 1..128 chars, exp int and not bool, exp within [now, now+300], token str.\n- Token: hex(HMAC-SHA256(utf8 secret, \"voice-relay|{sid}|{exp}\")), compared in constant time. Vector: secret \"relay-test-secret\", sid \"s1\", exp 1700000000 gives 43e2f2445ad07779cdf6135f4756cbe2ea5802718f6b6b9c930bb67d53a10591. It is asserted ONLY in Go (VB media_relay_test.go:204-209), not in the Python tests.\n- Reply JSON must keep compact separators and key order: {\"op\":\"ready\"} and {\"op\":\"error\",\"reason\":..}.\n- 11 handshake reason codes plus devices_lost, monitor_exited and mic_closed: busy, unconfigured, bad_hello, hello_timeout, expired, unauthorized, devices_unavailable, codec_unavailable, mic_unavailable, monitor_unavailable, internal.\n- Timing and limits: hello deadline 5 s over the whole frame, at most 4 pending handshakes, 30 s idle (UBAG_VOICE_RELAY_IDLE_S), 8 s device wait (below the gateway's 10 s ready timeout, media.go:58), busy refused before the hello is read, slot freed only after full cleanup.\n- Mute: decode-and-discard, applied in frame order. Empty or corrupt packets are dropped without ending the session. Fail closed on an empty secret.\n- Known mismatch to pin in fixtures: Go rejects length < 2 (media.go:221) while Python accepts length 1 (audio-relay.py:167).\n- Open DTX risk: the 30 s idle timeout against client DTX silence (VB PROGRESS.md:3929). Changing it is a protocol change, not byte-identical.\n\nPROFILING PLAN:\n- Prerequisites: real-libopus golden tests (existing tests use FakeLib, VB conftest.py:42-87,198) and env seams for the mic pipe path and the parec/pactl commands.\n- Inputs: deterministic seeded corpus of framed v2 streams: 2.5-120 ms packets, silence, corrupt, empty, max-size, mute interleavings; plus a monitor PCM file with a partial final chunk (the zero-pad path, audio-relay.py:548).\n- Rig: black-box driver over TCP, parec shim replaying the PCM at 20 ms cadence, FIFO sink writing timestamps to file. It runs unchanged against Python and any Rust binary. Both link the same libopus0 .so (pin the version; vendored builds can change encoder bytes).\n- Byte compare: control/handshake replies, FIFO bytes, and speaker packets must be identical. Fall back to a decoded-PCM tolerance only if the libopus build differs.\n- Measure:\n  - /proc utime+stime per call-minute.\n  - RSS/PSS, tracemalloc or heaptrack.\n  - ctx switches and syscalls per frame.\n  - Frame transit p50/p95/p99/max per direction, plus drops.\n  - py-spy --native --gil and perf, to split libopus self-time from glue.\n  - fd/thread/child leaks over 100 reconnects plus a 1 h soak.\n  - Chaos: kill pulse, kill parec, SIGTERM.\n- Run on a dedicated lab helper (2c/4G cgroup 1.5 CPU / 2.5 GiB). Do not use the shared prod VPS (VB PROGRESS.md:3921-3923).\n- Mixed run: N mock-provider browser workloads plus one voice call, A/B interleaved at least 5 pairs, reporting the CI lower bound. Use a local WebRTC echo page, with no provider login, to respect safe-mode.\n\nGATE (precise):\n- U = relay CPU-ms per call-minute minus libopus self-time. Rust needs U <= 0.8 x Python (>= 20% overhead gain), OR relay CPU/RSS <= 0.75 x Python.\n- AND materiality: container or host headroom or job p95 improves in the mixed run.\n- AND no regression in p95/p99 transit, drops, or leak checks.\n- AND the rollback drill passes.\n- Pre-registered STOP: if the post-fix profile shows >= 70% of relay CPU in libopus plus syscalls, or the relay is < 5% of container CPU, close the experiment without writing Rust.\n- The baseline must be the OPTIMISED Python, otherwise Rust gets credit for fixes Python can also take.\n\nIF GO: new crate packages/relay-rust, not packages/sidecar-rust.\n- The existing Axum/Tokio proxy has no audio code and is not in any deploy image (only ci.yml:507-514 and the Makefile build it).\n- Use std::thread plus blocking sockets, hmac/sha2/subtle, serde_json with stable key order, and libopus FFI.\n- Dockerfile multi-stage build for amd64 (VB Dockerfile:12,43).\n- Select the implementation in the entrypoint supervised loop (VB entrypoint.sh:215-222) via UBAG_VOICE_RELAY_IMPL=python|rust, default python, with fallback to python if the binary is missing.\n- Rollback needs no gateway change.\n- Project history cut Rust SDKs to limit language sprawl (PROGRESS.md:3299-3305), so a third runtime needs the gate above.",
+  "claims": [
+   {
+    "claim": "Rust = Axum/Tokio localhost sidecar",
+    "status": "confirmed",
+    "evidence": "packages/sidecar-rust/Cargo.toml:35-37 (axum, tokio, reqwest); lib.rs:1-22 loopback proxy; no opus/audio crate."
+   },
+   {
+    "claim": "Voice = Go/Pion WebRTC + Python/libopus browser audio relay",
+    "status": "partial",
+    "evidence": "Confirmed on branch feat/multimodal-voice-hardening (VB media.go:18, opus_bridge.py:23-62). Contradicted for main: git grep UBAG_VOICE and audio-relay on main returns nothing. Release is flagged INCOMPLETE and not to be merged (VB PROGRESS.md:3905-3923)."
+   },
+   {
+    "claim": "Audio queue is 64 packets (~1.28 s)",
+    "status": "partial",
+    "evidence": "VB media.go:64 micBufferDepth=64 and :66 20 ms frames, drop-oldest at :421-436. That is count-bounded only. The relay FIFO drops the newest frame (audio-relay.py:522-525), pipes hold about 680 ms each, and TCP buffers have no age bound. Total staleness is not bounded by 1.28 s."
+   },
+   {
+    "claim": "Rust candidate #1 = browser audio relay",
+    "status": "partial",
+    "evidence": "It is the only per-frame user-space code outside Go, but it is thin glue around native libopus (opus_bridge.py:43-62) and there is no profile. The Python-owned share is a hypothesis only."
+   },
+   {
+    "claim": "Relay does resampling / CPU-heavy DSP in Python",
+    "status": "contradicted",
+    "evidence": "No resampling in the relay: 48 kHz mono s16 end to end (audio-relay.py:106-109,334,411-413). Any resampling is inside PulseAudio, and the sink spec is unverifiable statically (audio-relay.py:314-316)."
+   },
+   {
+    "claim": "GIL contention limits the relay",
+    "status": "unverifiable",
+    "evidence": "ctypes CDLL and syscalls release the GIL; 2 threads per single-session process (audio-relay.py:457-458,392). Needs py-spy --gil."
+   },
+   {
+    "claim": "Relay protocol v2 + HMAC vectors exist as a byte-identical contract",
+    "status": "partial",
+    "evidence": "Spec only in docstring (audio-relay.py:15-81). Token vector asserted only in Go (VB media_relay_test.go:204-209), not in Python tests. No shared fixture or schema. Go/Python length-1 frame handling differs (media.go:221 vs audio-relay.py:167)."
+   },
+   {
+    "claim": "Existing tests give real-codec confidence",
+    "status": "contradicted",
+    "evidence": "VB conftest.py:42-87,198 replaces libopus with FakeLib. Real libopus was exercised only in a 3-frame canary (VB PROGRESS.md:3790-3793)."
+   },
+   {
+    "claim": "UBAG voice relay p95<=100ms is measurable today",
+    "status": "missing",
+    "evidence": "Only dropped/session counters (VB metrics.go:15-134); 'speaker' drops never incremented (media.go:418,428,434,670); acceptance harness has no voice media scenario (VB acceptance.mjs:38-39,332 only error mapping and metric scrape)."
+   },
+   {
+    "claim": "Rust relay would be independently rollbackable",
+    "status": "confirmed",
+    "evidence": "Relay is its own process on a TCP framed protocol, started from an env-driven supervised loop (VB entrypoint.sh:215-222); the gateway only sees the protocol (media.go:121-192). Feasible with a UBAG_VOICE_RELAY_IMPL switch."
+   },
+   {
+    "claim": "20% overhead or 25% CPU/mem gain would be material in a mixed workload",
+    "status": "unverifiable",
+    "evidence": "Relay is one process per browser container next to Chrome (4096 MiB cap, VB docker-compose.vps.yml:279-280). Static reasoning says relay RSS/CPU is a few percent of the container. Needs the mixed-workload A/B."
+   }
+  ],
+  "open_questions": [
+   "Phase mapping: I tagged reconcile/gating as phase 0 and everything else as phase 5. Confirm the plan's phase numbers.",
+   "What exactly does 'UBAG voice relay p95<=100ms' measure: gateway frame-in to FIFO write, parec chunk to gateway receive, or both? Static analysis says it is dominated by queue bounds (64 x 20 ms, 64 KiB pipes, TCP), so it needs a definition before rust-03 can emit it.",
+   "Do we merge feat/multimodal-voice-hardening before helper work? Its own ledger says do not merge until live ChatGPT/Gemini voice evidence exists (VB PROGRESS.md:3905-3923), and Gemini 'Listen' has no capture backing it.",
+   "Is `pactl list short sinks` for ubag_provider_sink 44.1 kHz stereo or 48 kHz mono in the canary image? That decides whether hidden PulseAudio resampling is a cheap config win.",
+   "Which libopus version does the Debian bookworm image ship, and are encoder ctl changes (complexity, bitrate, DTX) acceptable? They would break byte-identity but may be the largest CPU lever, and would be a separate quality decision.",
+   "Is a dedicated 2c/4G lab helper available for measurement? The shared prod VPS is OET/radiology-shared and must not carry benchmark load.",
+   "Should the 30 s idle timeout vs client DTX silence (VB PROGRESS.md:3929) get a v2-compatible keepalive control op before any port, so the Rust version does not copy a known weakness?"
+  ],
+  "existing": [
+   {
+    "what": "Rust loopback HTTP reverse proxy (Axum/Tokio/reqwest), no audio/DSP, 1,370 LOC; buffers bodies up to 16 MiB",
+    "file": "packages/sidecar-rust/src/lib.rs:1-57,400",
+    "note": "Unrelated to the relay. Only CI (.github/workflows/ci.yml:507-514) and Makefile:47 build it; not in any deploy image."
+   },
+   {
+    "what": "Python audio relay: framed TCP v2, HMAC hello, 2 pump threads, PulseAudio device health, supervised restart",
+    "file": "VB:deploy/vps/browser/audio-relay.py",
+    "note": "VB = branch feat/multimodal-voice-hardening, not on main. 742 LOC."
+   },
+   {
+    "what": "ctypes libopus bindings, per-codec lock, zeroed 11,520 B buffers per frame",
+    "file": "VB:deploy/vps/browser/opus_bridge.py:43-155",
+    "note": "Allocation hotspot candidates at lines 115 and 146-155."
+   },
+   {
+    "what": "Relay behavior tests (handshake, busy, mute, cleanup, health) using FakeLib/FakeProc/FIFO-as-file",
+    "file": "VB:deploy/vps/browser/tests/test_audio_relay.py, conftest.py",
+    "note": "Reusable behavior spec for any port. No real libopus is exercised."
+   },
+   {
+    "what": "Gateway media hub: Pion WebRTC, TCPFrameConn, RelayToken, mic chan 64 drop-oldest, per-frame allocs and SetWriteDeadline",
+    "file": "VB:apps/gateway/internal/voice/media.go:64,99-103,200-229,421-436",
+    "note": "Go-side per-frame make() in writeFrame/readFrame is a cheap Go fix, not a Rust candidate."
+   },
+   {
+    "what": "Voice metrics: dropped-frame and session counters only",
+    "file": "VB:apps/gateway/internal/voice/metrics.go:15-134",
+    "note": "The 'speaker' drop series is declared but never incremented. No latency histogram."
+   },
+   {
+    "what": "Acceptance harness with thresholds.json (max_/min_ keys) and offline self-tests",
+    "file": "VB:tests/load/acceptance.mjs, acceptance.test.mjs, thresholds.json",
+    "note": "Pattern to copy for a relay gate file. Has no voice media scenario."
+   },
+   {
+    "what": "Browser image and entrypoint: libopus0 apt-only, relay started in a supervised loop behind UBAG_VOICE_AUDIO_ENABLED=1",
+    "file": "VB:deploy/vps/browser/Dockerfile:43,73-74; entrypoint.sh:199-223",
+    "note": "Existing seam for an env-selectable relay implementation."
+   },
+   {
+    "what": "Shared fixture home",
+    "file": "packages/conformance/fixtures/v0/scenarios.json; packages/shared-schemas/schemas/",
+    "note": "Natural place for relay protocol v2 vectors."
+   }
+  ]
+ },
+ {
+  "area": "security",
+  "summary": "Verdict: the helper trust plane is greenfield. The main-branch gateway has no in-process TLS, no node identity, no attempt or lease-generation concept and no scoped capability tokens. Several local isolation leaks must be fixed before remote nodes exist.\n\nNEVER-RECEIVE LIST. A helper must never get:\n- UBAG_APP_SECRET (serve.go:178,304).\n- The Postgres DSN (serve.go:545), MinIO keys (serve.go:602-603), and NATS URL or creds (serve.go:524). nats-mtls.conf has no per-subject authz, so any cert holder can pub/sub every subject.\n- UBAG_WEBHOOK_SECRET* (serve.go:1430), UBAG_MASTER_KEK_HEX, the app-JWT private key, SSO/SIEM/MFA secrets, PATs or sessions, and the voice TURN shared secret.\n- Other tenants' jobs, the envelope's Callbacks and Client maps, primary-local attachment_local_paths, Antigravity OAuth sockets, and the fleet manager's SSH/WireGuard/Ansible credentials.\n- Instead it receives a new per-attempt HelperAttemptSpec type, not DispatchEnvelope. validateLeaseEnvelope (workerconsumer.go:1502-1553) compares callbacks, context and client, so those fields must be dropped by a separate projection.\n- The helper env should reuse the minimalWorkerEnv allowlist (workerconsumer.go:1617-1672) minus UBAG_REMOTE_BROWSER_ENDPOINT and UBAG_NOVNC_BASE_URL.\n\nSCOPED CAPABILITIES.\n- Reuse the appjwt RS256 sign/verify code (appjwt.go:54-116) with a separate keypair, header typ \"ubag-attempt\", aud \"ubag-helper\", and claims {nid, att, gen, jid, tid, keys[], ops, exp<=lease expiry}.\n- Do NOT extend AppClaims. resolveAppJWT (server.go:4201-4218) accepts any validly signed token with tid/sub/role/exp, so a shared key would turn attempt tokens into app principals. Make resolveAppJWT reject tokens carrying aud, and add a regression test.\n- The token is only a bearer reduction. Every asset RPC also checks the live attempt row (state, generation, node equal to the cert node).\n- Hash-at-rest, show-once enrollment and viewer tickets follow the session/pat pattern (session.go:1-12, pat/postgres.go:46). PATs have no job scope (pat.go:19-26), so they are not reusable here.\n\nmTLS identity to node ID.\n- Terminate mTLS in-process on a NEW grpc.Server and listener (UBAG_HELPER_GRPC_ADDR) with TLS1.3 and RequireAndVerifyClientCert.\n- Never register on the existing grpcServer (serve.go:301). It has no creds, serves reflection (:314), and is exposed through grpcweb on the public mux (:319).\n- Never trust the Caddy X-Client-Cert-Subject header (Caddyfile.mtls.example:49). The gateway never reads it.\n- The node_id comes from the leaf URI SAN spiffe://ubag/node/<id>, ignoring CN. It is resolved against a primary-owned gateway_helper_nodes table: node_id, spki_sha256 current and next, state, allowed_targets and workloads, registry_digest.\n- An interceptor re-checks state on every RPC and stream message, so revocation kills long streams. Any node_id carried in a message must equal the cert-derived id.\n\nROTATION.\n- Certs live <=72h, issued by the shared fleet manager's CA. UBAG runs no CA. The dev gen-certs.sh issues 365d certs and is dev-only.\n- The gateway reloads the CA bundle and node table every 30s or on SIGHUP.\n- Two pinned fingerprints per node give an overlap window. A reconnecting node resumes by attempt_id plus generation.\n- Revocation means deleting the fingerprint, effective within one RPC.\n\nAUDIT.\n- The TS vocabulary (audit.ts:4-33) and the authz action list are closed and cross-checked (check-contracts.mjs:275-375), so new names land there first. The Go chain is per tenant (audit.go:23-31). Tenant-bearing events go in the job's chain; node-lifecycle events go in a reserved system tenant \"_fleet\".\n- Events to add: node.enrolled, node.cert_rotated, node.revoked, node.auth_rejected, attempt.granted, attempt.fenced_rejected, attempt.committed, asset.token_issued, asset.read, asset.write, viewer.session_opened, viewer.session_closed, helper.policy_violation.\n- The existing authz audit is best-effort (`_, _ =`, server.go:3421). Grants, enrollment and viewer open must use a fail-closed append.\n\nAFFINITY.\n- Every identity field comes from the trusted job or attempt record, never helper payload (the pattern at workerconsumer.go:84-92, 711-716, 761-766). Extend it to topology tabs, whose context_id currently comes from the payload.\n- The primary computes an opaque profile_ref from a (tenant, provider, identity) binding. It strips options.user_data_dir, profile_dir and profile_path and context.account_binding_id from the helper spec. The helper maps profile_ref to <root>/<tenant_hash>/<provider>/<identity>.\n- Conversations gain node_id and profile_ref. A lost node marks the conversation broken; there is no migration.\n\nSAFE MODE ON HELPERS.\n- The helper runs the same adapter_registry loader (adapter_registry.py:165-182) and reports registry_digest; the primary compares it.\n- payloadpolicy runs on the primary before the spec is built. Every helper event passes the existing sanitizeWorkerData on append (memory.go:415, postgres.go:467, sqlite.go:478).\n- No RPC returns profile-dir files. Uploads are limited to artifact kinds the manifest's artifact_policy declares.\n- allowed_targets is default-deny. antigravity_cli is ineligible (credentialed OAuth sockets, workerconsumer.go:1279-1297). Only browser adapters with login_posture manual_required, plus mock, are eligible.\n\nMANUAL LOGIN VIEWER.\n- Loopback-only today at three layers (engine.py:693-717, jobs/memory.go:703-721, +page.svelte:49-55).\n- Production uses a shared nginx Basic Auth credential (default.conf.template:62-117) and VNC -nopw (vps entrypoint.sh:72).\n- The helper opens an OUTBOUND OpenViewer stream over its mTLS channel.\n- The primary serves a WS proxy behind a single-use ticket bound to operator subject, tenant, node, profile_ref and provider, with exp<=10min and idle 5min. It requires a new browser:interact action (operator and admin only) plus the MFA gate (server.go:3368-3378).\n- CDP, VNC and noVNC stay in-container or loopback. Current binds to 0.0.0.0 at small browser-viewer entrypoint.sh:124 and vps entrypoint.sh:176 must not be carried to helpers.\n- No programmatic keystroke RPC. Automation is locked out of the profile while a viewer is open, and afterwards only login_state is reported.\n\nFAIL-CLOSED RULES.\n- F1: unknown, revoked or mismatched cert, or node state other than active, means no RPC.\n- F2: stale generation, expired lease or node mismatch is rejected and audited, never applied.\n- F3: any event with a job, tenant or attempt mismatch fails the attempt.\n- F4: output over 1MiB or 512 events (workerconsumer.go:97-99) fails the attempt, never success-with-truncation.\n- F5: a secret-scan hit means redact, flag and quarantine the node.\n- F6: an audit append failure on grant, enroll or viewer open refuses the action.\n- F7: when the fleet manager or node cache is unreachable or stale, no new grants; running attempts continue.\n- F8: a registry_digest mismatch makes the node ineligible.\n- F9: no tenant-matching profile_ref means queue, not assign.\n- F10: an expired, replayed or non-MFA viewer ticket is denied.\n- F11: an asset key outside the declared manifest or the wrong op returns the same 404 as cross-tenant.\n- F12: with UBAG_HELPER_PLANE unset, no listener starts.\n- ABAC with a nil or empty bundle is permissive (abac.go:91-95), so fleet actions need an explicit deny-default.",
+  "claims": [
+   {
+    "claim": "Versioned mTLS gRPC/Protobuf between primary and helpers",
+    "status": "missing",
+    "evidence": "Only JobService exists (packages/proto/proto/ubag/v1/jobs.proto:7-14). grpc.NewServer() has no creds (serve.go:301). No PeerCertificates or ClientAuth use anywhere in apps/gateway."
+   },
+   {
+    "claim": "mTLS identity maps to node ID; cert rotation",
+    "status": "missing",
+    "evidence": "mTLS is only at the Caddy edge (deploy/mtls/README.md:22-28). The X-Client-Cert-Subject header is set (Caddyfile.mtls.example:49) but never read. Dev CA only (gen-certs.sh)."
+   },
+   {
+    "claim": "Helpers get no DB creds or global secret",
+    "status": "partial",
+    "evidence": "Local workers already get a scrubbed env (workerconsumer.go:1617-1672) and need no gateway creds (:1060-1074). The remote path, helper spec projection and asset auth do not exist."
+   },
+   {
+    "claim": "Fenced idempotent commits; stale helper result rejected",
+    "status": "missing",
+    "evidence": "WorkerEvent has no attempt_id, node or generation (jobs/store.go:46-55). normalizeWorkerEvent checks job_id, api_version and trace_id only (workerconsumer.go:1405-1431). Spool leases are local file renames (executor/filespool.go)."
+   },
+   {
+    "claim": "Tenant and account isolation holds for remote execution",
+    "status": "partial",
+    "evidence": "Job and artifact access is tenant-checked at the handler (server.go:3336-3345); the artifact store is job-scoped with no tenant param (artifacts/store.go:35-45); no Postgres RLS (migrations/). Topology upserts are global by ID (topology/store.go:182-203). A job:create caller can pick any relative options.user_data_dir under a per-target profile root (server.go:3157-3188; envelope.py:269-321)."
+   },
+   {
+    "claim": "Safe-mode (no automated login or credential scraping) is preserved",
+    "status": "confirmed",
+    "evidence": "Registry loader fails closed (adapter_registry.py:165-182), payload denylist (policy.go:10-40), event sanitizer on all stores (jobs/memory.go:604-666). Needs extension, not redesign, for helpers."
+   },
+   {
+    "claim": "Manual login via authenticated browser view works when profiles live on helpers",
+    "status": "contradicted",
+    "evidence": "Viewer URLs are loopback-only at worker (engine.py:693-717), gateway (jobs/memory.go:703-721) and dashboard (+page.svelte:49-55). Production uses shared Basic Auth (default.conf.template:62-117) and VNC -nopw (vps entrypoint.sh:72). A brokered ticket tunnel is new work."
+   },
+   {
+    "claim": "No WAN Playwright/CDP",
+    "status": "partial",
+    "evidence": "UBAG_REMOTE_BROWSER_ENDPOINT is passed through to workers (workerconsumer.go:1651; engines.py:59-65). CDP binds 0.0.0.0 in browser-viewer entrypoint.sh:124 and via socat in vps entrypoint.sh:176. The vps README:46 notes ufw inactive. The remote_endpoint field is returned to tenants (topology_handlers.go:214)."
+   },
+   {
+    "claim": "Provider readiness is separate from host health",
+    "status": "partial",
+    "evidence": "ProviderContext.LoginState exists separately from BrowserInstance (topology/store.go:27-58) with a LoginStateWriter (store.go:127). There is no node-level host-health model."
+   },
+   {
+    "claim": "Audit trail for helper actions",
+    "status": "partial",
+    "evidence": "Merkle WORM store exists (audit.go:23-82). The TS audit vocabulary is closed (audit.ts:4-33) with no node actor type. The authz audit swallows errors (server.go:3421)."
+   },
+   {
+    "claim": "Voice control and TURN are safe to forward to helpers",
+    "status": "unverifiable",
+    "evidence": "Voice code is absent from main (git ls-files) and exists only on feat/multimodal-voice-hardening, including migrations 0019/0020. Per-session TURN creds look reusable (voice/ice.go)."
+   },
+   {
+    "claim": "OET reservations and fleet-manager auth",
+    "status": "unverifiable",
+    "evidence": "The fleet manager is external to this repo. UBAG must treat unknown or stale reservation as ineligible (fail-closed); no code for it exists here."
+   }
+  ],
+  "open_questions": [
+   "Phase numbering assumed: 0=contracts/reconcile and pre-fixes, 1-3=perf/bounded workers, 4=helper execution/fleet integration, 5=voice on helpers, 6=Rust/acceptance. Please confirm the plan's real phase map.",
+   "Asset staging transport: the plan says streamed HTTPS; I assumed a dedicated /helper/v1 route on the mTLS listener instead of gRPC chunk streaming. Pick one before security-07.",
+   "Who issues node certs and where does the node pin table live: fleet manager push to UBAG, or UBAG registers nodes from its own enrollment token? I assumed UBAG owns the pin table and the fleet manager owns the CA.",
+   "Should the default profile policy stay legacy (shared per-target profile, caller-selectable user_data_dir) for the existing OET flow, with namespaced enforced only for helper nodes?",
+   "Voice work lives only on feat/multimodal-voice-hardening and takes migrations 0019/0020. Reconcile or merge before security-12, and renumber security migrations if the branch lands first."
+  ],
+  "existing": [
+   {
+    "what": "RBAC single table; superadmin wildcard; cross-checked against TS spec",
+    "file": "apps/gateway/internal/authz/authz.go:12-123; packages/security/src/rbac.ts:7-34; tools/check-contracts.mjs:275-375",
+    "note": "New fleet:* and browser:interact actions must land in both files or check:contracts fails."
+   },
+   {
+    "what": "Credential resolver chain: app secret, App JWT, PAT, SSO session",
+    "file": "apps/gateway/internal/httpapi/server.go:557-562, 4166-4262",
+    "note": "Node principals must NOT join this chain; helper plane is a separate listener."
+   },
+   {
+    "what": "App JWT RS256 sign/verify; claims tid/sub/role/iat/exp; no aud, jti, kid",
+    "file": "apps/gateway/internal/appjwt/appjwt.go:22-116",
+    "note": "Reusable signer, but attempt tokens need a separate key and typ/aud guard."
+   },
+   {
+    "what": "PAT and session stores: hash at rest, token shown once, revoked flag",
+    "file": "apps/gateway/internal/pat/postgres.go:46-103; session/session.go:1-12",
+    "note": "Pattern for enrollment and viewer tickets; PATs carry no scope."
+   },
+   {
+    "what": "Worker env allowlist and daemon env scrub",
+    "file": "apps/gateway/internal/executor/workerconsumer.go:1617-1672; daemonrunner.go:186-188",
+    "note": "Reuse for helper env; remove UBAG_REMOTE_BROWSER_ENDPOINT and UBAG_NOVNC_BASE_URL."
+   },
+   {
+    "what": "Gateway materializes attachments to 0600 temp files so the worker needs no credentials",
+    "file": "apps/gateway/internal/executor/workerconsumer.go:1060-1159",
+    "note": "Remote path needs manifest-bound staging via attempt token; never send local paths."
+   },
+   {
+    "what": "Worker event normalization: job_id, api_version, trace_id; 1MiB and 512-event caps",
+    "file": "apps/gateway/internal/executor/workerconsumer.go:97-99, 1405-1431",
+    "note": "No attempt, node or generation check; add a helper variant."
+   },
+   {
+    "what": "Identity forced from trusted job record (conversation, topology tenant)",
+    "file": "apps/gateway/internal/executor/workerconsumer.go:84-92, 711-716, 761-766",
+    "note": "Tab context_id and instance/context IDs still come from the payload."
+   },
+   {
+    "what": "One event sanitizer applied by all three job stores on append",
+    "file": "apps/gateway/internal/jobs/memory.go:415, 604-721; postgres.go:467; sqlite.go:478",
+    "note": "Free redaction layer for helper events; only loopback noVNC URLs survive."
+   },
+   {
+    "what": "Safe-mode enforcement: registry safe_mode block, loader checks, payload denylist, worker secret scan",
+    "file": "adapters/registry.json:4-10; apps/worker/ubag_worker/adapter_registry.py:165-182; apps/gateway/internal/payloadpolicy/policy.go:10-40; apps/worker/ubag_worker/live/secret_scan.py",
+    "note": "Run unchanged on helper start and on primary egress."
+   },
+   {
+    "what": "Merkle-chained per-tenant WORM audit; authz audit best-effort and skips allowed reads",
+    "file": "apps/gateway/internal/audit/audit.go:23-82; httpapi/server.go:3403-3431; migrations/postgres/0018_audit_worm_revoke.sql",
+    "note": "Needs a system-tenant chain for node events and a fail-closed append."
+   },
+   {
+    "what": "Edge-only mTLS with dev CA; gateway ignores the cert-subject header",
+    "file": "deploy/mtls/README.md:22-28; deploy/mtls/caddy/Caddyfile.mtls.example:49; deploy/mtls/gen-certs.sh",
+    "note": "Dev-only, 365d certs, no rotation or revocation."
+   },
+   {
+    "what": "Voice TURN: per-session HMAC credentials (10min TTL) and tenant-scoped session lookup",
+    "file": "apps/gateway/internal/voice/ice.go; apps/gateway/internal/httpapi/voice_handlers.go:455-466 (only on branch feat/multimodal-voice-hardening)",
+    "note": "Not on main; reuse the derived-credential pattern so the helper never sees TURNSecret."
+   }
+  ]
+ }
+]

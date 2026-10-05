@@ -1,0 +1,305 @@
+{
+ "angle": "Merged roadmap (risk-first + value-first + dependency-first). Backbone is dependency-first ordering (contracts before behaviour, fakes before the OET integration), plus risk-first's honest-gates-first Phase 0 and pre-registered stop rules, plus value-first's early OET-independent wins and small slices. Phase map (my assumption; the corpus has none): 0 reconcile, honest gates, measure; 1 early primary wins and isolation fixes; 2 contracts first; 3 streaming, no-resubmit, bounded isolated workers (primary only); 4 helper execution plane; 5 voice; 6 operator surface; 7 acceptance, capacity, Rust gate. Every behaviour change ships inert behind a flag; slices carry explicit depends_on so phases can overlap.\n\nCONFLICTS RESOLVED (winner and why):\n1. Attempt ledger timing: risk-first put the persistent ledger (migration) before streaming; value-first and dependency-first put it in the helper phase. Winner: value/dependency-first. Streaming only needs in-process attempt identity (dependency-first carve-out, P3.7); migrations auto-apply as mandatory on deploy, so the ledger (P4.2) lands with its first consumer.\n2. Pool vs streaming order: value-first streamed before the pool. Winner: risk/dependency-first and the corpus (pool P3.6 before ingest P3.10): both edit daemonrunner.go, and pool size 1 equals today.\n3. Submission boundary: risk/dependency-first made it ledger-dependent. Winner: value-first local in-process version (P3.12, flag UBAG_WORKER_STRICT_SUBMIT); ledger MarkSubmitted layers on in P4.2/P4.18.\n4. worker-04 split: risk-first's split won (P3.2 safety half now, P3.8 streaming later) because the blind-resubmit hazard is live today.\n5. Slice granularity: value/dependency-first splits beat risk-first XL lumps (stream ingest, helper service, remote runner, helper voice). Risk-first bundling kept only where files overlap (P0.9).\n6. events-05 one-query listEvents: value-first dropped it (marginal once the hub lands); risk/dependency-first kept it. Winner: dropped, revisit from pprof (P1.8).\n7. synthetic_chat fixture: value-first deferred it; risk/dependency-first kept it. Winner: kept (P7.1) because mock bypasses the warm daemon, so pool and streaming gains are otherwise unmeasurable.\n8. Helper proto: single package ubag/helper/v1 (value/dependency-first); voice RPCs authored later in P5.7 (dependency-first) instead of up front, since nothing consumes them earlier.\n9. Operator API naming: /v1/fleet/*, fleet:read, Go package internal/nodes; fleet-02's /v1/nodes and node:read dropped. browser:interact only if the viewer broker is approved (dependency-first).\n10. queue_reason and fleet contracts: risk-first timing wins (Phase 6, just before implementation) to avoid closed-schema and manifest churn with no consumer; the jobs summary endpoint stays early (value/dependency-first) because it fixes a real truthfulness bug.\n11. Flags: one taxonomy. Streaming pair UBAG_WORKER_STREAM_EVENTS (Python) and UBAG_WORKER_STREAM_INGEST (Go); strict flags UBAG_WORKER_STRICT_STREAM_END and UBAG_WORKER_STRICT_SUBMIT; ladder UBAG_HELPER_NODES, UBAG_HELPER_PLANE, UBAG_HELPER_DISPATCH, UBAG_HELPER_VOICE (the separate UBAG_VOICE_HELPER_MEDIA is dropped).\n12. Rust: risk-first's early stop-rule check before Python fixes wins; relay stats via log summary only (control-op variant deferred).\n13. Process-runner streaming (dependency-first) dropped; the daemon path is the product path.\n14. Dashboard weight gate sits in Phase 0 as an honest gate (risk-first); its first strict run goes through dispatched CI.\n\nDEFAULTS TAKEN WITHOUT ASKING (all flag-gated or reversible; veto any): delete legacy k6/Locust scripts; fix file-spool not_before in its own commit; profile policy default legacy with namespaced as the switch; SSE change additive, flag-gated and default off; Postgres LISTEN/NOTIFY deferred; attempt ledger on memory plus Postgres with SQLite failing closed; Rust thresholds use the plan's 20%/25% (OET doc says 30%/40%); helper voice media terminates on the helper (decided at P5.9).",
+ "risks": [
+  "Auto-deploy and stale parity: origin/main (voice, shared admission, exec leases, migrations 0019-0021) auto-deploys through gateway-image.yml while its own ledger says do not merge before live voice evidence, and none exists. Whether prod runs e0667b5 is unknown until P0.2. Every slice after P0.1 must land inert (flags off), on branches or PRs, never a direct push to main.",
+  "Migrations auto-apply as mandatory on deploy (deploy/small/gateway-entrypoint.sh), so each additive migration (attempts, nodes, profiles, voice lease generation) ships to production even with its flag off. Keep them strictly additive and allocate numbers only from the P0.3 table; corpus numbers 0019/0021/0022 collide with origin/main and each other, and sqlite numbering is inconsistent.",
+  "Cross-area collisions need single owners (settled in P0.3): ADR 0006 claimed four times, helper proto path, attempt ledger in both executor and fleet, flag names (UBAG_WORKER_STREAM_EVENTS used with three meanings; UBAG_HELPER_EXECUTION vs _DISPATCH vs _PLANE), UBAG-WORKER-OVERLOAD vs existing UBAG-OVERLOAD codes. Hot files (workerconsumer.go, serve.go, daemonrunner.go, engine.py, audio-relay.py, openapi.yaml, generated SDK manifests) cause conflicts; Phase 2 manifest-touching slices land sequentially and manifests are regenerated, never hand-merged.",
+  "Streaming removes the pre-apply exactly-one-terminal gate that currently prevents false success, and today's evt_sha(job:seq) ids plus ON CONFLICT DO NOTHING would silently drop a retry attempt's events. P1.1 characterization tests, attempt-scoped ids (P3.7) and held terminals (P3.10) must all land first. The Python engine buffers events until the interaction ends, so live-token gains and submission-boundary precision wait for P3.8.",
+  "Blind resubmit and false truncation exist today (3x whole-interaction retry including submit_prompt; deadline-cut streams reported completed; ctx-cancel replays after submission). The fixes change terminal statuses and need human live-DOM verification, so they ship default-off and the hazard persists until the flags flip.",
+  "Capacity is identity-bound, not CPU-bound: UNIQUE(tenant, target, identity_ref) plus the safe-mode ban on copying credentials mean helper capacity equals the human-logged-in identities on that helper (about 5 providers x 1 account caps same-identity parallelism near 5). The 5-20 workload target may be unreachable for browser providers without more accounts (D6).",
+  "Resource ceilings are marginal: production Chrome runs at 2 CPU/4 GiB and previously starved at 1 CPU/1.9 GB, while the 2c/4G helper ceiling is 1.5 CPU/2.5 GiB; the gateway cgroup (1 CPU/1300m) limits daemon slots to about 2-3 (Python plus Node driver each). The helper ceilings and 'new helper starts at 1 workload' are not in the OET doc (unverifiable). Pool size must come from P0.13 numbers.",
+  "Measurement validity: all saved runs target the mock adapter (bypasses the warm daemon) on a Windows laptop with no cgroup data and no voice, headroom or provider cost. Local 100-client create p95 (about 0.6-1.13 s) is far above the 200 ms goal, so the goal may need gateway resizing or admission tuning, not just code; tightening gates in P0.5 turns the harness red until work lands, hence the steady-state vs burst split (D5). Until P7.1 exists, Phase 3 gates are targeted tests only.",
+  "Voice is not functional end to end: ready_controls unprobed so sessions end activation_failed, Gemini 'Listen' lacks captures, default voice store is memory, reconciler fails open, text jobs are not excluded from a voice-leased instance, relay tests use FakeLib, and the 64-packet bound is count-based. A relay hop over the 156-193 ms primary-helper RTT would break the 100 ms p95, so helper voice needs co-located media and a helper-reachable UDP range or a TURN hop (manager side). Voice stays off in production until P5.5.",
+  "Lease semantics on origin/main do not match the plan (exec lease 90 s/10 s with no generation or fingerprint, file-spool lease no expiry, NATS ack-wait 30 s with InProgress never called, RecoverOrphanLeases requeues blindly). Adding a third lease concept would regress; the P0.3 ADR and P4.3 must extend or replace the existing one.",
+  "Closed contract schemas (job-event top level additionalProperties:false, closed error-category and event-type enums, SDK manifest fingerprints) make 'additive' changes touch generated manifests, and conformance validation is structural only until P2.1.",
+  "Postgres-dependent gates (attempt ledger, wake hub, fenced commit, voice parity) are skipped by default and run only through manually dispatched CI, so those exit gates are not locally verifiable. Fixing false-green CI and benchmark paths (P0.4, P0.6) may turn CI red; validate by dispatched runs.",
+  "Rust is a third runtime after the SDK pruning; relay time is mostly libopus plus queueing, so a material win is unlikely, and any verdict is valid only against the optimised-Python baseline. The OET doc's 30%/40% thresholds differ from the plan's 20%/25%.",
+  "Phase numbers, transport direction, OET manager API, PKI ownership and the shared Postgres pooler are assumptions or undefined; the phase map here is mine (the readers used five incompatible numberings) and slices keep their dependency order if you renumber. Several starting-point claims are only partly true or unverifiable (daemon default is off with prod value VPS-only; concurrency default 1 but a 2026-09 ledger note shows 2; dashboard polling is already mostly visibility-aware; the weight gate is vacuous).",
+  "Safe-mode is a hard constraint: helper logins stay human-only, the readiness probe must not type or submit, and CDP/VNC/noVNC binds to 0.0.0.0 in current entrypoints must not be carried to helpers. remote_endpoint is returned to tenants today; redaction (P1.6) may break the dashboard browser page, so check the types.ts consumer first.",
+  "The CLAUDE.md root path (E:\\Projects\\UBAG) differs from this session (D:\\Projects\\UBAG); stale absolute paths in AGENTS.md and older docs must be translated, not propagated (D1)."
+ ],
+ "deferred": [
+  {
+   "item": "events-04 Postgres LISTEN/NOTIFY",
+   "reason": "Production is single-replica, so the local hub plus fallback poll covers it; defer until a Helm multi-replica rollout is targeted and the shared Postgres pooler mode and connection budget are known."
+  },
+  {
+   "item": "events-05 one-query listEvents fast path",
+   "reason": "Marginal once the hub removes idle polling; revisit from pprof via P1.8."
+  },
+  {
+   "item": "baseline-09 (pprof)",
+   "reason": "Duplicate of bench-07; kept once in P0.7."
+  },
+  {
+   "item": "baseline-05 and bench-02 repair of k6/Locust/run-load; events-09 k6 SSE probe repair",
+   "reason": "Legacy scripts deleted (acceptance.mjs supersedes them); event-delivery measurement moves to bench-10 (P0.12) and the P7.2 ladder."
+  },
+  {
+   "item": "fleet-02's /v1/nodes and node:read",
+   "reason": "Collapsed into /v1/fleet/* and fleet:read; one operator surface."
+  },
+  {
+   "item": "fleet-03 attempt table",
+   "reason": "P4.2 owns the attempts table; the node store keeps nodes, allocations and the SPKI registry only."
+  },
+  {
+   "item": "New attempt.submitted event type (fleet-09)",
+   "reason": "prompt_submitted already exists in the schema and vocabulary and the event enum is closed."
+  },
+  {
+   "item": "bench-14 relay 'stats' control op",
+   "reason": "Prefer the no-protocol-change JSON log summary (rust-03); add the op only if the log path proves insufficient."
+  },
+  {
+   "item": "security-09 manual-login viewer broker and browser:interact",
+   "reason": "Large security-sensitive build; out-of-band human logins for the first helpers (D3). Build only if operators need it."
+  },
+  {
+   "item": "rust-07 Rust relay crate",
+   "reason": "Conditional on a 'go' from P7.7; the stop rule is checked first in P7.5 and static analysis expects a stop (relay is thin glue over libopus; Rust would be a third runtime)."
+  },
+  {
+   "item": "Process-runner streaming (events-08 part, dependency-first P2-13)",
+   "reason": "The daemon path is the product path; the cold process runner stays batch through the adapter."
+  },
+  {
+   "item": "Local eligibility-aware leasing as a standalone item",
+   "reason": "No corpus work item; bounded overload in P3.6 is the interim, and the P4.17 ADR settles lease-then-place."
+  },
+  {
+   "item": "Dedicated /fleet dashboard nav route",
+   "reason": "Would add a nav entry, ALL_ROUTES entry, win32 and linux baselines and dist weight; extend Jobs, Browser, Quotas and Overview instead."
+  },
+  {
+   "item": "Mobile app timers (dashboard-08 mobile part)",
+   "reason": "Optional; mobile is read-only monitoring."
+  },
+  {
+   "item": "Default-on clamp of UBAG_WORKER_CONCURRENCY>1 for live workers",
+   "reason": "Warn always; clamp only behind UBAG_WORKER_LIVE_CONCURRENCY_GUARD until the probe shows whether production runs more than 1."
+  },
+  {
+   "item": "Transparent migration of active sessions; antigravity_* targets on helpers; SQLite edge helper mode; forwarding UBAG_ORCHESTRATOR_ENABLED to pool or helper slots; same provider account on two nodes (unless D6 chooses it)",
+   "reason": "Excluded by the plan or by the code: primary-local OAuth sockets and stores, per-process AIMD state, and safe-mode's ban on copying credentials."
+  },
+  {
+   "item": "Early helper voice proto (R/V placed it with the base proto)",
+   "reason": "Nothing consumes it before P5; authored in P5.7 as an additive file in the same package."
+  },
+  {
+   "item": "Speculative early queue_reason and fleet contracts (V/D placed them in Phase 1-2)",
+   "reason": "Moved to P6.1 to avoid closed-schema and manifest churn without a consumer."
+  },
+  {
+   "item": "Persistent attempt ledger before streaming (R placed it in Phase 1)",
+   "reason": "Streaming only needs in-process attempt identity (P3.7); the migration lands with its first consumer (P4.2) because migrations auto-apply on deploy."
+  },
+  {
+   "item": "Queued voice sessions that never expire; relay 30 s idle timeout vs client DTX silence; libopus encoder ctl changes (complexity, bitrate, DTX)",
+   "reason": "No corpus work item (queued expiry) or a protocol and quality change that is not byte-identical (DTX keepalive, encoder ctls); needs a separate decision after P5.5 and P7.5."
+  }
+ ],
+ "out_of_repo": [
+  "OET fleet manager (.NET 10, SQLite, Ansible/SSH, WireGuard): helper onboarding and inventory, Docker limits (1.5 CPU/2.5 GiB, 3/5 GiB, 75%/62.5%), firewall, bounded UDP range, NAT 1:1 IP, TURN, helper image pull from GHCR. It defines no project-facing allocation, reservation or priority API; someone must write the manager-side adapter that emits the UBAG node-allocation schema (P2.4), so P4.15 is built against a fake and P4.20 stays external-blocked.",
+  "mTLS PKI: who issues and rotates helper and primary certs (assumed: manager CA, UBAG owns the SPKI pin table) and how a cert maps to node_id.",
+  "Production VPS read access (env.local values, UBAG_BUILD_COMMIT, docker inspect limits, applied migrations); the deployed SHA, daemon flag and worker concurrency cannot be proved from the repo. The box is shared with about 15 stacks (6 cores, 11-12 GB); no load is ever aimed at it.",
+  "Auto-deploy via .github/workflows/gateway-image.yml on every push to main, with its rollback behaviour.",
+  "Isolated Linux lab host or VM (cgroup-capable, limits matching 2c/4G and 4c/8G) plus a dedicated lab helper for baselines, the ladder, relay A/B and Rust-gate runs.",
+  "Human-run evidence: provider logins and noVNC (provider-refresh skill), live two-way ChatGPT/Gemini voice, Gemini 'Listen' DOM captures, and live-DOM selector verification before any worker flag default flips (safe-mode forbids automated login, credential scraping and CAPTCHA solving).",
+  "Provider account inventory per target and whether helper browsers share accounts with the primary (D6).",
+  "Second tenant credential on the isolated stack for the cross-tenant probe (UBAG_LOAD_API_KEY_B).",
+  "Manually dispatched GitHub Actions runs for Postgres integration (test:gateway:postgres with UBAG_TEST_POSTGRES_DSN), chaos runs, strict weight gate, image builds and CI-workflow validation, because routine coding skips long builds.",
+  "Toolchains: protoc, protoc-gen-go, protoc-gen-go-grpc and buf (generated proto code is checked in); libopus version in the Debian browser image for golden tests.",
+  "Shared platform Postgres (/opt/platform): pooler mode and max_connections, relevant only if LISTEN/NOTIFY is un-deferred.",
+  "Real OET reservation numbers for the shared host, and the helper-side TURN/coturn shared secret (derived per attempt so helpers never hold it)."
+ ],
+ "decisions": [
+  {
+   "question": "D1. May I fast-forward local main to origin/main (e0667b5, 40 commits), who runs the read-only production probe on the shared VPS, and which checkout path is canonical (D:\\Projects\\UBAG here vs E:\\Projects\\UBAG in CLAUDE.md)?",
+   "options": [
+    {
+     "label": "Fast-forward main; you run the probe and paste the output",
+     "description": "--ff-only, reversible via reflog; stash@{0} and tests/load/results/ untouched; probe prints env names and lengths only, never values. All new work goes on branches or PRs because a push to main auto-deploys."
+    },
+    {
+     "label": "Fast-forward main; grant me read-only SSH for the probe script",
+     "description": "Faster, but the box is shared with OET and radiology; read-only commands only and no load."
+    },
+    {
+     "label": "Work from a branch or worktree off origin/main; you run the probe",
+     "description": "Leaves local main stale and safer for the old stash, at the cost of two diverged checkouts."
+    }
+   ],
+   "recommendation": "Fast-forward main and you run the probe. Also confirm which path is the source of truth."
+  },
+  {
+   "question": "D2. Shared admission, exec leases and migrations 0019-0021 are already on main with no inert flag and auto-deploy (no live voice evidence exists). What rollout posture should the ledger and code take?",
+   "options": [
+    {
+     "label": "Probe first, then accept as live and add a kill-switch whose default preserves current behaviour",
+     "description": "UBAG_ADMISSION_SHARED defaulting to current live behaviour: no change on next deploy, gives a rollback switch."
+    },
+    {
+     "label": "Inert-by-default flag (off)",
+     "description": "Follows the repo rule literally but changes live behaviour at the next deploy unless env.local sets the flag first."
+    },
+    {
+     "label": "Record as accepted, ledger only",
+     "description": "Smallest change; no rollback switch."
+    },
+    {
+     "label": "Hold deploys or revert until live voice evidence exists",
+     "description": "Matches the branch ledger's 'do not merge' note, but main already contains the work."
+    }
+   ],
+   "recommendation": "Decide after the P0.2 probe shows what is deployed; default to the kill-switch with a live-preserving default."
+  },
+  {
+   "question": "D3. Helper plane architecture: who dials whom, how grants and certs flow, and how humans log in on helper browsers?",
+   "options": [
+    {
+     "label": "Primary dials the helper over WireGuard (mTLS gRPC server on the helper); UBAG polls manager grants against a UBAG-owned schema; manager CA issues certs of 72 h or less and UBAG pins SPKI; logins out of band",
+     "description": "Helpers hold no credentials to the primary. Grants kept last-known-good with a bounded stale grace and no increases while the manager is down. Logins use the provider-refresh skill over WireGuard or an SSH tunnel, with CDP, VNC and noVNC on loopback."
+    },
+    {
+     "label": "Helper claims work from the primary (OET document's claim model over HTTPS)",
+     "description": "Matches the OET doc, but helpers need outbound primary credentials and a longer-lived channel; changes P2.3 and P4.5 to P4.14."
+    },
+    {
+     "label": "Hybrid: primary dials for execution; helper opens an outbound stream for a brokered login viewer",
+     "description": "Adds the viewer broker (single-use ticket, MFA, browser:interact), a large security-sensitive item currently deferred."
+    }
+   ],
+   "recommendation": "First option. The brokered viewer and any pull model are built only if operators need them."
+  },
+  {
+   "question": "D4. When a stream hits its response deadline, or the outcome is ambiguous after the prompt was submitted, what should the job end as, and is the worker engine.py change in scope?",
+   "options": [
+    {
+     "label": "timed_out with data.partial and no partial text in result; post-submit ambiguity gives failed with submitted=true and reconcile_required; engine change in scope",
+     "description": "Never reports success on truncation and never blind-resubmits; flags UBAG_WORKER_STRICT_STREAM_END and UBAG_WORKER_STRICT_SUBMIT stay default off until a human verifies the live DOM."
+    },
+    {
+     "label": "completed_with_warnings with truncated=true",
+     "description": "Keeps the partial text but weakens the 'no false successful truncation' acceptance goal."
+    },
+    {
+     "label": "Leave current behaviour",
+     "description": "A deadline-cut stream stays completed and the engine keeps re-running the whole interaction, resubmitting the prompt, up to 3 times."
+    }
+   ],
+   "recommendation": "First option, flag-gated, flipping defaults only after live-DOM verification."
+  },
+  {
+   "question": "D5. Where do capacity and ladder runs happen, and how are the p95 goals gated?",
+   "options": [
+    {
+     "label": "Provision an isolated Linux lab host/VM with cgroup limits matching 2c/4G and 4c/8G; gate steady state at accept p95<=200 ms and read p95<=100 ms with a separate 100-client burst bound; publish in docs/benchmarks and PROGRESS.md",
+     "description": "Real throttle and headroom numbers. Local 100-client runs measured create p95 of about 0.6 to 1.13 s, so a flat 200 ms burst gate would fail by design."
+    },
+    {
+     "label": "Docker on this Windows laptop only",
+     "description": "Saved runs came from there with no cgroup data; cannot prove the 20% headroom or helper-ceiling goals."
+    },
+    {
+     "label": "Lab host, but hold the 100-client burst to 200 ms too",
+     "description": "Strictest; fails until gateway resizing or admission tuning (1 CPU, GOMAXPROCS 1) lands."
+    }
+   ],
+   "recommendation": "First option. Never aim load at the shared VPS; revisit the burst bound after the P0.13 baseline."
+  },
+  {
+   "question": "D6. Provider-identity capacity: parallelism is bounded by distinct human-logged-in (provider, physical session) pairs, not CPU. How should the 5-20 workload target be reached?",
+   "options": [
+    {
+     "label": "Provide the account inventory per provider; one active op per identity; scale by adding accounts or helpers",
+     "description": "No credential copying; the capacity report states the real ceiling (about 5 providers x 1 account = 5 browser workloads)."
+    },
+    {
+     "label": "Approve same-identity multi-tab per provider after live-DOM and safe-mode verification",
+     "description": "More parallelism per account, but needs per-provider verification and a terms-of-service check."
+    },
+    {
+     "label": "Allow the same account logged in on two nodes, with a primary-held fenced global identity lock",
+     "description": "Highest risk; needs per-provider review and conflicts with UNIQUE(tenant, target, identity_ref) today."
+    }
+   ],
+   "recommendation": "First option; tell us the number of accounts per provider so the 5-20 target is stated honestly."
+  }
+ ],
+ "critique": {
+  "verdict": "Not ready to execute as written. The dependency ordering, the honest-gates-first Phase 0 and the pre-registered Rust stop rule are sound. But the roadmap has five structural problems. (1) It is inert-only. No slice ever graduates a flag or enables anything in production, so the 5-20 workload outcome is never delivered. Until the external OET adapter exists (P4.20), the roadmap delivers measurement plus flag-off code. (2) The one acceptance goal the corpus already shows will fail, accept p95 <= 200 ms at 100 clients (local create p95 is 0.6-1.13 s with db_pool_wait of 2890 waits / 15.95 s), has no remediation slice, because P1.8 is an empty placeholder. (3) Several live-behaviour changes are ungated or decided silently against CLAUDE.md. These are the not_before fix (P1.4), the remote_endpoint redaction (P1.6), the event-id change (P3.7), the reconciler disconnect (P0.14) and the whole \"defaults taken without asking\" list. (4) P0.1 is not the smallest reversible first slice, because it bundles unrelated work and rewrites a script that runs on the shared prod box. (5) The \"voice stays disabled until P5.5\" claim is unenforced. I verified on origin/main that voice routes are live by default: serve.go says routes return 501 only when UBAG_VOICE_STORE is explicitly disabled, and docker-compose.vps.yml defaults UBAG_VOICE_STORE to memory. Verified facts: local main is 0 ahead and 40 behind origin/main. Postgres migrations on origin/main run to 0021, while sqlite stops at 0013 with 0009-0010 absent. thresholds.json has only max_create_p95_ms = 2000. check-small-deployment.mjs on origin/main already asserts UBAG_VOICE_STORE follows UBAG_GATEWAY_STORE for the deploy/small profile. There is no dispatch-envelope or worker-event schema in shared-schemas, apart from job-event.",
+  "missing": [
+   "No flag-graduation / rollout slice. Nothing flips UBAG_WORKER_STRICT_STREAM_END, STRICT_SUBMIT, STREAM_EVENTS/INGEST, EVENT_NOTIFY, POOL_SIZE, the warm daemon or the HELPER_* ladder to on, with criteria (live-DOM verification, canary, rollback). P7.2/P7.9 publish capacity without saying which flags were on. The false-truncation and blind-resubmit hazards stay live in production after every slice 'lands'. Needs a final rollout phase, and the ladder should be run with flags off and on.",
+   "Plan priority 8 and the accept p95 <= 200 / read p95 <= 100 goals have no concrete remediation slice. P1.8 is code-free with 'unmeasured candidates', yet the corpus already measured db_pool_wait (2890 waits / 15.95 s), a Postgres pool of 20 open / 5 idle, GOMAXPROCS=1 and a 1 CPU gateway. Missing: DB pool sizing, create-path profiling and a decision on gateway resizing.",
+   "Plan priority 7 (repeated attachment copying, page reloads, idle activity) has no work item and no slice, only the P1.8 placeholder. The warm-page reload every 10 jobs (_WARM_RELOAD_EVERY) is addressed only by the conditional P6.6.",
+   "Uploaded-audio workload: the corpus established no facts on how uploaded audio is processed. The roadmap only adds an audio-upload.json manifest. Mock bypasses the warm daemon, and the P7.1 synthetic fixture covers 'slow attachment accept' but no audio. The 5-20 target for the uploaded-audio class is unmeasurable as planned.",
+   "Primary-side capacity ceiling and resize decision. Workers run as children of the gateway container (1.0 CPU, 1300m, GOMEMLIMIT 950MiB). A 20% headroom goal leaves about 1040MiB, so the P3.6 pool is realistically 1-2 slots (Python plus Node driver each). All slots also share one 2 CPU Chrome container. The 5-20 target therefore depends entirely on helpers, which depend on an external OET adapter. The roadmap never says so, and never offers a resize option.",
+   "No early helper-footprint feasibility spike. P0.8 explicitly excludes real Chrome. Whether a 2c/4G helper at 1.5 CPU / 2.5 GiB can host the helper service, Python, Playwright and Chrome (plus noVNC, and Pulse/relay for voice) is first tested in P7.2, after Phase 4 and 5 are built. Prod Chrome previously starved at 1 CPU / 1.9 GB.",
+   "OET priority is only static (grant minus reservation). Missing: a policy and slice for grant shrink or preemption mid-flight (effective cap falling below in-flight attempts, voice call on a shrinking node). The Drain RPC is defined in P2.3 but nothing implements drain-on-shrink or cancel-vs-finish.",
+   "No ramp rule from 'new helper starts at 1 active browser workload' to N, so helpers never grow beyond 1 except via an undefined grant.",
+   "Pressure telemetry source is unestablished. CPU>80% / mem-available<20% are host-level figures aggregated across projects, but a helper container sees its own cgroup. No slice decides whether the manager or a helper agent reports host pressure. P4.1 and P4.11 assume it exists.",
+   "Post-submission reconcile has no terminal policy when the helper is unreachable forever (destroyed VPS). P4.18 says 'InspectAttempt, never resubmit' with no bound, no terminal state, and no operator-visible reconcile_required handling.",
+   "'No lost acked jobs' ignores the non-atomic create-then-enqueue (jobs.Create then EnqueueJob; the dispatch outbox is unwired). A gateway crash between them leaves a queued DB job with no spool entry. No reconciler, and no crash-injection or restart scenario in the P7.2 ladder.",
+   "Concurrency coupling: executor PoolSize comes from UBAG_WORKER_CONCURRENCY (default 1, clamp 32) and the roadmap's UBAG_WORKER_POOL_SIZE is separate. With concurrency 1, a pool of N slots yields no parallelism. P3.6 does not couple them. It also holds a lease while waiting for a slot (head-of-line), and the busy-loop on lease.Retry is identified only in the P4.17 ADR, after P3.6 has shipped 'bounded wait / retryable overload'.",
+   "No slice enforces or documents disabling voice in production before P5.5, despite the live-by-default routes (see wrong_assumptions).",
+   "queue_reason / queue_reason_since: no storage decision (a persisted job field needs migration plus three-store changes; computed-at-read means a placer call per listed job). No migration number reserved in the P0.3 table. The mobile app's types.ts mirrors the closed enums, so new fields and types need updating there too.",
+   "Observability and alerting for the helper plane (metrics, alert rules, runbook) arrive only in P6.7, after the P4.20 canary. PROGRESS.md and env.example updates are required per CLAUDE.md whenever a flag, scope or runtime status changes, but are scheduled only in P0.x and P6.7.",
+   "Plan 'primary keeps public session/signaling API and forwards control' for voice is covered, but ICE/TURN reachability on helpers is purely external (manager) with no in-repo verification slice. A helper-hosted voice call has no acceptance test short of human-run evidence."
+  ],
+  "wrong_assumptions": [
+   "P0.14 / risks: 'Voice stays disabled in production until P5.5.' False on origin/main. Voice session routes are on by default (memory store), and only UBAG_VOICE_AUDIO_ENABLED=0 gates the audio stack. P0.14's own change (voice store follows gateway store, so postgres in prod) activates DB-backed voice sessions. Also, the reconciler change is a behaviour change with no flag. Only the vps compose is the delta; deploy/small already asserts it.",
+   "Conflict resolution 13: 'the daemon path is the product path', so process-runner streaming is dropped. The corpus says UBAG_WORKER_DAEMON defaults to false (compose line 135) and the prod value is unverifiable. If prod runs the per-job process runner, the pool (P3.6) and streaming ingest (P3.10) change nothing in prod until a daemon-enablement step the roadmap does not contain.",
+   "P3.7 is presented as a no-schema carve-out, but it changes worker and gateway event ids on the default path (no flag). That contradicts later 'flag off byte-identical to goldens' claims (P3.1, P3.2, P3.8). Across a deploy, a retried job would mix old-style and attempt-scoped ids. It also depends only on P2.2, while the Python envelope must accept the new attempt block (owned by P3.4), and the corpus never established that envelope.py tolerates it.",
+   "P1.4: honouring not_before in the file spool is called a 'contract bug fix' and shipped ungated. Production runs UBAG_EXECUTOR_MODE=file, where scheduled jobs currently run immediately, so this changes live behaviour. It was decided without asking and breaks the inert-by-default rule.",
+   "P1.6 is labelled 'no new public contract' but redacts remote_endpoint from tenant responses. That field is in the OpenAPI BrowserInstance schema, so it is a response-contract change that is neither contract-first nor flagged, and SDK consumers were not checked. 'Tenant-keyed topology upsert' (global by ID today) probably needs a PK/schema change, with no migration reserved.",
+   "P4.15 stale-grace deviates from the plan. The plan says manager down means existing execution continues and no new grants. The roadmap keeps the last grant for a bounded grace and still places attempts under it ('no increases'). This was decided inside the bundled D3.",
+   "P4.1 hardcodes helper ceilings (1.5/2.5, 3/5, 75%/62.5%) inside UBAG, duplicating manager-owned policy. The plan says the manager applies limits and UBAG supplies only workload integration. The corpus marked these ceilings 'unverifiable', not in the OET doc. Drift between the manager and the UBAG table is likely.",
+   "P5.7 authors offer/answer helper-voice RPCs assuming media terminates on the helper, but that decision is 'made at P5.9'. P5.7 also hard-depends on the human live probe P5.4, although proto authoring needs no live evidence.",
+   "P0.1 is called the smallest slice, but it bundles a fast-forward, a probe rewrite, PROGRESS/HANDOFF edits and test:load:offline. The existing tools/vps-ubag-probe.sh prints env VALUES (REMOTE_BROWSER, GATEWAY_STORE and others via raw printenv), so 'names and lengths only' means rewriting existing lines of a script that runs on the shared prod VPS and is untestable locally beyond bash -n. Only the fast-forward is trivially reversible (reflog, 0 local-only commits).",
+   "P0.9 is bundled 'because files overlap', but it spans shared-schemas/OpenAPI, Python engine/events/mock and Go metrics plus observability contracts. There is no file overlap. It should be split into three slices.",
+   "Several exit gates are not runnable or not 'targeted' under CLAUDE.md: the P3.3 two-subprocess flock test is POSIX-only on a Windows dev box; Postgres and buf/protoc gates are CI-only. P6.7 runs docs:build, P0.6 a full local dashboard build, P2.2-P2.6 chain check:contracts + test:schema + manifest regeneration + check:sdk-freshness + test:conformance, and P2.5 the whole test:security suite. P1.3's command line is malformed (-run applies to every package listed after it). (-race is fine: gcc and CGO_ENABLED=1 are present locally.)",
+   "Integration strategy conflict. CLAUDE.md says to commit and push when done. The roadmap says never push to main (auto-deploy, mandatory migrations on deploy) and use branches/PRs, but it buries this inside D1. It is a repo-rule-level decision. Note the recent repo history shows direct docs pushes to main.",
+   "'DEFAULTS TAKEN WITHOUT ASKING' violates CLAUDE.md 'Never act on assumptions'. It lists deleting k6/Locust, the SSE contract change, helper media termination, the SQLite fail-closed ledger, LISTEN/NOTIFY deferral, the profile policy and the not_before fix. Each needs a selectable-option question. D3 also bundles four independent decisions (dial direction, grant polling and stale policy, PKI ownership, login path), so the user cannot pick one without accepting the rest.",
+   "Phase 3 pool/streaming work is hard-blocked on two out-of-band prerequisites: P0.2 (a human runs the probe on the VPS) feeds P1.5, P0.14 and P0.13; and P0.13 needs an isolated Linux lab host that does not exist (D5) and feeds P3.6. There is no fallback if the owner never runs the probe or D5 resolves to 'laptop only'.",
+   "P7.5's stop rule (>=70% of relay CPU in libopus plus syscalls, or relay <5% of container CPU) is the roadmap's own invention, not in the plan, and the <5% leg will trivially trigger because Chrome dominates the container. The plan's gate is >=20% UBAG-controlled overhead or >=25% CPU/mem, material in the mixed workload. The extra stop rule can cancel Rust before the plan's gate is ever evaluated, and it should be labelled and approved.",
+   "P4.13 readiness probe navigates the real provider page in the human-logged-in profile. It holds the identity lock, but a human logging in via noVNC does not, so the probe can disrupt an in-progress manual login. No probe frequency or rate limit is specified, which is also safe-mode-adjacent traffic.",
+   "P3.13 depends on the CONDITIONAL P2.7, so it is unclear what happens to P3.13 when P2.7 is not built."
+  ],
+  "blocking_questions": [
+   "Is UBAG_WORKER_DAEMON actually on in production and what is UBAG_WORKER_CONCURRENCY? This decides whether Phase 3 (pool, streaming ingest) delivers anything in prod. Also needed: the deployed SHA, and whether origin/main e0667b5 is live.",
+   "Are the voice session routes currently live in prod (default memory store, routes 501 only when explicitly disabled)? If so, how should they be disabled or contained (UBAG_VOICE_STORE=disabled?) before any further deploy, and is changing the voice store default to postgres acceptable?",
+   "Integration strategy: do slices land via branches/PRs, or does CLAUDE.md's 'commit and push when done' apply? Pushes to main auto-deploy and apply migrations mandatorily on the shared Postgres, so who approves each migration-bearing slice?",
+   "Is an isolated Linux lab host (cgroup limits matching 2c/4G and 4c/8G) available for P0.13/P7.2? If not, which phases are allowed to proceed with unmeasured gates (D5)?",
+   "Is resizing the primary (gateway 1 CPU / 1300m, shared 2 CPU Chrome) acceptable, or is the primary pool capped at about 1-2 slots with the 5-20 target deferred entirely to helpers?",
+   "OET interface: who writes the manager-side adapter that emits the allocation schema? Has the OET team accepted the UBAG-owned schema, given the OET doc's helper-claim HTTPS model and 30%/40% Rust thresholds? Also: who supplies host-pressure telemetry, is the helper ceiling table UBAG's or the manager's, and is 'no new grants when the manager is down' strict or a bounded grace?",
+   "Should the not_before fix, remote_endpoint redaction, SSE close/resume semantics, deletion of the legacy k6/Locust scripts, and helper-terminated voice media each be flag-gated, deferred, or ask-first (the roadmap took them as defaults)?",
+   "Is flag graduation (turning strict flags, streaming, event-notify, pool and warm daemon on in prod) in scope for this roadmap, and who performs the live-DOM verification that gates it?",
+   "Provider account inventory per target (D6). Without it the capacity report cannot state a truthful 5-20 ceiling, and the pool and helper slice sizing (one active op per identity) is unbounded guesswork.",
+   "How is uploaded audio processed today (attachment kind, worker path, provider)? A workload manifest and acceptance for the uploaded-audio class need that fact."
+  ],
+  "corrections_to_roadmap": [
+   "Split P0.1: P0.1a is the fast-forward only (git merge --ff-only origin/main, user OK, nothing pushed, check HEAD == origin/main, git status shows only the ignored results dir); this is the first slice. P0.1b is a separate slice that rewrites tools/vps-ubag-probe.sh to print names and lengths only, with a grep test that no value is printed, plus the PROGRESS/HANDOFF notes.",
+   "Add a voice-posture slice before or inside P0.14: state the actual live default (routes on, memory store), and add an explicit disable or contain mechanism until P5.5. Gate the reconciler fail-closed change behind a flag. Do not flip the vps voice store default until the posture is decided.",
+   "P1.4: put not_before honouring behind a flag (or ask), with default per the user's answer. Keep the lost-race lease fix separate.",
+   "P1.6: split into (a) tenant-keyed topology upsert, with the schema impact checked and a migration number reserved in the P0.3 table; (b) remote_endpoint redaction done contract-first (OpenAPI note, operator-only exposure, SDK and dashboard consumers checked) and flagged; (c) tab context_id and the profile-policy flag.",
+   "P3.7: gate attempt-scoped event ids behind a flag, or state plainly that the default path changes and update goldens. Specify mixed-id behaviour for retries spanning a deploy. Make it depend on the Python envelope accepting the attempt block (P3.4) or verify that tolerance first.",
+   "P3.6: couple UBAG_WORKER_POOL_SIZE with the consumer PoolSize (UBAG_WORKER_CONCURRENCY) so the pool actually parallelises. Move the lease-then-place / busy-loop ADR (currently in P4.17) ahead of P3.6. Define saturation after lease as delayed Retry, not immediate re-queue or a post-ack overload. Cap pool size from the primary cgroup headroom after measuring Chrome and worker RSS.",
+   "Add an early Phase 0 spike: one real Chrome plus the Python worker inside a 1.5 CPU / 2.5 GiB cgroup (and 3 CPU / 5 GiB), recording RSS and CPU. If a 2c/4G helper cannot host a browser workload, learn that now, not at P7.2. Extend P0.8 to use real Chrome and the actual cgroup.",
+   "Make P1.8 concrete or add a slice: a create-path pprof pass plus DB pool sizing against the measured db_pool_wait, with a before/after on the harness. If the accept p95 <= 200 ms goal is unreachable on a 1 CPU gateway, say so and ask (D5, resize option).",
+   "Add a final rollout / graduation phase: per-flag checklist (live-DOM check, canary, rollback, ledger update); warm-daemon enablement evaluation; run the ladder with flags off and on; P7.9 must state which flags were on for each published number.",
+   "Add a grant-shrink / drain slice (using the P2.3 Drain RPC) with an explicit cancel-vs-finish policy, plus a ramp rule from 1 to N workloads per helper. Decide the host-pressure telemetry source before P4.1 and P4.11.",
+   "P4.15: align stale-grace with the plan ('no new grants' when the manager is down) or ask. P4.1: either drop the UBAG-side ceiling table or mark it as defence-in-depth that defers to the manager's grant.",
+   "P4.18: add a bounded reconcile window and a terminal transition (failed with reconcile_required) when the helper stays unreachable. Add a queued-in-DB-but-not-in-spool reconciler, and crash and restart injection into the P7.2 ladder for 'no lost acked jobs'.",
+   "Move the helper-voice media-termination decision before P5.7 and turn it into a question; do not default it. Drop P5.7's hard dependency on P5.4.",
+   "Split P0.9 into schema/observability contract, Python timing marks, and Go stage metrics.",
+   "Replace heavy local exit gates with targeted checks (single schema, single manifest freshness check), and route docs:build, full dashboard build, Postgres, buf/protoc and the POSIX flock test to dispatched CI or WSL. Fix the malformed -run in P1.3. State per gate whether it is runnable on the Windows dev box.",
+   "Replace 'DEFAULTS TAKEN WITHOUT ASKING' with explicit questions in CLAUDE.md's selectable-option style, and split D3 into separate decisions: dial direction, grant polling plus stale policy, PKI ownership, login path. Add an integration-strategy decision (branches/PRs vs push, migration approval).",
+   "Give P0.13 and P3.6 a fallback when the human probe or lab host is unavailable: treat the premise as unverified and proceed with the conservative default, instead of a hard dependency.",
+   "Label the P7.5 stop rule as roadmap-proposed, require approval, and evaluate the plan's 20%/25%/materiality gate regardless. Add a rate limit and a human-login exclusion (no probe while an operator viewer or noVNC login is active) to P4.13.",
+   "Specify queue_reason storage (field plus migration, or computed) and reserve its migration number. Add apps/mobile types.ts to the contract-propagation list. Add helper-plane alerts and runbook before the P4.20 canary, and PROGRESS.md/env.example updates to every flag-introducing slice.",
+   "Clarify P2.7/P3.13: either make P2.7 non-conditional, or state P3.13 is dropped when P2.7 is not built."
+  ]
+ }
+}
