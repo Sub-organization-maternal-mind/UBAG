@@ -51,6 +51,11 @@
       "title": "SSE helpers preserve per-job event ordering",
       "assertions": [
         "ordered_sequence",
+        "strictly_increasing_sequence",
+        "at_least_once_dedupe_by_event_id",
+        "resume_via_last_event_id_or_after_sequence",
+        "no_content_when_resumed_past_terminal",
+        "tokens_provisional_until_terminal",
         "terminal_event_required",
         "bounded_reader"
       ]
