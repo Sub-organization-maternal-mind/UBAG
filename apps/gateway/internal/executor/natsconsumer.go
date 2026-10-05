@@ -393,6 +393,13 @@ func (l natsWorkerLease) Envelope() DispatchEnvelope {
 	return l.envelope
 }
 
+// Heartbeat tells JetStream the job is still being worked on, restarting the
+// ack-wait timer: a provider turn can outlast AckWait, and without this the
+// message would be redelivered while the first worker is still submitting.
+func (l natsWorkerLease) Heartbeat(context.Context) error {
+	return l.msg.InProgress()
+}
+
 func (l natsWorkerLease) Complete(context.Context) error {
 	return l.msg.Ack()
 }

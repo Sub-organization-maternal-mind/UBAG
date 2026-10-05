@@ -128,7 +128,38 @@ type WorkerConsumer struct {
 	Plugins  *plugins.Host // optional; nil disables post-job hook
 	Metrics  WorkerMetricsRecorder
 
+	// ExecLeases, when set, makes execution of a job exclusive across every
+	// consumer sharing the backend: before running, the consumer takes an
+	// expiring per-job lease (renewed by a heartbeat while the job runs). A
+	// second delivery of the same job — queue redelivery, a retried enqueue —
+	// that finds the lease held is NOT run: it is nacked, so the provider is
+	// never submitted to twice concurrently. A crashed holder's lease simply
+	// expires and the redelivery proceeds. If the lease is lost mid-run (the
+	// holder was presumed dead) the local run is cancelled. Nil keeps the
+	// queue's own lease as the only guard (single-process deployments).
+	ExecLeases topology.TokenBackend
+	// HeartbeatInterval paces lease/queue heartbeats (default 10s).
+	HeartbeatInterval time.Duration
+
 	inflight atomic.Int64
+}
+
+// LeaseHeartbeater is implemented by queue leases whose redelivery timer must
+// be extended while a long-running job executes.
+type LeaseHeartbeater interface {
+	Heartbeat(ctx context.Context) error
+}
+
+const (
+	execLeaseTTL             = 90 * time.Second
+	defaultHeartbeatInterval = 10 * time.Second
+)
+
+func (c *WorkerConsumer) heartbeatInterval() time.Duration {
+	if c.HeartbeatInterval > 0 {
+		return c.HeartbeatInterval
+	}
+	return defaultHeartbeatInterval
 }
 
 type WorkerQueue interface {
@@ -363,6 +394,27 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	if jobstore.TerminalStatus(job.Status) {
 		return c.finishTerminalLeasedJob(ctx, lease, job)
 	}
+	var execToken string
+	if c.ExecLeases != nil {
+		token, held, leaseErr := c.ExecLeases.AcquireToken(ctx,
+			[]topology.Lane{{Key: "exec:" + job.ID, Cap: 1}}, execLeaseTTL, time.Now().UTC())
+		if leaseErr != nil {
+			_ = lease.Retry(ctx)
+			return true, fmt.Errorf("acquire execution lease for job %s: %w", job.ID, leaseErr)
+		}
+		if !held {
+			// Another consumer is running (or recently ran) this job: a
+			// duplicate delivery must not reach the provider.
+			_ = lease.Retry(ctx)
+			return true, nil
+		}
+		execToken = token
+		defer func() {
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = c.ExecLeases.ReleaseToken(releaseCtx, execToken)
+		}()
+	}
 	assignedJob, found, err := c.Jobs.UpdateStatus(ctx, job.ID, jobstore.StatusAssigned)
 	if err != nil {
 		_ = lease.Retry(ctx)
@@ -377,7 +429,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	}
 
 	workerStarted := time.Now()
-	events, err := c.runWorkerWithCancellation(ctx, envelope)
+	events, err := c.runWorkerWithCancellation(ctx, lease, execToken, envelope)
 	workerDuration := time.Since(workerStarted)
 	if err != nil {
 		outcome := "failure"
@@ -918,7 +970,7 @@ func (c *WorkerConsumer) workerQueue() (WorkerQueue, error) {
 	return nil, fmt.Errorf("worker consumer queue is not configured")
 }
 
-func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease WorkerLease, execToken string, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -927,10 +979,27 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, envelope
 		defer close(done)
 		ticker := time.NewTicker(250 * time.Millisecond)
 		defer ticker.Stop()
+		heartbeat := time.NewTicker(c.heartbeatInterval())
+		defer heartbeat.Stop()
+		beater, _ := lease.(LeaseHeartbeater)
 		for {
 			select {
 			case <-runCtx.Done():
 				return
+			case <-heartbeat.C:
+				// Keep the queue message and the execution lease alive for as
+				// long as the job runs.
+				if beater != nil {
+					_ = beater.Heartbeat(runCtx)
+				}
+				if execToken != "" {
+					if err := c.ExecLeases.RenewToken(runCtx, execToken, execLeaseTTL, time.Now().UTC()); errors.Is(err, topology.ErrTokenLost) {
+						// We no longer own the job: stop rather than race a
+						// second worker onto the same provider submission.
+						cancel()
+						return
+					}
+				}
 			case <-ticker.C:
 				job, found, err := c.Jobs.Get(runCtx, envelope.JobID)
 				if err != nil || !found {

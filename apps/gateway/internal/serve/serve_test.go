@@ -158,7 +158,7 @@ func TestNewWorkerConsumerFromEnvSupportsFileAndNATSQueues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newDispatcherFromEnv file returned error: %v", err)
 	}
-	consumer, err := newWorkerConsumerFromEnv(dispatcher, jobs, nil, nil, nil, nil, nil, nil)
+	consumer, err := newWorkerConsumerFromEnv(dispatcher, jobs, nil, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("newWorkerConsumerFromEnv file returned error: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestNewWorkerConsumerFromEnvSupportsFileAndNATSQueues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newDispatcherFromEnv nats returned error: %v", err)
 	}
-	consumer, err = newWorkerConsumerFromEnv(dispatcher, jobs, nil, nil, nil, nil, nil, nil)
+	consumer, err = newWorkerConsumerFromEnv(dispatcher, jobs, nil, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("newWorkerConsumerFromEnv nats returned error: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestNewWorkerConsumerFromEnvRejectsInvalidNATSWorkerConfig(t *testing.T) {
 		t.Fatalf("newDispatcherFromEnv returned error: %v", err)
 	}
 
-	_, err = newWorkerConsumerFromEnv(dispatcher, jobstore.NewMemoryStore(), nil, nil, nil, nil, nil, nil)
+	_, err = newWorkerConsumerFromEnv(dispatcher, jobstore.NewMemoryStore(), nil, nil, nil, nil, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "UBAG_NATS_WORKER_MAX_DELIVER") {
 		t.Fatalf("error = %v, want max deliver validation", err)
 	}

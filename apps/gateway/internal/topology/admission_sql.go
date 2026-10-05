@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -32,6 +33,10 @@ type Lane struct {
 type TokenBackend interface {
 	AcquireToken(ctx context.Context, lanes []Lane, ttl time.Duration, now time.Time) (tokenID string, ok bool, err error)
 	AssociateToken(ctx context.Context, tokenID, jobID string) error
+	// RenewToken extends an UNASSOCIATED token's expiry (a heartbeat). It
+	// returns ErrTokenLost when the token no longer exists — expired and swept,
+	// or released — which the holder must treat as loss of the lease.
+	RenewToken(ctx context.Context, tokenID string, ttl time.Duration, now time.Time) error
 	ReleaseToken(ctx context.Context, tokenID string) error
 	ReleaseJobToken(ctx context.Context, jobID string) error
 	PutLaneCap(ctx context.Context, laneKey string, cap int, now time.Time) error
@@ -200,6 +205,22 @@ func (b *SQLTokenBackend) AssociateToken(ctx context.Context, tokenID, jobID str
 		// The token expired and was swept before the job was created; the
 		// job simply runs without a held token (permissive, never blocking).
 		return nil
+	}
+	return nil
+}
+
+// ErrTokenLost reports that a lease token is gone: its holder no longer owns
+// the resource and must stop.
+var ErrTokenLost = errors.New("admission: token lost")
+
+func (b *SQLTokenBackend) RenewToken(ctx context.Context, tokenID string, ttl time.Duration, now time.Time) error {
+	res, err := b.db.ExecContext(ctx, `UPDATE gateway_admission_tokens SET expires_at = `+b.ph(1)+
+		` WHERE token_id = `+b.ph(2)+` AND job_id = '' AND expires_at > `+b.ph(3), b.ts(now.Add(ttl)), tokenID, b.ts(now))
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrTokenLost
 	}
 	return nil
 }

@@ -301,7 +301,7 @@ func Run(ctx context.Context) error {
 	})
 
 	if workerConsumerEnabled() {
-		consumer, err := newWorkerConsumerFromEnv(rawDispatcher, jobs, webhookOutbox, enterprise.alerts, enterprise.conversations, enterprise.concurrency, enterprise.topology, artifactStore)
+		consumer, err := newWorkerConsumerFromEnv(rawDispatcher, jobs, webhookOutbox, enterprise.alerts, enterprise.conversations, enterprise.concurrency, enterprise.topology, artifactStore, enterprise.admission)
 		if err != nil {
 			return fmt.Errorf("invalid worker consumer configuration: %w", err)
 		}
@@ -1445,7 +1445,7 @@ func newStaleJobReaperFromEnv(jobs jobstore.Store, concurrency *topology.Concurr
 	}
 }
 
-func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Store, notifier executor.TerminalJobNotifier, alertsMgr *alerts.Manager, conversationsMgr *conversations.Manager, concurrency *topology.ConcurrencyRegistry, topologyStore topology.Store, artifactStore artifacts.ArtifactStore) (*executor.WorkerConsumer, error) {
+func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Store, notifier executor.TerminalJobNotifier, alertsMgr *alerts.Manager, conversationsMgr *conversations.Manager, concurrency *topology.ConcurrencyRegistry, topologyStore topology.Store, artifactStore artifacts.ArtifactStore, admission *topology.SQLTokenBackend) (*executor.WorkerConsumer, error) {
 	pollInterval, err := durationFromMillisEnv("UBAG_WORKER_POLL_INTERVAL_MS", 500*time.Millisecond)
 	if err != nil {
 		return nil, err
@@ -1489,7 +1489,15 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 	if err != nil {
 		return nil, err
 	}
+	// Per-job execution leases make duplicate deliveries harmless across
+	// replicas; they need the shared admission database (memory mode relies on
+	// the queue's own lease).
+	var execLeases topology.TokenBackend
+	if admission != nil {
+		execLeases = admission
+	}
 	return &executor.WorkerConsumer{
+		ExecLeases:       execLeases,
 		Queue:            queue,
 		Jobs:             jobs,
 		TerminalNotifier: notifier,
