@@ -13,6 +13,7 @@ Options:
   --scenario <name>          acceptance (default) or mock-e2e
   --base-url <url>           Gateway base URL (default: http://127.0.0.1:8080)
   --allow-remote             Explicitly permit a non-loopback base URL
+  --allow-warnings           Treat completed_with_warnings as success (mock-e2e only)
   --app-secret <secret>      Compatibility override (default: UBAG_APP_SECRET)
   --warmups <count>          Warmup runs, 0-1000 (default: 1)
   --samples <count>          Measured runs, 1-10000 (default: 10)

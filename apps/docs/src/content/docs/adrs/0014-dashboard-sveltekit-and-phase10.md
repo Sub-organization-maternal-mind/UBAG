@@ -41,7 +41,7 @@ Phase 10 closes two open items from the UBAG v2.1 blueprint:
 
 ### 3. Load regression gate: 20%
 
-**Decision**: Load test baselines published in `tests/load/baselines.json`; CI fails on >20% regression vs baseline.
+**Decision**: Load test baselines were published in `tests/load/baselines.json` (since removed; superseded by `tests/load/acceptance.mjs` and `tests/load/thresholds.json`, see `docs/load-testing.md`).
 
 **Rationale**: 20% allows for infrastructure variance while catching real regressions.
 

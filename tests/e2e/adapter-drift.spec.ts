@@ -34,11 +34,8 @@ test.describe('Adapter drift detection canaries', () => {
 
       for (const { name, selector } of provider.selectors) {
         const found = await page.locator(selector).first().isVisible({ timeout: 10_000 }).catch(() => false);
-        // Report drift as soft assertion (don't fail the test, just warn)
-        if (!found) {
-          console.warn(`[DRIFT] ${provider.name}: selector "${name}" (${selector}) not found`);
-        }
-        // Hard assertion: at least the page loaded (no complete outage)
+        // Fail closed: a missing selector IS the drift this canary exists to detect.
+        expect(found, `[DRIFT] ${provider.name}: selector "${name}" (${selector}) not found`).toBe(true);
       }
 
       // Verify the page has a meaningful title (not a Cloudflare block or error page)
@@ -57,31 +54,43 @@ test.describe('Gateway + automation path (live)', () => {
     const gatewayUrl = process.env.UBAG_E2E_GATEWAY ?? 'http://localhost:8081';
     const appSecret = process.env.UBAG_E2E_APP_SECRET ?? '';
 
-    if (!appSecret) {
-      console.warn('UBAG_E2E_APP_SECRET not set — skipping gateway job test');
-      return;
-    }
+    // Fail closed: a missing secret must never read as a pass.
+    expect(appSecret, 'UBAG_E2E_APP_SECRET must be set when UBAG_E2E=1').not.toBe('');
+
+    const apiVersion = '2026-05-22';
+    const marker = 'UBAG_E2E_OK';
+    const key = `e2e-${Math.random().toString(36).slice(2)}`;
+    const headers = {
+      Authorization: `Bearer ${appSecret}`,
+      'Ubag-Api-Version': apiVersion,
+      'Content-Type': 'application/json',
+    };
 
     const res = await request.post(`${gatewayUrl}/v1/jobs`, {
-      headers: {
-        'Authorization': `Bearer ${appSecret}`,
-        'Ubag-Api-Version': '2026-05-22',
-        'Content-Type': 'application/json',
-        'Idempotency-Key': Math.random().toString(36).slice(2),
-      },
+      headers: { ...headers, 'Idempotency-Key': key },
       data: {
-        job: {
-          target: 'https://example.com',
-          command_type: 'fetch',
-          input: { url: 'https://example.com' },
-        },
+        api_version: apiVersion,
+        idempotency_key: key,
         client: { app_id: 'e2e-test', app_version: '1.0.0', sdk: { name: 'e2e', version: '1.0.0' } },
+        job: { target: 'mock', command_type: 'chat.prompt', input: { prompt: `Return the exact text: ${marker}` } },
       },
     });
+    expect(res.status()).toBe(202);
+    const jobId = (await res.json()).job_id as string;
+    expect(jobId).toMatch(/^job_[A-Za-z0-9]+$/);
 
-    expect(res.status()).toBeLessThan(500);
-    const body = await res.json();
-    const jobId = body?.job?.id ?? body?.id;
-    if (jobId) console.log(`[E2E] Created job: ${jobId}`);
+    // Poll to a terminal state; only plain `completed` carrying the marker passes.
+    let job: { status: string; result?: unknown } = { status: 'queued' };
+    const terminal = ['completed', 'completed_with_warnings', 'failed_retryable', 'failed_terminal', 'dead_letter', 'cancelled', 'timed_out'];
+    await expect
+      .poll(async () => {
+        const r = await request.get(`${gatewayUrl}/v1/jobs/${jobId}`, { headers });
+        expect(r.status()).toBe(200);
+        job = await r.json();
+        return terminal.includes(job.status);
+      }, { timeout: 30_000 })
+      .toBe(true);
+    expect(job.status).toBe('completed');
+    expect(JSON.stringify(job.result ?? null)).toContain(marker);
   });
 });

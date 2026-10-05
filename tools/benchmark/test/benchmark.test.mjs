@@ -24,7 +24,7 @@ function jobResponse(jobId, status, overrides = {}) {
     idempotent_replay: false,
     status,
     target: 'mock',
-    result: null,
+    result: status.startsWith('completed') ? { text: 'UBAG_BENCHMARK_OK' } : null,
     metadata: {},
     trace_id: 'trace_benchmark',
     events_url: `/v1/jobs/${jobId}/events`,
@@ -493,4 +493,61 @@ test('buildConfig rejects an empty --output path', () => {
     () => buildConfig(['--output', ''], {}),
     /non-empty path/i,
   );
+});
+
+function terminalServer(status, result) {
+  return async (request, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (request.method === 'POST') {
+      await readJson(request);
+      response.writeHead(202, { location: '/v1/jobs/job_warn1' });
+      response.end(JSON.stringify(jobResponse('job_warn1', 'queued')));
+      return;
+    }
+    if (request.url.endsWith('/events')) {
+      response.end(JSON.stringify({
+        api_version: API_VERSION, job_id: 'job_warn1', events: [], next_cursor: null, trace_id: 'trace_benchmark',
+      }));
+      return;
+    }
+    response.end(JSON.stringify(jobResponse('job_warn1', status, result === undefined ? {} : { result })));
+  };
+}
+
+test('completed_with_warnings fails mock-e2e unless --allow-warnings', async () => {
+  await withServer(terminalServer('completed_with_warnings'), async (baseUrl) => {
+    await assert.rejects(runBenchmark(config(baseUrl, '--scenario', 'mock-e2e')), /completed_with_warnings/);
+    const ok = await runBenchmark(config(baseUrl, '--scenario', 'mock-e2e', '--allow-warnings'));
+    assert.equal(ok.metadata.allow_warnings, true);
+  });
+});
+
+test('completed_with_warnings at accept time fails the acceptance scenario', async () => {
+  await withServer(async (request, response) => {
+    await readJson(request);
+    response.writeHead(202, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(jobResponse('job_warn2', 'completed_with_warnings')));
+  }, async (baseUrl) => {
+    await assert.rejects(runBenchmark(config(baseUrl)), /completed_with_warnings/);
+  });
+});
+
+test('--allow-warnings is rejected for the acceptance scenario', () => {
+  assert.throws(() => buildConfig(['--allow-warnings'], {}), /only valid with --scenario mock-e2e/);
+});
+
+test('mock-e2e fails when the result text lacks the prompt marker', async () => {
+  await withServer(terminalServer('completed', { text: 'something else' }), async (baseUrl) => {
+    await assert.rejects(runBenchmark(config(baseUrl, '--scenario', 'mock-e2e')), /marker/);
+  });
+});
+
+test('acceptance is labelled accept-only in metadata', async () => {
+  await withServer(async (request, response) => {
+    await readJson(request);
+    response.writeHead(202, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(jobResponse('job_acc1', 'queued')));
+  }, async (baseUrl) => {
+    assert.equal((await runBenchmark(config(baseUrl))).metadata.scenario_kind, 'accept-only');
+  });
 });

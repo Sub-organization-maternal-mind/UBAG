@@ -145,7 +145,7 @@ This yields:
 3. **+500ms Postgres latency** — injects a toxiproxy `latency` toxic; verifies query timeout handling and breaker behavior.
 4. **Malformed adapter output** — sends a job with a known-bad adapter payload; verifies the worker error path without crashing.
 
-**CI integration:** Per-PR CI runs **schema validation only** (no live faults, no running stack required). The weekly soak profile (`chaos-soak` workflow job) runs the full suite against a live stack.
+**CI integration:** Per-PR CI runs **schema validation only** (no live faults, no running stack required). The weekly `chaos-schema-check-full` job re-runs the same schema and evaluator tests only; live-stack fault injection is not yet automated in CI.
 
 **Rationale:** Schema-only CI allows the experiment definitions to be validated on every PR with zero infrastructure cost. The live-fault soak is bounded to weekly to avoid burning CI minutes on a flaky integration harness.
 
@@ -163,5 +163,5 @@ Summary of cross-cutting consequences for Phase 7:
 2. **Bulkhead admission** adds a lock per `lease()` call. Negligible overhead for O(hundreds) concurrent tabs.
 3. **Backup/restore** depends on `pg_dump`/`pg_restore` being present in the runtime environment. Docker images must include `postgresql-client`.
 4. **WAL archiving** is opt-in via the `backup` Compose profile; does not affect default or observability profiles.
-5. **Chaos harness** is schema-validation-only in CI. Full experiment execution requires a running stack with toxiproxy and is run weekly via the `chaos-soak` workflow.
+5. **Chaos harness** is schema-validation-only in CI. Full experiment execution requires a running stack with toxiproxy and is not yet automated (the weekly `chaos-schema-check-full` job is schema-check only).
 6. Phase 7 introduces no changes to the public REST API, job schema, plugin ABI, or SDK interfaces. All changes are internal reliability infrastructure.
