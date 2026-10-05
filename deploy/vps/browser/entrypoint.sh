@@ -199,8 +199,21 @@ socat "TCP-LISTEN:$CDP_PROXY_PORT,fork,reuseaddr,bind=0.0.0.0" "TCP:127.0.0.1:$C
 if [ "$VOICE_AUDIO_ENABLED" = "1" ]; then
   (
     set +e
-    pulseaudio --start --exit-idle-time=-1 --disallow-exit >/run/ubag/pulse.log 2>&1 \
-      || pulseaudio --start --exit-idle-time=-1 >/run/ubag/pulse.log 2>&1
+    # PulseAudio runs FOREGROUND in a supervised loop. `pulseaudio --start`
+    # is unreliable across container restarts: /tmp (and its stale pulse
+    # runtime dir + pid) survives docker restart, so a daemonized start
+    # fails and no devices ever appear (observed live). The "run as root"
+    # warning is expected and harmless here.
+    while true; do
+      rm -rf /tmp/pulse-* 2>/dev/null
+      pulseaudio --exit-idle-time=-1 --disallow-exit >>/run/ubag/pulse.log 2>&1
+      echo "$(date -u +%FT%TZ) vps-browser: pulse exited; restarting in 2s" >>/run/ubag/pulse.log
+      rm -rf /tmp/pulse-* 2>/dev/null
+      sleep 2
+    done
+  ) &
+  (
+    set +e
     while true; do
       python3 /app/audio-relay.py --addr "$VOICE_RELAY_ADDR" >>/run/ubag/audio-relay.log 2>&1
       echo "$(date -u +%FT%TZ) vps-browser: audio relay exited; restarting in 2s" >>/run/ubag/audio-relay.log
