@@ -80,3 +80,19 @@ func TestSuperadminAllowsUnion(t *testing.T) {
 		t.Error("superadmin must allow credential-minting actions")
 	}
 }
+
+// TestFleetActionsOperatorAdminOnly pins the P2.5 deny-default for fleet:*.
+func TestFleetActionsOperatorAdminOnly(t *testing.T) {
+	for _, action := range []string{"fleet:read", "fleet:manage"} {
+		for _, role := range []string{"viewer", "developer", "service", "", "node"} {
+			if RoleAllows(role, action) {
+				t.Errorf("RoleAllows(%q, %q) = true, want false", role, action)
+			}
+		}
+		for _, role := range []string{"operator", "admin", "superadmin"} {
+			if !RoleAllows(role, action) {
+				t.Errorf("RoleAllows(%q, %q) = false, want true", role, action)
+			}
+		}
+	}
+}
