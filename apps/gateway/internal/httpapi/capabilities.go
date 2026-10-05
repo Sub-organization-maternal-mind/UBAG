@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
+	voicepkg "github.com/ubag/ubag/apps/gateway/internal/voice"
 )
 
 // GET /v1/capabilities publishes, per target, the media it accepts and the
@@ -33,6 +34,9 @@ type voiceCapability struct {
 	UtteranceJobs bool   `json:"utterance_jobs"`
 	EntryControl  string `json:"live_entry_control,omitempty"`
 	Verified      string `json:"verified,omitempty"`
+	// AcceptanceVerified is true only when a live two-way acceptance run is
+	// recorded for the provider (manifest voice.acceptance_verified).
+	AcceptanceVerified bool `json:"acceptance_verified"`
 }
 
 var (
@@ -74,10 +78,11 @@ func loadVoiceCapabilityFromDisk(target string) voiceCapability {
 	raw = trimManifestBOM(raw)
 	var manifest struct {
 		Voice *struct {
-			Live          bool   `json:"live"`
-			UtteranceJobs *bool  `json:"utterance_jobs"`
-			EntryControl  string `json:"live_entry_control"`
-			Verified      string `json:"verified"`
+			Live               bool   `json:"live"`
+			UtteranceJobs      *bool  `json:"utterance_jobs"`
+			EntryControl       string `json:"live_entry_control"`
+			Verified           string `json:"verified"`
+			AcceptanceVerified bool   `json:"acceptance_verified"`
 		} `json:"voice"`
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil || manifest.Voice == nil {
@@ -87,6 +92,7 @@ func loadVoiceCapabilityFromDisk(target string) voiceCapability {
 	capability.Live = manifest.Voice.Live
 	capability.EntryControl = strings.TrimSpace(manifest.Voice.EntryControl)
 	capability.Verified = strings.TrimSpace(manifest.Voice.Verified)
+	capability.AcceptanceVerified = manifest.Voice.AcceptanceVerified
 	if manifest.Voice.UtteranceJobs != nil {
 		capability.UtteranceJobs = *manifest.Voice.UtteranceJobs
 	} else {
@@ -167,7 +173,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			"manual_login_required": target["manual_login_required"],
 			"attachments":           attachmentPolicyView(policy),
 			"inline_message_parts":  facadeInlineMedia(policy),
-			"voice":                 voiceView(voice, s.availableVoiceAccounts(r.Context(), tenantID, key)),
+			"voice":                 s.voiceCapabilityView(r.Context(), tenantID, key, voice),
 		}
 		entries = append(entries, entry)
 	}
@@ -209,14 +215,73 @@ func attachmentPolicyView(policy attachmentPolicy) map[string]any {
 	}
 }
 
-func voiceView(voice voiceCapability, availableAccounts int) map[string]any {
+// voiceCapabilityView publishes supported / configured / verified / available
+// SEPARATELY so a client never mistakes a manifest declaration for a working
+// capability:
+//
+//   - supported:  the provider adapter declares a live voice entry control;
+//   - configured: THIS gateway has the voice store, media plane and provider
+//     activation wired (and the relay environment exists);
+//   - verified:   a live two-way acceptance run is recorded for the provider
+//     (manifest voice.acceptance_verified); "verified_note" carries the text;
+//   - available:  configured AND at least one authenticated account with a
+//     free browser environment exists for this tenant right now.
+//
+// "live" (legacy) mirrors supported. "free_resources" counts free eligible
+// account+environment pairs; "available_accounts" is kept for compatibility
+// and now means the same honest number.
+func (s *Server) voiceCapabilityView(ctx context.Context, tenantID, target string, voice voiceCapability) map[string]any {
+	configured := s.voice != nil && s.voiceMedia != nil && s.voiceActivation
+	free := 0
+	if voice.Live {
+		free = s.freeVoicePlacements(ctx, tenantID, target)
+	}
 	return map[string]any{
 		"live":               voice.Live,
+		"supported":          voice.Live,
+		"configured":         configured && voice.Live,
+		"verified":           voice.AcceptanceVerified,
+		"verified_note":      voice.Verified,
+		"available":          configured && voice.Live && free > 0,
 		"utterance_jobs":     voice.UtteranceJobs,
 		"live_entry_control": voice.EntryControl,
-		"verified":           voice.Verified,
-		"available_accounts": availableAccounts,
+		"free_resources":     free,
+		"available_accounts": free,
 	}
+}
+
+// freeVoicePlacements counts this tenant's eligible (authenticated account,
+// hosting environment) pairs that no live session currently holds.
+func (s *Server) freeVoicePlacements(ctx context.Context, tenantID, target string) int {
+	placements := s.voicePlacements(ctx, tenantID, target, "")
+	if len(placements) == 0 {
+		return 0
+	}
+	inUseAccounts, inUseInstances := map[string]bool{}, map[string]bool{}
+	if s.voice != nil {
+		sessions, err := s.voice.List(ctx, tenantID, "", 200)
+		if err != nil {
+			return 0 // cannot prove anything is free
+		}
+		for _, session := range sessions {
+			if !session.Status.Active() || session.Status == voicepkg.StatusQueued {
+				continue
+			}
+			if session.Target == target && session.IdentityRef != "" {
+				inUseAccounts[session.IdentityRef] = true
+			}
+			if session.InstanceRef != "" {
+				inUseInstances[session.InstanceRef] = true
+			}
+		}
+	}
+	free := 0
+	for _, p := range placements {
+		if !inUseAccounts[p.Identity] && !inUseInstances[p.Instance] {
+			free++
+		}
+	}
+	return free
 }
 
 // availableVoiceAccounts counts this tenant's topology contexts for the target

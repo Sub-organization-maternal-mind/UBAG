@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -157,5 +158,36 @@ func TestVoiceControlCommandsAreReservedFromExternalCallers(t *testing.T) {
 	rec := doJSON(h, http.MethodPost, "/v1/jobs", body, authHeaders("reserved_voice_key_1"))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("external voice.activate = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestVoiceOriginPolicy(t *testing.T) {
+	_, h, _ := voiceTestServer(t, func(c *Config) { c.AllowedOrigins = []string{"https://app.example.com"} })
+	call := func(method, origin string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "/v1/voice/sessions", nil)
+		for k, v := range authHeaders("") {
+			req.Header.Set(k, v)
+		}
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := call(http.MethodGet, ""); rec.Code != http.StatusOK {
+		t.Fatalf("server-to-server (no Origin) = %d", rec.Code)
+	}
+	if rec := call(http.MethodGet, "https://app.example.com"); rec.Code != http.StatusOK || rec.Header().Get("Access-Control-Allow-Origin") != "https://app.example.com" {
+		t.Fatalf("allowed origin = %d acao=%q", rec.Code, rec.Header().Get("Access-Control-Allow-Origin"))
+	}
+	if rec := call(http.MethodGet, "https://evil.example"); rec.Code != http.StatusForbidden {
+		t.Fatalf("foreign origin = %d, want 403", rec.Code)
+	}
+	if rec := call(http.MethodOptions, "https://app.example.com"); rec.Code != http.StatusNoContent {
+		t.Fatalf("preflight = %d, want 204", rec.Code)
+	}
+	if got := parseAllowedOrigins("https://a.example/, *, https://b.example"); len(got) != 2 {
+		t.Fatalf("wildcard must never be honoured: %v", got)
 	}
 }

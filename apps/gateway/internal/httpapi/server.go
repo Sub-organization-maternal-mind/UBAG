@@ -251,6 +251,9 @@ type Config struct {
 	// UploadMemoryBytes bounds request-body bytes held in memory at once
 	// across every upload path. AdmissionKindCounts and DBStats feed the
 	// pressure metrics.
+	// AllowedOrigins lists the browser origins permitted on /v1/voice/*
+	// (default UBAG_ALLOWED_ORIGINS; empty = same-origin only).
+	AllowedOrigins      []string
 	MaxInflightRequests int
 	UploadMemoryBytes   int64
 	AdmissionKindCounts func(context.Context) (map[string]int, error)
@@ -310,6 +313,7 @@ type Server struct {
 	maxBody          int64
 	facadeMaxBody    int64
 	overload         *overloadState
+	allowedOrigins   []string
 	voice            voice.Store
 	voiceActivation  bool
 	voiceLife        voiceLifecycle
@@ -510,6 +514,9 @@ func NewServer(config Config) *Server {
 	if config.FacadeMaxBodyBytes <= 0 {
 		config.FacadeMaxBodyBytes = parseEnvInt64("UBAG_FACADE_MAX_BODY_BYTES", defaultFacadeMaxBodyBytes)
 	}
+	if config.AllowedOrigins == nil {
+		config.AllowedOrigins = allowedOriginsFromEnv()
+	}
 	if config.MaxInflightRequests <= 0 {
 		config.MaxInflightRequests = parseEnvInt("UBAG_GATEWAY_MAX_INFLIGHT_REQUESTS", defaultMaxInflightRequests)
 	}
@@ -630,6 +637,7 @@ func NewServer(config Config) *Server {
 		jitAdmin:                  config.JITAdmin,
 
 		overload: newOverloadState(config),
+		allowedOrigins: config.AllowedOrigins,
 
 		metrics: &metricState{
 			requests:           make(map[string]int),
@@ -670,6 +678,7 @@ func (s *Server) routes() {
 		s.withInflightLimit,               // bounded concurrent requests; explicit 503 + Retry-After beyond it
 		s.withRequestLog,                  // structured JSON request log line (§18.1); skips probe paths
 		s.withDevCORS,                     // opt-in cross-origin dev shim (§7.2 note above); no-op unless configured
+		s.withVoiceOriginPolicy,           // browser origin allowlist for /v1/voice/*
 		s.withAuth,                        // authenticates bearer / device / SSO session
 		s.withRateLimit,                   // IETF token-bucket rate-limiting (§10.6)
 		mw.APIVersionHeader(s.apiVersion), // sets Ubag-Api-Version-Used (§6.5)

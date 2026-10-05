@@ -88,24 +88,18 @@ func TestCapabilitiesHandler(t *testing.T) {
 
 func TestCapabilitiesVoiceAccountsFromTopology(t *testing.T) {
 	store := topology.NewMemoryStore()
-	store.AddContext(topology.ProviderContext{
-		ContextID:  "ctx_chatgpt_1",
-		TenantID:   "tenant_edge",
-		TargetID:   "chatgpt_web",
-		LoginState: "authenticated",
-	})
-	store.AddContext(topology.ProviderContext{
-		ContextID:  "ctx_chatgpt_2",
-		TenantID:   "tenant_edge",
-		TargetID:   "chatgpt_web",
-		LoginState: "login_required",
-	})
-	store.AddContext(topology.ProviderContext{
-		ContextID:  "ctx_gemini_1",
-		TenantID:   "tenant_edge",
-		TargetID:   "gemini_web",
-		LoginState: "authenticated",
-	})
+	for _, id := range []string{"b1", "b2", "b3"} {
+		store.AddInstance(topology.BrowserInstance{InstanceID: id, TenantID: "tenant_edge", State: "ready"})
+	}
+	store.AddContext(topology.ProviderContext{ContextID: "ctx_chatgpt_1", InstanceID: "b1", TenantID: "tenant_edge",
+		TargetID: "chatgpt_web", IdentityRef: "acct-1", LoginState: "authenticated"})
+	store.AddContext(topology.ProviderContext{ContextID: "ctx_chatgpt_2", InstanceID: "b2", TenantID: "tenant_edge",
+		TargetID: "chatgpt_web", IdentityRef: "acct-2", LoginState: "login_required"})
+	// Authenticated but with no hosting environment: not usable.
+	store.AddContext(topology.ProviderContext{ContextID: "ctx_chatgpt_orphan", InstanceID: "missing", TenantID: "tenant_edge",
+		TargetID: "chatgpt_web", IdentityRef: "acct-3", LoginState: "authenticated"})
+	store.AddContext(topology.ProviderContext{ContextID: "ctx_gemini_1", InstanceID: "b3", TenantID: "tenant_edge",
+		TargetID: "gemini_web", IdentityRef: "acct-g", LoginState: "authenticated"})
 	srv := NewServer(Config{
 		AppSecret: "dev-secret",
 		ActorRole: "service",
@@ -129,10 +123,54 @@ func TestCapabilitiesVoiceAccountsFromTopology(t *testing.T) {
 		accounts[key] = int(n)
 	}
 	if accounts["chatgpt_web"] != 1 {
-		t.Fatalf("chatgpt accounts = %d, want 1 (login_required excluded)", accounts["chatgpt_web"])
+		t.Fatalf("chatgpt accounts = %d, want 1 (login_required and host-less contexts excluded)", accounts["chatgpt_web"])
 	}
 	if accounts["gemini_web"] != 1 {
 		t.Fatalf("gemini accounts = %d, want 1", accounts["gemini_web"])
+	}
+}
+
+// supported / configured / verified / available are separate facts: a gateway
+// without the media plane never claims a live-voice target is configured or
+// available, and "verified" stays false until acceptance is recorded.
+func TestCapabilitiesVoiceFlagsAreIndependent(t *testing.T) {
+	voiceFor := func(h http.Handler, target string) map[string]any {
+		rec := doJSON(h, http.MethodGet, "/v1/capabilities", "", authHeaders(""))
+		var response collectionResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range response.Data {
+			if entry["target"] == target {
+				v, _ := entry["voice"].(map[string]any)
+				return v
+			}
+		}
+		t.Fatalf("target %s missing", target)
+		return nil
+	}
+	// Topology present, voice NOT configured on the gateway.
+	_, h, _ := voiceTestServer(t, func(c *Config) { c.VoiceStore, c.VoiceMedia = nil, nil })
+	v := voiceFor(h, "chatgpt_web")
+	if v["supported"] != true || v["configured"] != false || v["available"] != false {
+		t.Fatalf("unconfigured gateway voice flags = %v", v)
+	}
+	if v["verified"] != false {
+		t.Fatalf("verified must stay false until acceptance is recorded: %v", v)
+	}
+	// Fully configured with a free account+environment.
+	_, h, _ = voiceTestServer(t, func(c *Config) { c.VoiceProviderActivation = true })
+	v = voiceFor(h, "chatgpt_web")
+	if v["configured"] != true || v["available"] != true || v["free_resources"] != float64(1) {
+		t.Fatalf("configured gateway voice flags = %v", v)
+	}
+	// Once the only environment is leased it is no longer available.
+	if code, _ := createVoice(t, h, voiceBody("chatgpt_web")); code != http.StatusCreated {
+		t.Fatalf("create = %d", code)
+	}
+	v = voiceFor(h, "chatgpt_web")
+	if v["available"] != false || v["free_resources"] != float64(0) {
+		t.Fatalf("leased environment still advertised free: %v", v)
 	}
 }
 
