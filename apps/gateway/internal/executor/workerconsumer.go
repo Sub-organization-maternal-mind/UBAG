@@ -1005,7 +1005,18 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(250 * time.Millisecond)
+		// Hub on: wake on this job's commits and keep a slow fallback Get so a
+		// cancel landing between wakes (or written by another gateway) is
+		// still seen. Hub off: legacy 250 ms poll.
+		cancelPoll := 250 * time.Millisecond
+		var jobWake <-chan struct{}
+		if waker, ok := c.Jobs.(jobstore.JobWaker); ok {
+			if wake, unsubscribe, on := waker.SubscribeJobWake(envelope.JobID); on {
+				defer unsubscribe()
+				jobWake, cancelPoll = wake, cancelWatchFallback
+			}
+		}
+		ticker := time.NewTicker(cancelPoll)
 		defer ticker.Stop()
 		heartbeat := time.NewTicker(c.heartbeatInterval())
 		defer heartbeat.Stop()
@@ -1028,6 +1039,11 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 						return
 					}
 				}
+			case <-jobWake:
+				if c.jobCanceled(runCtx, envelope.JobID) {
+					cancel()
+					return
+				}
 			case <-ticker.C:
 				job, found, err := c.Jobs.Get(runCtx, envelope.JobID)
 				if err != nil || !found {
@@ -1045,6 +1061,14 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 	cancel()
 	<-done
 	return events, err
+}
+
+// cancelWatchFallback is the safety-net Get cadence while the event hub is on.
+const cancelWatchFallback = 2 * time.Second
+
+func (c *WorkerConsumer) jobCanceled(ctx context.Context, jobID string) bool {
+	job, found, err := c.Jobs.Get(ctx, jobID)
+	return err == nil && found && job.Status == jobstore.StatusCanceled
 }
 
 func (c *WorkerConsumer) applyFailure(ctx context.Context, lease WorkerLease, envelope DispatchEnvelope, cause error) error {

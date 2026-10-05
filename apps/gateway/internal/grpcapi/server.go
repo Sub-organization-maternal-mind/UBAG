@@ -41,6 +41,10 @@ var (
 
 const streamPollLimit = 100
 
+// streamIdleCheck bounds how long StreamJobEvents waits without an event before
+// re-checking whether the job is already terminal (var so tests can shrink it).
+var streamIdleCheck = 30 * time.Second
+
 // Config wires the gRPC JobService to the same dependencies as the HTTP server.
 type Config struct {
 	APIVersion string
@@ -470,10 +474,20 @@ func (s *Server) StreamJobEvents(req *ubagv1.ListJobEventsRequest, stream ubagv1
 		if ctx.Err() != nil {
 			return status.FromContextError(ctx.Err()).Err()
 		}
-		events, found, err := s.jobs.WaitEvents(ctx, job.ID, afterSequence, streamPollLimit)
+		waitCtx, cancelWait := context.WithTimeout(ctx, streamIdleCheck)
+		events, found, err := s.jobs.WaitEvents(waitCtx, job.ID, afterSequence, streamPollLimit)
+		cancelWait()
 		if err != nil {
 			if ctx.Err() != nil {
 				return status.FromContextError(ctx.Err()).Err()
+			}
+			if waitCtx.Err() != nil {
+				// Idle: no event for streamIdleCheck. Close if the job went
+				// terminal before our cursor (no terminal event will come).
+				if current, ok, gerr := s.jobs.Get(ctx, job.ID); gerr == nil && ok && jobstore.TerminalStatus(current.Status) {
+					return nil
+				}
+				continue
 			}
 			return status.Error(codes.Internal, "failed to stream job events")
 		}
@@ -491,9 +505,6 @@ func (s *Server) StreamJobEvents(req *ubagv1.ListJobEventsRequest, stream ubagv1
 			}
 		}
 		if terminal {
-			return nil
-		}
-		if current, ok, err := s.jobs.Get(ctx, job.ID); err == nil && ok && jobstore.TerminalStatus(current.Status) {
 			return nil
 		}
 	}
