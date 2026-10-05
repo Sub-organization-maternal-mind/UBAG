@@ -209,14 +209,19 @@ func TestVoiceConnectNegotiatesAndIssuesCredential(t *testing.T) {
 	if connected.SDPAnswer != media.answer {
 		t.Fatalf("answer = %q", connected.SDPAnswer)
 	}
-	if !VerifyVoiceMediaCredential("dev-secret", id, connected.MediaCredential, time.Now().UTC()) {
+	if !VerifyVoiceMediaCredential("dev-secret", media.sessions[0], connected.MediaCredential, time.Now().UTC()) {
 		t.Fatal("issued credential must verify")
 	}
-	if VerifyVoiceMediaCredential("dev-secret", "voice_other", connected.MediaCredential, time.Now().UTC()) {
+	if VerifyVoiceMediaCredential("dev-secret", voice.Session{ID: "voice_other", TenantID: media.sessions[0].TenantID, AppID: media.sessions[0].AppID}, connected.MediaCredential, time.Now().UTC()) {
 		t.Fatal("credential must be session-scoped")
 	}
-	if VerifyVoiceMediaCredential("dev-secret", id, connected.MediaCredential, time.Now().UTC().Add(6*time.Minute)) {
+	if VerifyVoiceMediaCredential("dev-secret", media.sessions[0], connected.MediaCredential, time.Now().UTC().Add(6*time.Minute)) {
 		t.Fatal("expired credential must fail")
+	}
+	other := media.sessions[0]
+	other.TenantID = "someone_else"
+	if VerifyVoiceMediaCredential("dev-secret", other, connected.MediaCredential, time.Now().UTC()) {
+		t.Fatal("credential must be tenant-scoped")
 	}
 	if len(media.offers) != 1 || !strings.Contains(media.offers[0], "offer") {
 		t.Fatalf("media negotiator saw offers %v", media.offers)

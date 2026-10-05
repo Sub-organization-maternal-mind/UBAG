@@ -278,6 +278,10 @@ type MediaHub struct {
 	Metrics    MediaMetrics
 
 	OnConnected func(Session)
+	// AuthorizeControl verifies the credential a client presents on the
+	// control data channel for its session. Nil fails closed: the channel then
+	// ignores every command.
+	AuthorizeControl func(s Session, credential string) bool
 	// OnEnded fires once for EVERY end of a media path (explicit disconnect,
 	// peer or relay failure, shutdown) except reconnect replacement, which
 	// keeps the session's provider voice alive.
@@ -440,10 +444,21 @@ func (h *MediaHub) HandleOffer(ctx context.Context, session Session, sdpOffer st
 				return
 			}
 			var cmd struct {
-				Op    string `json:"op"`
-				Muted *bool  `json:"muted"`
+				Op         string `json:"op"`
+				Muted      *bool  `json:"muted"`
+				Credential string `json:"credential"`
 			}
 			if json.Unmarshal(msg.Data, &cmd) != nil {
+				return
+			}
+			if cmd.Op == "auth" {
+				ok := hub.AuthorizeControl != nil && hub.AuthorizeControl(ms.session, cmd.Credential)
+				ms.controlAuthed.Store(ok)
+				ms.sendEvent(map[string]any{"event": "auth", "ok": ok})
+				return
+			}
+			if !ms.controlAuthed.Load() {
+				ms.sendEvent(map[string]any{"event": "error", "reason": "unauthorized"})
 				return
 			}
 			switch cmd.Op {
@@ -607,6 +622,9 @@ type mediaSession struct {
 	done      chan struct{}
 	closeOnce sync.Once
 	muted     atomic.Bool
+	// controlAuthed is set once the client proves its scoped media credential
+	// on the control data channel.
+	controlAuthed atomic.Bool
 
 	ctrlMu  sync.Mutex
 	control *webrtc.DataChannel

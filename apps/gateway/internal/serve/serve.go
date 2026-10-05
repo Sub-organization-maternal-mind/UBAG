@@ -384,6 +384,7 @@ func Run(ctx context.Context) error {
 	if hub, ok := voiceMedia.(*voice.MediaHub); ok {
 		hub.OnConnected = server.VoiceMediaConnected
 		hub.OnEnded = server.VoiceMediaEnded
+		hub.AuthorizeControl = server.VoiceControlAuthorizer()
 	}
 	baseHandler := server.Handler()
 	gatewayHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

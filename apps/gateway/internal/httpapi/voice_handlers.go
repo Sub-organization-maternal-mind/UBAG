@@ -569,7 +569,7 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 		SessionID:       sessionID,
 		Status:          string(voice.StatusConnecting),
 		SDPAnswer:       answer,
-		MediaCredential: issueVoiceMediaCredential(s.appSecret, sessionID, expires),
+		MediaCredential: issueVoiceMediaCredential(s.appSecret, session, expires),
 		MediaExpiresMS:  expires.UnixMilli(),
 		Kind:            "voice_session_connection",
 	})
@@ -689,29 +689,41 @@ func (s *Server) decodeVoiceJSON(w http.ResponseWriter, r *http.Request, out any
 	return true
 }
 
-// issueVoiceMediaCredential derives a short-lived, session-scoped media
-// token: "voice-media|<session>|<expiryUnix>|<hmac>". The token carries no
-// tenant or account data and grants nothing beyond this one session's media
-// path; VerifyVoiceMediaCredential validates it against the shared secret.
-func issueVoiceMediaCredential(appSecret, sessionID string, expires time.Time) string {
-	payload := fmt.Sprintf("voice-media|%s|%d", sessionID, expires.Unix())
+// issueVoiceMediaCredential derives a short-lived media credential scoped to
+// ONE session: "voice-media|<tenant>|<app>|<session>|<expiryUnix>|<hmac>".
+// It authorizes the client's control data channel (mute, ping): the channel
+// ignores every command until it presents a credential that
+// VerifyVoiceMediaCredential accepts for exactly this tenant, app, session and
+// a not-yet-expired time. The media itself is protected separately by the
+// authenticated signaling exchange and DTLS.
+func issueVoiceMediaCredential(appSecret string, session voice.Session, expires time.Time) string {
+	payload := fmt.Sprintf("voice-media|%s|%s|%s|%d", session.TenantID, session.AppID, session.ID, expires.Unix())
 	mac := hmac.New(sha256.New, []byte(appSecret))
 	mac.Write([]byte(payload))
 	return payload + "|" + hex.EncodeToString(mac.Sum(nil))
 }
 
-// VerifyVoiceMediaCredential validates a credential issued at connect. The
-// media plane calls this before accepting any client media traffic; an
-// expired or foreign-session credential fails closed.
-func VerifyVoiceMediaCredential(appSecret, sessionID, credential string, now time.Time) bool {
+// VerifyVoiceMediaCredential validates a credential against the session it
+// must belong to. A credential minted for another tenant, app or session, or
+// an expired or altered one, fails closed.
+func VerifyVoiceMediaCredential(appSecret string, session voice.Session, credential string, now time.Time) bool {
 	parts := strings.Split(credential, "|")
-	if len(parts) != 4 || parts[0] != "voice-media" || parts[1] != sessionID {
+	if len(parts) != 6 || parts[0] != "voice-media" ||
+		parts[1] != session.TenantID || parts[2] != session.AppID || parts[3] != session.ID {
 		return false
 	}
-	expiresUnix, err := strconv.ParseInt(parts[2], 10, 64)
+	expiresUnix, err := strconv.ParseInt(parts[4], 10, 64)
 	if err != nil || now.Unix() > expiresUnix {
 		return false
 	}
-	expected := issueVoiceMediaCredential(appSecret, sessionID, time.Unix(expiresUnix, 0))
+	expected := issueVoiceMediaCredential(appSecret, session, time.Unix(expiresUnix, 0))
 	return hmac.Equal([]byte(expected), []byte(credential))
+}
+
+// VoiceControlAuthorizer returns the hook the media hub uses to authorize a
+// control-channel auth message for a session.
+func (s *Server) VoiceControlAuthorizer() func(voice.Session, string) bool {
+	return func(session voice.Session, credential string) bool {
+		return VerifyVoiceMediaCredential(s.appSecret, session, credential, time.Now().UTC())
+	}
 }

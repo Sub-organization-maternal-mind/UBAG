@@ -190,3 +190,62 @@ func TestRelayTokenMatchesPythonRelay(t *testing.T) {
 		t.Fatalf("RelayToken = %s, want %s", got, want)
 	}
 }
+
+// The control data channel ignores every command until the client presents a
+// credential the hub's authorizer accepts for exactly this session.
+func TestMediaHubControlChannelRequiresScopedCredential(t *testing.T) {
+	_, addr := startFakeRelay(t)
+	hub := &MediaHub{
+		Dialer: relayDialer(addr, testRelaySecret),
+		AuthorizeControl: func(s Session, credential string) bool {
+			return s.ID == "voice_ctl" && credential == "good"
+		},
+	}
+	clientPC, err := webrtc.NewPeerConnection(webrtc.Configuration{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = clientPC.Close() })
+	mic, _ := webrtc.NewTrackLocalStaticSample(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeOpus}, "m", "c")
+	_, _ = clientPC.AddTrack(mic)
+	dc, err := clientPC.CreateDataChannel("control", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened := make(chan struct{})
+	dc.OnOpen(func() { close(opened) })
+	offer, _ := clientPC.CreateOffer(nil)
+	_ = clientPC.SetLocalDescription(offer)
+	waitGathered(t, clientPC)
+	answer, err := hub.HandleOffer(context.Background(), Session{ID: "voice_ctl", TenantID: "t", Target: "chatgpt_web", InstanceRef: "browser-1"}, clientPC.LocalDescription().SDP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = clientPC.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer})
+	defer hub.Disconnect("voice_ctl")
+	select {
+	case <-opened:
+	case <-time.After(8 * time.Second):
+		t.Fatal("control data channel never opened")
+	}
+	muted := func() bool {
+		hub.mu.Lock()
+		defer hub.mu.Unlock()
+		return hub.sessions["voice_ctl"].muted.Load()
+	}
+
+	_ = dc.SendText(`{"op":"mute","muted":true}`)
+	time.Sleep(300 * time.Millisecond)
+	if muted() {
+		t.Fatal("unauthenticated mute was honored")
+	}
+	_ = dc.SendText(`{"op":"auth","credential":"wrong"}`)
+	_ = dc.SendText(`{"op":"mute","muted":true}`)
+	time.Sleep(300 * time.Millisecond)
+	if muted() {
+		t.Fatal("mute honored after a rejected credential")
+	}
+	_ = dc.SendText(`{"op":"auth","credential":"good"}`)
+	_ = dc.SendText(`{"op":"mute","muted":true}`)
+	waitFor(t, "authorized mute", muted)
+}
