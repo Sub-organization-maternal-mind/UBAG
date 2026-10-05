@@ -1121,7 +1121,10 @@ func newEnterpriseStoresFromEnv(ctx context.Context, storeKind string, db *sql.D
 	// Shared admission: with a SQL store, in-flight tokens live in the
 	// database so every replica admits against one authority (memory mode
 	// keeps the process-local counters, which is correct for one process).
-	if db != nil && (storeKind == "sqlite" || storeKind == "postgres") {
+	// UBAG_ADMISSION_SHARED is a kill-switch: unset/true keeps the live
+	// behaviour; false falls back to process-local counters and disables
+	// per-job execution leases (they share this backend).
+	if db != nil && (storeKind == "sqlite" || storeKind == "postgres") && envBoolDefaultTrue("UBAG_ADMISSION_SHARED") {
 		backend := topology.NewSQLiteTokenBackend(db)
 		if storeKind == "postgres" {
 			backend = topology.NewPostgresTokenBackend(db)
@@ -1585,6 +1588,15 @@ func newWebhookURLPolicyFromEnv() webhooks.URLPolicy {
 func envBool(key string) bool {
 	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
 	return value == "1" || value == "true" || value == "yes"
+}
+
+// envBoolDefaultTrue is true unless the variable is explicitly 0/false/no/off.
+func envBoolDefaultTrue(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "0", "false", "no", "off":
+		return false
+	}
+	return true
 }
 
 func csvEnv(key string) []string {
