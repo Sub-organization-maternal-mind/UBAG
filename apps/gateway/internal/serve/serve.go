@@ -1422,6 +1422,24 @@ func buildWorkerRunner(
 	}, nil
 }
 
+// guardLiveWorkerConcurrency warns when several per-job live workers would run
+// at once: they share one per-role tab registry and each worker's stale-page
+// cleanup closes its siblings' live tabs. Clamping to 1 is opt-in via
+// UBAG_WORKER_LIVE_CONCURRENCY_GUARD so existing deployments are unchanged.
+func guardLiveWorkerConcurrency(concurrency int, script string) int {
+	if concurrency <= 1 || filepath.Base(script) != "run_live_worker.py" {
+		return concurrency
+	}
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_WORKER_LIVE_CONCURRENCY_GUARD")))
+	clamp := v == "1" || v == "true" || v == "yes"
+	slog.Warn("UBAG_WORKER_CONCURRENCY>1 with per-job live workers: siblings close each other's live tabs",
+		"requested", concurrency, "script", filepath.Base(script), "clamped", clamp)
+	if clamp {
+		return 1
+	}
+	return concurrency
+}
+
 func staleJobReaperEnabled() bool {
 	value := strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_JOB_REAPER_ENABLED")))
 	return value == "1" || value == "true" || value == "yes"
@@ -1474,6 +1492,7 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 	if err != nil {
 		return nil, err
 	}
+	workerConcurrency = guardLiveWorkerConcurrency(workerConcurrency, script)
 	queue, err := workerQueueFromEnv(dispatcher, maxRuntime, pollInterval)
 	if err != nil {
 		return nil, err

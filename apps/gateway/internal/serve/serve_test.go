@@ -304,3 +304,21 @@ func TestEnvBoolDefaultTrue(t *testing.T) {
 		}
 	}
 }
+
+func TestLiveWorkerConcurrencyGuard(t *testing.T) {
+	live := filepath.Join("apps", "worker", "run_live_worker.py")
+	t.Setenv("UBAG_WORKER_LIVE_CONCURRENCY_GUARD", "")
+	if got := guardLiveWorkerConcurrency(2, live); got != 2 {
+		t.Fatalf("default must not clamp, got %d", got)
+	}
+	if got := guardLiveWorkerConcurrency(2, filepath.Join("apps", "worker", "run_mock_worker.py")); got != 2 {
+		t.Fatalf("non-live script must not clamp, got %d", got)
+	}
+	t.Setenv("UBAG_WORKER_LIVE_CONCURRENCY_GUARD", "true")
+	if got := guardLiveWorkerConcurrency(2, live); got != 1 {
+		t.Fatalf("guard flag must clamp to 1, got %d", got)
+	}
+	if got := guardLiveWorkerConcurrency(1, live); got != 1 {
+		t.Fatalf("got %d", got)
+	}
+}
