@@ -26,6 +26,8 @@ type SQLiteStore struct {
 	db           *sql.DB
 	now          func() time.Time
 	waitInterval time.Duration
+	wake         *eventHub     // nil = legacy fixed-interval poll (UBAG_EVENT_NOTIFY=off)
+	wakeFallback time.Duration // fallback poll cadence while wake != nil
 }
 
 func NewSQLiteStore(db *sql.DB) *SQLiteStore {
@@ -34,6 +36,16 @@ func NewSQLiteStore(db *sql.DB) *SQLiteStore {
 		now:          time.Now,
 		waitInterval: defaultWaitEventsInterval,
 	}
+}
+
+// EnableEventNotify turns on the in-process per-job wake hub: WaitEvents then
+// re-reads on a commit notification and otherwise only every fallback. Call
+// once at startup, before the store serves requests.
+func (s *SQLiteStore) EnableEventNotify(fallback time.Duration) {
+	if fallback <= 0 {
+		fallback = DefaultEventFallbackInterval
+	}
+	s.wake, s.wakeFallback = newEventHub(), fallback
 }
 
 func (s *SQLiteStore) Create(ctx context.Context, request CreateRequest) (Job, error) {
@@ -142,6 +154,7 @@ INSERT INTO gateway_jobs (
 	if err := tx.Commit(); err != nil {
 		return Job{}, err
 	}
+	s.wake.notify(job.ID)
 	return job, nil
 }
 
@@ -202,6 +215,7 @@ func (s *SQLiteStore) TransitionStatus(ctx context.Context, id string, from Stat
 	if err := tx.Commit(); err != nil {
 		return Job{}, false, err
 	}
+	s.wake.notify(job.ID)
 	return job, true, nil
 }
 
@@ -344,19 +358,9 @@ func (s *SQLiteStore) WaitEvents(ctx context.Context, jobID string, afterSequenc
 	if interval <= 0 {
 		interval = defaultWaitEventsInterval
 	}
-	for {
-		events, found, err := s.listEvents(ctx, jobID, afterSequence, limit)
-		if err != nil || !found || len(events) > 0 {
-			return events, found, err
-		}
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, true, ctx.Err()
-		case <-timer.C:
-		}
-	}
+	return waitEventsLoop(ctx, s.wake, s.wakeFallback, interval, jobID, func() ([]Event, bool, error) {
+		return s.listEvents(ctx, jobID, afterSequence, limit)
+	})
 }
 
 func (s *SQLiteStore) UpdateStatus(ctx context.Context, id string, status Status) (Job, bool, error) {
@@ -408,6 +412,7 @@ func (s *SQLiteStore) UpdateStatus(ctx context.Context, id string, status Status
 	if err := tx.Commit(); err != nil {
 		return Job{}, false, err
 	}
+	s.wake.notify(job.ID)
 	return job, true, nil
 }
 
@@ -512,6 +517,7 @@ ON CONFLICT DO NOTHING`, job.ID, eventKey, formatSQLiteTime(s.now().UTC()))
 	if err := tx.Commit(); err != nil {
 		return Job{}, false, err
 	}
+	s.wake.notify(job.ID)
 	return job, true, nil
 }
 

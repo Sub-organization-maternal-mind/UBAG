@@ -645,7 +645,12 @@ func newStoresFromEnv(ctx context.Context) (jobstore.Store, idempotency.Service,
 			_ = db.Close()
 			return nil, nil, nil, "", nil, err
 		}
-		return jobstore.NewPostgresStore(db), idempotency.NewPostgresStore(db, idempotencyTTLFromEnv()), db, "postgres", func() { _ = db.Close() }, nil
+		pgJobs := jobstore.NewPostgresStore(db)
+		if err := configureEventNotify(pgJobs); err != nil {
+			_ = db.Close()
+			return nil, nil, nil, "", nil, err
+		}
+		return pgJobs, idempotency.NewPostgresStore(db, idempotencyTTLFromEnv()), db, "postgres", func() { _ = db.Close() }, nil
 	case "sqlite", "sqlite3":
 		dsn := strings.TrimSpace(getenv("UBAG_SQLITE_DSN", defaultSQLiteDSN))
 		db, err := sql.Open("sqlite", dsn)
@@ -663,10 +668,38 @@ func newStoresFromEnv(ctx context.Context) (jobstore.Store, idempotency.Service,
 			_ = db.Close()
 			return nil, nil, nil, "", nil, err
 		}
-		return jobstore.NewSQLiteStore(db), idempotency.NewSQLiteStore(db, idempotencyTTLFromEnv()), db, "sqlite", func() { _ = db.Close() }, nil
+		sqliteJobs := jobstore.NewSQLiteStore(db)
+		if err := configureEventNotify(sqliteJobs); err != nil {
+			_ = db.Close()
+			return nil, nil, nil, "", nil, err
+		}
+		return sqliteJobs, idempotency.NewSQLiteStore(db, idempotencyTTLFromEnv()), db, "sqlite", func() { _ = db.Close() }, nil
 	default:
 		return nil, nil, nil, "", nil, fmt.Errorf("unsupported UBAG_GATEWAY_STORE %q", mode)
 	}
+}
+
+// configureEventNotify applies UBAG_EVENT_NOTIFY (off|local, default off) and
+// UBAG_EVENT_FALLBACK_MS (default 2000) to a SQL job store. "off" keeps the
+// legacy 50 ms WaitEvents poll. "postgres" (LISTEN/NOTIFY) is reserved and not
+// built, so it and any unknown value warn and stay on the legacy poll.
+func configureEventNotify(store interface{ EnableEventNotify(time.Duration) }) error {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_EVENT_NOTIFY")))
+	on, ok := jobstore.ParseEventNotify(mode)
+	if !ok {
+		slog.Warn("UBAG_EVENT_NOTIFY value is not supported; keeping the legacy event poll", "value", mode)
+		return nil
+	}
+	if !on {
+		return nil
+	}
+	fallback, err := durationFromMillisEnv("UBAG_EVENT_FALLBACK_MS", jobstore.DefaultEventFallbackInterval)
+	if err != nil {
+		return err
+	}
+	store.EnableEventNotify(fallback)
+	slog.Info("job event wake hub enabled", "mode", mode, "fallback_ms", fallback.Milliseconds())
+	return nil
 }
 
 // newArtifactStoreFromEnv creates the artifact store based on UBAG_ARTIFACT_STORE.
