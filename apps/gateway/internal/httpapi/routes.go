@@ -56,6 +56,8 @@ func (s *Server) simpleRoutes() []routeDecl {
 		{"/v1/targets", s.handleCollection("targets", targetCatalog(), "job:read")},
 		{"/v1/adapters", s.handleCollection("adapters", adapterCatalog(), "job:read")},
 		{"/v1/capabilities", s.handleCapabilities},
+		{"/v1/voice/sessions", s.handleVoiceSessions},
+		{"/v1/voice/sessions/*", s.handleVoiceSessionSubtree},
 		{"/v1/apps", s.handleCollection("apps", nil, "job:read")},
 		{"/v1/devices", s.handleCollection("devices", nil, "job:read")},
 		{"/v1/webhooks", s.handleCollection("webhooks", nil, "job:read")},

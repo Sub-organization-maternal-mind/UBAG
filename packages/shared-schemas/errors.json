@@ -287,6 +287,20 @@
           { "code": "UBAG-INTERNAL-QUEUE-004",    "message": "Internal queue error",              "retryable": true },
           { "code": "UBAG-INTERNAL-CRYPTO-005",   "message": "Internal cryptographic operation failed", "retryable": true }
         ]
+      },
+      {
+        "prefix": "UBAG-VOICE",
+        "category": "voice",
+        "description": "Voice-session failures: unsupported target, unconfigured media plane, tenant session budgets, and lifecycle state errors.",
+        "codes": [
+          { "code": "UBAG-VOICE-UNSUPPORTED-001",       "message": "Live voice is not supported for this target",       "retryable": false },
+          { "code": "UBAG-VOICE-NOT-CONFIGURED-002",    "message": "Voice sessions are not configured on this gateway", "retryable": false },
+          { "code": "UBAG-VOICE-SESSION-LIMIT-003",     "message": "Active voice-session budget reached for this tenant", "retryable": true },
+          { "code": "UBAG-VOICE-QUEUE-FULL-004",        "message": "Voice-session queue budget reached for this tenant",  "retryable": true },
+          { "code": "UBAG-VOICE-SESSION-STATE-005",     "message": "Voice session is not in the required state",          "retryable": false },
+          { "code": "UBAG-VOICE-SESSION-NOT-FOUND-006", "message": "Voice session does not exist in this tenant",         "retryable": false },
+          { "code": "UBAG-VOICE-MEDIA-UNAVAILABLE-007", "message": "Media plane cannot accept this connection",           "retryable": true }
+        ]
       }
     ]
   }

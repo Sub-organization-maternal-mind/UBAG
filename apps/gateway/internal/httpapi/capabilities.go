@@ -160,14 +160,14 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 		policy := resolveAttachmentPolicy(key)
 		voice := resolveVoiceCapability(key)
 		entry := map[string]any{
-			"target":                 key,
-			"display_name":           target["display_name"],
-			"kind":                   adapterKinds[key],
-			"safe_mode":              target["safe_mode"],
-			"manual_login_required":  target["manual_login_required"],
-			"attachments":            attachmentPolicyView(policy),
-			"inline_message_parts":   facadeInlineMedia(policy),
-			"voice":                  voiceView(voice, s.availableVoiceAccounts(r.Context(), tenantID, key)),
+			"target":                key,
+			"display_name":          target["display_name"],
+			"kind":                  adapterKinds[key],
+			"safe_mode":             target["safe_mode"],
+			"manual_login_required": target["manual_login_required"],
+			"attachments":           attachmentPolicyView(policy),
+			"inline_message_parts":  facadeInlineMedia(policy),
+			"voice":                 voiceView(voice, s.availableVoiceAccounts(r.Context(), tenantID, key)),
 		}
 		entries = append(entries, entry)
 	}

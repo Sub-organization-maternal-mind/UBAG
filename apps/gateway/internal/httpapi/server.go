@@ -60,6 +60,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/sso"
 	"github.com/ubag/ubag/apps/gateway/internal/templates"
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
+	voice "github.com/ubag/ubag/apps/gateway/internal/voice"
 	"github.com/ubag/ubag/apps/gateway/internal/webhooks"
 	"github.com/ubag/ubag/apps/gateway/internal/workflow"
 )
@@ -238,6 +239,23 @@ type Config struct {
 	// selects the 48 MiB default. Defaults to UBAG_FACADE_MAX_BODY_BYTES.
 	FacadeMaxBodyBytes int64
 
+	// Voice session components. VoiceStore nil (default) keeps every
+	// /v1/voice route on a clean 501; VoiceMedia nil additionally answers
+	// connect with 501 while create/status still work.
+	VoiceStore voice.Store
+	VoiceMedia MediaNegotiator
+
+	// VoiceSessionTTL is the default lease window between renewals
+	// (30s..1h). Zero selects the 10-minute default.
+	VoiceSessionTTL time.Duration
+
+	// Voice budgets (tenant-wide): active sessions and the queued backlog.
+	// Zero selects the defaults (4 active / 32 queued); read from
+	// UBAG_VOICE_MAX_SESSIONS_PER_TENANT / UBAG_VOICE_MAX_QUEUED_PER_TENANT
+	// when unset.
+	VoiceMaxSessionsPerTenant int
+	VoiceMaxQueuedPerTenant   int
+
 	// Plugins is the optional WASM plugin host. When nil, no plugin hooks run.
 	Plugins *plugins.Host
 
@@ -271,13 +289,19 @@ type Server struct {
 	devCORSOrigin    string
 	maxBody          int64
 	facadeMaxBody    int64
-	jobs             jobstore.Store
-	idempotency      idempotency.Service
-	executor         executor.Dispatcher
-	artifactSt       artifacts.ArtifactStore
-	templates        templates.Store
-	webhooks         webhooks.OutboxStore
-	webhookURLs      webhooks.URLPolicy
+	voice            voice.Store
+	voiceMedia       MediaNegotiator
+	voiceSessionTTL  time.Duration
+
+	voiceMaxSessionsPerTenant int
+	voiceMaxQueuedPerTenant   int
+	jobs                      jobstore.Store
+	idempotency               idempotency.Service
+	executor                  executor.Dispatcher
+	artifactSt                artifacts.ArtifactStore
+	templates                 templates.Store
+	webhooks                  webhooks.OutboxStore
+	webhookURLs               webhooks.URLPolicy
 
 	rateLimiter         ratelimit.Limiter
 	rateResolver        *ratelimit.PolicyResolver
@@ -462,6 +486,15 @@ func NewServer(config Config) *Server {
 	if config.FacadeMaxBodyBytes <= 0 {
 		config.FacadeMaxBodyBytes = parseEnvInt64("UBAG_FACADE_MAX_BODY_BYTES", defaultFacadeMaxBodyBytes)
 	}
+	if config.VoiceMaxSessionsPerTenant <= 0 {
+		config.VoiceMaxSessionsPerTenant = parseEnvInt("UBAG_VOICE_MAX_SESSIONS_PER_TENANT", defaultVoiceMaxSessionsPerTenant)
+	}
+	if config.VoiceMaxQueuedPerTenant <= 0 {
+		config.VoiceMaxQueuedPerTenant = parseEnvInt("UBAG_VOICE_MAX_QUEUED_PER_TENANT", defaultVoiceMaxQueuedPerTenant)
+	}
+	if config.VoiceSessionTTL <= 0 {
+		config.VoiceSessionTTL = defaultVoiceSessionTTL
+	}
 	if config.MaxQueueDepth <= 0 {
 		config.MaxQueueDepth = parseEnvInt("UBAG_MAX_QUEUE_DEPTH", 10000)
 	}
@@ -543,17 +576,23 @@ func NewServer(config Config) *Server {
 		maxQueueDepth:    config.MaxQueueDepth,
 		facadeMaxWait:    config.FacadeMaxWait,
 		facadeMaxBody:    config.FacadeMaxBodyBytes,
-		patStore:         config.PAT,
-		patDefaultTTL:    config.PATDefaultTTL,
-		appJWTPublicKey:  config.AppJWTPublicKey,
-		abacEnforcer:     config.ABACEnforcer,
-		semanticCache:    config.SemanticCache,
-		privacyStore:     config.PrivacyStore,
-		plugins:          config.Plugins,
-		regionRouter:     config.RegionRouter,
-		killSwitch:       config.KillSwitch,
-		mfaSvc:           config.MFA,
-		jitAdmin:         config.JITAdmin,
+		voice:            config.VoiceStore,
+		voiceMedia:       config.VoiceMedia,
+		voiceSessionTTL:  config.VoiceSessionTTL,
+
+		voiceMaxSessionsPerTenant: config.VoiceMaxSessionsPerTenant,
+		voiceMaxQueuedPerTenant:   config.VoiceMaxQueuedPerTenant,
+		patStore:                  config.PAT,
+		patDefaultTTL:             config.PATDefaultTTL,
+		appJWTPublicKey:           config.AppJWTPublicKey,
+		abacEnforcer:              config.ABACEnforcer,
+		semanticCache:             config.SemanticCache,
+		privacyStore:              config.PrivacyStore,
+		plugins:                   config.Plugins,
+		regionRouter:              config.RegionRouter,
+		killSwitch:                config.KillSwitch,
+		mfaSvc:                    config.MFA,
+		jitAdmin:                  config.JITAdmin,
 
 		metrics: &metricState{
 			requests:           make(map[string]int),
