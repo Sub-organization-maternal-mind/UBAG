@@ -295,3 +295,12 @@ func reflectedIntField(value any, field string) int {
 	}
 	return int(v.FieldByName(field).Int())
 }
+
+func TestEnvBoolDefaultTrue(t *testing.T) {
+	for v, want := range map[string]bool{"": true, "true": true, "1": true, "false": false, "0": false, "OFF": false, " no ": false} {
+		t.Setenv("UBAG_TEST_BOOL_DT", v)
+		if got := envBoolDefaultTrue("UBAG_TEST_BOOL_DT"); got != want {
+			t.Fatalf("%q: got %v want %v", v, got, want)
+		}
+	}
+}
