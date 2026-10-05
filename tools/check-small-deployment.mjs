@@ -210,6 +210,22 @@ for (const compose of [
   }
 }
 
+// VPS resource-budget baseline (P0.3): header/README must not drift from the compose values.
+requireTerms('docker-compose.vps.yml', [
+  'cpus: "${UBAG_GATEWAY_CPUS:-1.00}"',
+  'mem_limit: 1300m',
+  'GOMAXPROCS: "1"',
+  'cpus: "2.0"',
+  'mem_limit: 4096m',
+  'pids_limit: 1024',
+  'UBAG_WORKER_CONCURRENCY: ${UBAG_WORKER_CONCURRENCY:-1}',
+  'UBAG_WORKER_DAEMON: ${UBAG_WORKER_DAEMON:-false}',
+  'UBAG_EXECUTOR_MODE: file',
+  'UBAG_GATEWAY_STORE: postgres',
+  'TOTAL........... 3.25 cpu / 5748m'
+]);
+requireTerms('deploy/vps/README.md', ['**3.25**', '5748m', 'pids_limit 1024']);
+
 if (failures.length > 0) {
   console.error(failures.join('\n'));
   process.exit(1);

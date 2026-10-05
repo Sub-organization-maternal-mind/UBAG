@@ -166,3 +166,23 @@ Shared fixtures asserting identical behavior across SDKs.
 
 **Semantic Cache**:
 Similarity-matched result cache keyed per (tenant, target, command_type, app, locale).
+
+### Shared fleet & helper plane (perf-fleet program)
+
+**Helper Node**:
+A remote machine, granted by the external fleet manager, that runs a browser + worker for UBAG over a mutually authenticated channel. UBAG consumes manager grants and never provisions hosts (ADR-0006).
+_Avoid_: worker node, fleet node, "Fleet" (for this concept)
+
+**Fleet (worker-side)**:
+The in-process `Fleet` class in `apps/worker` orchestration (ADR-0005): the per-process registry of channels/identities. It has nothing to do with the external fleet manager or Helper Nodes.
+_Avoid_: using "fleet" bare for helper nodes; say Helper Node or fleet manager.
+
+**Fleet Manager**:
+The external system (outside this repo) that allocates Helper Node capacity. UBAG only reads its grants.
+
+**Attempt Lease**:
+The helper-plane lease on one execution attempt: 120 s TTL, 20 s renewal, monotonically increasing generation used for fencing stale writers, and an input fingerprint (ADR-0007).
+_Avoid_: exec lease (for this concept)
+
+**Exec Lease**:
+The existing gateway execution lease: 90 s TTL renewed every 10 s, token-per-job, no generation. Live in production today; the Attempt Lease supersedes it only for helper-dispatched work.

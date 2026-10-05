@@ -1,0 +1,5 @@
+# Helper nodes consume fleet-manager grants; UBAG never provisions
+
+UBAG places work on Helper Nodes only within capacity the external Fleet Manager has granted; it never creates, resizes or destroys hosts. The primary polls grants against a UBAG-owned schema and keeps the last-known-good grant, but while the manager is unreachable there are no new grants, no increases and no new placements beyond already-granted limits. The UBAG-side ceiling table (1.5 CPU / 2.5 GiB, 3 / 5 browsers, 75% / 62.5%) is defence-in-depth only: effective cap = min(manager grant, table). Helper trust: primary dials the helper over WireGuard (mTLS gRPC server on the helper), manager CA issues certs of at most 72h, UBAG pins SPKI and reads node identity from a URI SAN. Provider logins stay out-of-band human logins (Safe Mode, ADR-0002); capacity is identity-bound, one active operation per (provider, physical session). Decided 2026-10-06 because the manager has no project-facing allocation API inside this repo and provisioning would duplicate it.
+
+Status: accepted

@@ -16,12 +16,16 @@
 # gateway's live worker attaches to that same Chrome over CDP. Safe-mode intact:
 # a human does the login, UBAG never types credentials or solves CAPTCHAs.
 #
-# Current resource budget (cpus / mem_limit) on a box with 6 cores / 11GB:
-#   gateway......... 1.00 cpu / 1300m  (Go binary + Python live worker + Playwright CDP client)
+# Current resource budget (cpus / mem_limit) on a shared 8-core / 24GB box
+# (about 15 other stacks, load average ~10; capacity is identity-bound, not CPU-bound):
+#   gateway......... 1.00 cpu / 1300m  (GOMAXPROCS=1, GOMEMLIMIT=950MiB; Go binary + Python live worker + Playwright CDP client)
 #   nginx-dashboard.. 0.15 cpu /   96m
-#   browser......... 1.00 cpu / 1900m  (headed Chrome + Xvfb)
+#   browser......... 2.00 cpu / 4096m  (headed Chrome + Xvfb; pids_limit 1024)
 #   chat-reaper...... 0.10 cpu /  256m
-#   TOTAL........... 2.25 cpu / 3552m
+#   TOTAL........... 3.25 cpu / 5748m (~5.6 GiB)
+# Defaults asserted by tools/check-small-deployment.mjs: UBAG_WORKER_CONCURRENCY=1,
+# UBAG_WORKER_DAEMON=false in source (production env sets true), UBAG_EXECUTOR_MODE=file,
+# UBAG_GATEWAY_STORE=postgres.
 #
 # Postgres comes from the shared platform stack at /opt/platform since
 # 2026-07-17 (one instance for every project on the box — see
