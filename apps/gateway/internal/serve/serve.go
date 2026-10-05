@@ -361,6 +361,7 @@ func Run(ctx context.Context) error {
 			return fmt.Errorf("webhook worker is not ready: %w", err)
 		}
 		webhookWorkerRunErrors = worker.RunErrors
+		worker.OnDelivery = server.ObserveWebhookDelivery
 		go func() {
 			if err := worker.Run(ctx); err != nil && err != context.Canceled {
 				slog.Error("webhook worker stopped", "error", err)

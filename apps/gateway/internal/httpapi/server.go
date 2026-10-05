@@ -369,7 +369,6 @@ type Server struct {
 	// Ã‚Â§18 contract counters (Task 2.3) Ã¢â‚¬â€ updated atomically on the hot path.
 	idempotencyReplays atomic.Int64 // ubag_idempotency_replays_total
 	artifactCaptures   atomic.Int64 // ubag_artifact_captures_total
-	webhookDeliveries  atomic.Int64 // ubag_webhook_deliveries_total
 
 	// Optional accessor for the delivery worker's failure count; nil-safe.
 	webhookWorkerRunErrors func() uint64
@@ -422,9 +421,15 @@ type metricState struct {
 	ingestionEvents    map[string]uint64
 	ingestionDurations map[string]durationAggregate
 	jobDurations       map[string]durationAggregate
-	terminalObserved   map[string]struct{}
-	terminalOrder      []string
-	terminalCursor     int
+	// stageDurations is keyed (stage, adapter_family); webhookDeliveries by
+	// (outcome, error_class); webhookDurations by outcome. All key parts come
+	// from closed sets so the maps stay bounded.
+	stageDurations    map[string]durationAggregate
+	webhookDeliveries map[string]uint64
+	webhookDurations  map[string]durationAggregate
+	terminalObserved  map[string]struct{}
+	terminalOrder     []string
+	terminalCursor    int
 }
 
 type durationAggregate struct {
@@ -646,6 +651,9 @@ func NewServer(config Config) *Server {
 			ingestionEvents:    make(map[string]uint64),
 			ingestionDurations: make(map[string]durationAggregate),
 			jobDurations:       make(map[string]durationAggregate),
+			stageDurations:     make(map[string]durationAggregate),
+			webhookDeliveries:  make(map[string]uint64),
+			webhookDurations:   make(map[string]durationAggregate),
 			terminalObserved:   make(map[string]struct{}),
 		},
 		mux: chi.NewRouter(),
@@ -975,16 +983,33 @@ func (s *Server) writeMetricsBody(ctx context.Context, w io.Writer) error {
 	runtimeMetrics := s.runtimeMetricsSnapshot()
 
 	fmt.Fprintf(w, "ubag_gateway_info{version=\"%s\",api_version=\"%s\",commit=\"%s\"} 1\n", promLabel(s.version), promLabel(s.apiVersion), promLabel(s.buildCommit))
-	_, _ = fmt.Fprint(w, "ubag_gateway_ready{service=\"ubag-gateway\",check=\"jobs\"} 1\n")
-	_, _ = fmt.Fprint(w, "ubag_gateway_ready{service=\"ubag-gateway\",check=\"idempotency\"} 1\n")
-	_, _ = fmt.Fprint(w, "ubag_gateway_ready{service=\"ubag-gateway\",check=\"queue\"} 1\n")
-	_, _ = fmt.Fprint(w, "ubag_gateway_ready{service=\"ubag-gateway\",check=\"executor\"} 1\n")
-	_, _ = fmt.Fprint(w, "ubag_gateway_ready{service=\"ubag-gateway\",check=\"artifacts\"} 1\n")
-	_, _ = fmt.Fprint(w, "ubag_gateway_ready{service=\"ubag-gateway\",check=\"webhooks\"} 1\n")
+	// Readiness is probed per scrape with the same Ready() calls /v1/ready
+	// uses (the queue check is the executor.Stats call above, which already
+	// succeeded). Previously every check was a hard-coded 1.
+	probeCtx, cancelProbe := context.WithTimeout(ctx, 2*time.Second)
+	for _, probe := range []struct {
+		check string
+		ready func(context.Context) error
+	}{
+		{"jobs", s.jobs.Ready},
+		{"idempotency", s.idempotency.Ready},
+		{"queue", func(context.Context) error { return nil }},
+		{"executor", s.executor.Ready},
+		{"artifacts", s.artifactSt.Ready},
+		{"webhooks", s.webhooks.Ready},
+	} {
+		value := 1
+		if probe.ready(probeCtx) != nil {
+			value = 0
+		}
+		_, _ = fmt.Fprintf(w, "ubag_gateway_ready{service=\"ubag-gateway\",check=\"%s\"} %d\n", probe.check, value)
+	}
+	cancelProbe()
 	for _, metric := range s.metricsSnapshot() {
+		methodClass := metricMethodClass(metric.method)
 		_, _ = fmt.Fprintf(w, "ubag_gateway_http_requests_total{service=\"ubag-gateway\",route=\"%s\",method=\"%s\",status_class=\"%s\",outcome=\"%s\"} %d\n", promLabel(metric.route), promLabel(metric.method), promLabel(metric.statusClass), promLabel(metric.outcome), metric.count)
-		_, _ = fmt.Fprintf(w, "ubag_gateway_http_request_duration_seconds_sum{service=\"ubag-gateway\",route=\"%s\",method=\"%s\",status_class=\"%s\"} %.6f\n", promLabel(metric.route), promLabel(metric.method), promLabel(metric.statusClass), metric.durationSum)
-		_, _ = fmt.Fprintf(w, "ubag_gateway_http_request_duration_seconds_count{service=\"ubag-gateway\",route=\"%s\",method=\"%s\",status_class=\"%s\"} %d\n", promLabel(metric.route), promLabel(metric.method), promLabel(metric.statusClass), metric.count)
+		_, _ = fmt.Fprintf(w, "ubag_gateway_http_request_duration_seconds_sum{service=\"ubag-gateway\",route=\"%s\",method=\"%s\",status_class=\"%s\",method_class=\"%s\"} %.6f\n", promLabel(metric.route), promLabel(metric.method), promLabel(metric.statusClass), methodClass, metric.durationSum)
+		_, _ = fmt.Fprintf(w, "ubag_gateway_http_request_duration_seconds_count{service=\"ubag-gateway\",route=\"%s\",method=\"%s\",status_class=\"%s\",method_class=\"%s\"} %d\n", promLabel(metric.route), promLabel(metric.method), promLabel(metric.statusClass), methodClass, metric.count)
 	}
 	s.writeOverloadMetrics(w)
 	_, _ = fmt.Fprintf(w, "ubag_jobs_created_total{target_family=\"all\",command_type=\"all\",source=\"gateway\",outcome=\"accepted\"} %d\n", totalJobs)
@@ -1111,17 +1136,43 @@ func (s *Server) writeMetricsBody(ctx context.Context, w io.Writer) error {
 		_, _ = fmt.Fprintf(w, "ubag_attachment_materialize_failures_total{reason=\"%s\"} %d\n", promLabel(reason), materializeFailures[reason])
 	}
 
-	// Adapter-request counters and duration histogram stubs.
-	// These are set to 0 in the gateway; real values come from the worker.
-	_, _ = fmt.Fprint(w, "ubag_adapter_requests_total{adapter_family=\"mock\",target_family=\"all\",outcome=\"success\",error_class=\"none\"} 0\n")
-	_, _ = fmt.Fprint(w, "ubag_adapter_request_duration_seconds_count{adapter_family=\"mock\",target_family=\"all\",outcome=\"success\"} 0\n")
-	_, _ = fmt.Fprint(w, "ubag_adapter_request_duration_seconds_sum{adapter_family=\"mock\",target_family=\"all\",outcome=\"success\"} 0\n")
+	// ubag_adapter_requests_total / ubag_adapter_request_duration_seconds are
+	// adapter-owned (worker-side) contract metrics. The gateway used to emit
+	// a hard-coded mock zero series for them, which read as "adapters are
+	// healthy and idle"; it now emits nothing rather than a fabricated zero.
 
-	// Webhook delivery counter and duration histogram.
-	webhookDeliveries := s.webhookDeliveries.Load()
-	_, _ = fmt.Fprintf(w, "ubag_webhook_deliveries_total{endpoint_kind=\"job_callback\",outcome=\"success\",error_class=\"none\"} %d\n", webhookDeliveries)
-	_, _ = fmt.Fprintf(w, "ubag_webhook_delivery_duration_seconds_count{endpoint_kind=\"job_callback\",outcome=\"success\"} %d\n", webhookDeliveries)
-	_, _ = fmt.Fprint(w, "ubag_webhook_delivery_duration_seconds_sum{endpoint_kind=\"job_callback\",outcome=\"success\"} 0\n")
+	// Per-stage job durations parsed from worker data.timings_ms. Zero-valued
+	// mock defaults keep the series present before the first observation.
+	_, _ = fmt.Fprint(w, "# TYPE ubag_job_stage_duration_seconds histogram\n")
+	stageDefaults := make([]string, 0, len(executor.JobStages))
+	for _, stage := range executor.JobStages {
+		stageDefaults = append(stageDefaults, metricKey(stage, "mock"))
+	}
+	for _, key := range metricKeysWithDefaults(runtimeMetrics.stageDurations, stageDefaults) {
+		parts := strings.Split(key, "\x00")
+		writeDurationHistogram(
+			w,
+			"ubag_job_stage_duration_seconds",
+			fmt.Sprintf(`stage="%s",adapter_family="%s"`, promLabel(parts[0]), promLabel(parts[1])),
+			runtimeMetrics.stageDurations[key],
+		)
+	}
+
+	// Webhook delivery counter and duration histogram, fed by the delivery
+	// worker (DeliveryWorker.OnDelivery -> ObserveWebhookDelivery).
+	for _, key := range counterKeysWithDefaults(runtimeMetrics.webhookDeliveries, []string{metricKey("success", "none")}) {
+		parts := strings.Split(key, "\x00")
+		_, _ = fmt.Fprintf(w, "ubag_webhook_deliveries_total{endpoint_kind=\"job_callback\",outcome=\"%s\",error_class=\"%s\"} %d\n", promLabel(parts[0]), promLabel(parts[1]), runtimeMetrics.webhookDeliveries[key])
+	}
+	_, _ = fmt.Fprint(w, "# TYPE ubag_webhook_delivery_duration_seconds histogram\n")
+	for _, outcome := range metricKeysWithDefaults(runtimeMetrics.webhookDurations, []string{"success"}) {
+		writeDurationHistogram(
+			w,
+			"ubag_webhook_delivery_duration_seconds",
+			fmt.Sprintf(`endpoint_kind="job_callback",outcome="%s"`, promLabel(outcome)),
+			runtimeMetrics.webhookDurations[outcome],
+		)
+	}
 
 	// Webhook delivery-loop health. DeliveryWorker.Run used to return on the
 	// first store error and serve.Run only logged it, so a single blip stopped
@@ -3873,6 +3924,9 @@ type runtimeMetricSnapshot struct {
 	ingestionEvents    map[string]uint64
 	ingestionDurations map[string]durationAggregate
 	jobDurations       map[string]durationAggregate
+	stageDurations     map[string]durationAggregate
+	webhookDeliveries  map[string]uint64
+	webhookDurations   map[string]durationAggregate
 }
 
 type traceContextKey struct{}
@@ -3997,7 +4051,54 @@ func (s *Server) recordMetric(route, method string, status int, duration time.Du
 	defer s.metrics.mu.Unlock()
 	s.metrics.requests[key]++
 	s.metrics.durationSum[key] += duration.Seconds()
-	s.overload.observeLatency(route, duration)
+	s.overload.observeLatency(route, metricMethodClass(method), duration)
+}
+
+// metricMethodClass buckets an already-normalized method into the closed
+// method_class label set (observability METHOD_CLASSES).
+func metricMethodClass(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead:
+		return "read"
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return "write"
+	default:
+		return "other"
+	}
+}
+
+// ObserveJobStage records one worker-reported stage duration
+// (data.timings_ms). Stages outside the closed set are dropped.
+func (s *Server) ObserveJobStage(target, stage string, duration time.Duration) {
+	if !executor.IsJobStage(stage) {
+		return
+	}
+	s.observeDuration(s.metrics.stageDurations, metricKey(stage, adapterFamily(target)), duration)
+}
+
+// ObserveWebhookDelivery records one webhook delivery attempt.
+func (s *Server) ObserveWebhookDelivery(errorClass string, duration time.Duration) {
+	errorClass = webhookErrorClass(errorClass)
+	outcome := "failure"
+	if errorClass == "none" {
+		outcome = "success"
+	}
+	s.metrics.mu.Lock()
+	defer s.metrics.mu.Unlock()
+	s.metrics.webhookDeliveries[metricKey(outcome, errorClass)]++
+	if duration >= 0 {
+		s.metrics.webhookDurations[outcome] = addDuration(s.metrics.webhookDurations[outcome], duration)
+	}
+}
+
+func webhookErrorClass(errorClass string) string {
+	switch errorClass = strings.ToLower(strings.TrimSpace(errorClass)); errorClass {
+	case "none", "url_policy", "plugin_reject", "signing_error", "circuit_open", "request_invalid",
+		"network", "http_5xx", "rate_limited", "http_4xx", "redirect", "unknown":
+		return errorClass
+	default:
+		return "other"
+	}
 }
 
 func (s *Server) ObserveQueueWait(duration time.Duration) {
@@ -4130,6 +4231,9 @@ func (s *Server) runtimeMetricsSnapshot() runtimeMetricSnapshot {
 		ingestionEvents:    cloneMetricCounters(s.metrics.ingestionEvents),
 		ingestionDurations: cloneDurationAggregates(s.metrics.ingestionDurations),
 		jobDurations:       cloneDurationAggregates(s.metrics.jobDurations),
+		stageDurations:     cloneDurationAggregates(s.metrics.stageDurations),
+		webhookDeliveries:  cloneMetricCounters(s.metrics.webhookDeliveries),
+		webhookDurations:   cloneDurationAggregates(s.metrics.webhookDurations),
 	}
 }
 

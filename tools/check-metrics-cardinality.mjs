@@ -46,8 +46,10 @@ const CONTRACT_METRIC_NAMES = new Set([
   'ubag_worker_job_duration_seconds',
   'ubag_worker_result_ingestions_total',
   'ubag_worker_result_ingestion_duration_seconds',
-  'ubag_adapter_requests_total',
-  'ubag_adapter_request_duration_seconds',
+  // ubag_adapter_requests_total / ubag_adapter_request_duration_seconds are
+  // adapter-owned and no longer faked by the gateway (P0.9c), so they are not
+  // required in a gateway scrape.
+  'ubag_job_stage_duration_seconds',
   'ubag_webhook_deliveries_total',
   'ubag_webhook_delivery_duration_seconds',
   'ubag_webhook_outbox_depth',

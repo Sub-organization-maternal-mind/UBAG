@@ -35,6 +35,7 @@ func TestDeliveryWorkerSignsAndDeliversWebhook(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Enqueue returned error: %v", err)
 	}
+	var observedClasses []string
 	worker := DeliveryWorker{
 		Store: store,
 		Sender: HTTPSender{
@@ -48,10 +49,14 @@ func TestDeliveryWorkerSignsAndDeliversWebhook(t *testing.T) {
 		BatchSize:   1,
 		LeaseFor:    time.Minute,
 		RetryPolicy: RetryPolicy{MaxAttempts: 3, BaseDelay: time.Second, MaxDelay: time.Minute},
+		OnDelivery:  func(errorClass string, _ time.Duration) { observedClasses = append(observedClasses, errorClass) },
 	}
 	processed, err := worker.RunOnce(context.Background())
 	if err != nil || !processed {
 		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+	if len(observedClasses) != 1 || observedClasses[0] != "none" {
+		t.Fatalf("OnDelivery observations = %v, want [none]", observedClasses)
 	}
 	request := <-received
 	if request.Header.Get(SignatureHeader) == "" || request.Header.Get(NonceHeader) == "" || request.Header.Get(DeliveryIDHeader) != delivery.ID {

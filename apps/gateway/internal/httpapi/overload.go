@@ -113,14 +113,15 @@ func (o *overloadState) reject(reason string) {
 	}
 }
 
-func (o *overloadState) observeLatency(route string, d time.Duration) {
+func (o *overloadState) observeLatency(route, methodClass string, d time.Duration) {
 	seconds := d.Seconds()
+	key := route + "\x00" + methodClass
 	o.latencyMu.Lock()
 	defer o.latencyMu.Unlock()
-	h := o.latency[route]
+	h := o.latency[key]
 	if h == nil {
 		h = &latencyHist{buckets: make([]uint64, len(latencyBuckets))}
-		o.latency[route] = h
+		o.latency[key] = h
 	}
 	h.count++
 	h.sum += seconds
@@ -208,14 +209,16 @@ func (s *Server) writeOverloadMetrics(w io.Writer) {
 		routes = append(routes, route)
 	}
 	sort.Strings(routes)
-	for _, route := range routes {
-		h := o.latency[route]
+	for _, key := range routes {
+		h := o.latency[key]
+		route, class, _ := strings.Cut(key, "\x00")
+		labels := fmt.Sprintf(`route="%s",method_class="%s"`, promLabel(route), promLabel(class))
 		for i, bound := range latencyBuckets {
-			fmt.Fprintf(w, "ubag_gateway_request_latency_seconds_bucket{route=\"%s\",le=\"%g\"} %d\n", promLabel(route), bound, h.buckets[i])
+			fmt.Fprintf(w, "ubag_gateway_request_latency_seconds_bucket{%s,le=\"%g\"} %d\n", labels, bound, h.buckets[i])
 		}
-		fmt.Fprintf(w, "ubag_gateway_request_latency_seconds_bucket{route=\"%s\",le=\"+Inf\"} %d\n", promLabel(route), h.count)
-		fmt.Fprintf(w, "ubag_gateway_request_latency_seconds_sum{route=\"%s\"} %.6f\n", promLabel(route), h.sum)
-		fmt.Fprintf(w, "ubag_gateway_request_latency_seconds_count{route=\"%s\"} %d\n", promLabel(route), h.count)
+		fmt.Fprintf(w, "ubag_gateway_request_latency_seconds_bucket{%s,le=\"+Inf\"} %d\n", labels, h.count)
+		fmt.Fprintf(w, "ubag_gateway_request_latency_seconds_sum{%s} %.6f\n", labels, h.sum)
+		fmt.Fprintf(w, "ubag_gateway_request_latency_seconds_count{%s} %d\n", labels, h.count)
 	}
 	o.latencyMu.Unlock()
 
