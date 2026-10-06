@@ -26,6 +26,10 @@
     draining: 'bg-saffron-soft text-warning',
     lost: 'bg-danger-soft text-danger',
     unknown_reservation: 'bg-saffron-soft text-warning',
+    // Voice session states (queued reuses the job tone above).
+    connecting: 'bg-marine-soft text-marine',
+    connected: 'bg-success-soft text-success',
+    terminated: 'bg-rule-soft text-ink-mute',
   };
 
   let cls = $derived(tone[status?.toLowerCase()] ?? 'bg-rule-soft text-ink-mute');
