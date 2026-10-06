@@ -19,6 +19,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	"github.com/ubag/ubag/apps/gateway/internal/nodes"
 	"github.com/ubag/ubag/apps/gateway/internal/plugins"
 	"github.com/ubag/ubag/apps/gateway/internal/templates"
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
@@ -1789,5 +1790,36 @@ func TestListJobsCursorPaginationBothDirections(t *testing.T) {
 	}
 	if asc3[0] != "job_000000000005" {
 		t.Fatalf("ascending page 3 = %v, want job_000000000005", asc3)
+	}
+}
+
+func TestMetricsExposeHelperPlaneSeries(t *testing.T) {
+	store := nodes.NewMemoryStore()
+	now := time.Now()
+	err := store.ApplyAllocation(context.Background(), nodes.Allocation{
+		NodeID: "helper-a", Region: "eu", Endpoint: "10.0.0.2:7443", URISAN: nodes.NodeURISAN("helper-a"),
+		ReservationState: nodes.ReservationKnown, State: nodes.StateDraining, MaxBrowserWorkloads: 2,
+		ValidUntil: now.Add(time.Hour), Generation: 1,
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(Config{Version: "test", AppSecret: "dev-secret", HelperNodes: store})
+	body := doJSON(server.Handler(), http.MethodGet, "/v1/metrics", "", nil).Body.String()
+	for _, expected := range []string{
+		`ubag_lease_renew_failures_total{lease="attempt",reason="lost"}`,
+		`ubag_helper_fenced_rejects_total{reason="stale_generation"}`,
+		`ubag_helper_metrics_source_up 1`,
+		`ubag_helper_nodes{admission="draining"} 1`,
+		`ubag_helper_node_drain_state{node_id="helper-a"} 1`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("metrics missing %q in: %s", expected, body)
+		}
+	}
+	// Without a node store only the process-wide counters appear.
+	plain := doJSON(NewServer(Config{Version: "test", AppSecret: "dev-secret"}).Handler(), http.MethodGet, "/v1/metrics", "", nil).Body.String()
+	if strings.Contains(plain, "ubag_helper_nodes") || !strings.Contains(plain, "ubag_helper_fenced_rejects_total") {
+		t.Fatalf("unexpected helper series without a node store: %s", plain)
 	}
 }

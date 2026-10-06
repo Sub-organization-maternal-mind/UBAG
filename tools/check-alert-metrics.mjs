@@ -64,6 +64,7 @@ if (BASES.size < 20) {
 // ── 2. What the alerts reference ─────────────────────────────────────────────
 const ALERT_FILES = [
   'deploy/helm/ubag/templates/prometheusrule.yaml',
+  'deploy/prometheus/helper-plane-alerts.yaml',
   'deploy/grafana/dashboards'
 ];
 

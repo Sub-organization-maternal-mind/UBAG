@@ -1,0 +1,116 @@
+# Prometheus alert rules for the helper plane and lease health (P4.23).
+#
+# Plain Prometheus rule file: load it with `rule_files:` (or wrap the groups in
+# a PrometheusRule). Every metric below is emitted by the gateway
+# (internal/helpermetrics, rendered in /v1/metrics); tools/check-alert-metrics.mjs
+# fails if a name here is not, and tools/check-helper-alerts.mjs checks the
+# structure and that each runbook anchor exists in docs/perf-fleet/RUNBOOK.md.
+# promtool was NOT used to author or validate this file.
+#
+# Per-node series (node_id) exist only while UBAG_HELPER_NODES is on. With it
+# off, only the process-wide counters exist and the node alerts stay silent.
+# Keep this file to single-line strings: the structure check is line-based.
+groups:
+  - name: ubag.helper.liveness
+    rules:
+      - alert: UBAGHelperHeartbeatStale
+        expr: ubag_helper_node_heartbeat_age_seconds > 45
+        for: 1m
+        labels:
+          severity: warning
+          plane: helper
+        annotations:
+          summary: "Helper {{ $labels.node_id }} heartbeat is {{ $value | humanizeDuration }} old"
+          description: "Three missed 15 s heartbeats stop new placements on the node. Running work is not touched."
+          runbook: "docs/perf-fleet/RUNBOOK.md#heartbeat-stale-or-missing"
+      - alert: UBAGHelperHeartbeatMissing
+        expr: ubag_helper_nodes{admission="heartbeat_missed"} > 0
+        for: 3m
+        labels:
+          severity: warning
+          plane: helper
+        annotations:
+          summary: "{{ $value }} helper node(s) have no recent heartbeat"
+          description: "Covers nodes that never reported as well as stale ones (the per-node age series is absent until the first heartbeat)."
+          runbook: "docs/perf-fleet/RUNBOOK.md#heartbeat-stale-or-missing"
+      - alert: UBAGHelperNoEligibleNodes
+        expr: ubag_helper_nodes{admission="eligible"} == 0 and on() sum(ubag_helper_nodes) > 0
+        for: 5m
+        labels:
+          severity: critical
+          plane: helper
+        annotations:
+          summary: "Helper nodes are registered but none can take new placements"
+          description: "Check the admission breakdown for the dominant refusal reason."
+          runbook: "docs/perf-fleet/RUNBOOK.md#no-eligible-helper-nodes"
+      - alert: UBAGHelperGrantExpired
+        expr: ubag_helper_nodes{admission="grant_expired"} > 0
+        for: 2m
+        labels:
+          severity: warning
+          plane: helper
+        annotations:
+          summary: "{{ $value }} helper grant(s) expired"
+          description: "The manager is unreachable or stopped renewing. With no fresh grant there are no new placements and no capacity increases."
+          runbook: "docs/perf-fleet/RUNBOOK.md#grant-expired-manager-unreachable"
+      - alert: UBAGHelperDrainStuck
+        expr: ubag_helper_node_drain_state > 0
+        for: 30m
+        labels:
+          severity: warning
+          plane: helper
+        annotations:
+          summary: "Helper {{ $labels.node_id }} has been draining or revoked for 30 minutes"
+          description: "Drain finishes in-flight work first. A node that stays in this state is holding work or was never released."
+          runbook: "docs/perf-fleet/RUNBOOK.md#drain-or-revoke-stuck"
+      - alert: UBAGHelperMetricsSourceDown
+        expr: ubag_helper_metrics_source_up == 0
+        for: 2m
+        labels:
+          severity: warning
+          plane: helper
+        annotations:
+          summary: "The gateway cannot read the helper node store"
+          description: "The per-node helper series are missing while this fires, so the other helper alerts are blind."
+          runbook: "docs/perf-fleet/RUNBOOK.md#helper-metrics-source-down"
+  - name: ubag.helper.fencing
+    rules:
+      - alert: UBAGAttemptLeaseRenewFailing
+        expr: increase(ubag_lease_renew_failures_total{lease="attempt"}[5m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          plane: helper
+        annotations:
+          summary: "Attempt lease renewals are failing"
+          description: "A holder that cannot renew will be fenced when the lease lapses and the attempt may be re-dispatched. Check the helper link first."
+          runbook: "docs/perf-fleet/RUNBOOK.md#lease-renewal-failures"
+      - alert: UBAGQueueOrExecLeaseRenewFailing
+        expr: sum by (lease, reason) (increase(ubag_lease_renew_failures_total{lease=~"queue|exec"}[10m])) > 3
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Queue or execution lease renewals are failing ({{ $labels.lease }}/{{ $labels.reason }})"
+          description: "reason=lost means another consumer took the job and this run was cancelled; reason=error means the store or filesystem is failing renewals."
+          runbook: "docs/perf-fleet/RUNBOOK.md#lease-renewal-failures"
+      - alert: UBAGHelperFencedWrites
+        expr: sum(increase(ubag_helper_fenced_rejects_total[10m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+          plane: helper
+        annotations:
+          summary: "A helper wrote with a superseded lease generation"
+          description: "Fencing worked and nothing was written. Repeated hits mean a helper missed its cancel or a lease is flapping."
+          runbook: "docs/perf-fleet/RUNBOOK.md#fenced-writes-and-policy-violations"
+      - alert: UBAGHelperPolicyViolations
+        expr: sum(increase(ubag_helper_policy_violations_total[10m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+          plane: helper
+        annotations:
+          summary: "A helper stream was rejected for a policy violation"
+          description: "Wrong scope, malformed or oversize output. The audit chain has one helper.policy_violation record per reason and session."
+          runbook: "docs/perf-fleet/RUNBOOK.md#fenced-writes-and-policy-violations"

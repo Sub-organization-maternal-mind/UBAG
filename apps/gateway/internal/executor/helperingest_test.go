@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/audit"
+	"github.com/ubag/ubag/apps/gateway/internal/helpermetrics"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	helperv1 "github.com/ubag/ubag/packages/proto/gen/go/ubag/helper/v1"
 )
@@ -758,5 +760,32 @@ func TestHelperIngestEventTypeAllowlistIsTheProtoMinusTerminal(t *testing.T) {
 		}); err != nil {
 			t.Errorf("%s maps to %q which the store refuses: %v", name, mapped, err)
 		}
+	}
+}
+
+func TestHelperIngestFencedRejectIsCountedInMetrics(t *testing.T) {
+	f := newIngestFixture(t, 20*time.Millisecond)
+	g := f.open(t)
+	accept(t, g, hev(1, evStarted, `{}`))
+	f.supersede(t)
+	// Sum the series: which fence reason fires (stale generation vs. commit
+	// fence) is the ledger's business, the counter must move either way.
+	total := func() (n int) {
+		var b strings.Builder
+		helpermetrics.Write(context.Background(), &b, nil, time.Now())
+		for _, l := range strings.Split(b.String(), "\n") {
+			if strings.HasPrefix(l, "ubag_helper_fenced_rejects_total{") {
+				var v int
+				_, _ = fmt.Sscanf(l[strings.LastIndex(l, " ")+1:], "%d", &v)
+				n += v
+			}
+		}
+		return n
+	}
+	before := total()
+	_, err := g.Accept(context.Background(), hterm(2, completedOutcome()))
+	wantIs(t, err, jobstore.ErrAttemptFenced)
+	if after := total(); after != before+1 {
+		t.Fatalf("fenced reject counter %d -> %d, want +1", before, after)
 	}
 }

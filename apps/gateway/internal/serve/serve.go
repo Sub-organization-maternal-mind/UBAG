@@ -292,6 +292,7 @@ func Run(ctx context.Context) error {
 		},
 
 		VoiceMetrics: voiceMetrics,
+		HelperNodes:  helperNodes,
 		// Provider voice is started by worker control jobs and a session is only
 		// "connected" once the provider is verified ready. Disable only for
 		// media-path development (UBAG_VOICE_PROVIDER_ACTIVATION=0).
