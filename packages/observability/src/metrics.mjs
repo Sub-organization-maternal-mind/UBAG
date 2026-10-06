@@ -246,6 +246,22 @@ export const OBSERVABILITY_METRICS = Object.freeze([
     description: "Current SSE connections served by the gateway."
   }),
   metric({
+    name: "ubag_event_wakeups_total",
+    type: "counter",
+    owner: "gateway",
+    unit: "wakeups",
+    labels: ["source"],
+    description: "SSE waiter wakeups by source (local hub wake, notify reserved, fallback poll)."
+  }),
+  metric({
+    name: "ubag_sse_event_frame_lag_seconds",
+    type: "histogram",
+    owner: "gateway",
+    unit: "seconds",
+    labels: ["service"],
+    description: "Lag between a job event being stored and its SSE frame being written (live frames only)."
+  }),
+  metric({
     name: "ubag_artifact_captures_total",
     type: "counter",
     owner: "worker",

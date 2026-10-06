@@ -225,6 +225,15 @@ type Config struct {
 	// Defaults to UBAG_MAX_QUEUE_DEPTH env var if set, or 10000.
 	MaxQueueDepth int
 
+	// SSECloseOnTerminal ends GET /v1/sse/jobs/{id} after the first terminal
+	// event and answers 204 to a reconnect that already saw one (204 is the
+	// only status that stops EventSource reconnecting). Also enabled by
+	// UBAG_SSE_CLOSE_ON_TERMINAL=true. Default off.
+	SSECloseOnTerminal bool
+	// SSEMaxStreams caps concurrent SSE job streams; excess opens get 503 with
+	// Retry-After. Zero (default) is unlimited; falls back to UBAG_SSE_MAX_STREAMS.
+	SSEMaxStreams int
+
 	MaxBodyBytes int64
 
 	// FacadeMaxWait bounds one POST /v1/openai/chat/completions call: the
@@ -352,6 +361,8 @@ type Server struct {
 	conversations       *conversations.Manager
 	outbox              outbox.Store
 	maxQueueDepth       int
+	sseCloseOnTerminal  bool
+	sseMaxStreams       int
 	patStore            pat.Store
 	patDefaultTTL       time.Duration
 	appJWTPublicKey     *crypto_rsa.PublicKey
@@ -416,6 +427,8 @@ type metricState struct {
 	requests           map[string]int
 	durationSum        map[string]float64
 	sseCurrent         int
+	sseWakeups         map[string]uint64 // source=local|notify|fallback
+	sseFrameLag        durationAggregate
 	queueWait          durationAggregate
 	workerRuns         map[string]durationAggregate
 	ingestionEvents    map[string]uint64
@@ -543,6 +556,12 @@ func NewServer(config Config) *Server {
 	if config.MaxQueueDepth <= 0 {
 		config.MaxQueueDepth = parseEnvInt("UBAG_MAX_QUEUE_DEPTH", 10000)
 	}
+	if config.SSEMaxStreams <= 0 {
+		config.SSEMaxStreams = parseEnvInt("UBAG_SSE_MAX_STREAMS", 0)
+	}
+	if !config.SSECloseOnTerminal {
+		config.SSECloseOnTerminal = strings.EqualFold(strings.TrimSpace(os.Getenv("UBAG_SSE_CLOSE_ON_TERMINAL")), "true")
+	}
 	if config.Jobs == nil {
 		config.Jobs = jobstore.NewMemoryStore()
 	}
@@ -598,33 +617,35 @@ func NewServer(config Config) *Server {
 
 		webhookWorkerRunErrors: config.WebhookWorkerRunErrors,
 
-		rateLimiter:      config.RateLimiter,
-		rateResolver:     config.RateLimitResolver,
-		rateLimitEnabled: config.RateLimitEnabled,
-		responseCache:    config.ResponseCache,
-		workflows:        config.Workflows,
-		workflowEngine:   config.WorkflowEngine,
-		sso:              config.SSO,
-		ssoAuthFlow:      config.SSOAuthFlow,
-		scim:             config.SCIM,
-		siemConfig:       config.SIEMConfig,
-		siemExporter:     config.SIEMExporter,
-		webhookSecrets:   config.WebhookSecrets,
-		audit:            config.Audit,
-		sessions:         config.Sessions,
-		sessionTTL:       config.SessionTTL,
-		alerts:           config.Alerts,
-		topology:         config.Topology,
-		concurrency:      config.Concurrency,
-		conversations:    config.Conversations,
-		outbox:           config.Outbox,
-		maxQueueDepth:    config.MaxQueueDepth,
-		facadeMaxWait:    config.FacadeMaxWait,
-		facadeMaxBody:    config.FacadeMaxBodyBytes,
-		voice:            config.VoiceStore,
-		voiceActivation:  config.VoiceProviderActivation,
-		voiceMedia:       config.VoiceMedia,
-		voiceSessionTTL:  config.VoiceSessionTTL,
+		rateLimiter:        config.RateLimiter,
+		rateResolver:       config.RateLimitResolver,
+		rateLimitEnabled:   config.RateLimitEnabled,
+		responseCache:      config.ResponseCache,
+		workflows:          config.Workflows,
+		workflowEngine:     config.WorkflowEngine,
+		sso:                config.SSO,
+		ssoAuthFlow:        config.SSOAuthFlow,
+		scim:               config.SCIM,
+		siemConfig:         config.SIEMConfig,
+		siemExporter:       config.SIEMExporter,
+		webhookSecrets:     config.WebhookSecrets,
+		audit:              config.Audit,
+		sessions:           config.Sessions,
+		sessionTTL:         config.SessionTTL,
+		alerts:             config.Alerts,
+		topology:           config.Topology,
+		concurrency:        config.Concurrency,
+		conversations:      config.Conversations,
+		outbox:             config.Outbox,
+		maxQueueDepth:      config.MaxQueueDepth,
+		sseCloseOnTerminal: config.SSECloseOnTerminal,
+		sseMaxStreams:      config.SSEMaxStreams,
+		facadeMaxWait:      config.FacadeMaxWait,
+		facadeMaxBody:      config.FacadeMaxBodyBytes,
+		voice:              config.VoiceStore,
+		voiceActivation:    config.VoiceProviderActivation,
+		voiceMedia:         config.VoiceMedia,
+		voiceSessionTTL:    config.VoiceSessionTTL,
 
 		voiceMaxSessionsPerTenant: config.VoiceMaxSessionsPerTenant,
 		voiceMaxQueuedPerTenant:   config.VoiceMaxQueuedPerTenant,
@@ -655,6 +676,7 @@ func NewServer(config Config) *Server {
 			webhookDeliveries:  make(map[string]uint64),
 			webhookDurations:   make(map[string]durationAggregate),
 			terminalObserved:   make(map[string]struct{}),
+			sseWakeups:         make(map[string]uint64),
 		},
 		mux: chi.NewRouter(),
 	}
@@ -1068,6 +1090,12 @@ func (s *Server) writeMetricsBody(ctx context.Context, w io.Writer) error {
 		_, _ = fmt.Fprintf(w, "ubag_webhook_outbox_oldest_age_seconds{endpoint_kind=\"job_callback\",state=\"%s\"} %.6f\n", promLabel(state), webhookStats.OldestAgeByState[state].Seconds())
 	}
 	_, _ = fmt.Fprintf(w, "ubag_sse_connections_current{service=\"ubag-gateway\"} %d\n", s.currentSSEConnections())
+	_, _ = fmt.Fprint(w, "# TYPE ubag_event_wakeups_total counter\n")
+	for _, key := range counterKeysWithDefaults(runtimeMetrics.sseWakeups, []string{sseWakeLocal, sseWakeNotify, sseWakeFallback}) {
+		_, _ = fmt.Fprintf(w, "ubag_event_wakeups_total{source=\"%s\"} %d\n", promLabel(key), runtimeMetrics.sseWakeups[key])
+	}
+	_, _ = fmt.Fprint(w, "# TYPE ubag_sse_event_frame_lag_seconds histogram\n")
+	writeDurationHistogram(w, "ubag_sse_event_frame_lag_seconds", `service="ubag-gateway"`, runtimeMetrics.sseFrameLag)
 
 	// Ã‚Â§18 contract metrics Ã¢â‚¬â€ missing from original handler (Task 2.3).
 	// Idempotency replay counter (incremented in the idempotency replay path).
@@ -1852,108 +1880,14 @@ func (s *Server) handleJobByID(w http.ResponseWriter, r *http.Request) {
 // hold a slot (clients reconnect and resume), the heartbeat keeps proxies and
 // clients from declaring an idle stream dead, and the write timeout drops a
 // stalled client instead of letting it block the handler forever.
-const (
-	sseConnectionTTL = 10 * time.Minute
-	sseWriteTimeout  = 10 * time.Second
-)
+const sseConnectionTTL = 10 * time.Minute
+
+// sseWriteTimeout is a var only so tests can shrink it.
+var sseWriteTimeout = 10 * time.Second
 
 // sseHeartbeatInterval is a var only so tests can shrink it; production code
 // never reassigns it.
 var sseHeartbeatInterval = 15 * time.Second
-
-func (s *Server) handleJobSSE(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		s.writeMethodNotAllowed(w, r, http.MethodGet)
-		return
-	}
-
-	segments := splitRouteTail(r.URL.Path, "/v1/sse/jobs/")
-	if len(segments) != 1 || segments[0] == "" {
-		s.writeNotFound(w, r)
-		return
-	}
-
-	job, ok := s.loadAuthorizedJob(w, r, segments[0], "job:read")
-	if !ok {
-		return
-	}
-
-	events, found, err := s.jobs.ListEvents(r.Context(), job.ID, 0, 100)
-	if err != nil {
-		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to load job events"))
-		return
-	}
-	if !found {
-		s.writeJobNotFound(w, r)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-	flusher, _ := w.(http.Flusher)
-	controller := http.NewResponseController(w)
-	// Bounded write: a stalled client (full TCP buffer, dead peer) must be
-	// dropped, not stall the event loop.
-	writeFrame := func(frame string) bool {
-		_ = controller.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
-		if _, err := fmt.Fprint(w, frame); err != nil {
-			return false
-		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-		return true
-	}
-	writeEvent := func(event jobstore.Event) bool {
-		payload, _ := json.Marshal(jobEventToResponse(event, traceIDFromContext(r.Context())))
-		return writeFrame(fmt.Sprintf("id: %s\nevent: job.%s\ndata: %s\n\n", event.ID, event.Type, payload))
-	}
-	s.incrementSSEConnections()
-	defer s.decrementSSEConnections()
-
-	afterSequence := 0
-	for _, event := range events {
-		if !writeEvent(event) {
-			return
-		}
-		afterSequence = event.Sequence
-	}
-	if strings.EqualFold(r.URL.Query().Get("snapshot"), "true") {
-		return
-	}
-
-	// Per-connection deadline: close after the TTL; SSE clients reconnect and
-	// resume from the last event they saw.
-	expiresAt := time.Now().Add(sseConnectionTTL)
-	for {
-		if time.Now().After(expiresAt) {
-			return
-		}
-		// Bounded wait: WaitEvents returns as soon as events land, and the
-		// window expiry doubles as the heartbeat tick, so an idle stream emits
-		// a ": ping" comment every interval instead of staying silent (silent
-		// connections get killed by proxies and look dead to clients).
-		waitCtx, cancel := context.WithTimeout(r.Context(), sseHeartbeatInterval)
-		nextEvents, _, err := s.jobs.WaitEvents(waitCtx, job.ID, afterSequence, 100)
-		cancel()
-		if err != nil && !errors.Is(err, context.DeadlineExceeded) {
-			// Client went away (Canceled) or the store failed: close the
-			// stream; the client reconnects and resumes.
-			return
-		}
-		for _, event := range nextEvents {
-			if !writeEvent(event) {
-				return
-			}
-			afterSequence = event.Sequence
-		}
-		if len(nextEvents) == 0 && !writeFrame(": ping\n\n") {
-			return
-		}
-	}
-}
 
 type preparedCreateJob struct {
 	request             createJobRequest
@@ -3930,6 +3864,8 @@ type runtimeMetricSnapshot struct {
 	stageDurations     map[string]durationAggregate
 	webhookDeliveries  map[string]uint64
 	webhookDurations   map[string]durationAggregate
+	sseWakeups         map[string]uint64
+	sseFrameLag        durationAggregate
 }
 
 type traceContextKey struct{}
@@ -4179,10 +4115,16 @@ func addDuration(aggregate durationAggregate, duration time.Duration) durationAg
 	return aggregate
 }
 
-func (s *Server) incrementSSEConnections() {
+// tryIncrementSSEConnections reserves an SSE slot; false means the optional
+// stream cap (UBAG_SSE_MAX_STREAMS, 0 = unlimited) is reached.
+func (s *Server) tryIncrementSSEConnections() bool {
 	s.metrics.mu.Lock()
 	defer s.metrics.mu.Unlock()
+	if s.sseMaxStreams > 0 && s.metrics.sseCurrent >= s.sseMaxStreams {
+		return false
+	}
 	s.metrics.sseCurrent++
+	return true
 }
 
 func (s *Server) decrementSSEConnections() {
@@ -4237,6 +4179,8 @@ func (s *Server) runtimeMetricsSnapshot() runtimeMetricSnapshot {
 		stageDurations:     cloneDurationAggregates(s.metrics.stageDurations),
 		webhookDeliveries:  cloneMetricCounters(s.metrics.webhookDeliveries),
 		webhookDurations:   cloneDurationAggregates(s.metrics.webhookDurations),
+		sseWakeups:         cloneMetricCounters(s.metrics.sseWakeups),
+		sseFrameLag:        s.metrics.sseFrameLag,
 	}
 }
 
