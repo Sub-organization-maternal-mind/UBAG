@@ -8,6 +8,7 @@ import (
 	"time"
 
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	"github.com/ubag/ubag/apps/gateway/internal/nodes"
 )
 
 // pickerFunc adapts a function to HelperPicker.
@@ -145,6 +146,36 @@ func TestPlacerConsumerSynchronousHoldStarvesTheJobBehindIt(t *testing.T) {
 	time.Sleep(600 * time.Millisecond)
 	if g.completed(b.ID) {
 		t.Fatal("the job behind a synchronously held one ran: the starvation this slice removes is not reproduced")
+	}
+}
+
+// The attempt reconcile gate (P4.18) holds a job whose previous attempt still holds
+// its lease; that wait is off the worker too, so it does not block the jobs behind.
+type reconcilerFunc func(jobID string) nodes.ReconcilePlan
+
+func (f reconcilerFunc) Reconcile(_ context.Context, jobID string) (nodes.ReconcilePlan, error) {
+	return f(jobID), nil
+}
+
+func TestPlacerConsumerReconcileGateHoldsWaitOffTheWorkerToo(t *testing.T) {
+	var aID atomic.Value
+	g := newHoldRig(t, func(HelperPickRequest) (HelperPlacement, error) { return HelperPlacement{}, ErrNoHelper },
+		func(c *WorkerConsumer) {
+			c.PoolSize, c.AsyncHolds = 1, 8
+			c.Reconcile = reconcilerFunc(func(jobID string) nodes.ReconcilePlan {
+				if id, _ := aID.Load().(string); jobID == id {
+					return nodes.ReconcilePlan{Action: nodes.ReconcileWait, Reason: nodes.ReconcileLeaseHeld, RetryAfter: 100 * time.Millisecond}
+				}
+				return nodes.ReconcilePlan{Action: nodes.ReconcileRun, Reason: nodes.ReconcileNoAttempt}
+			})
+		})
+	a := g.enqueue(t)
+	b := g.enqueue(t)
+	aID.Store(a.ID)
+	g.run(t)
+	waitFor(t, 5*time.Second, "the job behind the reconcile hold to complete", func() bool { return g.completed(b.ID) })
+	if jobstore.TerminalStatus(g.f.job(a.ID).Status) {
+		t.Fatal("the held job must still be waiting")
 	}
 }
 

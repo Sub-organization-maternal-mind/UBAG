@@ -182,7 +182,7 @@ type WorkerConsumer struct {
 	// resume a submitted attempt on its helper, or fail the job closed for
 	// reconciling (reconcilegate.go). Nil is today's gateway.
 	Reconcile AttemptReconciler
-	// AsyncHolds, when positive (UBAG_HELPER_DISPATCH with the placer, ADR-0015),
+	// AsyncHolds, when positive (UBAG_HELPER_DISPATCH with the placer, ADR-0016),
 	// lets that many leased jobs whose placement was refused wait out their delay
 	// OFF the worker: the worker is free to lease the next job at once, so a busy
 	// identity neither pins a worker nor starves the jobs queued behind it (the
@@ -1473,7 +1473,7 @@ func holdPlan(ctx context.Context, lease WorkerLease, cause error) time.Duration
 }
 
 // holdLease is retryAfterDelay for a refusal the helper plane or the local gate
-// issued before the job started (ADR-0015). With AsyncHolds it hands the lease to
+// issued before the job started (ADR-0016). With AsyncHolds it hands the lease to
 // a goroutine that retries it after the delay (at once on shutdown) and returns
 // the worker immediately, so the next job is leased while this one waits: a busy
 // identity then neither pins a worker nor starves the jobs behind it, and the

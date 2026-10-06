@@ -11,11 +11,11 @@ import (
 )
 
 // placementRetryDelay is how long a job held by the placer waits before its lease
-// is retried (ADR-0015): short, because the hold happens off the worker, and the
+// is retried (ADR-0016): short, because the hold happens off the worker, and the
 // same as the pool-overload delay (ADR-0011).
 const placementRetryDelay = defaultOverloadRetryDelay
 
-// FleetPicker is the HelperPicker over the accepted manager grants (P4.17, ADR-0015):
+// FleetPicker is the HelperPicker over the accepted manager grants (P4.17, ADR-0016):
 // it joins the tenant's own profiles (helperauth) with the capacity the placer
 // tracks (nodes). It runs AFTER the lease, because the target and the identity
 // are only known from the envelope and the queue cannot peek by eligibility.

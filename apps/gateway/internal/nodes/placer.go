@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// The capacity half of helper placement (ADR-0015, UBAG_HELPER_DISPATCH, default
+// The capacity half of helper placement (ADR-0016, UBAG_HELPER_DISPATCH, default
 // off). The Placer answers two questions and nothing else: which helper nodes may
 // take a placement right now, and, for one node and one identity lane, is there a
 // free slot. Which tenant profile runs where is helperauth's rule (EligibleProfiles)

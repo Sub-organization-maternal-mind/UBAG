@@ -263,7 +263,7 @@ func Run(ctx context.Context) error {
 
 	// Helper dispatch (UBAG_HELPER_DISPATCH, default off): the primary dials the
 	// helper itself (decision D3) and runs placed jobs as fenced attempts there.
-	// The placer (P4.17, ADR-0015) is the picker: it joins the tenant's own
+	// The placer (P4.17, ADR-0016) is the picker: it joins the tenant's own
 	// profiles with the granted capacity after a job is leased.
 	fleet, err := newHelperFleetFromEnv(ctx, helperNodes, fleetPoller, storeKind, db)
 	if err != nil {

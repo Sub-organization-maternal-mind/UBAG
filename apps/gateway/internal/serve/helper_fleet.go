@@ -21,10 +21,10 @@ import (
 )
 
 // asyncPlacementHolds bounds the leased jobs that wait out a refused placement off
-// the worker (ADR-0015). Past it a hold waits on the worker, as before.
+// the worker (ADR-0016). Past it a hold waits on the worker, as before.
 const asyncPlacementHolds = 64
 
-// helperFleet is the placement side of helper dispatch (P4.17, ADR-0015): the
+// helperFleet is the placement side of helper dispatch (P4.17, ADR-0016): the
 // placer over the accepted grants and the picker the remote runner asks. It
 // exists only with UBAG_HELPER_DISPATCH on.
 type helperFleet struct {
