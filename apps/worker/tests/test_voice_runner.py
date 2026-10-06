@@ -8,6 +8,7 @@ import io
 import json
 import sys
 import types
+from pathlib import Path
 import unittest
 from unittest import mock
 
@@ -232,6 +233,38 @@ class ReadinessTests(unittest.TestCase):
             readiness = resolve_selectors(provider).voice_readiness
             self.assertEqual(tuple(readiness.ready_controls), ())
             self.assertEqual(readiness.baseline_version, "unverified-until-live-probe")
+
+
+class CapturedDomTests(unittest.TestCase):
+    """Real read-only voice-probe captures (tools/provider-refresh/captures) drive the runner.
+
+    These are PRE-call captures: they prove the entry control and the honest
+    evidence gaps, not in-call readiness (that needs a human-run
+    `voice-probe.mjs --in-call`, see docs/perf-fleet/voice-activation-probe.md).
+    """
+
+    CAPTURES = Path(__file__).resolve().parents[3] / "tools" / "provider-refresh" / "captures"
+
+    def page_from_capture(self, name: str, url: str) -> FakePage:
+        capture = json.loads((self.CAPTURES / name).read_text(encoding="utf8"))
+        elements = {
+            f"[aria-label='{c['aria_label']}']": FakeElement(c["aria_label"])
+            for c in capture["voiceish_controls"] if c.get("visible") and c.get("aria_label")
+        }
+        return FakePage(url, elements)
+
+    def test_chatgpt_capture_has_entry_control_but_no_in_call_evidence(self) -> None:
+        page = self.page_from_capture("chatgpt_web-voice-2026-10-05T03-44-17-319Z.json", "https://chatgpt.com/")
+        result = activate_voice(FakeCdpClient([page]), "chatgpt_web", **FAST)
+        self.assertEqual(result.state, "unverified_ready")
+        self.assertTrue(page.elements["[aria-label='Start Voice']"].clicked)
+        self.assertFalse(page.elements["[aria-label='Dictate']"].clicked)
+
+    def test_gemini_capture_lacks_listen_so_runner_reports_drift(self) -> None:
+        # Evidence gap: the 2026-10-05 Gemini capture never listed "Listen".
+        page = self.page_from_capture("gemini_web-voice-2026-10-05T03-44-17-991Z.json", "https://gemini.google.com/app")
+        with self.assertRaises(VoiceControlDrift):
+            click_voice_control(page, resolve_selectors("gemini_web"))
 
 
 class TabOpeningTests(unittest.TestCase):

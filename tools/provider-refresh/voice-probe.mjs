@@ -6,20 +6,35 @@
 // never logs in, never opens menus.
 //
 // Usage: node tools/provider-refresh/voice-probe.mjs [provider_id ...] [--cdp URL]
+//
+// --in-call (P5.4): STILL read-only. A HUMAN starts the provider's voice call in
+// their own signed-in browser first, then runs this with --i-started-the-call
+// [--baseline <pre-call capture .json>]. The probe never clicks, types, logs in
+// or touches the mic; it lists every visible control and, against the baseline,
+// proposes CANDIDATE VoiceReadiness.ready_controls selectors. Candidates are not
+// evidence: see docs/perf-fleet/voice-activation-probe.md.
 
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { repoPath, repoRoot } from './lib.mjs';
+import { deriveReadyCandidates, pythonTuple, safeText } from './voice-probe-lib.mjs';
 
 const args = process.argv.slice(2);
+const inCall = args.includes('--in-call');
+const baselineIdx = args.indexOf('--baseline');
+const baselineFile = baselineIdx >= 0 ? args[baselineIdx + 1] : null;
+if (inCall && !args.includes('--i-started-the-call')) {
+  console.error('--in-call needs --i-started-the-call: a human must start the voice call; this tool never clicks.');
+  process.exit(2);
+}
 const cdpIdx = args.indexOf('--cdp');
 const cdpBase = (cdpIdx >= 0 ? args[cdpIdx + 1] : null) || process.env.UBAG_PROBE_CDP || 'http://127.0.0.1:15923';
-const wanted = args.filter((a) => !a.startsWith('--'));
+const wanted = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--cdp' && args[i - 1] !== '--baseline');
 const homes = wanted.length
   ? Object.fromEntries(wanted.map((id) => [id, null]))
   : { chatgpt_web: 'https://chatgpt.com/', gemini_web: 'https://gemini.google.com/app' };
 
-const extraction = () => {
+const extraction = (allControls) => {
   const kw = /(voice|audio|mic|waveform|sound|dictat|speak|talk|live)/i;
   const describe = (el) => {
     if (!el || el.nodeType !== 1) return null;
@@ -42,7 +57,7 @@ const extraction = () => {
     const d = describe(el);
     if (!d || !d.visible) continue;
     const hay = [d.aria_label, d.testid, d.title, d.text].filter(Boolean).join(' ');
-    if (kw.test(hay)) {
+    if (allControls || kw.test(hay)) {
       const key = `${d.tag}|${d.aria_label}|${d.testid}|${d.rect.x},${d.rect.y}`;
       if (!seen.has(key)) {
         seen.add(key);
@@ -65,7 +80,7 @@ const extraction = () => {
     title: document.title,
     composer: describe(composer),
     composer_buttons: composerButtons,
-    voiceish_controls: voiceish.slice(0, 40),
+    voiceish_controls: voiceish.slice(0, allControls ? 120 : 40),
     media_devices_probe: 'skipped (requires permission gesture; read-only probe never triggers it)',
   };
 };
@@ -95,12 +110,24 @@ for (const id of Object.keys(homes)) {
   });
   try {
     const { result } = await send('Runtime.evaluate', {
-      expression: `(${extraction.toString()})()`,
+      expression: `(${extraction.toString()})(${inCall})`,
       returnByValue: true,
       awaitPromise: true,
     });
     const out = { id, captured_at: new Date().toISOString(), url: tab.url, ...result.value };
-    const file = repoPath('tools', 'provider-refresh', 'captures', `${id}-voice-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+    if (inCall) {
+      // Conversation text must not land in a committed capture.
+      for (const c of [...out.voiceish_controls, ...out.composer_buttons]) c.text = safeText(c.text);
+      out.mode = 'in-call';
+      let baseline = [];
+      if (baselineFile) {
+        baseline = JSON.parse(readFileSync(baselineFile, 'utf8')).voiceish_controls || [];
+        out.baseline_file = path.basename(baselineFile);
+      }
+      out.ready_controls_candidates = deriveReadyCandidates(baseline, out.voiceish_controls);
+      out.candidates_status = 'UNVERIFIED: a human must confirm in a supervised two-way demo before editing selectors.py';
+    }
+    const file = repoPath('tools', 'provider-refresh', 'captures', `${id}-voice${inCall ? '-incall' : ''}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
     mkdirSync(path.dirname(file), { recursive: true });
     writeFileSync(file, JSON.stringify(out, null, 2));
     console.log(`\n=== ${id} (${tab.url}) -> ${path.relative(repoRoot, file)}`);
@@ -109,6 +136,12 @@ for (const id of Object.keys(homes)) {
     console.log('  voice-ish controls:');
     for (const v of out.voiceish_controls) {
       console.log(`    [${v.tag}] aria="${v.aria_label || ''}" testid="${v.testid || ''}" title="${v.title || ''}" text="${v.text}" @${v.rect.x},${v.rect.y}`);
+    }
+    if (inCall) {
+      console.log(`  ready_controls candidates (${baselineFile ? 'diff vs baseline' : 'NO BASELINE: every stable control is listed'}):`);
+      for (const c of out.ready_controls_candidates) console.log(`    ${c.selector}  [${c.tag}]`);
+      console.log(pythonTuple(out.ready_controls_candidates.map((c) => c.selector)));
+      console.log(`  ${out.candidates_status}`);
     }
   } finally {
     ws.close();
