@@ -77,6 +77,21 @@ test("voice relay frame-age metric is a gateway histogram with only the fixed di
   assert.deepEqual(age.labels, ["direction"]);
 });
 
+test("voice link-quality metrics are gateway series with no labels at all", () => {
+  for (const name of [
+    "ubag_voice_inbound_jitter_seconds",
+    "ubag_voice_inbound_packets_received_total",
+    "ubag_voice_inbound_packets_lost_total",
+    "ubag_voice_mic_queue_depth"
+  ]) {
+    const m = getMetricByName(name);
+    assert.equal(m.owner, "gateway");
+    assert.deepEqual(m.labels, [], name);
+  }
+  assert.equal(getMetricByName("ubag_voice_inbound_jitter_seconds").type, "histogram");
+  assert.equal(getMetricByName("ubag_voice_mic_queue_depth").type, "gauge");
+});
+
 test("event registry and event payload validation enforce stable shape", () => {
   assert.deepEqual(validateEventRegistry(), []);
   assert.ok(OBSERVABILITY_EVENT_NAMES.includes("operations.probe.run.success"));
