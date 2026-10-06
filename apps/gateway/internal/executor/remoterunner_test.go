@@ -121,6 +121,16 @@ func TestRemoteRunCompletesTheJobThroughTheFencedIngest(t *testing.T) {
 	if f.helper.closes.Load() != 1 {
 		t.Fatalf("connection closed %d times, want 1", f.helper.closes.Load())
 	}
+	// The dispatch is on the tenant's audit chain: granted before the run, committed at the end.
+	var actions []string
+	for _, r := range f.auditRecords() {
+		if r.Action == audit.EventAttemptGranted || r.Action == audit.EventAttemptCommitted {
+			actions = append(actions, r.Action)
+		}
+	}
+	if want := []string{audit.EventAttemptGranted, audit.EventAttemptCommitted}; !slices.Equal(actions, want) {
+		t.Fatalf("attempt audit actions = %v, want %v", actions, want)
+	}
 	f.assertPlacementsReleased()
 }
 
