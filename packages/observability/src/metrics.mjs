@@ -191,6 +191,38 @@ export const OBSERVABILITY_METRICS = Object.freeze([
     description: "Gateway-side voice relay frame age; direction is the fixed set mic (RTP read to relay Send returned) and speaker (relay Recv to speaker WriteSample returned). Buckets 5ms..1.28s."
   }),
   metric({
+    name: "ubag_voice_inbound_jitter_seconds",
+    type: "histogram",
+    owner: "gateway",
+    unit: "seconds",
+    labels: [],
+    description: "Client-to-gateway inbound audio RTP jitter sampled from pc.GetStats on a fixed interval, one observation per live media session per sample; no per-session labels. Buckets 1ms..640ms."
+  }),
+  metric({
+    name: "ubag_voice_inbound_packets_received_total",
+    type: "counter",
+    owner: "gateway",
+    unit: "packets",
+    labels: [],
+    description: "Inbound client audio RTP packets received (pc.GetStats delta); with the lost counter gives the loss ratio."
+  }),
+  metric({
+    name: "ubag_voice_inbound_packets_lost_total",
+    type: "counter",
+    owner: "gateway",
+    unit: "packets",
+    labels: [],
+    description: "Inbound client audio RTP packets lost (pc.GetStats delta, never negative)."
+  }),
+  metric({
+    name: "ubag_voice_mic_queue_depth",
+    type: "gauge",
+    owner: "gateway",
+    unit: "frames",
+    labels: [],
+    description: "Mic frames currently queued toward the provider relay, summed across live media sessions at scrape time (each queue is bounded at 64); no per-session labels."
+  }),
+  metric({
     name: "ubag_adapter_requests_total",
     type: "counter",
     owner: "adapter",

@@ -177,6 +177,7 @@ func Run(ctx context.Context) error {
 	voiceMetrics := voice.NewMediaCounters()
 	if hub, ok := voiceMedia.(*voice.MediaHub); ok {
 		hub.Metrics = voiceMetrics
+		voiceMetrics.SetMicQueueDepthFunc(hub.MicQueueDepth)
 		defer hub.Close()
 		if voiceStore != nil {
 			go reconcileVoiceMedia(ctx, hub, voiceStore)
