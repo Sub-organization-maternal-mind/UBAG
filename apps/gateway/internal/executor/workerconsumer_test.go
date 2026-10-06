@@ -1937,3 +1937,24 @@ func TestWorkerConsumerParallelRunOverlapsJobs(t *testing.T) {
 		t.Fatal("Run did not stop after cancel")
 	}
 }
+
+func TestMinimalWorkerEnvForwardsSlotAndSyntheticFlagsNotOrchestrator(t *testing.T) {
+	for _, k := range []string{"UBAG_WORKER_SLOT_ID", "UBAG_WORKER_IDENTITY_LOCK", "UBAG_WORKER_STREAM_EVENTS", "UBAG_WORKER_STRICT_STREAM_END", "UBAG_WORKER_STRICT_SUBMIT", "UBAG_MOCK_SYNTHETIC"} {
+		t.Setenv(k, "1")
+	}
+	t.Setenv("UBAG_ORCHESTRATOR_ENABLED", "1")
+	values := map[string]string{}
+	for _, item := range minimalWorkerEnv() {
+		if k, v, ok := strings.Cut(item, "="); ok {
+			values[k] = v
+		}
+	}
+	for _, k := range []string{"UBAG_WORKER_SLOT_ID", "UBAG_WORKER_IDENTITY_LOCK", "UBAG_WORKER_STREAM_EVENTS", "UBAG_WORKER_STRICT_STREAM_END", "UBAG_WORKER_STRICT_SUBMIT", "UBAG_MOCK_SYNTHETIC"} {
+		if values[k] != "1" {
+			t.Fatalf("%s not forwarded: %#v", k, values)
+		}
+	}
+	if _, ok := values["UBAG_ORCHESTRATOR_ENABLED"]; ok {
+		t.Fatal("UBAG_ORCHESTRATOR_ENABLED must not be forwarded")
+	}
+}

@@ -208,3 +208,19 @@ def mark_deleted(
             pass
         return 0
     return changed
+
+
+def chat_sink_if_enabled():
+    """Engine ``chat_sink`` when UBAG_CHAT_LEDGER_ENABLED is truthy, else None (inert)."""
+    import time
+
+    raw = os.environ.get("UBAG_CHAT_LEDGER_ENABLED")
+    if raw is None or raw.strip().lower() in ("", "0", "false", "no", "off"):
+        return None
+
+    def sink(*, url, target, conversation_key):
+        record_chat(
+            url=url, target=target, created_at=time.time(), conversation_key=conversation_key
+        )
+
+    return sink

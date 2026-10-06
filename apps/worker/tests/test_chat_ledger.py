@@ -210,3 +210,37 @@ class ConvIdSelectorGuardTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DaemonChatSinkTests(unittest.TestCase):
+    def _run(self, **kw):
+        from ubag_worker.live.daemon import WarmWorkerDaemon
+
+        got = {}
+
+        class Eng:
+            def __init__(self, selectors, **k):
+                got.update(k)
+
+            def iter_events(self, payload, driver=None):
+                return iter(())
+
+        daemon = WarmWorkerDaemon(
+            driver_factory=lambda sel: MockPageDriver(), engine_factory=Eng, **kw)
+        list(daemon.run_job(_payload("chatgpt_web")))
+        return got
+
+    def test_sink_passed_only_when_wired(self):
+        sink = lambda **k: None  # noqa: E731
+        self.assertIs(self._run(chat_sink=sink)["chat_sink"], sink)
+        self.assertNotIn("chat_sink", self._run())
+
+    def test_chat_sink_if_enabled_follows_flag(self):
+        from unittest import mock
+
+        from ubag_worker.live.chat_ledger import chat_sink_if_enabled
+
+        with mock.patch.dict(os.environ, {"UBAG_CHAT_LEDGER_ENABLED": ""}):
+            self.assertIsNone(chat_sink_if_enabled())
+        with mock.patch.dict(os.environ, {"UBAG_CHAT_LEDGER_ENABLED": "true"}):
+            self.assertTrue(callable(chat_sink_if_enabled()))

@@ -1858,6 +1858,15 @@ func minimalWorkerEnv() []string {
 		// process, not withhold benign operational config.
 		"UBAG_CHAT_LEDGER_ENABLED": {},
 		"UBAG_CHAT_LEDGER_PATH":    {},
+		// Slot/stream/strict knobs and the mock benchmark gate: all non-secret
+		// flags. UBAG_ORCHESTRATOR_ENABLED is deliberately NOT forwarded (slot
+		// mode refuses it).
+		"UBAG_WORKER_SLOT_ID":           {},
+		"UBAG_WORKER_IDENTITY_LOCK":     {},
+		"UBAG_WORKER_STREAM_EVENTS":     {},
+		"UBAG_WORKER_STRICT_STREAM_END": {},
+		"UBAG_WORKER_STRICT_SUBMIT":     {},
+		"UBAG_MOCK_SYNTHETIC":           {},
 	}
 	env := []string{}
 	for _, item := range os.Environ() {

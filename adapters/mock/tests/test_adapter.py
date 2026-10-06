@@ -180,5 +180,33 @@ class MockAdapterTests(unittest.TestCase):
         )
 
 
+class SyntheticKnobTests(unittest.TestCase):
+    def _payload(self, **options):
+        return {"job_id": "j1", "job": {"input": {"prompt": "p"}, "options": options}}
+
+    def test_knobs_ignored_without_env(self):
+        import os
+        os.environ.pop("UBAG_MOCK_SYNTHETIC", None)
+        opts = {"mock_fail": True, "mock_result_bytes": 5000, "mock_delay_ms": 5}
+        self.assertEqual(
+            build_mock_events(self._payload(**opts)),
+            build_mock_events(self._payload()),
+        )
+
+    def test_knobs_honored_with_env(self):
+        import os
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"UBAG_MOCK_SYNTHETIC": "1"}):
+            events = build_mock_events(self._payload(mock_result_bytes=3000))
+            self.assertEqual(len(events[-1]["data"]["result"]["text"]), 3000)
+            # >512 words: gateway maxWorkerEvents must fail it explicitly.
+            self.assertGreater(len(events), 512)
+            with self.assertRaises(MockAdapterError):
+                build_mock_events(self._payload(mock_fail=True))
+            self.assertEqual(
+                build_mock_events(self._payload(mock_delay_ms=1))[-1]["type"], "completed"
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

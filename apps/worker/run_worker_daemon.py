@@ -71,7 +71,11 @@ def main() -> int:
         )
         return 2
     _reap_orphan_slot_registries()
-    daemon = WarmWorkerDaemon(orchestrator=_orchestrator_if_enabled())
+    from ubag_worker.live.chat_ledger import chat_sink_if_enabled
+
+    daemon = WarmWorkerDaemon(
+        orchestrator=_orchestrator_if_enabled(), chat_sink=chat_sink_if_enabled()
+    )
 
     # SIGTERM/SIGINT previously leaked the warm browser page: nothing closed
     # the daemon. Close it (pages + driver) and exit cleanly.

@@ -71,6 +71,7 @@ class WarmWorkerDaemon:
         engine_factory: Callable[[Any], Any] = LiveSessionEngine,
         selectors_by_target: Mapping[str, Any] = PROVIDER_SELECTORS,
         orchestrator: Optional[Any] = None,
+        chat_sink: Optional[Callable[..., Any]] = None,
     ) -> None:
         self._driver_factory = driver_factory
         self._engine_factory = engine_factory
@@ -80,6 +81,8 @@ class WarmWorkerDaemon:
         # None (the default, and what run_worker_daemon constructs unless
         # UBAG_ORCHESTRATOR_ENABLED is truthy) keeps behavior byte-identical.
         self._orchestrator = orchestrator
+        # Chat-ledger sink (UBAG_CHAT_LEDGER_ENABLED); None keeps behavior unchanged.
+        self._chat_sink = chat_sink
 
     def warm_key(self, payload: Mapping[str, Any]) -> str:
         """One-way hash of the physical session (protocol v2 JOB_END ``warm_key``)."""
@@ -136,12 +139,14 @@ class WarmWorkerDaemon:
 
         self._evict_other_keys(key)
         driver = self._checkout(key, selectors, payload)
-        if self._orchestrator is None:
-            engine = self._engine_factory(selectors)
-        else:
-            # Factories default to LiveSessionEngine(selectors) — a single
-            # positional arg. Only inject the orchestrator when one is wired.
-            engine = self._engine_factory(selectors, orchestrator=self._orchestrator)
+        # Factories default to LiveSessionEngine(selectors) — a single
+        # positional arg. Only inject the orchestrator/sink when wired.
+        extra: Dict[str, Any] = {}
+        if self._orchestrator is not None:
+            extra["orchestrator"] = self._orchestrator
+        if self._chat_sink is not None:
+            extra["chat_sink"] = self._chat_sink
+        engine = self._engine_factory(selectors, **extra)
         completed = False
         try:
             for event in engine.iter_events(payload, driver=driver):
