@@ -293,6 +293,12 @@ services:
       # UBAG-as-OET-AI-provider integration (OpenAI facade); harmless to other
       # tenants — the gateway still authenticates every caller.
       - oetwebsite_internal
+      # The shared fleet manager's own bridge (oet-fleet project, created by
+      # its compose). The gateway's allocation poll dials
+      # http://oet-fleet-manager:8080 across it; without this attachment the
+      # poll fails DNS every UBAG_FLEET_POLL_SECONDS. Outbound only: the
+      # manager never initiates into this stack.
+      - oet_fleet_net
 
   agy-slot-1:
     <<: *antigravity-account
@@ -457,6 +463,8 @@ networks:
   platform:
     external: true
   oetwebsite_internal:
+    external: true
+  oet_fleet_net:
     external: true
 
 volumes:
