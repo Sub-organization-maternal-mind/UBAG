@@ -683,8 +683,10 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	if err != nil && ctx.Err() == nil && (errors.Is(err, ErrPoolOverloaded) || errors.As(err, &heldBack)) {
 		// Lease-then-place (ADR-0011): the job was leased but no worker slot (or
 		// no helper) could take it. It never ran, so it is neither failed nor
-		// completed.
+		// completed. It is already assigned, so the hold is noted for operators
+		// (fleet summary) only; a tenant's queue_reason covers queued jobs.
 		releaseExecLease()
+		c.Holds.NoteAssigned(job.ID, job.TenantID, job.AppID, holdReason(err))
 		return c.retryAfterDelay(ctx, lease, err)
 	}
 	if err != nil {

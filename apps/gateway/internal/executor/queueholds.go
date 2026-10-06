@@ -65,7 +65,11 @@ type HoldInfo struct {
 	Fine string
 	// Since is when the current reason began; it restarts only when the reason changes.
 	Since time.Time
-	seen  time.Time
+	// Assigned marks a hold noted after the job was set to assigned (a worker
+	// pool refusal). Tenants see only queued jobs by reason, so the tenant
+	// summary skips these; the operator fleet summary counts them.
+	Assigned bool
+	seen     time.Time
 }
 
 // HoldBoard is the bounded in-memory view of the leased jobs this gateway is
@@ -89,6 +93,16 @@ func NewHoldBoard() *HoldBoard { return &HoldBoard{m: map[string]HoldInfo{}, now
 // Note records that jobID is held for the fine reason. A reason that is not a short
 // identifier token is recorded as other_hold.
 func (b *HoldBoard) Note(jobID, tenantID, appID, fine string) {
+	b.note(jobID, tenantID, appID, fine, false)
+}
+
+// NoteAssigned is Note for a job already set to assigned whose worker slot was
+// refused (pool saturation): operators see the hold, the job stays assigned.
+func (b *HoldBoard) NoteAssigned(jobID, tenantID, appID, fine string) {
+	b.note(jobID, tenantID, appID, fine, true)
+}
+
+func (b *HoldBoard) note(jobID, tenantID, appID, fine string, assigned bool) {
 	if b == nil || jobID == "" {
 		return
 	}
@@ -109,7 +123,7 @@ func (b *HoldBoard) Note(jobID, tenantID, appID, fine string) {
 	if ok && cur.Fine == fine && now.Sub(cur.seen) < holdTTL {
 		since = cur.Since
 	}
-	b.m[jobID] = HoldInfo{TenantID: tenantID, AppID: appID, Fine: fine, Since: since, seen: now}
+	b.m[jobID] = HoldInfo{TenantID: tenantID, AppID: appID, Fine: fine, Since: since, Assigned: assigned, seen: now}
 }
 
 // Clear forgets a job (it was assigned, or is no longer held).
@@ -137,10 +151,20 @@ func (b *HoldBoard) Lookup(jobID string) (HoldInfo, bool) {
 	return h, true
 }
 
-// Counts returns the live holds per fine reason. An empty tenantID counts every
+// Counts returns the live holds per fine reason of jobs that still read as queued. An empty tenantID counts every
 // tenant (the operator view); otherwise only that tenant's holds, and only that
 // app's when appID is set.
 func (b *HoldBoard) Counts(tenantID, appID string) map[string]int {
+	return b.counts(tenantID, appID, false)
+}
+
+// AllCounts is the operator view: every tenant, including the holds on jobs
+// already assigned (Counts skips those, since they no longer read as queued).
+func (b *HoldBoard) AllCounts() map[string]int {
+	return b.counts("", "", true)
+}
+
+func (b *HoldBoard) counts(tenantID, appID string, withAssigned bool) map[string]int {
 	out := map[string]int{}
 	if b == nil {
 		return out
@@ -149,7 +173,7 @@ func (b *HoldBoard) Counts(tenantID, appID string) map[string]int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, h := range b.m {
-		if now.Sub(h.seen) >= holdTTL || (tenantID != "" && h.TenantID != tenantID) || (appID != "" && h.AppID != appID) {
+		if now.Sub(h.seen) >= holdTTL || (tenantID != "" && h.TenantID != tenantID) || (appID != "" && h.AppID != appID) || (h.Assigned && !withAssigned) {
 			continue
 		}
 		key := h.Fine

@@ -99,7 +99,7 @@ func newFleetViewFromEnv(store nodes.Store, poller *nodes.Poller, fleet *helperF
 	cfg := nodes.FleetViewConfig{
 		Allocations: func(ctx context.Context, _ time.Time) ([]nodes.Allocation, error) { return store.ListAllocations(ctx) },
 		State:       store.GetState,
-		Held:        func() map[string]int { return holds.Counts("", "") },
+		Held:        func() map[string]int { return holds.AllCounts() },
 	}
 	if poller != nil {
 		cfg.Allocations = poller.Current
