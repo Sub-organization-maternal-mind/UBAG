@@ -8,6 +8,10 @@ would block forever on a job that is already over.
 import io
 import json
 
+import pytest
+from ubag_worker.live.daemon import WarmWorkerDaemon, _driver_key
+from ubag_worker.live.page_driver import MockPageDriver
+from ubag_worker.live.selectors import PROVIDER_SELECTORS
 from ubag_worker.live.daemon_protocol import (
     EXIT_DEADLINE,
     JOB_END,
@@ -264,3 +268,175 @@ class TestProtocolV2:
         monkeypatch.setenv("UBAG_ORCHESTRATOR_ENABLED", "true")
 
         assert run_worker_daemon.main() == 2
+
+
+# --- read-only provider readiness probe (proto:2 probe + payload) ------------
+
+
+class _ReadOnlyDriver(MockPageDriver):
+    """Any write-ish call is a test failure: a probe may only open + detect."""
+
+    def submit_prompt(self, selectors, prompt):
+        raise AssertionError("readiness probe must never submit")
+
+    def await_manual_login(self, selectors, *, timeout_s):
+        raise AssertionError("readiness probe must never drive a login")
+
+
+def _probe_line(target="gemini_web", tenant="t1"):
+    return json.dumps(
+        {
+            "__ubag_control__": "probe",
+            "proto": 2,
+            "payload": {"job": {"target": target}, "tenant_id": tenant, "input": {"prompt": "NO"}},
+        }
+    )
+
+
+def _probe(daemon, line=None):
+    out = io.StringIO()
+    serve(io.StringIO((line or _probe_line()) + "\n"), out, daemon)
+    (reply,) = _lines(out)
+    return reply
+
+
+@pytest.fixture
+def probe_env(monkeypatch, tmp_path):
+    monkeypatch.setenv("UBAG_CHAT_LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
+    monkeypatch.delenv("UBAG_WORKER_SLOT_ID", raising=False)
+    monkeypatch.delenv("UBAG_WORKER_IDENTITY_LOCK", raising=False)
+    monkeypatch.setenv("UBAG_WORKER_PROBE_MIN_INTERVAL_S", "0")
+    return tmp_path
+
+
+def _daemon(**driver_kwargs):
+    drivers = []
+
+    def factory(_options):
+        d = _ReadOnlyDriver(**driver_kwargs)
+        drivers.append(d)
+        return d
+
+    return WarmWorkerDaemon(driver_factory=factory), drivers
+
+
+class TestReadinessProbe:
+    def test_probe_reports_login_state_and_selector_version_without_writing(self, probe_env):
+        daemon, drivers = _daemon(authenticated=True)
+
+        reply = _probe(daemon)
+
+        assert reply["__ubag_control__"] == "probe" and reply["proto"] == 2
+        assert reply["state"] == "idle" and reply["login_state"] == "authenticated"
+        assert reply["target"] == "gemini_web" and reply["selector_version"]
+        assert len(drivers) == 1 and drivers[0].opened and drivers[0].closed
+        assert drivers[0].submitted_prompt is None
+        assert JOB_END not in reply
+
+    def test_logged_out_session_maps_to_login_required_never_logs_in(self, probe_env):
+        daemon, drivers = _daemon(authenticated=False, login_after_wait=True)
+
+        assert _probe(daemon)["login_state"] == "login_required"
+        assert drivers[0].authenticated is False  # await_manual_login was not called
+
+    def test_selector_drift_and_driver_errors_are_unknown_without_leaking(self, probe_env):
+        daemon, _ = _daemon(drift_group=PROVIDER_SELECTORS["gemini_web"].authenticated_signal.name)
+        assert _probe(daemon)["login_state"] == "unknown"
+
+        def boom(_options):
+            raise RuntimeError("secret /home/u/profile")
+
+        reply = _probe(WarmWorkerDaemon(driver_factory=boom))
+        assert reply["login_state"] == "unknown" and "secret" not in json.dumps(reply)
+
+    def test_unknown_target_is_a_generic_error_not_an_exception_text(self, probe_env):
+        daemon, drivers = _daemon()
+
+        reply = _probe(daemon, _probe_line(target="nope"))
+
+        assert reply["error"] == "readiness_probe_failed" and "login_state" not in reply
+        assert "nope" not in json.dumps(reply) and not drivers
+
+    def test_probe_without_payload_stays_a_pure_liveness_query(self, probe_env):
+        daemon, drivers = _daemon()
+        line = json.dumps({"__ubag_control__": "probe", "proto": 2})
+
+        reply = _probe(daemon, line)
+
+        assert reply["state"] == "idle" and "login_state" not in reply and not drivers
+
+    def test_probe_on_a_held_identity_returns_busy_and_does_not_touch_the_browser(
+        self, probe_env, monkeypatch
+    ):
+        from ubag_worker.live import daemon as daemon_mod
+        from ubag_worker.live.identity_lock import IdentityBusy
+
+        class _Held:
+            def __init__(self, key, *, blocking=True):
+                assert blocking is False  # a probe must never wait for a job
+
+            def __enter__(self):
+                raise IdentityBusy("held")
+
+            def __exit__(self, *_):
+                pass
+
+        monkeypatch.setenv("UBAG_WORKER_SLOT_ID", "0")
+        monkeypatch.setattr(daemon_mod, "IdentityLock", _Held)
+        daemon, drivers = _daemon()
+
+        reply = _probe(daemon)
+
+        assert reply["state"] == "busy" and "login_state" not in reply
+        assert reply["selector_version"] and not drivers
+
+    def test_probe_releases_the_lock_it_took(self, probe_env, monkeypatch):
+        from ubag_worker.live import daemon as daemon_mod
+
+        log = []
+
+        class _Rec:
+            def __init__(self, key, *, blocking=True):
+                log.append(("new", blocking))
+
+            def __enter__(self):
+                log.append("enter")
+                return self
+
+            def __exit__(self, *_):
+                log.append("exit")
+
+        monkeypatch.setenv("UBAG_WORKER_SLOT_ID", "0")
+        monkeypatch.setattr(daemon_mod, "IdentityLock", _Rec)
+        daemon, _ = _daemon()
+
+        assert _probe(daemon)["login_state"] == "authenticated"
+        assert log == [("new", False), "enter", "exit"]
+
+    def test_repeat_probes_inside_the_interval_are_served_from_cache(self, probe_env, monkeypatch):
+        monkeypatch.setenv("UBAG_WORKER_PROBE_MIN_INTERVAL_S", "30")
+        daemon, drivers = _daemon()
+        now = [100.0]
+        daemon._clock = lambda: now[0]
+
+        first = _probe(daemon)
+        now[0] += 5
+        second = _probe(daemon)
+        now[0] += 30
+        third = _probe(daemon)
+
+        assert "cached" not in first and second["cached"] is True
+        assert second["login_state"] == "authenticated"
+        assert "cached" not in third and len(drivers) == 2
+
+    def test_probe_reuses_a_warm_page_and_leaves_it_open(self, probe_env):
+        daemon, drivers = _daemon()
+        warm = _ReadOnlyDriver()
+        payload = json.loads(_probe_line())["payload"]
+        daemon._warm[_driver_key(payload)] = warm
+
+        reply = daemon.probe_readiness(json.loads(_probe_line())["payload"])
+
+        assert reply["login_state"] == "authenticated"
+        assert not drivers and warm.closed is False
+        assert daemon._warm  # still warm for the next job

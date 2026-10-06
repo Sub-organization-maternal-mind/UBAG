@@ -16,7 +16,9 @@ already finished.
 Protocol v2 is strictly opt-in (see worker-daemon-request.schema.json): a job line
 carrying ``"proto": 2`` gets a JOB_END that also echoes proto/attempt_id/slot_id
 and adds pid, warm_key (one-way hash), outcome_signal and submitted; a
-``{"__ubag_control__": "hello"|"probe", "proto": 2}`` line gets one control reply.
+``{"__ubag_control__": "hello"|"probe", "proto": 2}`` line gets one control reply;
+a probe that carries a ``payload`` is a read-only provider readiness probe
+(``login_state``, ``selector_version``, or ``state: busy`` on a locked identity).
 A v1 line gets the exact v1 bytes: the daemon never emits an unsolicited line.
 
 Events are forwarded untouched. This layer decides where the page comes from,
@@ -220,7 +222,7 @@ def _v2_fields(request: Mapping[str, Any], payload: Mapping[str, Any], daemon: A
     return fields
 
 
-def _control_reply(kind: str) -> dict:
+def _control_reply(kind: str, request: Optional[Mapping[str, Any]] = None, daemon: Any = None) -> dict:
     # One reply per explicit control line. Probe is read-only: the loop is serial,
     # so the daemon is idle whenever it reads a line.
     reply: dict = {CONTROL: kind, "proto": PROTO_V2, "pid": os.getpid()}
@@ -229,8 +231,20 @@ def _control_reply(kind: str) -> dict:
         reply["slot_id"] = int(slot)
     if kind == "hello":
         reply["features"] = list(FEATURES)
-    else:
-        reply["state"] = "idle"
+        return reply
+    reply["state"] = "idle"
+    payload = request.get("payload") if request is not None else None
+    if payload is not None:
+        # Provider readiness probe: open + detect_login_state only (never submit).
+        try:
+            if not isinstance(payload, Mapping) or not callable(
+                getattr(daemon, "probe_readiness", None)
+            ):
+                raise ValueError("readiness probe unavailable")
+            reply.update(daemon.probe_readiness(payload))
+        except Exception:  # noqa: BLE001 - generic, no exception text on the wire
+            reply["state"] = "idle"
+            reply["error"] = "readiness_probe_failed"
     return reply
 
 
@@ -250,7 +264,7 @@ def serve(stdin: TextIO, stdout: TextIO, daemon: Any) -> int:
                     request.get("proto") == PROTO_V2
                     and request.get(CONTROL) in ("hello", "probe")
                 ):
-                    _emit(stdout, _control_reply(request[CONTROL]))
+                    _emit(stdout, _control_reply(request[CONTROL], request, daemon))
                     continue
                 job_id = str(request.get("job_id", ""))
                 payload = request.get("payload")
