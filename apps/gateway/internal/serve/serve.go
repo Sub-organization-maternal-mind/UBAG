@@ -215,6 +215,16 @@ func Run(ctx context.Context) error {
 			"relay_addr", os.Getenv("UBAG_VOICE_AUDIO_RELAY_ADDR"))
 	}
 
+	// Helper Node store (UBAG_HELPER_NODES, default off). Consumers (trust
+	// plane, allocation poller, placement) land in later P4 slices.
+	helperNodes, err := newHelperNodeStoreFromEnv(ctx, storeKind, db)
+	if err != nil {
+		return fmt.Errorf("invalid helper node configuration: %w", err)
+	}
+	if helperNodes != nil {
+		slog.Info("helper node store enabled", "store", storeKind)
+	}
+
 	appJWTPublicKey, err := appJWTPublicKeyFromEnv()
 	if err != nil {
 		return fmt.Errorf("invalid app JWT configuration: %w", err)
