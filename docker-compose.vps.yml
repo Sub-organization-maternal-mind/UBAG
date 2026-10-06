@@ -107,6 +107,9 @@ services:
       UBAG_VOICE_STORE: ${UBAG_VOICE_STORE:-memory}
       # 1/true = stop media after 5 consecutive store errors (default off = fail open).
       UBAG_VOICE_RECONCILER_FAIL_CLOSED: ${UBAG_VOICE_RECONCILER_FAIL_CLOSED:-}
+      # Voice and browser jobs exclude each other on a shared browser (P5.5). Empty/1 = on
+      # (changes nothing while no voice session holds the browser); 0 = off.
+      UBAG_VOICE_LANE_EXCLUSION: ${UBAG_VOICE_LANE_EXCLUSION:-}
       UBAG_VOICE_AUDIO_RELAY_ADDR: ${UBAG_VOICE_AUDIO_RELAY_ADDR:-browser:9099}
       # Control jobs carry the browser-context index on multi-context environments (empty/0 = off).
       UBAG_VOICE_CONTEXT_INDEX: ${UBAG_VOICE_CONTEXT_INDEX:-}

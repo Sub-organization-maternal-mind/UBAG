@@ -220,6 +220,10 @@ func Run(ctx context.Context) error {
 			"relay_addr", os.Getenv("UBAG_VOICE_AUDIO_RELAY_ADDR"))
 	}
 
+	// Voice and jobs exclude each other on a shared browser (P5.5): the probe is
+	// what the job consumer asks, the registry is what a voice admission asks.
+	voiceLanes := wireVoiceLaneExclusion(voiceStore, enterprise.topology, enterprise.concurrency, enterprise.admission)
+
 	// Helper Node store (UBAG_HELPER_NODES, default off). Consumers (trust
 	// plane, allocation poller, placement) land in later P4 slices.
 	helperNodes, err := newHelperNodeStoreFromEnv(ctx, storeKind, db)
@@ -301,6 +305,9 @@ func Run(ctx context.Context) error {
 		VoiceContextIndex: envBool("UBAG_VOICE_CONTEXT_INDEX"),
 		// Off (default) frees a terminated session's leases at once, as before.
 		VoiceTerminatingHold: voiceStore != nil && voice.HelperVoiceEnabled(os.Getenv),
+		// On by default whenever voice sessions are configured (UBAG_VOICE_LANE_EXCLUSION=0
+		// opts out): a voice admission skips a browser with a running job.
+		VoiceLaneExclusion: voiceLanes != nil,
 
 		RateLimiter:       enterprise.rateLimiter,
 		RateLimitResolver: enterprise.rateResolver,
@@ -337,6 +344,7 @@ func Run(ctx context.Context) error {
 			return fmt.Errorf("worker consumer is not ready: %w", err)
 		}
 		consumer.Metrics = server
+		consumer.VoiceLanes = voiceLanes
 		if closer, ok := consumer.Queue.(interface{ Close() }); ok {
 			defer closer.Close()
 		}

@@ -285,6 +285,13 @@ type Config struct {
 	// flag ladder); off is the previous immediate release.
 	VoiceTerminatingHold bool
 
+	// VoiceLaneExclusion makes a voice admission skip a browser environment with
+	// a running browser job (the job consumer holds jobs back while a live
+	// session holds the browser: executor.WorkerConsumer.VoiceLanes). It reads
+	// the browser-lane registrations in Concurrency, so it does nothing without
+	// one. Wired from UBAG_VOICE_LANE_EXCLUSION (default on when voice is on).
+	VoiceLaneExclusion bool
+
 	// VoiceSessionTTL is the default lease window between renewals
 	// (30s..1h). Zero selects the 10-minute default.
 	VoiceSessionTTL time.Duration
@@ -343,6 +350,7 @@ type Server struct {
 	voiceActivation  bool
 	voiceContextIdx  bool
 	voiceHold        bool // terminating hold on (needs voiceActivation)
+	voiceLanes       bool // voice admission respects running browser jobs (needs concurrency)
 	voiceLife        voiceLifecycle
 	voiceMedia       MediaNegotiator
 	voiceSessionTTL  time.Duration
@@ -665,6 +673,7 @@ func NewServer(config Config) *Server {
 		voiceActivation:    config.VoiceProviderActivation,
 		voiceContextIdx:    config.VoiceContextIndex,
 		voiceHold:          config.VoiceProviderActivation && config.VoiceTerminatingHold,
+		voiceLanes:         config.VoiceLaneExclusion && config.Concurrency != nil,
 		voiceMedia:         config.VoiceMedia,
 		voiceSessionTTL:    config.VoiceSessionTTL,
 

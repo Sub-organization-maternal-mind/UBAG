@@ -152,6 +152,16 @@ type WorkerConsumer struct {
 	// HeartbeatInterval paces lease/queue heartbeats (default 10s).
 	HeartbeatInterval time.Duration
 
+	// VoiceLanes, when set (a gateway with voice sessions), makes a job that
+	// drives the shared browser wait while a live voice session holds it: the
+	// job registers on the browser lane in Concurrency, then asks the probe, and
+	// a held lane sends it back to the queue after a delay (voicelane.go). Nil
+	// (voice off, or UBAG_VOICE_LANE_EXCLUSION=0) never looks.
+	VoiceLanes VoiceLaneProbe
+	// VoiceLaneRetryDelay is how long a job held back by a voice session waits
+	// before its lease goes back to the queue. Zero is 2s (the pool overload delay).
+	VoiceLaneRetryDelay time.Duration
+
 	inflight atomic.Int64
 }
 
@@ -474,6 +484,15 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		}
 		defer releaseExecLease()
 	}
+	// A browser job and a live voice session exclude each other on the browser
+	// (voicelane.go). Checked before the job is assigned: a held-back job has not
+	// started, so it stays queued and goes back to the queue after a delay.
+	laneHold, laneErr := c.enterBrowserLane(ctx, envelope)
+	if laneErr != nil {
+		releaseExecLease()
+		return c.retryAfterDelay(ctx, lease, laneErr)
+	}
+	defer laneHold.Release()
 	assignedJob, found, err := c.Jobs.UpdateStatus(ctx, job.ID, jobstore.StatusAssigned)
 	if err != nil {
 		_ = lease.Retry(ctx)
@@ -495,13 +514,13 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		ingest = &streamIngest{c: c, job: job, envelope: envelope}
 	}
 	workerStarted := time.Now()
-	events, err := c.runWorkerWithCancellation(ctx, lease, execToken, envelope, ingest)
+	events, err := c.runWorkerWithCancellation(ctx, lease, execToken, laneHold, envelope, ingest)
 	workerDuration := time.Since(workerStarted)
 	if err != nil && ctx.Err() == nil && errors.Is(err, ErrPoolOverloaded) {
 		// Lease-then-place (ADR-0011): the job was leased but no worker slot could
 		// take it. It never ran, so it is neither failed nor completed.
 		releaseExecLease()
-		return c.retryAfterOverload(ctx, lease, err)
+		return c.retryAfterDelay(ctx, lease, err)
 	}
 	if err != nil {
 		outcome := "failure"
@@ -1099,7 +1118,7 @@ func (c *WorkerConsumer) workerQueue() (WorkerQueue, error) {
 	return nil, fmt.Errorf("worker consumer queue is not configured")
 }
 
-func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease WorkerLease, execToken string, envelope DispatchEnvelope, ingest *streamIngest) ([]jobstore.WorkerEvent, error) {
+func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease WorkerLease, execToken string, laneHold *topology.LaneHold, envelope DispatchEnvelope, ingest *streamIngest) ([]jobstore.WorkerEvent, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -1151,6 +1170,13 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 						}
 					}
 				}
+				// A shared browser-lane registration that lapsed (the store was
+				// unreachable for its whole TTL) means a voice session may now hold
+				// the browser: stop rather than run under a live call.
+				if err := laneHold.Renew(runCtx); errors.Is(err, topology.ErrTokenLost) {
+					cancel()
+					return
+				}
 			case <-jobWake:
 				if c.jobCanceled(runCtx, envelope.JobID) {
 					cancel()
@@ -1183,23 +1209,34 @@ const (
 	maxOverloadRetryDelay     = 30 * time.Second
 )
 
-// retryAfterOverload returns a leased job whose placement was refused (a
-// saturated DaemonPool) to the queue AFTER a delay. The delay is what keeps a
-// saturated pool from becoming a busy loop: the file spool's Retry re-queues
-// instantly and wakes the poller, so lease -> overload -> Retry -> lease would
-// spin. The job stays leased while it waits, so no other consumer picks it up
-// early. It is a nack, never an ack: the job is not failed or completed, and its
-// status stays what the assignment made it.
-func (c *WorkerConsumer) retryAfterOverload(ctx context.Context, lease WorkerLease, cause error) (bool, error) {
+// retryAfterDelay returns a leased job that could not start (a saturated
+// DaemonPool refused its placement, or a live voice session holds its browser)
+// to the queue AFTER a delay. The delay is what keeps either from becoming a busy
+// loop: the file spool's Retry re-queues instantly and wakes the poller, so
+// lease -> refuse -> Retry -> lease would spin. The job stays leased while it
+// waits, so no other consumer picks it up early. It is a nack, never an ack: the
+// job is not failed or completed, and its status stays what it was.
+func (c *WorkerConsumer) retryAfterDelay(ctx context.Context, lease WorkerLease, cause error) (bool, error) {
 	delay, reason := defaultOverloadRetryDelay, "overloaded"
 	var overload *PoolOverloadError
-	if errors.As(cause, &overload) {
+	var busy *LaneBusyError
+	switch {
+	case errors.As(cause, &overload):
 		reason = overload.Reason
 		if overload.RetryAfter > 0 {
 			delay = min(overload.RetryAfter, maxOverloadRetryDelay)
 		}
+	case errors.As(cause, &busy):
+		reason = busy.Reason
+		if busy.RetryAfter > 0 {
+			delay = min(busy.RetryAfter, maxOverloadRetryDelay)
+		}
 	}
-	slog.Warn("worker placement refused; retrying the lease after a delay",
+	level := slog.LevelWarn
+	if busy != nil && busy.Reason != laneStateUnavailable {
+		level = slog.LevelInfo // an expected wait behind a call, repeated every delay; not an alarm
+	}
+	slog.Log(ctx, level, "worker placement refused; retrying the lease after a delay",
 		"job_id", lease.JobID(), "reason", reason, "delay", delay)
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
@@ -1207,7 +1244,13 @@ func (c *WorkerConsumer) retryAfterOverload(ctx context.Context, lease WorkerLea
 	case <-ctx.Done():
 	case <-timer.C:
 	}
-	return true, lease.Retry(ctx)
+	err := lease.Retry(ctx)
+	if err == nil {
+		// A shutdown during the hold ends the consumer loop: without it a queue
+		// that always has the held job would be leased and refused forever.
+		err = ctx.Err()
+	}
+	return true, err
 }
 
 // jobCanceled reports whether the job reached ANY terminal state under the

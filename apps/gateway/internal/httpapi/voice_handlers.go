@@ -146,33 +146,38 @@ func newVoiceSessionID(now time.Time) string {
 	return fmt.Sprintf("voice_%d_%s", now.Unix(), hex.EncodeToString(entropy[:]))
 }
 
-// voicePlacements resolves, server-side, the (provider account, browser
+// voiceCandidates resolves, server-side, the (provider account, browser
 // environment) pairs this tenant may hold for the target: an authenticated
 // topology context paired with the usable instance that actually hosts it.
 // A caller-supplied identity_ref is only a PREFERENCE among these pairs — it
 // is never proof of ownership, so naming an account the tenant does not own
-// (or one without a hosting environment) resolves to nothing.
-func (s *Server) voicePlacements(ctx context.Context, tenantID, target, preferred string) []voice.Placement {
+// (or one without a hosting environment) resolves to nothing. The second result
+// maps each usable instance with a registered CDP endpoint to its browser lane.
+func (s *Server) voiceCandidates(ctx context.Context, tenantID, target, preferred string) ([]voice.Placement, map[string]string) {
 	if s.topology == nil {
-		return nil
+		return nil, nil
 	}
 	instances, err := s.topology.ListInstances(ctx, topology.InstanceFilter{TenantID: tenantID, Limit: 100})
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	usable := map[string]bool{}
+	lanes := map[string]string{} // instance -> browser lane (only instances with a CDP endpoint)
 	for _, instance := range instances {
 		switch strings.ToLower(strings.TrimSpace(instance.State)) {
 		case "failed", "unhealthy", "draining", "recycling", "stopped", "terminated":
 		default:
 			if id := strings.TrimSpace(instance.InstanceID); id != "" {
 				usable[id] = true
+				if lane := topology.BrowserLaneKey(instance.RemoteEndpoint); lane != "" {
+					lanes[id] = lane
+				}
 			}
 		}
 	}
 	contexts, err := s.topology.ListContexts(ctx, topology.ContextFilter{TenantID: tenantID, Limit: 1000})
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	preferred = strings.TrimSpace(preferred)
 	var out []voice.Placement
@@ -188,7 +193,58 @@ func (s *Server) voicePlacements(ctx context.Context, tenantID, target, preferre
 			out = append(out, p)
 		}
 	}
-	return out
+	return out, lanes
+}
+
+// voicePlacements is voiceCandidates for an admission (Reserve or Claim): pairs
+// whose browser has a running job are left out (voice and jobs exclude each other
+// on a browser, see admitVoiceLanes), and the returned release must be called once
+// the store call that uses the placements has returned.
+func (s *Server) voicePlacements(ctx context.Context, tenantID, target, preferred string) ([]voice.Placement, func()) {
+	candidates, lanes := s.voiceCandidates(ctx, tenantID, target, preferred)
+	return s.admitVoiceLanes(ctx, candidates, lanes)
+}
+
+// admitVoiceLanes keeps the placements whose browser has no running job and holds
+// a voice-admission registration on each browser it keeps, so a job that starts
+// meanwhile is held back (the consumer registers, then looks for it). The caller
+// releases the registrations once Reserve or Claim has returned: from then on the
+// session's own lease, which the consumer reads from the voice store, holds the
+// browser. Register-then-look on both sides is what makes the exclusion race-free
+// (topology/lane.go). A browser whose state cannot be read is left out (fail
+// closed); an instance with no registered endpoint has no shared lane to check.
+func (s *Server) admitVoiceLanes(ctx context.Context, placements []voice.Placement, lanes map[string]string) ([]voice.Placement, func()) {
+	if !s.voiceLanes {
+		return placements, func() {}
+	}
+	var holds []*topology.LaneHold
+	kept := make([]voice.Placement, 0, len(placements))
+	for _, p := range placements {
+		lane := lanes[p.Instance]
+		if lane == "" {
+			kept = append(kept, p)
+			continue
+		}
+		hold, err := s.concurrency.EnterLane(ctx, topology.LaneVoice, lane)
+		if err != nil {
+			slog.Warn("voice admission: browser lane unavailable; skipping its placement", "error", err)
+			continue
+		}
+		if jobs, err := s.concurrency.LaneHolders(ctx, topology.LaneJob, lane); err != nil || jobs > 0 {
+			if err != nil {
+				slog.Warn("voice admission: browser lane unreadable; skipping its placement", "error", err)
+			}
+			hold.Release()
+			continue
+		}
+		holds = append(holds, hold)
+		kept = append(kept, p)
+	}
+	return kept, func() {
+		for _, hold := range holds {
+			hold.Release()
+		}
+	}
 }
 
 func containsString(list []string, want string) bool {
@@ -306,17 +362,20 @@ func (s *Server) handleVoiceSessionCreate(w http.ResponseWriter, r *http.Request
 	// the store's admission transaction, so concurrent creates and replicas
 	// cannot overshoot them: with the active budget spent a session can only
 	// queue, and a spent queue budget is an explicit, retryable overload.
+	// A browser with a running job is not offered: the session queues instead.
+	placements, releaseLanes := s.voicePlacements(ctx, tenantID, target, req.IdentityRef)
 	reserved, err := s.voice.Reserve(ctx, voice.ReserveRequest{
 		SessionID:  newVoiceSessionID(now),
 		TenantID:   tenantID,
 		AppID:      appID,
 		Target:     target,
-		Placements: s.voicePlacements(ctx, tenantID, target, req.IdentityRef),
+		Placements: placements,
 		MaxActive:  s.voiceMaxSessionsPerTenant,
 		MaxQueued:  s.voiceMaxQueuedPerTenant,
 		LeaseTTL:   ttl,
 		Now:        now,
 	})
+	releaseLanes()
 	if errors.Is(err, voice.ErrQueueFull) {
 		s.voiceOverloaded(w, r, "UBAG-VOICE-QUEUE-FULL-004",
 			fmt.Sprintf("voice-session queue budget reached (%d)", s.voiceMaxQueuedPerTenant))
@@ -509,14 +568,16 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 		// Promote: claim the first free account+environment now that the
 		// caller is actually connecting. A conflict here is an honest
 		// overload answer: the session stays queued, nothing is held.
+		placements, releaseLanes := s.voicePlacements(ctx, tenantID, session.Target, "")
 		claimed, err := s.voice.Claim(ctx, voice.ClaimRequest{
 			TenantID:   tenantID,
 			SessionID:  sessionID,
-			Placements: s.voicePlacements(ctx, tenantID, session.Target, ""),
+			Placements: placements,
 			MaxActive:  s.voiceMaxSessionsPerTenant,
 			LeaseTTL:   s.voiceLeaseTTL(),
 			Now:        now,
 		})
+		releaseLanes()
 		if errors.Is(err, voice.ErrConflict) {
 			s.voiceError(w, r, http.StatusConflict, "UBAG-VOICE-SESSION-STATE-005",
 				"no provider account or browser environment is free; the session remains queued", true, ptrInt(int(time.Second.Milliseconds())))

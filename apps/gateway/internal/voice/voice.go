@@ -309,6 +309,22 @@ type Store interface {
 	// tenant). Active counts lease-holding sessions only; queued counts
 	// StatusQueued rows.
 	GlobalSessionCounts(ctx context.Context) (active int, queued int, err error)
+
+	// ListLeaseHolders lists, across ALL tenants, the live-mode sessions that
+	// reserve a browser environment at now: live ones and terminated ones still
+	// inside their terminating hold. Unlike Get it keeps InstanceRef for a held
+	// termination. It is the truth the job consumer checks before it drives a
+	// browser (see LaneProbe).
+	ListLeaseHolders(ctx context.Context, now time.Time) ([]LeaseHolder, error)
+}
+
+// LeaseHolder is the part of a session that tells which browser environment it
+// still reserves.
+type LeaseHolder struct {
+	SessionID   string
+	TenantID    string
+	Target      string
+	InstanceRef string
 }
 
 // SessionID generates a session identifier with the vault-prefixed, sortable
@@ -709,6 +725,22 @@ func (m *MemoryStore) SweepExpired(_ context.Context, now time.Time) ([]string, 
 		swept = append(swept, s.ID)
 	}
 	return swept, nil
+}
+
+func (m *MemoryStore) ListLeaseHolders(_ context.Context, now time.Time) ([]LeaseHolder, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []LeaseHolder
+	for _, s := range m.sessions {
+		if s.Mode == ModeUtterance || s.InstanceRef == "" {
+			continue
+		}
+		if s.Status == StatusTerminated && !s.TerminatingUntil.After(now) {
+			continue // the hold elapsed; the refs just have not been cleaned yet
+		}
+		out = append(out, LeaseHolder{SessionID: s.ID, TenantID: s.TenantID, Target: s.Target, InstanceRef: s.InstanceRef})
+	}
+	return out, nil
 }
 
 func (m *MemoryStore) GlobalSessionCounts(_ context.Context) (int, int, error) {
