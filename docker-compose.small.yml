@@ -132,6 +132,8 @@ services:
       UBAG_VOICE_NAT_1TO1_IP: ${UBAG_VOICE_NAT_1TO1_IP:-}
       UBAG_VOICE_MEDIA_PORT_MIN: ${UBAG_VOICE_MEDIA_PORT_MIN:-}
       UBAG_VOICE_MEDIA_PORT_MAX: ${UBAG_VOICE_MEDIA_PORT_MAX:-}
+      # Drop mic/speaker frames queued longer than this (0/empty = count bound only).
+      UBAG_VOICE_QUEUE_MAX_AGE_MS: ${UBAG_VOICE_QUEUE_MAX_AGE_MS:-}
     depends_on:
       postgres:
         condition: service_healthy

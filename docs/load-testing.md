@@ -202,6 +202,17 @@ session into label-free series: `ubag_voice_inbound_jitter_seconds` (histogram),
 (loss ratio = lost / (received + lost)) and the gauge `ubag_voice_mic_queue_depth`
 (frames queued toward relays, summed across sessions at scrape time).
 
+Age bound (`UBAG_VOICE_QUEUE_MAX_AGE_MS`, default `0` = off): the mic channel and
+the speaker path are bounded by 64 packets, which is about 1.28 s only for 20 ms
+packets (the relay accepts up to 120 ms, so up to about 7.7 s). With a value above 0
+a queued frame older than that is dropped instead of forwarded and counted in
+`ubag_voice_media_frames_dropped_total{direction="mic_age"}` /
+`{direction="speaker_age"}`; the count bound keeps dropping the oldest frame as
+before (`mic` / `speaker`). With the bound on, the speaker pump drains the relay
+socket into its own bounded queue and a separate writer forwards it. Ages are
+stamped inside the gateway; kernel FIFO, pipe and TCP buffers are out of reach
+(P7.6). The latency bench below honours the same env var, so on/off can be compared.
+
 Offline bench (no network, no VPS): a real `MediaHub` plus a pion client over
 loopback against the in-test `fakeRelay` echo, client mic paced at the 20 ms
 Opus frame duration, sessions ramped 1/5/10/20 with one `fakeRelay` each:

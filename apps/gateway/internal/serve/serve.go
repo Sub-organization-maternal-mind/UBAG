@@ -1925,6 +1925,8 @@ func newVoiceMediaHub(store voice.Store, topo topology.Store) *voice.MediaHub {
 	hub := &voice.MediaHub{
 		Dialer: &voice.TCPRelayDialer{Address: voiceRelayResolver(topo), Secret: secret},
 		ICE:    voiceICEConfigFromEnv(),
+		// 0 / unset / invalid = count-bounded queues only (previous behavior).
+		QueueMaxAge: voiceQueueMaxAge(os.Getenv("UBAG_VOICE_QUEUE_MAX_AGE_MS")),
 	}
 	hub.OnClosed = func(s voice.Session, reason string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1941,6 +1943,16 @@ func newVoiceMediaHub(store voice.Store, topo topology.Store) *voice.MediaHub {
 		}
 	}
 	return hub
+}
+
+// voiceQueueMaxAge parses UBAG_VOICE_QUEUE_MAX_AGE_MS; anything but a
+// positive integer disables the age bound.
+func voiceQueueMaxAge(raw string) time.Duration {
+	ms, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || ms <= 0 {
+		return 0
+	}
+	return time.Duration(ms) * time.Millisecond
 }
 
 // voiceICEConfigFromEnv reads the NAT-traversal deployment settings:
