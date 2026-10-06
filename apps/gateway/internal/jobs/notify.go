@@ -94,6 +94,11 @@ func waitEventsLoop(ctx context.Context, hub *eventHub, fallback, interval time.
 	}
 	for {
 		events, found, err := read()
+		if err != nil && ctx.Err() != nil {
+			// A cancel that lands mid-read surfaces as a driver-specific error
+			// (sqlite "interrupted"); normalize to the contract (nil, true, ctx.Err()).
+			return nil, true, ctx.Err()
+		}
 		if err != nil || !found || len(events) > 0 {
 			return events, found, err
 		}

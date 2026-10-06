@@ -1,21 +1,27 @@
 {
-  "_comment": "Known npm advisories as of 2026-10-03. tools/check-npm-audit.mjs fails the build if any severity count INCREASES, or if a new critical/high appears in a workspace that currently has none. Every entry here is build tooling (vite, esbuild, astro/starlight, sharp, svgo, jsdom>undici, @sveltejs/kit>devalue, fast-uri, js-yaml, postcss, browserslist, vitest, nanoid, smol-toml) that is not present in a deployed artifact: the gateway is a Go binary and apps/dashboard ships static files with no Node runtime. The 2026-10-03 refresh absorbed newly published advisories against the same build-only backlog (two waves within the hour of each other; see the PROGRESS.md note). Re-run `node tools/check-npm-audit.mjs --update` after an intentional upgrade and commit the new numbers with a note in PROGRESS.md.",
-  "critical": 2,
-  "high": 30,
-  "moderate": 29,
+  "_comment": "Known npm advisories as of 2026-10-06 (refreshed: newly published tinypool, devalue and undici advisories in apps__dashboard; fast-uri via ajv in the build-only packages/conformance fixture validator). tools/check-npm-audit.mjs fails the build if any severity count INCREASES, or if a new critical/high appears in a workspace that currently has none. Every entry here is build tooling (vite, postcss, browserslist, nanoid, vitest, astro/starlight) that is not present in a deployed artifact: the gateway is a Go binary and apps/dashboard ships static files with no Node runtime. pnpm reports no patched version for any of them, so a plain `pnpm audit` gate could never go green and would train everyone to bypass it. Re-run `node tools/check-npm-audit.mjs --update` after an intentional upgrade and commit the new numbers with a note in PROGRESS.md.",
+  "critical": 4,
+  "high": 31,
+  "moderate": 31,
   "low": 7,
   "byWorkspace": {
     "apps__dashboard": {
-      "critical": 1,
-      "high": 13,
-      "moderate": 22,
+      "critical": 3,
+      "high": 14,
+      "moderate": 23,
       "low": 5
     },
     "apps__docs": {
       "critical": 1,
-      "high": 17,
+      "high": 10,
       "moderate": 7,
       "low": 2
+    },
+    "packages__conformance": {
+      "critical": 0,
+      "high": 7,
+      "moderate": 1,
+      "low": 0
     }
   }
 }

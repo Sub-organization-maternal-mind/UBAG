@@ -48,6 +48,7 @@ in CI), so latent test/policy drift surfaced all at once. Fixes on the branch:
 - **Supply-chain:** otel exporters 1.44.0 -> 1.47.0 fixes GO-2026-6505 /
   CVE-2026-81870 (otlptrace exporter config logging could leak collector
   URLs with embedded credentials); govulncheck is clean again.
+- **npm audit baseline refreshed again on 2026-10-06 (68 -> 73 advisories; critical 2 -> 4).** New tinypool/devalue/undici advisories in apps/dashboard (registry churn, no dependency change) and fast-uri via ajv in packages/conformance (build-only fixture validator, new devDependency; no patched version published). Nothing ships. Found by push-CI triage of feat/perf-fleet (PR feat/pf-ci-fix-2).
 - **npm audit baseline refreshed twice on 2026-10-03: 48 -> 66 -> 68
   advisories.** All additions are newly published advisories (vite, esbuild,
   js-yaml, fast-uri, sharp, svgo, undici via jsdom, devalue via
