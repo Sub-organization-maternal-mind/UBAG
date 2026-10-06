@@ -42,6 +42,12 @@ type ICEConfig struct {
 	// ServerViaTURN makes the gateway allocate a relay candidate too, for
 	// gateways with no publicly reachable UDP.
 	ServerViaTURN bool
+	// FixedServers are ICE servers whose TURN credentials were minted elsewhere
+	// (helper-hosted voice, P5.10: the primary derives them per attempt, so a
+	// Helper Node holds no TURN secret). When set they replace STUNURLs, TURNURLs
+	// and TURNSecret for the endpoint's own peer connections; a TURN entry (one
+	// with a username) is used only together with ServerViaTURN.
+	FixedServers []ICEServer
 }
 
 // ICEServer is the JSON shape clients feed straight into RTCPeerConnection.
@@ -95,6 +101,15 @@ func (c *ICEConfig) serverICEServers(sessionID string, now time.Time) []webrtc.I
 		return nil
 	}
 	var out []webrtc.ICEServer
+	if len(c.FixedServers) > 0 {
+		for _, s := range c.FixedServers {
+			if s.Username != "" && !c.ServerViaTURN {
+				continue
+			}
+			out = append(out, webrtc.ICEServer{URLs: s.URLs, Username: s.Username, Credential: s.Credential})
+		}
+		return out
+	}
 	if len(c.STUNURLs) > 0 {
 		out = append(out, webrtc.ICEServer{URLs: c.STUNURLs})
 	}
