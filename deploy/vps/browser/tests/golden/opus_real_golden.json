@@ -1,0 +1,10 @@
+{
+  "_note": "Golden Opus packets for the fixed corpus in test_opus_real.py. Byte-exact output depends on the libopus build, so libopus_version is recorded and the byte check only runs on that exact version. Not yet recorded: run in the Debian image with UBAG_OPUS_GOLDEN_UPDATE=1 (see docs/perf-fleet/slices/P7.4.md) and commit the result.",
+  "libopus_version": null,
+  "sample_rate": 48000,
+  "channels": 1,
+  "frame_samples": 960,
+  "frames": 5,
+  "packets_hex": [],
+  "decoded_sha256": []
+}
