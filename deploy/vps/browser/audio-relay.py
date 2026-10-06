@@ -108,6 +108,16 @@ Optional, all inert unless set:
   UBAG_VOICE_MIC_PIPE        mic FIFO path (default /tmp/ubag-voice-mic.pcm)
   UBAG_VOICE_PAREC           parec executable (default parec)
   UBAG_VOICE_PACTL           pactl executable (default pactl)
+  UBAG_VOICE_PIPE_BYTES      F_SETPIPE_SZ for the mic FIFO and the parec pipe
+                             (Linux only; 4096..1048576; unset = kernel
+                             default 64 KiB, nothing is changed). A smaller
+                             pipe bounds queued audio (latency) at the cost
+                             of earlier mic drops; verify live before use.
+  UBAG_VOICE_SINK_SPEC_PIN=1 create the provider null-sink as rate=48000
+                             channels=1 so PulseAudio does no hidden resampling
+                             on the monitor. Only applies when the sink is
+                             created by this relay; unset = today's behaviour.
+                             Verify with a live `pactl list short sinks`.
 Dependencies: pulseaudio (pacat/pactl), libopus0 (via opus_bridge ctypes),
 installed by the browser image.
 """
@@ -128,9 +138,15 @@ import sys
 import threading
 import time
 
+try:
+    import fcntl  # Linux only; pipe sizing is skipped without it
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None
+
 from opus_bridge import OpusDecoder, OpusEncoder, OpusError
 
 FRAME_HEADER = struct.Struct("<I")
+_FRAME_HEAD = struct.Struct("<IB")  # length + type byte in one pack
 MAX_FRAME_BYTES = 64 * 1024  # length field bound (type byte + payload)
 TYPE_AUDIO = 0x01
 TYPE_CONTROL = 0x02
@@ -189,6 +205,43 @@ def _env_float(name: str, default: float) -> float:
 IDLE_TIMEOUT_S = _env_float("UBAG_VOICE_RELAY_IDLE_S", 30.0)
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+PIPE_BYTES_MIN = 4096          # one page: the kernel floor
+PIPE_BYTES_MAX = 1 << 20       # default /proc/sys/fs/pipe-max-size for unprivileged callers
+
+
+def pipe_bytes() -> int | None:
+    """UBAG_VOICE_PIPE_BYTES, or None when unset/invalid/out of range (then
+    no pipe is touched and the kernel default applies)."""
+    raw = os.environ.get("UBAG_VOICE_PIPE_BYTES", "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if not PIPE_BYTES_MIN <= value <= PIPE_BYTES_MAX:
+        print(f"audio-relay: ignoring UBAG_VOICE_PIPE_BYTES={raw!r} "
+              f"(want {PIPE_BYTES_MIN}..{PIPE_BYTES_MAX})", file=sys.stderr)
+        return None
+    return value
+
+
+def cap_pipe(fd: int | None, what: str) -> None:
+    """Best-effort F_SETPIPE_SZ on a pipe/FIFO fd. Inert unless
+    UBAG_VOICE_PIPE_BYTES is set; a failure is logged and never fatal."""
+    size = pipe_bytes()
+    if size is None or fd is None or fcntl is None:
+        return
+    try:
+        fcntl.fcntl(fd, getattr(fcntl, "F_SETPIPE_SZ", 1031), size)
+    except (OSError, ValueError) as exc:
+        print(f"audio-relay: F_SETPIPE_SZ {what} -> {size} failed: {exc}", file=sys.stderr)
+
+
 class HandshakeError(Exception):
     """Session refused; ``reason`` is the wire error code."""
 
@@ -199,21 +252,23 @@ class HandshakeError(Exception):
 
 # --- framing -------------------------------------------------------------
 
-def read_exact(sock: socket.socket, size: int, deadline: float | None = None) -> bytes:
-    chunks = []
-    remaining = size
-    while remaining > 0:
+def read_exact(sock: socket.socket, size: int, deadline: float | None = None) -> bytearray:
+    """Read exactly ``size`` bytes into one preallocated buffer (recv_into:
+    no per-chunk bytes objects, no join)."""
+    buf = bytearray(size)
+    view = memoryview(buf)
+    got = 0
+    while got < size:
         if deadline is not None:
             left = deadline - time.monotonic()
             if left <= 0:
                 raise socket.timeout("deadline exceeded")
             sock.settimeout(left)
-        chunk = sock.recv(remaining)
-        if not chunk:
+        n = sock.recv_into(view[got:])
+        if not n:
             raise ConnectionError("peer closed")
-        chunks.append(chunk)
-        remaining -= len(chunk)
-    return b"".join(chunks)
+        got += n
+    return buf
 
 
 def read_frame(sock: socket.socket, deadline: float | None = None) -> tuple[int, bytes]:
@@ -226,13 +281,13 @@ def read_frame(sock: socket.socket, deadline: float | None = None) -> tuple[int,
     ftype = body[0]
     if ftype not in (TYPE_AUDIO, TYPE_CONTROL):
         raise ConnectionError(f"unknown frame type: {ftype:#x}")
-    return ftype, body[1:]
+    return ftype, bytes(memoryview(body)[1:])
 
 
 def write_frame(sock: socket.socket, ftype: int, payload: bytes) -> None:
     if len(payload) + 1 > MAX_FRAME_BYTES:
         raise ValueError("frame too large")
-    sock.sendall(FRAME_HEADER.pack(len(payload) + 1) + bytes((ftype,)) + payload)
+    sock.sendall(_FRAME_HEAD.pack(len(payload) + 1, ftype) + payload)
 
 
 def write_control(sock: socket.socket, msg: dict) -> None:
@@ -364,11 +419,16 @@ def pactl_names(kind: str) -> set:
 
 def devices_ok() -> bool:
     """True only when BOTH the virtual mic source and the provider sink exist
-    (whose monitor we capture)."""
+    (whose monitor we capture).
+
+    One pactl spawn, not two: PulseAudio always exposes a sink as the source
+    ``<sink>.monitor``, so the exact monitor name in `list short sources`
+    proves the sink exists (exact-name match, never a substring)."""
     try:
-        return MIC_SOURCE in pactl_names("sources") and SPEAKER_SINK in pactl_names("sinks")
+        sources = pactl_names("sources")
     except (OSError, subprocess.SubprocessError):
         return False
+    return MIC_SOURCE in sources and SPEAKER_MONITOR in sources
 
 
 def ensure_audio_devices() -> None:
@@ -389,8 +449,10 @@ def ensure_audio_devices() -> None:
         print(f"audio-relay: pactl unavailable ({exc}); audio devices not configured", file=sys.stderr)
         return
     if SPEAKER_SINK not in sinks:
+        pin = ([f"rate={SAMPLE_RATE}", f"channels={CHANNELS}"]
+               if _env_flag("UBAG_VOICE_SINK_SPEC_PIN") else [])
         run_checked(PACTL, "load-module", "module-null-sink",
-                    f"sink_name={SPEAKER_SINK}",
+                    f"sink_name={SPEAKER_SINK}", *pin,
                     "sink_properties=device.description=UBAG_Provider_Voice")
     if MIC_SOURCE not in sources:
         # module-pipe-source exposes a FIFO as a capture device; the relay's
@@ -611,11 +673,14 @@ class Session:
         except OSError as exc:
             print(f"audio-relay: mic FIFO open failed: {exc}", file=sys.stderr)
             raise HandshakeError("mic_unavailable")
+        cap_pipe(self.mic_fd, "mic FIFO")
         try:
             self.procs.append(spawn_monitor())
         except OSError as exc:
             print(f"audio-relay: parec start failed: {exc}", file=sys.stderr)
             raise HandshakeError("monitor_unavailable")
+        stdout = getattr(self.procs[0], "stdout", None)
+        cap_pipe(stdout.fileno() if hasattr(stdout, "fileno") else None, "parec pipe")
         self.conn.settimeout(IDLE_TIMEOUT_S)  # reads AND writes: no stalled peer holds us
         self._send(lambda: write_control(self.conn, {"op": "ready"}))
         self.threads = [threading.Thread(target=self._pump_mic, daemon=True),

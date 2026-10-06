@@ -80,6 +80,11 @@ class _Codec:
         self._handle = None
         self._channels = 1
         self._lock = threading.Lock()
+        # One output buffer per codec, sized for the longest legal packet
+        # (5760 samples x 2 B = 11,520 B mono) and allocated lazily. Only
+        # touched under self._lock, so reuse is thread-safe; results are
+        # copied out (string_at / slice) before the lock is released.
+        self._buf = None
 
     def close(self) -> None:
         with self._lock:
@@ -119,16 +124,18 @@ class OpusDecoder(_Codec):
             raise OpusError(f"opus packet too large: {len(packet)}")
         if not 0 < max_frame_samples <= MAX_FRAME_SAMPLES:
             raise OpusError(f"invalid max_frame_samples: {max_frame_samples}")
-        out = (ctypes.c_int16 * (max_frame_samples * self._channels))()
         with self._lock:
             if not self._handle:
                 raise OpusError("decoder closed")
+            if self._buf is None:
+                self._buf = (ctypes.c_int16 * (MAX_FRAME_SAMPLES * self._channels))()
             written = self._lib.opus_decode(
-                self._handle, bytes(packet), len(packet), out, max_frame_samples, 0,
+                self._handle, bytes(packet), len(packet), self._buf, max_frame_samples, 0,
             )
-        if written < 0:
-            raise OpusError(f"opus_decode failed: {written}")
-        return ctypes.string_at(out, written * self._channels * 2)
+            if written < 0:
+                raise OpusError(f"opus_decode failed: {written}")
+            # Copy under the lock: the next decode overwrites the buffer.
+            return ctypes.string_at(self._buf, written * self._channels * 2)
 
 
 class OpusEncoder(_Codec):
@@ -150,13 +157,15 @@ class OpusEncoder(_Codec):
         """Encode one frame of s16le interleaved PCM to an Opus packet."""
         if len(pcm) != frame_samples * self._channels * 2:
             raise OpusError(f"pcm length {len(pcm)} does not match {frame_samples} samples")
-        out = ctypes.create_string_buffer(MAX_FRAME_SAMPLES * self._channels * 2)
         with self._lock:
             if not self._handle:
                 raise OpusError("encoder closed")
+            if self._buf is None:
+                self._buf = ctypes.create_string_buffer(MAX_FRAME_SAMPLES * self._channels * 2)
             written = self._lib.opus_encode(
-                self._handle, pcm, frame_samples, out, ctypes.sizeof(out),
+                self._handle, pcm, frame_samples, self._buf, ctypes.sizeof(self._buf),
             )
-        if written < 0:
-            raise OpusError(f"opus_encode failed: {written}")
-        return out.raw[:written]
+            if written < 0:
+                raise OpusError(f"opus_encode failed: {written}")
+            # string_at copies only the packet (out.raw copied all 11,520 B).
+            return ctypes.string_at(self._buf, written)

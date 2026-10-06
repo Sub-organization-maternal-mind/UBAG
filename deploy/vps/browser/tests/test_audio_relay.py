@@ -328,9 +328,17 @@ def test_devices_ok_requires_both_mic_and_sink(rig, monkeypatch):
     assert not relay.devices_ok()  # mic missing
     monkeypatch.setattr(subprocess, "run", fake_pactl(["ubag_virtual_mic"], []))
     assert not relay.devices_ok()  # sink missing
-    # a monitor source alone must not satisfy the sink check
-    monkeypatch.setattr(subprocess, "run", fake_pactl(["ubag_virtual_mic", "ubag_provider_sink.monitor"], ["other"]))
+    # the sink is proven by its exact monitor source name, never a substring
+    monkeypatch.setattr(subprocess, "run", fake_pactl(["ubag_virtual_mic", "xubag_provider_sink.monitor"], ["x"]))
     assert not relay.devices_ok()
+
+
+def test_devices_ok_spawns_one_pactl_not_two(rig, monkeypatch):
+    calls = []
+    inner = fake_pactl(["ubag_virtual_mic", "ubag_provider_sink.monitor"], ["ubag_provider_sink"])
+    monkeypatch.setattr(subprocess, "run", lambda args, **kw: (calls.append(args), inner(args, **kw))[1])
+    assert rig.relay.devices_ok()
+    assert calls == [["pactl", "list", "short", "sources"]]
 
 
 def test_devices_ok_false_when_pactl_missing(rig, monkeypatch):
@@ -377,3 +385,139 @@ def test_single_health_miss_does_not_drop_ready(rig, monkeypatch):
     relay.device_health_step()
     relay.device_health_step()
     assert relay._devices_ready.is_set()
+
+
+# --- P7.6 relay baseline fixes: identical bytes, flag-gated knobs ---------
+
+def _old_frame(ftype, payload):
+    import struct
+    return struct.pack("<I", len(payload) + 1) + bytes((ftype,)) + payload
+
+
+@pytest.mark.parametrize("ftype", [1, 2])
+@pytest.mark.parametrize("size", [0, 1, 2, 959, 1920, 65535])
+def test_write_frame_bytes_identical_to_legacy_framing(rig, ftype, size):
+    payload = bytes(range(256)) * (size // 256) + bytes(range(size % 256))
+    sent = []
+
+    class Sock:
+        def sendall(self, data):
+            sent.append(bytes(data))
+
+    rig.relay.write_frame(Sock(), ftype, payload)
+    assert sent == [_old_frame(ftype, payload)]
+
+
+def test_read_frame_reassembles_dribbled_bytes_via_recv_into(rig):
+    payload = bytes(range(200))
+    wire = _old_frame(1, payload) + _old_frame(2, b'{"op":"x"}')
+    a, b = socket.socketpair()
+    try:
+        def dribble():
+            for i in range(0, len(wire), 7):
+                b.sendall(wire[i:i + 7])
+                time.sleep(0.0005)
+
+        t = threading.Thread(target=dribble, daemon=True)
+        t.start()
+        a.settimeout(4.0)
+        assert rig.relay.read_frame(a) == (1, payload)
+        got = rig.relay.read_frame(a)
+        assert got == (2, b'{"op":"x"}') and type(got[1]) is bytes
+        t.join(4)
+    finally:
+        a.close()
+        b.close()
+
+
+def test_read_exact_peer_close_and_deadline(rig):
+    a, b = socket.socketpair()
+    c, d = socket.socketpair()
+    try:
+        b.sendall(b"ab")
+        b.close()
+        with pytest.raises(ConnectionError):
+            rig.relay.read_exact(a, 4)
+        with pytest.raises(socket.timeout):
+            rig.relay.read_exact(c, 1, deadline=time.monotonic() + 0.05)
+    finally:
+        for sock in (a, c, d):
+            sock.close()
+
+
+class FakeFcntl:
+    F_SETPIPE_SZ = 1031
+
+    def __init__(self, fail=False):
+        self.calls = []
+        self.fail = fail
+
+    def fcntl(self, fd, op, arg):
+        if self.fail:
+            raise OSError(1, "EPERM")
+        self.calls.append((fd, op, arg))
+        return arg
+
+
+def test_pipe_cap_is_inert_unless_env_set(rig, monkeypatch):
+    fake = FakeFcntl()
+    monkeypatch.setattr(rig.relay, "fcntl", fake)
+    monkeypatch.delenv("UBAG_VOICE_PIPE_BYTES", raising=False)
+    rig.relay.cap_pipe(5, "x")
+    assert fake.calls == []
+
+
+def test_pipe_cap_applies_valid_and_ignores_invalid(rig, monkeypatch):
+    fake = FakeFcntl()
+    monkeypatch.setattr(rig.relay, "fcntl", fake)
+    for bad in ("abc", "0", "100", "99999999999"):
+        monkeypatch.setenv("UBAG_VOICE_PIPE_BYTES", bad)
+        rig.relay.cap_pipe(5, "x")
+    assert fake.calls == []
+    monkeypatch.setenv("UBAG_VOICE_PIPE_BYTES", "16384")
+    rig.relay.cap_pipe(5, "x")
+    assert fake.calls == [(5, 1031, 16384)]
+    rig.relay.cap_pipe(None, "x")
+    assert len(fake.calls) == 1
+
+
+def test_pipe_cap_failure_is_not_fatal_and_session_still_runs(rig, monkeypatch):
+    monkeypatch.setattr(rig.relay, "fcntl", FakeFcntl(fail=True))
+    monkeypatch.setenv("UBAG_VOICE_PIPE_BYTES", "16384")
+    rig.relay.cap_pipe(5, "x")  # must not raise
+    assert rig.open_session()
+
+
+def test_session_caps_mic_fifo_when_flag_set(rig, monkeypatch):
+    fake = FakeFcntl()
+    monkeypatch.setattr(rig.relay, "fcntl", fake)
+    monkeypatch.setenv("UBAG_VOICE_PIPE_BYTES", "8192")
+    assert rig.open_session()
+    assert [c[2] for c in fake.calls] == [8192]  # FakeStdout has no fileno: only the mic FIFO
+
+
+def _capture_sink_load(rig, monkeypatch, pin):
+    relay = rig.relay
+    if pin is None:
+        monkeypatch.delenv("UBAG_VOICE_SINK_SPEC_PIN", raising=False)
+    else:
+        monkeypatch.setenv("UBAG_VOICE_SINK_SPEC_PIN", pin)
+    seen = []
+    monkeypatch.setattr(relay, "wait_for_pulse", lambda *a, **k: True)
+    monkeypatch.setattr(relay, "pactl_names", lambda kind: {"ubag_virtual_mic"} if kind == "sources" else set())
+    monkeypatch.setattr(relay, "run_checked", lambda *args: seen.append(list(args)))
+    relay.ensure_audio_devices()
+    return next(a for a in seen if "module-null-sink" in a)
+
+
+def test_sink_spec_pin_off_by_default_keeps_legacy_args(rig, monkeypatch):
+    args = _capture_sink_load(rig, monkeypatch, None)
+    assert args == ["pactl", "load-module", "module-null-sink", "sink_name=ubag_provider_sink",
+                    "sink_properties=device.description=UBAG_Provider_Voice"]
+
+
+def test_sink_spec_pin_adds_48k_mono_only_when_set(rig, monkeypatch):
+    args = _capture_sink_load(rig, monkeypatch, "1")
+    assert "rate=48000" in args and "channels=1" in args
+    assert args[-1] == "sink_properties=device.description=UBAG_Provider_Voice"
+    assert "rate=48000" not in _capture_sink_load(rig, monkeypatch, "0")
