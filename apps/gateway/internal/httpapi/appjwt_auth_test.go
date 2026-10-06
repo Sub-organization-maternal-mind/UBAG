@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/appjwt"
+	"github.com/ubag/ubag/apps/gateway/internal/attemptcap"
+	"github.com/ubag/ubag/apps/gateway/internal/jobs"
 )
 
 func newAppJWTTestServer(t *testing.T, pub *rsa.PublicKey) http.Handler {
@@ -286,5 +288,28 @@ func TestAppSecretStillAuthenticatesWhenJWTConfigured(t *testing.T) {
 	resp := doJSON(handler, http.MethodGet, "/v1/jobs", "", authHeaders(""))
 	if resp.Code != http.StatusOK {
 		t.Fatalf("app-secret list with JWT configured = %d; want 200; body=%s", resp.Code, resp.Body.String())
+	}
+}
+
+// TestAppJWTRejectsAttemptCapabilityToken: a helper attempt token (typ
+// ubag-attempt, aud ubag-helper) must never authenticate the public API, even
+// if the helper-plane signing key were the same as the app JWT key.
+func TestAppJWTRejectsAttemptCapabilityToken(t *testing.T) {
+	priv, err := appjwt.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("generate key pair: %v", err)
+	}
+	handler := newAppJWTTestServer(t, &priv.PublicKey)
+	now := time.Now()
+	token, err := attemptcap.Issue(jobs.Attempt{
+		JobID: "job_1", AttemptID: "att_abc", Generation: 1, NodeID: "helper-1",
+		State: jobs.AttemptActive, LeaseExpiresAt: now.Add(time.Minute),
+	}, "tenant_a", []string{"k"}, []string{attemptcap.OpRead}, time.Minute, now, priv)
+	if err != nil {
+		t.Fatalf("issue attempt token: %v", err)
+	}
+	resp := doJSON(handler, http.MethodGet, "/v1/jobs", "", appJWTHeaders(token, ""))
+	if resp.Code != http.StatusUnauthorized {
+		t.Fatalf("attempt token on public API = %d; want 401; body=%s", resp.Code, resp.Body.String())
 	}
 }

@@ -41,6 +41,10 @@ var ErrExpired = errors.New("appjwt: token is expired")
 // ErrInvalid is returned by Verify for any structural or signature failure.
 var ErrInvalid = errors.New("appjwt: invalid token")
 
+// attemptTokenType is the JWT typ of helper attempt capability tokens
+// (package attemptcap). Duplicated as a literal so appjwt stays dependency-free.
+const attemptTokenType = "ubag-attempt"
+
 // GenerateKeyPair generates a new 2048-bit RSA key pair.
 func GenerateKeyPair() (*rsa.PrivateKey, error) {
 	key, err := rsa.GenerateKey(rand.Reader, KeySize)
@@ -87,6 +91,11 @@ func Verify(tokenStr string, publicKey *rsa.PublicKey) (AppClaims, error) {
 	if err := json.Unmarshal(headerJSON, &header); err != nil || header["alg"] != "RS256" {
 		return AppClaims{}, fmt.Errorf("%w: unsupported algorithm", ErrInvalid)
 	}
+	// An app JWT is never an attempt capability token, even if one were ever
+	// signed with this key.
+	if header["typ"] == attemptTokenType {
+		return AppClaims{}, fmt.Errorf("%w: not an app token", ErrInvalid)
+	}
 
 	// Verify signature.
 	signingInput := parts[0] + "." + parts[1]
@@ -103,6 +112,18 @@ func Verify(tokenStr string, publicKey *rsa.PublicKey) (AppClaims, error) {
 	payloadJSON, err := base64urlDecode(parts[1])
 	if err != nil {
 		return AppClaims{}, ErrInvalid
+	}
+	// App tokens are audience-less. Any token carrying aud (helper attempt
+	// capabilities, third-party JWTs) is rejected so it can never authenticate
+	// the public API. AppClaims is deliberately not widened to carry aud.
+	var probe struct {
+		Aud json.RawMessage `json:"aud"`
+	}
+	if err := json.Unmarshal(payloadJSON, &probe); err != nil {
+		return AppClaims{}, fmt.Errorf("%w: malformed claims", ErrInvalid)
+	}
+	if probe.Aud != nil {
+		return AppClaims{}, fmt.Errorf("%w: audience-bound token", ErrInvalid)
 	}
 	var claims AppClaims
 	if err := json.Unmarshal(payloadJSON, &claims); err != nil {

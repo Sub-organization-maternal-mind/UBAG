@@ -1,8 +1,12 @@
 package appjwt
 
 import (
+	"crypto"
+	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -99,5 +103,39 @@ func TestIsExpired(t *testing.T) {
 	future := AppClaims{Expires: time.Now().Add(time.Hour).Unix()}
 	if future.IsExpired(time.Now()) {
 		t.Error("IsExpired must return false for future expiry")
+	}
+}
+
+// signRaw signs an arbitrary header/payload with the app key, to model a token
+// minted by something other than IssueToken.
+func signRaw(t *testing.T, header, payload string, priv *rsa.PrivateKey) string {
+	t.Helper()
+	in := base64url([]byte(header)) + "." + base64url([]byte(payload))
+	digest := sha256.Sum256([]byte(in))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, digest[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return in + "." + base64url(sig)
+}
+
+func TestVerifyRejectsAudienceBoundAndAttemptTokens(t *testing.T) {
+	priv, _ := GenerateKeyPair()
+	exp := time.Now().Add(time.Hour).Unix()
+	body := func(extra string) string {
+		return `{"tid":"t","sub":"a","role":"admin","iat":1,"exp":` + strconv.FormatInt(exp, 10) + extra + `}`
+	}
+	if _, err := Verify(signRaw(t, `{"alg":"RS256","typ":"JWT"}`, body(""), priv), &priv.PublicKey); err != nil {
+		t.Fatalf("baseline app token must verify: %v", err)
+	}
+	for name, tok := range map[string]string{
+		"aud string":  signRaw(t, `{"alg":"RS256","typ":"JWT"}`, body(`,"aud":"ubag-helper"`), priv),
+		"aud array":   signRaw(t, `{"alg":"RS256","typ":"JWT"}`, body(`,"aud":["x"]`), priv),
+		"aud null":    signRaw(t, `{"alg":"RS256","typ":"JWT"}`, body(`,"aud":null`), priv),
+		"attempt typ": signRaw(t, `{"alg":"RS256","typ":"ubag-attempt"}`, body(""), priv),
+	} {
+		if _, err := Verify(tok, &priv.PublicKey); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: got %v, want ErrInvalid", name, err)
+		}
 	}
 }
