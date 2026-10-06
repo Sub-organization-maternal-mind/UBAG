@@ -26,6 +26,8 @@ The full UBAG Gateway REST API reference is available in machine-readable OpenAP
 | GET | /v1/adapters | List adapters |
 | GET | /v1/browser/instances | List browser instances |
 | GET | /v1/browser/summary | Browser session summary |
+| GET | /v1/fleet/nodes | Operator view of the helper nodes: state, grant, usage, pressure, readiness (`fleet:read`; `501` without a fleet source) |
+| GET | /v1/fleet/summary | Operator fleet totals and held-job counts by reason (`fleet:read`; `501` without a fleet source) |
 | GET | /v1/metrics | Gateway metrics |
 | GET | /v1/audit | Audit log |
 | GET | /v1/templates | List templates |

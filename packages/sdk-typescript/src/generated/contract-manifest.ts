@@ -149,6 +149,14 @@ export const UBAG_ENDPOINTS = {
     "method": "GET",
     "path": "/v1/concurrency"
   },
+  "GET /v1/fleet/nodes": {
+    "method": "GET",
+    "path": "/v1/fleet/nodes"
+  },
+  "GET /v1/fleet/summary": {
+    "method": "GET",
+    "path": "/v1/fleet/summary"
+  },
   "GET /v1/sso/config": {
     "method": "GET",
     "path": "/v1/sso/config"
@@ -1046,8 +1054,9 @@ export const UBAG_JOB_STATUSES = {
   }
 } as const;
 export const UBAG_JOB_EVENT_TYPES = ["created","queued","assigned","running","browser_opened","session.manual_action_required","prompt_submitted","token","token_streaming","completing","completed","completed_with_warnings","failed_retryable","failed_terminal","dead_letter","cancelled","timed_out","artifact_created","blocked","warning"] as const;
+export const UBAG_QUEUE_REASONS = ["waiting_for_worker","waiting_for_identity","waiting_for_capacity","waiting_for_node","retry_backoff","temporarily_unavailable"] as const;
 export const UBAG_TERMINAL_JOB_STATUSES = ["completed","completed_with_warnings","failed_retryable","failed_terminal","dead_letter","cancelled","timed_out"] as const;
 export const UBAG_SCHEMA_FINGERPRINTS = {
   "job-request": "c97e105265015aee85de030cfc1721260eb3492ea75fefb501e2c0bdb2336138",
-  "job-response": "63259dd3e85713a3269bd05aa9987e1efe6e7fe94476561f6bdb903c855d4f26"
+  "job-response": "04c7db6454e69c313464b8480cf2cc6db4d42b0cd5b883fca2d05a5d5445d33f"
 } as const;

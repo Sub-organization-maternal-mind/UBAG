@@ -26,6 +26,8 @@ Every job response carries:
 - `trace_id`
 - `events_url`
 
+Optional fields: `created_at`, `updated_at`, and, while a job is queued, `queue_reason` and `queue_reason_since` (see [Job Lifecycle](/contracts/job-lifecycle#queue-reason)).
+
 ## Output normalization
 
 The result model supports text, Markdown, plain text, sections, and HTML. The local file-spool consumer normalizes mock worker `result` events into `output.text` and `output.plain_text`, records validation metadata, and stores the result on the public job response. v1 adds adapter-specific schema validation, retry-with-critique for malformed outputs, and renderers for HTML, DOCX, and PDF.
