@@ -30,6 +30,7 @@ Column meanings.
 | `UBAG_HELPER_DISPATCH` | gateway | off | empty | managed | `apps/gateway/internal/serve/helper_dispatch.go` |
 | `UBAG_HELPER_VOICE` | gateway + helper | off | empty | managed | `apps/gateway/internal/helper/voice_config.go` |
 | `UBAG_FLEET_MANAGER_URL` | gateway | unset | empty | managed | `apps/gateway/internal/nodes/allocation_source.go` |
+| `UBAG_FLEET_MANAGER_TOKEN` | gateway | unset | empty | knob | `apps/gateway/internal/nodes/allocation_source.go` |
 | `UBAG_ADMISSION_SHARED` | gateway | on | true | live | `apps/gateway/internal/serve/serve.go` |
 | `UBAG_VOICE_LANE_EXCLUSION` | gateway | off | empty | managed | `apps/gateway/internal/serve/voicelane.go` |
 | `UBAG_WORKER_POOL_MAX` | gateway | 3 | empty | knob | `apps/gateway/internal/serve/serve.go` |

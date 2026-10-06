@@ -60,8 +60,8 @@ type AllocationSource interface {
 // HTTPSource polls a manager endpoint that serves the allocation_list
 // definition of node-allocation.schema.json with ETag support.
 type HTTPSource struct {
-	url   string
-	token string
+	url    string
+	token  string
 	client *http.Client
 }
 

@@ -234,6 +234,9 @@ services:
       UBAG_HELPER_VOICE: ${UBAG_HELPER_VOICE:-}
       UBAG_HELPER_RECONCILE_WINDOW_SECONDS: ${UBAG_HELPER_RECONCILE_WINDOW_SECONDS:-}
       UBAG_FLEET_MANAGER_URL: ${UBAG_FLEET_MANAGER_URL:-}
+      # Bearer credential sent on every allocation poll (empty = poll
+      # unauthenticated, exactly the pre-token behaviour).
+      UBAG_FLEET_MANAGER_TOKEN: ${UBAG_FLEET_MANAGER_TOKEN:-}
       UBAG_FLEET_POLL_SECONDS: ${UBAG_FLEET_POLL_SECONDS:-}
       # Live provider jobs (page loads, streamed responses) need more headroom
       # than mock jobs; matches the verified local live-runtime setting.

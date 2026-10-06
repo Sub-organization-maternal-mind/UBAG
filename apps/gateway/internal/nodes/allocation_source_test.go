@@ -397,9 +397,60 @@ func TestAllocationSourceRunStopsOnCancel(t *testing.T) {
 
 func TestAllocationSourceNewHTTPSourceRejectsBadURL(t *testing.T) {
 	for _, u := range []string{"", "ftp://x", "http://", "http://user:pw@host/", "://bad", "host:80"} {
-		if _, err := NewHTTPSource(u, nil); err == nil {
+		if _, err := NewHTTPSource(u, "", nil); err == nil {
 			t.Errorf("accepted %q", u)
 		}
+	}
+}
+
+func TestAllocationSourceBearerToken(t *testing.T) {
+	m := newFakeManager(t)
+	m.set(wireList_(wireEntry("helper-1", 1, 2, "active")), `"v1"`)
+
+	// A configured token is sent verbatim as the Bearer credential.
+	src, err := NewHTTPSource(m.srv.URL, "s3cret-token", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewPoller(src, NewMemoryStore(), PollerConfig{Interval: time.Second, StaleGrace: time.Minute}, nil)
+	if err := p.Poll(context.Background()); err != nil {
+		t.Fatalf("poll with token: %v", err)
+	}
+	m.with(func(m *fakeManager) {
+		if len(m.auth) == 0 || m.auth[0] != "Bearer s3cret-token" {
+			t.Fatalf("Authorization = %v, want the Bearer token", m.auth)
+		}
+	})
+
+	// An empty token sends no Authorization header at all (pre-token behaviour).
+	src, err = NewHTTPSource(m.srv.URL, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p = NewPoller(src, NewMemoryStore(), PollerConfig{Interval: time.Second, StaleGrace: time.Minute}, nil)
+	if err := p.Poll(context.Background()); err != nil {
+		t.Fatalf("poll without token: %v", err)
+	}
+	m.with(func(m *fakeManager) {
+		if last := m.auth[len(m.auth)-1]; last != "" {
+			t.Fatalf("Authorization = %q, want none", last)
+		}
+	})
+}
+
+func TestAllocationSourceNewHTTPSourceRejectsBadToken(t *testing.T) {
+	for _, tok := range []string{"two words", "line\nbreak", "tab\there", "uniçode"} {
+		if _, err := NewHTTPSource("http://m", tok, nil); err == nil {
+			t.Errorf("accepted token %q", tok)
+		}
+	}
+	// Leading/trailing spaces are trimmed before validation (PollerConfigFromEnv
+	// does the same), so " tok " is the valid token "tok" and "   " means none.
+	if _, err := NewHTTPSource("http://m", "abc-DEF_123.~", nil); err != nil {
+		t.Errorf("rejected a header-safe token: %v", err)
+	}
+	if _, err := NewHTTPSource("http://m", strings.Repeat("x", maxTokenBytes+1), nil); err == nil {
+		t.Error("accepted an oversized token")
 	}
 }
 
@@ -407,14 +458,20 @@ func TestAllocationSourcePollerConfigFromEnv(t *testing.T) {
 	env := func(kv map[string]string) func(string) (string, bool) {
 		return func(k string) (string, bool) { v, ok := kv[k]; return v, ok }
 	}
-	if _, _, ok, err := PollerConfigFromEnv(env(nil)); ok || err != nil {
+	if _, _, _, ok, err := PollerConfigFromEnv(env(nil)); ok || err != nil {
 		t.Fatalf("unset url: ok=%v err=%v", ok, err)
 	}
-	u, cfg, ok, err := PollerConfigFromEnv(env(map[string]string{EnvFleetManagerURL: "http://10.8.0.1:9000/v1/fleet/allocations"}))
-	if !ok || err != nil || u == "" || cfg.Interval != DefaultPollInterval || cfg.StaleGrace != DefaultStaleGrace {
-		t.Fatalf("defaults: %q %+v %v %v", u, cfg, ok, err)
+	u, token, cfg, ok, err := PollerConfigFromEnv(env(map[string]string{
+		EnvFleetManagerURL: "http://10.8.0.1:9000/v1/fleet/allocations", EnvFleetManagerToken: "  tok ",
+	}))
+	if !ok || err != nil || u == "" || token != "tok" || cfg.Interval != DefaultPollInterval || cfg.StaleGrace != DefaultStaleGrace {
+		t.Fatalf("defaults: %q %q %+v %v %v", u, token, cfg, ok, err)
 	}
-	_, cfg, ok, err = PollerConfigFromEnv(env(map[string]string{
+	_, token, _, ok, err = PollerConfigFromEnv(env(map[string]string{EnvFleetManagerURL: "http://m"}))
+	if !ok || err != nil || token != "" {
+		t.Fatalf("no token configured: %q %v %v", token, ok, err)
+	}
+	_, _, cfg, ok, err = PollerConfigFromEnv(env(map[string]string{
 		EnvFleetManagerURL: "http://m", EnvFleetPollSeconds: "10", EnvFleetStaleGraceSec: "0",
 	}))
 	if !ok || err != nil || cfg.Interval != 10*time.Second || cfg.StaleGrace != 0 {
@@ -425,7 +482,7 @@ func TestAllocationSourcePollerConfigFromEnv(t *testing.T) {
 		{EnvFleetStaleGraceSec: "-1"}, {EnvFleetStaleGraceSec: "86401"},
 	} {
 		kv[EnvFleetManagerURL] = "http://m"
-		if _, _, ok, err := PollerConfigFromEnv(env(kv)); ok || err == nil {
+		if _, _, _, ok, err := PollerConfigFromEnv(env(kv)); ok || err == nil {
 			t.Errorf("accepted %v", kv)
 		}
 	}
