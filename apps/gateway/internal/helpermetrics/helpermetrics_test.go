@@ -134,3 +134,27 @@ func TestSourceFailureIsVisible(t *testing.T) {
 		t.Fatalf("unexpected output:\n%s", out)
 	}
 }
+
+func TestPlacementAndProbeCountersAreBounded(t *testing.T) {
+	RecordPlacement("placed")
+	RecordPlacement("held_identity_busy")
+	RecordPlacement("tenant_abc_node_7") // anything outside the fixed set folds into other
+	RecordProbe("ok")
+	RecordProbe("dial refused: 10.8.0.2:7443")
+	out := render(t, nil, time.Now())
+	for _, want := range []string{
+		`ubag_helper_placements_total{outcome="placed"} `,
+		`ubag_helper_placements_total{outcome="held_identity_busy"} `,
+		`ubag_helper_placements_total{outcome="other"} `,
+		`ubag_helper_probes_total{result="ok"} `,
+		`ubag_helper_probes_total{result="incompatible"} `,
+		`ubag_helper_probes_total{result="other"} `,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "tenant_abc") || strings.Contains(out, "refused") {
+		t.Fatal("an unbounded value became a label")
+	}
+}

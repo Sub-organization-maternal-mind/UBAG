@@ -31,9 +31,8 @@ import (
 //	UBAG_HELPER_WORKLOAD_VERSION   the helper workload (image + code) this primary dispatches to
 //	UBAG_ADAPTERS_DIR              this primary's adapter registry (default ./adapters); its digest must equal the helper's
 //
-// The picker is the only thing still missing for jobs to move: the placer
-// (P4.17) or a manager adaptor supplies one. Until it does, NoHelperPicker
-// places nothing and every job runs locally, which is logged once at start.
+// The picker is the placer built in helper_fleet.go; with NoHelperPicker nothing
+// is placed and every job runs locally, which is logged once at start.
 func newHelperRemoteFromEnv(jobs jobstore.Store, nodeStore nodes.Store, plane *helperPlane, auditStore audit.Store, picker executor.HelperPicker) (*executor.RemoteWorkerRunner, error) {
 	if !envBool("UBAG_HELPER_DISPATCH") {
 		return nil, nil
@@ -54,15 +53,7 @@ func newHelperRemoteFromEnv(jobs jobstore.Store, nodeStore nodes.Store, plane *h
 			return nil, fmt.Errorf("UBAG_HELPER_DISPATCH=true requires %s", name)
 		}
 	}
-	pool, err := helperauth.LoadCAPool(values["UBAG_HELPER_CA_FILE"])
-	if err != nil {
-		return nil, err
-	}
-	keyPair, err := helperauth.NewKeyPair(values["UBAG_HELPER_CLIENT_CERT_FILE"], values["UBAG_HELPER_CLIENT_KEY_FILE"])
-	if err != nil {
-		return nil, err
-	}
-	dialer, err := helperclient.NewFromKeyPair(pool, keyPair, nodeStore)
+	dialer, err := newHelperDialer(values["UBAG_HELPER_CA_FILE"], values["UBAG_HELPER_CLIENT_CERT_FILE"], values["UBAG_HELPER_CLIENT_KEY_FILE"], nodeStore)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +84,7 @@ func newHelperRemoteFromEnv(jobs jobstore.Store, nodeStore nodes.Store, plane *h
 		return nil, err
 	}
 	if _, none := picker.(executor.NoHelperPicker); none {
-		slog.Warn("UBAG_HELPER_DISPATCH is on but no helper picker is configured: every job runs on this gateway until the placer is wired")
+		slog.Warn("UBAG_HELPER_DISPATCH is on but no helper picker is configured: every job runs on this gateway")
 	}
 	return runner, nil
 }
@@ -125,4 +116,18 @@ func newHelperReconcilerFromEnv(jobs jobstore.Store, nodeStore nodes.Store, runn
 		return nil, fmt.Errorf("UBAG_HELPER_DISPATCH=true needs a job store with the attempt ledger (postgres, or memory for tests)")
 	}
 	return &nodes.Reconciler{Ledger: ledger, Inspector: runner, Registry: nodeStore, Config: nodes.ReconcileConfig{Window: window}}, nil
+}
+
+// newHelperDialer is the primary's mTLS dial to helpers: the manager CA bundle,
+// the primary's own certificate (re-read when renewed) and the node registry.
+func newHelperDialer(caFile, certFile, keyFile string, nodeStore nodes.Store) (*helperclient.Dialer, error) {
+	pool, err := helperauth.LoadCAPool(caFile)
+	if err != nil {
+		return nil, err
+	}
+	keyPair, err := helperauth.NewKeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+	return helperclient.NewFromKeyPair(pool, keyPair, nodeStore)
 }

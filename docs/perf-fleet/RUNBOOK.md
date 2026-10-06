@@ -12,7 +12,8 @@ Each rung needs the previous one. All default off.
 |---|---|---|
 | `UBAG_HELPER_NODES` | 1 | Node store (allocations, per-node state, SPKI registry). Enables the per-node metrics. |
 | `UBAG_HELPER_PLANE` | 2 | Separate mTLS gRPC listener for helpers. |
-| `UBAG_HELPER_DISPATCH` | 3 | The primary dials helpers and runs placed jobs as fenced attempts (P4.14; needs `UBAG_EXECUTOR_ATTEMPTS`, `UBAG_HELPER_CLIENT_CERT_FILE`, `UBAG_HELPER_CLIENT_KEY_FILE`, `UBAG_HELPER_WORKLOAD_VERSION`). Nothing is placed until a picker is wired (P4.17): with the flag on and no picker every job still runs locally. It also turns on the attempt reconciler (P4.18; window `UBAG_HELPER_RECONCILE_WINDOW_SECONDS`, default 600) and stops the stale-job sweep from expiring attempts. |
+| `UBAG_HELPER_DISPATCH` | 3 | The primary dials helpers and runs placed jobs as fenced attempts (P4.14; needs `UBAG_EXECUTOR_ATTEMPTS`, `UBAG_HELPER_CLIENT_CERT_FILE`, `UBAG_HELPER_CLIENT_KEY_FILE`, `UBAG_HELPER_WORKLOAD_VERSION`). The placer (P4.17, ADR-0016) is the picker and the prober: a job is placed only for a tenant that has a profile bound on an eligible node, every other job runs locally. There is no operator route to bind a profile yet (P4.16 follow-up), so until there is, nothing is placed. It also turns on the attempt reconciler (P4.18; window `UBAG_HELPER_RECONCILE_WINDOW_SECONDS`, default 600) and stops the stale-job sweep from expiring attempts. |
+| `UBAG_FLEET_MANAGER_URL` | - | Where grants come from (needs `UBAG_HELPER_NODES`; `UBAG_FLEET_POLL_SECONDS` default 30, `UBAG_FLEET_GRANT_STALE_GRACE_SECONDS` default 600). Unset: nothing is polled and nothing is ever granted. There is no authentication on this request yet (the manager's scheme is undefined). |
 | `UBAG_HELPER_VOICE` | 4 | Voice media on a helper (not wired yet). |
 | `UBAG_EXECUTOR_ATTEMPTS` | - | Attempt ledger (needed by the fenced commit path; Postgres or memory store). |
 | `UBAG_EXECUTOR_LEASE_TTL_MS` | - | Queue lease TTL (`0` = legacy no expiry; otherwise 30000 to 900000). |
@@ -27,7 +28,7 @@ All on `GET /v1/metrics` (unauthenticated, cross-tenant aggregates; no tenant, j
 
 | Series | Type | Labels | Meaning |
 |---|---|---|---|
-| `ubag_helper_nodes` | gauge | `admission` | Nodes by current admission verdict: `eligible`, `revoked`, `draining`, `reservation_unknown`, `grant_expired`, `heartbeat_missed`, `no_capacity`. Computed at scrape with the same `Evaluate` placement uses. |
+| `ubag_helper_nodes` | gauge | `admission` | Nodes by current admission verdict: `eligible`, `revoked`, `draining`, `reservation_unknown`, `grant_expired`, `heartbeat_missed`, `no_capacity`. Computed at scrape with the same `Admission` placement uses (`Evaluate` plus the ceiling table: a node of unknown host size has no capacity). |
 | `ubag_helper_node_heartbeat_age_seconds` | gauge | `node_id` | Seconds since the last heartbeat. Absent until the node's first heartbeat. |
 | `ubag_helper_node_drain_state` | gauge | `node_id` | Grant state: 0 active, 1 draining, 2 revoked (anything unknown reads 2). |
 | `ubag_helper_node_admission_limit` | gauge | `node_id` | Concurrent browser workloads admitted right now; 0 means refused. |
@@ -35,6 +36,8 @@ All on `GET /v1/metrics` (unauthenticated, cross-tenant aggregates; no tenant, j
 | `ubag_lease_renew_failures_total` | counter | `lease` (`queue`, `exec`, `attempt`), `reason` (`lost`, `error`) | Failed renewals. `queue` and `exec` are recorded by the local consumer today; `attempt` is recorded by the helper dispatcher once it lands, so it reads 0 until then. |
 | `ubag_helper_fenced_rejects_total` | counter | `reason` | Helper writes refused as stale or fenced (`UBAG-WORKER-NODE-FENCED-005`). |
 | `ubag_helper_policy_violations_total` | counter | `reason` | Helper streams rejected or failed for scope, content or budget violations. |
+| `ubag_helper_placements_total` | counter | `outcome` | Placement decisions for leased jobs that were offered to the placer: `placed`, run here (`local_no_fleet`, `local_no_profile`, `local_conversation`) or held back (`held_identity_busy`, `held_no_capacity`, `held_no_node`, `held_affinity`, `held_error`). A held job is counted once per retry. |
+| `ubag_helper_probes_total` | counter | `result` | Capacity reports the prober asked helpers for: `ok`, `error` (dial, timeout or store failure) or `incompatible` (another workload version or adapter registry digest). |
 | `ubag_helper_reconcile_total` | counter | `action` (`run`, `wait`, `resume`, `fail_closed`), `reason` | Attempt reconcile decisions (P4.18) for leased jobs that already have attempts. Only the pairs the policy can produce exist, all from the first scrape; a `wait` repeats every few seconds while a job is held. |
 
 Counters are per gateway process and reset on restart; use `increase()`. Helper-influenced text never becomes a label value: unknown reasons are folded into `other`. Heartbeat age and admission are derived from the node store at scrape time (the body is cached for 5 s), so they are only as fresh as the store.
@@ -47,7 +50,7 @@ Alert rules: `deploy/prometheus/helper-plane-alerts.yaml` (load via `rule_files`
 
 Alerts: `UBAGHelperHeartbeatStale`, `UBAGHelperHeartbeatMissing`.
 
-Three missed 15 s heartbeats (45 s) stop new placements on the node; running work is not touched. `heartbeat_missed` also covers a node that has never reported.
+Three missed 15 s heartbeats (45 s) stop new placements on the node; running work is not touched. `heartbeat_missed` also covers a node that has never reported. A heartbeat is the primary's own successful capacity report: the prober dials every granted, non-revoked helper every 15 s (with `UBAG_HELPER_DISPATCH` on) and a report that fails, times out (5 s) or names another workload version or adapter registry leaves the heartbeat to age (see `ubag_helper_probes_total`).
 
 1. Check `ubag_helper_nodes` for how many nodes are affected. One node: a helper or link problem. All nodes: suspect the gateway side (store, listener) or the WireGuard path.
 2. Gateway logs: look for `helper` rejection lines from the trust plane (`OnReject`). A rotated or expired certificate (leaf lifetime is at most 72 h) or an SPKI pin that does not match the registry shows up there.
@@ -103,6 +106,21 @@ Alerts: `UBAGHelperFencedWrites`, `UBAGHelperPolicyViolations`.
 
 - Fenced (`UBAG-WORKER-NODE-FENCED-005`): a helper wrote with a superseded lease generation. The ledger refused it and nothing was written; the legitimate holder is unaffected. One-off hits after a reconnect are expected; a steady stream means a helper missed its cancel or a lease is flapping (see lease renewal failures).
 - Policy violations: wrong node, tenant, job or attempt, a sequence gap, a disallowed event type, malformed or oversize output. The attempt is failed (`helper_output_limit` or `helper_event_invalid`) or the write is rejected. The audit chain holds one record per reason and session: `attempt.fenced_rejected` and `helper.policy_violation`, actor `node:<id>`, with only ids and fixed reason text. A wrong-scope or wrong-node violation from a certified helper is a security event: revoke the node, then investigate.
+
+### Jobs held by the placer
+
+Source: `executor.FleetPicker` and the consumer (ADR-0016). The log line is `worker placement refused; retrying the lease after a delay` with `reason=` one of the tokens below; the job never started, so it is queued and unrun, and its lease is retried every 2 s. Nothing is failed.
+
+- `identity_busy`: another attempt is running on the same provider session (one active operation per `profile_ref`). Expected while a tenant sends several jobs for one account; it clears when the running attempt ends.
+- `no_capacity`: every eligible node is at its workload limit (min of the manager grant, the ceiling table, the 1-to-N ramp and the pressure halving; see `ubag_helper_node_admission_limit`). A new helper starts at 1 workload and gains one per 8 healthy, saturated 15 s samples.
+- `no_eligible_node`: the tenant has profiles but none is on an eligible node (its node is draining, silent or expired) while other nodes are up. The job waits for that node; it is never moved to another tenant's or an unbound profile. Fix the node (see "Heartbeat stale or missing") or revoke the profile.
+- `affinity_unavailable`: a conversation is bound to a node that is not eligible; it waits and is never relocated.
+- `fleet_unreadable`, `profiles_unreadable`, `reserve_failed`, `profile_selection`: the gateway could not read the node store or the profile registry. The job is held, not run locally. Check Postgres and `ubag_helper_metrics_source_up`.
+- `local_slots_busy`: the pool is larger than the local pool (it follows the helper capacity), so a job that stays on this gateway waits for a local slot.
+
+A job is **not** held when no helper node is eligible at all (nothing granted, manager unreachable past the stale grace, every node silent or draining), when the tenant has no profile for the target, or when a conversation cannot resume on a helper: it runs on this gateway. Up to 64 leases wait off the worker (the holds of the attempt reconcile gate, P4.18, share the same bound); past that the waiting is synchronous and a long pile-up of held jobs at the head of the file spool can delay the jobs behind it (peek-by-eligibility, which needs a queue API change, is the answer if that is ever seen). On NATS each hold consumes one delivery (`UBAG_NATS_WORKER_MAX_DELIVER`, default 5): raise it before enabling dispatch there.
+
+The probes: `ubag_helper_probes_total{result="error"}` rising for one node means its heartbeat will age out in 45 s and it stops taking placements; `result="incompatible"` means the node runs another workload version or adapter registry than this primary's `UBAG_HELPER_WORKLOAD_VERSION` and `UBAG_ADAPTERS_DIR`, and gets no heartbeat until it is upgraded.
 
 ### Remote attempt held back, lost or failed for reconcile
 

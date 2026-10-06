@@ -13,14 +13,17 @@
     "UBAG_HELPER_PLANE",
     "UBAG_HELPER_DISPATCH",
     "UBAG_EXECUTOR_ATTEMPTS",
-    "a placer or manager adaptor wired as the HelperPicker (P4.17)",
+    "UBAG_FLEET_MANAGER_URL pointing at the fleet manager, so the placer (P4.17) polls its grants",
     "two Helper Nodes (helper_a, helper_b) on a lab host that is not the shared VPS"
   ],
   "covered_by": [
     "TestRemoteManagerDownKeepsInFlightAttemptsAndGrantsNothingNew",
     "TestRemoteFallsBackToTheLocalRunnerWhenNothingIsPlaced",
     "TestReconcileManagerDownStillSettlesAnAlreadyPlacedAttempt",
-    "TestReconcileGateManagerDownRunsAnUnsubmittedJobLocallyButNeverASubmittedOne"
+    "TestReconcileGateManagerDownRunsAnUnsubmittedJobLocallyButNeverASubmittedOne",
+    "TestPlacerPickerRunsLocallyWhenTheFleetIsNotInvolved",
+    "TestHelperFleetUsesThePollersViewOfTheGrants",
+    "TestAllocationSourceManagerDown"
   ],
   "configuration": {
     "helper_a_container": {

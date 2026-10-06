@@ -128,7 +128,9 @@ type WorkerConsumer struct {
 	// cannot see. Zero keeps the fixed PollInterval.
 	IdlePollMax time.Duration
 	// PoolSize is the number of parallel lease-process workers in Run.
-	// 0/negative means 1 (legacy serial behavior). Clamped to 32 in workerCount.
+	// 0/negative means 1 (legacy serial behavior). Clamped to 32 in workerCount
+	// (HelperCapacity adds helper workers on top, and is how local concurrency
+	// stays at this size when it does).
 	// Each worker loops RunOnce independently; FileSpool rename-CAS and NATS
 	// fetch+ack are safe for concurrent LeaseNext. ProcessWorkerRunner is
 	// stateless (one subprocess per job) so mock/per-job jobs truly overlap;
@@ -180,8 +182,30 @@ type WorkerConsumer struct {
 	// resume a submitted attempt on its helper, or fail the job closed for
 	// reconciling (reconcilegate.go). Nil is today's gateway.
 	Reconcile AttemptReconciler
+	// AsyncHolds, when positive (UBAG_HELPER_DISPATCH with the placer, ADR-0016),
+	// lets that many leased jobs whose placement was refused wait out their delay
+	// OFF the worker: the worker is free to lease the next job at once, so a busy
+	// identity neither pins a worker nor starves the jobs queued behind it (the
+	// file spool returns a retried job to the head of the queue). Beyond the bound
+	// the hold is synchronous, as before. Zero keeps every hold synchronous.
+	AsyncHolds int
+	// HelperCapacity, when set, is the total workload limit of the eligible helper
+	// nodes (the placer's Capacity). Every remote attempt occupies a worker for its
+	// whole run, so the worker count becomes PoolSize (the local pool, clamped to
+	// 32 as before) plus this, bounded by maxFleetWorkers, and is re-read every
+	// PoolRegrowEvery; it only grows. Local runs stay bounded by PoolSize (the
+	// local gate). Nil keeps PoolSize alone.
+	HelperCapacity func() int
+	// PoolRegrowEvery is how often HelperCapacity is re-read (default 15 s).
+	PoolRegrowEvery time.Duration
 
-	inflight atomic.Int64
+	inflight   atomic.Int64
+	held       atomic.Int64   // leases waiting out an async hold
+	holdWG     sync.WaitGroup // async holds, awaited by Run
+	localSlots chan struct{}  // local gate, set by Run when HelperCapacity is set
+	// localHoldDelay is how long a job that found the local gate full waits (tests
+	// shorten it); zero means the 2 s pool overload delay.
+	localHoldDelay time.Duration
 }
 
 // LeaseHeartbeater is the optional WorkerLease capability for queue leases whose
@@ -290,24 +314,55 @@ func (c *WorkerConsumer) Ready(ctx context.Context) error {
 }
 
 func (c *WorkerConsumer) Run(ctx context.Context) error {
+	// Held leases go back to the queue before Run returns (they retry at once on
+	// shutdown), so a stopped gateway never leaves a job leased.
+	defer c.holdWG.Wait()
 	n := c.workerCount()
-	if n <= 1 {
+	if n <= 1 && c.HelperCapacity == nil {
 		return c.runSerial(ctx)
+	}
+	if c.HelperCapacity != nil {
+		c.localSlots = make(chan struct{}, c.localWorkers())
 	}
 	child, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var wg sync.WaitGroup
-	errCh := make(chan error, n)
-	for i := 0; i < n; i++ {
+	errCh := make(chan error, maxFleetWorkers)
+	running := 0
+	spawn := func(to int) {
+		for ; running < to; running++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if err := c.runSerial(child); err != nil && err != context.Canceled && err != child.Err() {
+					select {
+					case errCh <- err:
+					default:
+					}
+					cancel()
+				}
+			}()
+		}
+	}
+	spawn(n)
+	if c.HelperCapacity != nil {
+		// The helper plane learns its capacity after the consumer starts (the first
+		// grant poll and heartbeat), so the pool grows when it does.
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := c.runSerial(child); err != nil && err != context.Canceled && err != child.Err() {
+			t := time.NewTicker(durationOr(c.PoolRegrowEvery, defaultPoolRegrowEvery))
+			defer t.Stop()
+			for {
 				select {
-				case errCh <- err:
-				default:
+				case <-child.Done():
+					return
+				case <-t.C:
+					if want := c.workerCount(); want > running {
+						slog.Info("worker pool grown to the helper capacity", "workers", want, "was", running)
+						spawn(want)
+					}
 				}
-				cancel()
 			}
 		}()
 	}
@@ -320,16 +375,37 @@ func (c *WorkerConsumer) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
-// workerCount normalizes PoolSize: unset/non-positive keeps the legacy
-// single worker; the ceiling bounds FileSpool ReadDir fan-out per poll.
-func (c *WorkerConsumer) workerCount() int {
+const (
+	// maxFleetWorkers bounds the worker count when it follows helper capacity.
+	maxFleetWorkers        = 512
+	defaultPoolRegrowEvery = 15 * time.Second
+)
+
+func durationOr(d, def time.Duration) time.Duration {
+	if d > 0 {
+		return d
+	}
+	return def
+}
+
+// localWorkers is the local pool: PoolSize, at least 1, clamped to 32.
+func (c *WorkerConsumer) localWorkers() int {
 	if c == nil || c.PoolSize <= 0 {
 		return 1
 	}
-	if c.PoolSize > 32 {
-		return 32
+	return min(c.PoolSize, 32)
+}
+
+// workerCount normalizes PoolSize: unset/non-positive keeps the legacy
+// single worker; the ceiling bounds FileSpool ReadDir fan-out per poll. With
+// helper dispatch (HelperCapacity) every helper slot gets a worker on top of the
+// local pool, bounded by maxFleetWorkers instead of the clamp of 32.
+func (c *WorkerConsumer) workerCount() int {
+	n := c.localWorkers()
+	if c != nil && c.HelperCapacity != nil {
+		n = min(n+max(c.HelperCapacity(), 0), maxFleetWorkers)
 	}
-	return c.PoolSize
+	return n
 }
 
 // Inflight reports jobs currently leased-and-executing across Run workers.
@@ -510,7 +586,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	if c.Reconcile != nil && c.Remote != nil {
 		if gate = c.reconcileGate(ctx, job.ID); gate.hold != nil {
 			releaseExecLease()
-			return c.retryAfterDelay(ctx, lease, gate.hold)
+			return c.holdLease(ctx, lease, gate.hold)
 		}
 	}
 	// Helper placement (UBAG_HELPER_DISPATCH): lease-then-place, before the job is
@@ -522,11 +598,22 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		var placeErr error
 		if placed, placeErr = c.Remote.Place(ctx, envelope); placeErr != nil {
 			releaseExecLease()
-			return c.retryAfterDelay(ctx, lease, placeErr)
+			return c.holdLease(ctx, lease, placeErr)
 		}
 	}
 	defer placed.Release()
 	remote := placed != nil || gate.resume != nil || gate.fail != nil
+	// With the pool sized from helper capacity there are more workers than local
+	// slots: a job that stays on this gateway takes a local slot or is held.
+	if !remote && c.localSlots != nil {
+		select {
+		case c.localSlots <- struct{}{}:
+			defer func() { <-c.localSlots }()
+		default:
+			releaseExecLease()
+			return c.holdLease(ctx, lease, &LaneBusyError{Reason: "local_slots_busy", RetryAfter: durationOr(c.localHoldDelay, defaultOverloadRetryDelay)})
+		}
+	}
 	// A browser job and a live voice session exclude each other on the browser
 	// (voicelane.go). Checked before the job is assigned: a held-back job has not
 	// started, so it stays queued and goes back to the queue after a delay. A job
@@ -1336,6 +1423,25 @@ const (
 // waits, so no other consumer picks it up early. It is a nack, never an ack: the
 // job is not failed or completed, and its status stays what it was.
 func (c *WorkerConsumer) retryAfterDelay(ctx context.Context, lease WorkerLease, cause error) (bool, error) {
+	delay := holdPlan(ctx, lease, cause)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+	err := lease.Retry(ctx)
+	if err == nil {
+		// A shutdown during the hold ends the consumer loop: without it a queue
+		// that always has the held job would be leased and refused forever.
+		err = ctx.Err()
+	}
+	return true, err
+}
+
+// holdPlan logs why a leased job is being held back and returns how long to wait
+// before its lease is retried: the cause's own RetryAfter (at most 30 s), else 2 s.
+func holdPlan(ctx context.Context, lease WorkerLease, cause error) time.Duration {
 	delay, reason := defaultOverloadRetryDelay, "overloaded"
 	var overload *PoolOverloadError
 	var busy *LaneBusyError
@@ -1363,19 +1469,42 @@ func (c *WorkerConsumer) retryAfterDelay(ctx context.Context, lease WorkerLease,
 	}
 	slog.Log(ctx, level, "worker placement refused; retrying the lease after a delay",
 		"job_id", lease.JobID(), "reason", reason, "delay", delay)
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-	case <-timer.C:
+	return delay
+}
+
+// holdLease is retryAfterDelay for a refusal the helper plane or the local gate
+// issued before the job started (ADR-0016). With AsyncHolds it hands the lease to
+// a goroutine that retries it after the delay (at once on shutdown) and returns
+// the worker immediately, so the next job is leased while this one waits: a busy
+// identity then neither pins a worker nor starves the jobs behind it, and the
+// held job is placed again once per delay. At most AsyncHolds leases wait this
+// way; beyond that, or with AsyncHolds unset, the worker waits as before.
+func (c *WorkerConsumer) holdLease(ctx context.Context, lease WorkerLease, cause error) (bool, error) {
+	if c.AsyncHolds <= 0 || ctx.Err() != nil {
+		return c.retryAfterDelay(ctx, lease, cause)
 	}
-	err := lease.Retry(ctx)
-	if err == nil {
-		// A shutdown during the hold ends the consumer loop: without it a queue
-		// that always has the held job would be leased and refused forever.
-		err = ctx.Err()
+	if c.held.Add(1) > int64(c.AsyncHolds) {
+		c.held.Add(-1)
+		return c.retryAfterDelay(ctx, lease, cause)
 	}
-	return true, err
+	delay := holdPlan(ctx, lease, cause)
+	c.holdWG.Add(1)
+	go func() {
+		defer c.holdWG.Done()
+		defer c.held.Add(-1)
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+		case <-timer.C:
+		}
+		opCtx, cancel := detachedOpContext(ctx)
+		defer cancel()
+		if err := lease.Retry(opCtx); err != nil {
+			slog.Warn("could not return a held lease to the queue", "job_id", lease.JobID(), "error", err)
+		}
+	}()
+	return true, nil
 }
 
 // jobCanceled reports whether the job reached ANY terminal state under the
