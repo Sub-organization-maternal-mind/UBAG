@@ -281,6 +281,21 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("invalid helper voice configuration: %w", err)
 	}
 	go runVoiceNodeRelease(ctx, voiceNodes, voiceStore)
+	// Operator fleet view and queue reasons (P6.2): read-only, on with the node
+	// store. Interfaces stay nil (routes answer 501, queue_reason is omitted)
+	// without UBAG_HELPER_NODES.
+	var queueHolds *executor.HoldBoard
+	var fleetView httpapi.FleetSource
+	var holdSource httpapi.QueueHoldSource
+	if helperNodes != nil {
+		queueHolds = executor.NewHoldBoard()
+		holdSource = queueHolds
+		view, err := newFleetViewFromEnv(helperNodes, fleetPoller, fleet, queueHolds)
+		if err != nil {
+			return fmt.Errorf("invalid fleet view configuration: %w", err)
+		}
+		fleetView = view
+	}
 	helperRemote, err := newHelperRemoteFromEnv(jobs, helperNodes, hplane, enterprise.audit, helperPicker)
 	if err != nil {
 		return fmt.Errorf("invalid helper dispatch configuration: %w", err)
@@ -357,6 +372,8 @@ func Run(ctx context.Context) error {
 
 		VoiceMetrics: voiceMetrics,
 		HelperNodes:  helperNodes,
+		Fleet:        fleetView,
+		QueueHolds:   holdSource,
 		// Provider voice is started by worker control jobs and a session is only
 		// "connected" once the provider is verified ready. Disable only for
 		// media-path development (UBAG_VOICE_PROVIDER_ACTIVATION=0).
@@ -408,6 +425,7 @@ func Run(ctx context.Context) error {
 		consumer.Metrics = server
 		consumer.VoiceLanes = voiceLanes
 		consumer.Remote = helperRemote
+		consumer.Holds = queueHolds
 		consumer.Cancels = helperCancels
 		if helperReconciler != nil { // never a typed-nil interface: the gate holds every job without a ledger
 			consumer.Reconcile = helperReconciler

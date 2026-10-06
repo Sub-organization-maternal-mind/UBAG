@@ -199,6 +199,11 @@ type WorkerConsumer struct {
 	// PoolRegrowEvery is how often HelperCapacity is re-read (default 15 s).
 	PoolRegrowEvery time.Duration
 
+	// Holds, when set (UBAG_HELPER_NODES, P6.2), is told which queued jobs this
+	// consumer is holding back and why, so the API can report a queue_reason. Nil
+	// records nothing.
+	Holds *HoldBoard
+
 	inflight   atomic.Int64
 	held       atomic.Int64   // leases waiting out an async hold
 	holdWG     sync.WaitGroup // async holds, awaited by Run
@@ -549,6 +554,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		envelope.Attempt = &DispatchAttempt{ID: lease.LeaseID()}
 	}
 	if jobstore.TerminalStatus(job.Status) {
+		c.Holds.Clear(job.ID)
 		return c.finishTerminalLeasedJob(ctx, lease, job)
 	}
 	var execToken string
@@ -586,6 +592,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	if c.Reconcile != nil && c.Remote != nil {
 		if gate = c.reconcileGate(ctx, job.ID); gate.hold != nil {
 			releaseExecLease()
+			c.Holds.Note(job.ID, job.TenantID, job.AppID, holdReason(gate.hold))
 			return c.holdLease(ctx, lease, gate.hold)
 		}
 	}
@@ -598,6 +605,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		var placeErr error
 		if placed, placeErr = c.Remote.Place(ctx, envelope); placeErr != nil {
 			releaseExecLease()
+			c.Holds.Note(job.ID, job.TenantID, job.AppID, holdReason(placeErr))
 			return c.holdLease(ctx, lease, placeErr)
 		}
 	}
@@ -611,6 +619,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			defer func() { <-c.localSlots }()
 		default:
 			releaseExecLease()
+			c.Holds.Note(job.ID, job.TenantID, job.AppID, "local_slots_busy")
 			return c.holdLease(ctx, lease, &LaneBusyError{Reason: "local_slots_busy", RetryAfter: durationOr(c.localHoldDelay, defaultOverloadRetryDelay)})
 		}
 	}
@@ -623,10 +632,12 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		var laneErr error
 		if laneHold, laneErr = c.enterBrowserLane(ctx, envelope); laneErr != nil {
 			releaseExecLease()
+			c.Holds.Note(job.ID, job.TenantID, job.AppID, holdReason(laneErr))
 			return c.retryAfterDelay(ctx, lease, laneErr)
 		}
 	}
 	defer laneHold.Release()
+	c.Holds.Clear(job.ID) // past every hold: the job starts now
 	assignedJob, found, err := c.Jobs.UpdateStatus(ctx, job.ID, jobstore.StatusAssigned)
 	if err != nil {
 		_ = lease.Retry(ctx)

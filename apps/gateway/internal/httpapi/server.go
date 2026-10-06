@@ -318,6 +318,16 @@ type Config struct {
 	// (UBAG_HELPER_NODES). Optional: nil emits only the process-wide counters.
 	HelperNodes helpermetrics.NodeSource
 
+	// Fleet backs GET /v1/fleet/nodes and /v1/fleet/summary and the redaction of
+	// helper-hosted browser endpoints (UBAG_HELPER_NODES). Nil answers 501 on the
+	// routes, like Topology.
+	Fleet FleetSource
+
+	// QueueHolds supplies queue_reason (the queued jobs this gateway's consumer is
+	// holding back and why). Nil omits queue_reason and leaves queued_by_reason
+	// empty, as before.
+	QueueHolds QueueHoldSource
+
 	// Plugins is the optional WASM plugin host. When nil, no plugin hooks run.
 	Plugins *plugins.Host
 
@@ -392,6 +402,8 @@ type Server struct {
 	sessionTTL          time.Duration
 	alerts              *alerts.Manager
 	topology            topology.Store
+	fleet               FleetSource
+	queueHolds          QueueHoldSource
 	concurrency         *topology.ConcurrencyRegistry
 	conversations       *conversations.Manager
 	outbox              outbox.Store
@@ -669,6 +681,8 @@ func NewServer(config Config) *Server {
 		sessionTTL:         config.SessionTTL,
 		alerts:             config.Alerts,
 		topology:           config.Topology,
+		fleet:              config.Fleet,
+		queueHolds:         config.QueueHolds,
 		concurrency:        config.Concurrency,
 		conversations:      config.Conversations,
 		outbox:             config.Outbox,
@@ -2316,7 +2330,9 @@ func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
 
 	responses := make([]jobResponse, 0, len(jobs))
 	for _, job := range jobs {
-		responses = append(responses, jobToResponse(job, false, traceIDFromContext(r.Context())))
+		resp := jobToResponse(job, false, traceIDFromContext(r.Context()))
+		s.applyQueueReason(&resp, job)
+		responses = append(responses, resp)
 	}
 
 	s.writeJSON(w, http.StatusOK, listJobsResponse{
@@ -2334,6 +2350,7 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request, id string) {
 	}
 
 	response := jobToResponse(job, false, traceIDFromContext(r.Context()))
+	s.applyQueueReason(&response, job)
 	signals := s.deriveJobSignals(r.Context(), job)
 	response.Error = signals.ErrorMessage
 	response.ErrorClass = signals.ErrorClass

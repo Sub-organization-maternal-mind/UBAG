@@ -68,8 +68,8 @@ func (s *Server) handleJobsSummary(w http.ResponseWriter, r *http.Request) {
 		"kind":             "jobs_summary",
 		"total":            total,
 		"counts_by_status": counts,
-		// Empty until the gateway computes a queue reason (roadmap P6.2).
-		"queued_by_reason": map[string]int{},
+		// Coarse queue reasons; empty without a hold source (UBAG_HELPER_NODES off).
+		"queued_by_reason": s.queuedByReason(tenantID, appID, counts[string(jobstore.StatusQueued)]),
 		"oldest_queued_at": oldestQueued,
 		"trace_id":         traceIDFromContext(r.Context()),
 	})

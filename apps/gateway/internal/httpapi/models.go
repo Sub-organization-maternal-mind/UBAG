@@ -215,16 +215,21 @@ type jobResponse struct {
 	// worker events (a failed job leaves Result nil). Emitted as top-level strings
 	// so consumers that read a flat error/manual_action can surface the real cause
 	// instead of a generic empty result. Omitted when absent.
-	Error        string              `json:"error,omitempty"`
-	ErrorClass   string              `json:"error_class,omitempty"`
-	ManualAction string              `json:"manual_action,omitempty"`
-	Target       string              `json:"target"`
-	Result       *JobResultEnvelope  `json:"result"`
-	Metadata     JobMetadataEnvelope `json:"metadata"`
-	TraceID      string              `json:"trace_id"`
-	EventsURL    string              `json:"events_url"`
-	CreatedAt    time.Time           `json:"created_at"`
-	UpdatedAt    time.Time           `json:"updated_at"`
+	Error        string `json:"error,omitempty"`
+	ErrorClass   string `json:"error_class,omitempty"`
+	ManualAction string `json:"manual_action,omitempty"`
+	// QueueReason is the coarse reason a queued job has not started and
+	// QueueReasonSince when it began; both omitted when unknown (queue_reason is
+	// computed on read, never stored).
+	QueueReason      string              `json:"queue_reason,omitempty"`
+	QueueReasonSince *time.Time          `json:"queue_reason_since,omitempty"`
+	Target           string              `json:"target"`
+	Result           *JobResultEnvelope  `json:"result"`
+	Metadata         JobMetadataEnvelope `json:"metadata"`
+	TraceID          string              `json:"trace_id"`
+	EventsURL        string              `json:"events_url"`
+	CreatedAt        time.Time           `json:"created_at"`
+	UpdatedAt        time.Time           `json:"updated_at"`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

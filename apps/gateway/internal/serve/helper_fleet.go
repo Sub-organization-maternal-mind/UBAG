@@ -90,6 +90,26 @@ func newHelperFleetFromEnv(ctx context.Context, store nodes.Store, poller *nodes
 	return &helperFleet{placer: placer, picker: &executor.FleetPicker{Placer: placer, Profiles: profiles}}, nil
 }
 
+// newFleetViewFromEnv builds the operator read view behind GET /v1/fleet/*
+// (UBAG_HELPER_NODES; the caller passes a non-nil store). It reads the grants the
+// way placement does (the poller's, else the store's), the slots the placer has
+// reserved (none without UBAG_HELPER_DISPATCH) and the queued jobs the consumer
+// holds, per fine reason.
+func newFleetViewFromEnv(store nodes.Store, poller *nodes.Poller, fleet *helperFleet, holds *executor.HoldBoard) (*nodes.FleetView, error) {
+	cfg := nodes.FleetViewConfig{
+		Allocations: func(ctx context.Context, _ time.Time) ([]nodes.Allocation, error) { return store.ListAllocations(ctx) },
+		State:       store.GetState,
+		Held:        func() map[string]int { return holds.Counts("", "") },
+	}
+	if poller != nil {
+		cfg.Allocations = poller.Current
+	}
+	if fleet != nil {
+		cfg.Used = fleet.placer.Used
+	}
+	return nodes.NewFleetView(cfg)
+}
+
 // wire makes the consumer follow the fleet: holds wait off the worker and the
 // worker count tracks the helper capacity. Both are inert on a nil fleet.
 func (f *helperFleet) wire(c *executor.WorkerConsumer) {

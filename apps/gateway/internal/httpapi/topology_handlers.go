@@ -40,9 +40,10 @@ func (s *Server) handleBrowserInstances(w http.ResponseWriter, r *http.Request) 
 		s.writeError(w, r, http.StatusInternalServerError, internalError("failed to list browser instances"))
 		return
 	}
+	onHelper := helperHostedEndpointFunc(r.Context(), s.fleet)
 	data := make([]map[string]any, 0, len(records))
 	for _, instance := range records {
-		data = append(data, instanceToResponse(instance))
+		data = append(data, instanceToResponse(instance, onHelper(instance.RemoteEndpoint)))
 	}
 	s.writeJSON(w, http.StatusOK, collectionResponse{
 		APIVersion: s.apiVersion,
@@ -213,7 +214,7 @@ func redactRemoteEndpoint() bool {
 	return on
 }
 
-func instanceToResponse(instance topology.BrowserInstance) map[string]any {
+func instanceToResponse(instance topology.BrowserInstance, helperHosted bool) map[string]any {
 	out := map[string]any{
 		"instance_id":     instance.InstanceID,
 		"worker_id":       instance.WorkerID,
@@ -226,8 +227,9 @@ func instanceToResponse(instance topology.BrowserInstance) map[string]any {
 	}
 	// remote_endpoint is the browser's CDP endpoint (full browser control), so
 	// it is withheld from tenant responses when UBAG_REDACT_REMOTE_ENDPOINT is
-	// on. Default off preserves the legacy response shape.
-	if !redactRemoteEndpoint() {
+	// on. Default off preserves the legacy response shape. An instance on a helper
+	// node is always withheld: its endpoint is an address inside the fleet.
+	if !redactRemoteEndpoint() && !helperHosted {
 		out["remote_endpoint"] = instance.RemoteEndpoint
 	}
 	if instance.RSSBytes != nil {
