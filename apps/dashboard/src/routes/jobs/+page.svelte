@@ -1,18 +1,29 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, listOf } from '$lib/api/client';
-  import { normalizeJobs } from '$lib/api/jobs';
+  import { normalizeJobs, parseJobsSummary } from '$lib/api/jobs';
+  import { EM_DASH, QUEUE_REASON_HINT, fmtTime, humanize, loadFleetSummary, queueReasonRows } from '$lib/api/fleet';
+  import { snapshots } from '$lib/stores/snapshot';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import AttachmentPicker from '$lib/components/AttachmentPicker.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
+  import QueueReasons from '$lib/components/QueueReasons.svelte';
   import SkeletonTable from '$lib/components/SkeletonTable.svelte';
   import UpdatedAgo from '$lib/components/UpdatedAgo.svelte';
   import { pollWhileVisible } from '$lib/poll';
   import type { SelectedAttachment } from '$lib/attachments';
-  import type { BrowserContext, Job, JobCreateResponse, JobEnvelope, JobsResponse, Template } from '$lib/api/types';
+  import type {
+    BrowserContext,
+    FleetSummary,
+    Job,
+    JobCreateResponse,
+    JobEnvelope,
+    JobsResponse,
+    Template,
+  } from '$lib/api/types';
   import { isTerminalStatus } from '$lib/api/statuses';
 
   const API_VERSION = '2026-05-22';
@@ -34,6 +45,15 @@
   let currentCursor = $state<string | undefined>(undefined);
 
   let lastUpdated = $state<Date | null>(null);
+
+  // Why queued jobs are waiting. The coarse counts come from /v1/jobs/summary and are
+  // empty unless the gateway computes queue reasons; the fleet summary (fine reasons,
+  // operator-only) stays null, so its panel stays hidden, unless it answers 200.
+  let queuedByReason = $state<Record<string, number>>({});
+  let fleet = $state<FleetSummary | null>(null);
+  let hasQueueReasons = $derived(queueReasonRows(queuedByReason).length > 0);
+  // Show the column once any listed job carries a reason; other rows then read as an em dash.
+  let showQueueReason = $derived(items.some((j) => j.queue_reason));
 
   // Detail drawer
   let selectedJob = $state<Job | null>(null);
@@ -107,6 +127,20 @@
     ]);
     if (!templateRes.error && !templateRes.denied) templates = listOf<Template>(templateRes);
     if (!contextRes.error && !contextRes.denied) contexts = listOf<BrowserContext>(contextRes);
+  }
+
+  async function loadQueueInsight(force = false) {
+    const [summaryRes, fleetSummary] = await Promise.all([
+      snapshots.get('/v1/jobs/summary', () => api.get('/v1/jobs/summary'), { force }),
+      loadFleetSummary(force),
+    ]);
+    queuedByReason = parseJobsSummary(summaryRes.data)?.queued_by_reason ?? {};
+    fleet = fleetSummary;
+  }
+
+  function refresh() {
+    void loadQueueInsight(true);
+    return load(currentCursor);
   }
 
   function goNext() {
@@ -317,8 +351,16 @@
   onMount(() => {
     load();
     loadSupportData();
+    loadQueueInsight();
     // Gentle auto-refresh while the tab is visible; silent (no skeleton flash).
-    const stopPolling = pollWhileVisible(() => load(currentCursor, true), 45_000, { immediate: false });
+    const stopPolling = pollWhileVisible(
+      () => {
+        void loadQueueInsight();
+        return load(currentCursor, true);
+      },
+      45_000,
+      { immediate: false },
+    );
     return stopPolling;
   });
 </script>
@@ -327,7 +369,7 @@
   <PageHeader title="Jobs" subtitle="Submit, inspect and manage provider jobs on the gateway queue.">
     {#snippet actions()}
       <UpdatedAgo at={lastUpdated} />
-      <button onclick={() => load(currentCursor)} class="btn btn-secondary btn-sm">Refresh</button>
+      <button onclick={refresh} class="btn btn-secondary btn-sm">Refresh</button>
     {/snippet}
   </PageHeader>
 
@@ -466,6 +508,23 @@
     {/if}
   </section>
 
+  <!-- Queue reasons: coarse and tenant-visible; fine placement reasons only when the fleet endpoint answers 200 -->
+  {#if hasQueueReasons || fleet}
+    <div class="grid gap-4 md:grid-cols-2">
+      {#if hasQueueReasons}
+        <QueueReasons title="Waiting jobs by reason" counts={queuedByReason} hints />
+      {/if}
+      {#if fleet}
+        <QueueReasons
+          title="Held by placement reason"
+          counts={fleet.held_by_reason}
+          empty="No queued job is held for placement."
+          note="Operator detail across all tenants."
+        />
+      {/if}
+    </div>
+  {/if}
+
   <!-- Filter -->
   <input
     type="search"
@@ -492,6 +551,9 @@
             <th class="th">Target</th>
             <th class="th">Command Type</th>
             <th class="th">Status</th>
+            {#if showQueueReason}
+              <th class="th">Queue Reason</th>
+            {/if}
             <th class="th">Created At</th>
             <th class="th">Actions</th>
           </tr>
@@ -515,6 +577,11 @@
               <td class="td max-w-[10rem] truncate text-ink" title={job.target}>{job.target}</td>
               <td class="td font-mono text-xs">{job.command_type}</td>
               <td class="td"><StatusBadge status={job.status} /></td>
+              {#if showQueueReason}
+                <td class="td text-xs" title={job.queue_reason ? (QUEUE_REASON_HINT[job.queue_reason] ?? '') : ''}>
+                  {job.queue_reason ? humanize(job.queue_reason) : EM_DASH}
+                </td>
+              {/if}
               <td class="td whitespace-nowrap text-xs text-ink-mute">{fmtDate(job.created_at)}</td>
               <td class="td">
                 <button
@@ -591,6 +658,17 @@
             <p class="text-xs text-ink-mute uppercase tracking-wider font-mono mb-0.5">Updated</p>
             <p class="text-ink-soft text-xs">{fmtDate(selectedJob.updated_at)}</p>
           </div>
+          {#if selectedJob.queue_reason}
+            <div>
+              <p class="text-xs text-ink-mute uppercase tracking-wider font-mono mb-0.5">Queue Reason</p>
+              <p class="text-ink text-xs">{humanize(selectedJob.queue_reason)}</p>
+              <p class="text-ink-mute text-xs">{QUEUE_REASON_HINT[selectedJob.queue_reason] ?? ''}</p>
+            </div>
+            <div>
+              <p class="text-xs text-ink-mute uppercase tracking-wider font-mono mb-0.5">Waiting Since</p>
+              <p class="text-ink-soft text-xs">{fmtTime(selectedJob.queue_reason_since)}</p>
+            </div>
+          {/if}
         </div>
 
         <!-- Error if any -->

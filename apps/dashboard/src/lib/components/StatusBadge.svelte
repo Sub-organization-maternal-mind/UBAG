@@ -20,6 +20,12 @@
     dead_letter: 'bg-danger-soft text-danger',
     cancelled: 'bg-rule-soft text-ink-mute',
     timed_out: 'bg-danger-soft text-danger',
+    // Helper-node placement states (GET /v1/fleet/nodes).
+    eligible: 'bg-success-soft text-success',
+    ineligible: 'bg-danger-soft text-danger',
+    draining: 'bg-saffron-soft text-warning',
+    lost: 'bg-danger-soft text-danger',
+    unknown_reservation: 'bg-saffron-soft text-warning',
   };
 
   let cls = $derived(tone[status?.toLowerCase()] ?? 'bg-rule-soft text-ink-mute');
