@@ -110,13 +110,20 @@ def normalize_payload(payload: Mapping[str, Any], provider_id: str) -> Normalize
         or context.get("tenant_id"),
         "default",
     )
-    user_data_dir = _resolve_user_data_dir(options, context, target, tenant_id)
+    helper_profile_ref = _helper_profile_ref(payload)
+    user_data_dir = _resolve_user_data_dir(
+        options, context, target, tenant_id, helper_profile_ref
+    )
     headless_raw = options.get("headless", False)
     if not isinstance(headless_raw, bool):
         raise EnvelopeError("options.headless must be a boolean")
     headless = headless_raw
 
-    account_binding_id = _clean_text(context.get("account_binding_id"), "unbound")
+    # Helper mode: the identity is the profile the primary bound, never a
+    # caller-supplied context value (the helper spec carries none).
+    account_binding_id = helper_profile_ref or _clean_text(
+        context.get("account_binding_id"), "unbound"
+    )
     conversation_id = _optional_string(
         input_payload.get("conversation_id")
         or options.get("conversation_id")
@@ -320,13 +327,55 @@ def _tenant_segment(tenant_id: str) -> str:
     return "t_" + digest(tenant_id)[:16]
 
 
+# The primary mints profile_ref as "pr_" + base32 (see helperauth.MintProfileRef)
+# and the gateway accepts [A-Za-z0-9][A-Za-z0-9._:-]{0,127}. The worker is
+# stricter: no ":" (an NTFS alternate-data-stream separator in a directory name).
+_HELPER_PROFILE_REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
+def _helper_mode() -> bool:
+    """UBAG_HELPER_PLANE: this worker runs on a helper node for the primary.
+
+    Set by the helper agent in the worker's environment, never by a job. It is
+    not in the gateway's local-worker env allowlist, so the primary's own
+    workers never run in this mode.
+    """
+    return env_flag("UBAG_HELPER_PLANE", False)
+
+
+def _helper_profile_ref(payload: Mapping[str, Any]) -> Optional[str]:
+    """The opaque profile_ref of a helper attempt, or None outside helper mode.
+
+    Read ONLY from the top level of the payload, which the primary's
+    HelperAttemptSpec fills: never from options or context, which a job:create
+    caller controls. In helper mode a missing or malformed ref fails closed
+    instead of falling back to a caller-selectable profile directory.
+    """
+    if not _helper_mode():
+        return None
+    ref = payload.get("profile_ref")
+    if not isinstance(ref, str) or not _HELPER_PROFILE_REF_RE.fullmatch(ref):
+        raise EnvelopeError(
+            "helper mode requires a top-level profile_ref (opaque token, no path characters)"
+        )
+    return ref
+
+
 def _resolve_user_data_dir(
     options: Mapping[str, Any],
     context: Mapping[str, Any],
     target: str,
     tenant_id: str = "default",
+    helper_profile_ref: Optional[str] = None,
 ) -> str:
     profile_root = _profile_root()
+    if helper_profile_ref is not None:
+        # Helper node: the profile directory is derived from the primary-issued
+        # profile_ref ALONE. The primary already bound the ref to one tenant,
+        # provider and identity, and logins on this host are human-made inside
+        # exactly this directory. user_data_dir, profile_dir, profile_path, the
+        # tenant id and the target are all ignored.
+        return os.path.join(profile_root, "helper", helper_profile_ref)
     if _profile_options_policy() == "namespaced":
         # A job:create caller can otherwise pick ANOTHER tenant's relative
         # profile directory (cookies/sessions). Under the namespaced policy the
