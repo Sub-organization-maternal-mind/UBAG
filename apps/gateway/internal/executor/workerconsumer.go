@@ -1061,7 +1061,7 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 		}
 	}()
 
-	events, err := c.Runner.RunWorker(runCtx, envelope)
+	events, err := c.runWorker(runCtx, envelope)
 	cancel()
 	<-done
 	return events, err
