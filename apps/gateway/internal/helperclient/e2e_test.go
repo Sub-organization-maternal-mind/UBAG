@@ -45,7 +45,7 @@ func newE2E(t *testing.T, script helper.RunnerFunc, mut ...func(*executor.Remote
 	dialer := r.dialer(r.primary, nil, nil)
 	store := jobstore.NewMemoryStore()
 	cfg := executor.RemoteConfig{
-		Store: store, WorkloadVersion: "w1", RegistryDigest: testDigest,
+		Store: store, WorkloadVersion: "w1", RegistryDigest: testDigest, Nodes: staticEndpoint{r.addr},
 		Picker: onePicker{executor.HelperPlacement{NodeID: testNode, Endpoint: r.addr, ProfileRef: "pr_e2e"}},
 		Dialer: executor.HelperDialFunc(func(ctx context.Context, p executor.HelperPlacement) (executor.HelperConn, error) {
 			conn, err := dialer.Dial(ctx, p.NodeID, p.Endpoint)

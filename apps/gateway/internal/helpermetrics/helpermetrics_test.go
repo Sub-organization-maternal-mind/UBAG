@@ -106,6 +106,28 @@ func (failingSource) GetState(context.Context, string) (nodes.HelperState, error
 	return nodes.HelperState{}, nil
 }
 
+// The reconcile counter has one series per pair the policy can produce, all present
+// from the first scrape (so increase() sees the first failure), and nothing outside
+// that set can become a label.
+func TestReconcileCounterBoundedLabels(t *testing.T) {
+	RecordReconcile(string(nodes.ReconcileFailClosed), nodes.ReconcileNoRecord)
+	RecordReconcile("fail_closed", "a reason a helper made up "+strings.Repeat("x", 40))
+	RecordReconcile("run", nodes.ReconcileNoRecord) // a pair the policy never produces
+	out := render(t, nil, time.Now())
+	for _, o := range nodes.ReconcileOutcomes {
+		want := `ubag_helper_reconcile_total{action="` + string(o.Action) + `",reason="` + o.Reason + `"} `
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	if !strings.Contains(out, `ubag_helper_reconcile_total{action="other",reason="other"} 2`) {
+		t.Errorf("the two unknown pairs must be folded into other/other:\n%s", out)
+	}
+	if strings.Contains(out, "made up") {
+		t.Fatal("an unbounded reason leaked into a label")
+	}
+}
+
 func TestSourceFailureIsVisible(t *testing.T) {
 	out := render(t, failingSource{}, time.Now())
 	if !strings.Contains(out, "ubag_helper_metrics_source_up 0\n") || strings.Contains(out, "ubag_helper_nodes{") {

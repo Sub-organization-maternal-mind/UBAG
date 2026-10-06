@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,7 @@ var (
 	leaseFail  = map[[2]string]int64{}
 	fencedRej  = map[string]int64{}
 	violations = map[string]int64{}
+	reconciled = map[nodes.ReconcileOutcome]int64{}
 )
 
 func norm(set []string, v string) string {
@@ -76,6 +78,19 @@ func RecordFencedReject(reason string) {
 func RecordPolicyViolation(reason string) {
 	mu.Lock()
 	violations[norm(violationReasons, reason)]++
+	mu.Unlock()
+}
+
+// RecordReconcile counts one attempt-reconcile decision (P4.18). A pair the
+// policy cannot produce is folded into action="other", reason="other" (bounded
+// labels).
+func RecordReconcile(action, reason string) {
+	o := nodes.ReconcileOutcome{Action: nodes.ReconcileAction(action), Reason: reason}
+	if !slices.Contains(nodes.ReconcileOutcomes, o) {
+		o = nodes.ReconcileOutcome{Action: "other", Reason: "other"}
+	}
+	mu.Lock()
+	reconciled[o]++
 	mu.Unlock()
 }
 
@@ -120,6 +135,10 @@ func Write(ctx context.Context, w io.Writer, src NodeSource, now time.Time) {
 	for k, v := range violations {
 		pv[k] = v
 	}
+	rc := make(map[nodes.ReconcileOutcome]int64, len(reconciled))
+	for k, v := range reconciled {
+		rc[k] = v
+	}
 	mu.Unlock()
 
 	header(w, "ubag_lease_renew_failures_total", "counter", "Failed lease renewals by lease kind and reason.")
@@ -135,6 +154,13 @@ func Write(ctx context.Context, w io.Writer, src NodeSource, now time.Time) {
 	writeReasons(w, "ubag_helper_fenced_rejects_total", fr, fencedReasons)
 	header(w, "ubag_helper_policy_violations_total", "counter", "Helper writes rejected or failed for policy violations.")
 	writeReasons(w, "ubag_helper_policy_violations_total", pv, violationReasons)
+	header(w, "ubag_helper_reconcile_total", "counter", "Attempt reconcile decisions for leased jobs that already have attempts (P4.18).")
+	for _, o := range nodes.ReconcileOutcomes {
+		_, _ = fmt.Fprintf(w, "ubag_helper_reconcile_total{action=\"%s\",reason=\"%s\"} %d\n", o.Action, o.Reason, rc[o])
+	}
+	if other := rc[nodes.ReconcileOutcome{Action: "other", Reason: "other"}]; other > 0 {
+		_, _ = fmt.Fprintf(w, "ubag_helper_reconcile_total{action=\"other\",reason=\"other\"} %d\n", other)
+	}
 
 	if src == nil {
 		return
