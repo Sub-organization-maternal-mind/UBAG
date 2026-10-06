@@ -98,6 +98,9 @@ class _NormalizedJob:
     model_settings: Dict[str, Any]
     conversation_key: str
     thread_ref: str
+    # Synthetic knobs; non-default only when UBAG_MOCK_SYNTHETIC is truthy.
+    delay_ms: int = 0
+    fail: bool = False
 
 
 class MockAdapter:
@@ -137,6 +140,11 @@ class MockAdapter:
             },
         )
         sequence += 1
+
+        if job.delay_ms:
+            time.sleep(job.delay_ms / 1000.0)
+        if job.fail:
+            raise MockAdapterError("mock_fail requested")
 
         for token_index, token in enumerate(job.tokens):
             if t_first is None:
@@ -237,6 +245,17 @@ def _normalize_payload(payload: Mapping[str, Any]) -> _NormalizedJob:
     tokens, result_text = _resolve_tokens(job_id, target, command_type, prompt, options)
     model_settings = _extract_model_settings(options)
     conversation_key, thread_ref = _extract_conversation(payload, job_payload)
+    delay_ms, fail = 0, False
+    if _synthetic_enabled():
+        # Gateway-overhead benchmark knobs; ignored unless UBAG_MOCK_SYNTHETIC is set.
+        delay_ms = _bounded_int(options.get("mock_delay_ms"), _MAX_SYNTHETIC_DELAY_MS)
+        fail = options.get("mock_fail") is True
+        size = _bounded_int(options.get("mock_result_bytes"), _MAX_SYNTHETIC_BYTES)
+        if size:
+            # Word-shaped so it streams as many tokens (long output must trip the
+            # gateway's event cap explicitly, never truncate silently).
+            result_text = ("word " * (size // 5 + 1))[:size]
+            tokens = _split_for_stream(result_text)
 
     return _NormalizedJob(
         api_version=api_version,
@@ -250,7 +269,23 @@ def _normalize_payload(payload: Mapping[str, Any]) -> _NormalizedJob:
         model_settings=model_settings,
         conversation_key=conversation_key,
         thread_ref=thread_ref,
+        delay_ms=delay_ms,
+        fail=fail,
     )
+
+
+_MAX_SYNTHETIC_DELAY_MS = 60_000
+_MAX_SYNTHETIC_BYTES = 8 * 1024 * 1024
+
+
+def _synthetic_enabled() -> bool:
+    return os.environ.get("UBAG_MOCK_SYNTHETIC", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _bounded_int(value: Any, maximum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return max(0, min(value, maximum))
 
 
 def _extract_model_settings(options: Mapping[str, Any]) -> Dict[str, Any]:
