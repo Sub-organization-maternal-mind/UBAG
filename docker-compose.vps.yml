@@ -169,6 +169,16 @@ services:
       UBAG_WORKER_POOL_SIZE: ${UBAG_WORKER_POOL_SIZE:-1}
       UBAG_WORKER_POOL_MAX: ${UBAG_WORKER_POOL_MAX:-}
       UBAG_WORKER_POOL_WAIT_MS: ${UBAG_WORKER_POOL_WAIT_MS:-}
+      # Streaming ingest (all empty = off, today's batch path). With the first
+      # flag the gateway applies a warm-daemon job's non-terminal events as they
+      # arrive and holds the single terminal until the worker ends cleanly. It
+      # only shows live tokens when the worker streams too (UBAG_WORKER_STREAM_EVENTS)
+      # and it should be paired with UBAG_WORKER_STRICT_SUBMIT so a submitted
+      # prompt is never replayed. Turn them on together, after a human has
+      # verified the live DOM.
+      UBAG_WORKER_STREAM_INGEST: ${UBAG_WORKER_STREAM_INGEST:-}
+      UBAG_WORKER_STREAM_EVENTS: ${UBAG_WORKER_STREAM_EVENTS:-}
+      UBAG_WORKER_STRICT_SUBMIT: ${UBAG_WORKER_STRICT_SUBMIT:-}
       # Live provider jobs (page loads, streamed responses) need more headroom
       # than mock jobs; matches the verified local live-runtime setting.
       # Covers auth readiness (57 s), manual login (300 s), three bounded

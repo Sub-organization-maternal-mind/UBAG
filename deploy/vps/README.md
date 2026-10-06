@@ -94,6 +94,19 @@ measured yet. Do not raise the cap without a measurement
 (`tools/perf/baseline-matrix.mjs budget`). Enabling the pool is a deploy change,
 not part of this repository's defaults.
 
+`UBAG_WORKER_STREAM_INGEST` (default off) makes the gateway ingest a warm-daemon
+job as a stream. Events are provisional until one valid terminal: tokens and
+other non-terminal events are applied to the job as they arrive, but the single
+terminal event is held and applied only after the worker reports a clean end
+(its `JOB_END` marker) with exactly one terminal. A worker that dies mid-stream,
+ends without the marker, ends failed, or sends zero or two terminals abandons the
+attempt: the tokens already applied stay in the history as that attempt's
+discarded partial and the job fails (it never completes on an ambiguous stream).
+Streaming implies attempt-scoped event ids, so a re-run after a partial is not
+dropped as a duplicate. Per-job worker targets (mock, generic) stay on the batch
+path. The flag only shows live tokens together with `UBAG_WORKER_STREAM_EVENTS`,
+and should be paired with `UBAG_WORKER_STRICT_SUBMIT`.
+
 ## Antigravity CLI OAuth slots (opt-in, not yet production-verified)
 
 The `antigravity-oauth` profile installs the official `agy` Linux CLI into
