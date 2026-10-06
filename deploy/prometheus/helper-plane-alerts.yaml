@@ -114,3 +114,13 @@ groups:
           summary: "A helper stream was rejected for a policy violation"
           description: "Wrong scope, malformed or oversize output. The audit chain has one helper.policy_violation record per reason and session."
           runbook: "docs/perf-fleet/RUNBOOK.md#fenced-writes-and-policy-violations"
+      - alert: UBAGHelperReconcileFailedClosed
+        expr: sum by (reason) (increase(ubag_helper_reconcile_total{action="fail_closed"}[15m])) > 0
+        for: 0m
+        labels:
+          severity: warning
+          plane: helper
+        annotations:
+          summary: "A job was failed for reconciling ({{ $labels.reason }}): its prompt was submitted and the attempt could not be settled"
+          description: "The job ends failed with reconcile_required and is never run again. Look at the provider conversation for the turn before re-sending anything."
+          runbook: "docs/perf-fleet/RUNBOOK.md#attempt-reconcile-after-a-restart-or-helper-loss"

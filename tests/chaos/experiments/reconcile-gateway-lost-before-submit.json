@@ -1,10 +1,11 @@
 {
-  "title": "A superseded helper keeps writing",
-  "description": "Pauses the helper long enough for its attempt lease to lapse and be superseded by a new attempt on another node, then resumes it so it sends events under the old generation. Expected: every late write is rejected by the ledger (UBAG-WORKER-NODE-FENCED-005, audited as attempt.fenced_rejected), the job holds only the successor attempt's events, and the primary never cancels the successor's helper work on behalf of the stale holder. The reconciler (P4.18) applies the same rule to what a helper reports about an attempt: an InspectAttempt answer for another lease generation or input is a stale result, nothing in it is used, and a submitted attempt it concerns is failed closed.",
+  "title": "Gateway lost before the prompt is submitted",
+  "description": "Kills the gateway (not the helper) while an attempt is running on helper_a and has not submitted the prompt, and restarts it after the attempt lease has lapsed. Expected: the reconciler holds the job while the old lease might still be live, then reassigns it; the new attempt takes lease generation 2 under a fresh attempt id and the old holder is fenced. The ledger shows two attempts (the first expired and never submitted) and exactly one prompt reaches the provider.",
   "tags": [
     "helper",
     "fleet",
-    "fencing",
+    "reconcile",
+    "gateway-restart",
     "generation"
   ],
   "status": "definition_only",
@@ -17,20 +18,18 @@
     "two Helper Nodes (helper_a, helper_b) on a lab host that is not the shared VPS"
   ],
   "covered_by": [
-    "TestRemoteSupersededLeaseStopsWithoutWritingAnything",
-    "TestRemoteStaleEventGenerationIsRejectedTheJobUntouchedAndAudited",
-    "TestRemoteDuplicateCompletionIsANoOp",
-    "TestReconcileGateRejectsAStaleHelperResult",
-    "TestReconcileRealHelperStaleGenerationIsRejected"
+    "TestReconcileGateLostBeforeSubmissionReassignsAtGenerationPlusOne",
+    "TestReconcileLostBeforeSubmissionReassignsAtTheNextGenerationAndFencesTheOldHolder",
+    "TestReconcilePolicyTable"
   ],
   "configuration": {
+    "gateway_container": {
+      "type": "env",
+      "key": "UBAG_CHAOS_GATEWAY_CONTAINER"
+    },
     "helper_a_container": {
       "type": "env",
       "key": "UBAG_CHAOS_HELPER_A_CONTAINER"
-    },
-    "helper_net": {
-      "type": "env",
-      "key": "UBAG_CHAOS_HELPER_NET"
     }
   },
   "steady-states": {
@@ -68,40 +67,40 @@
   "method": [
     {
       "type": "action",
-      "name": "pause-helper-a",
+      "name": "kill-gateway",
       "provider": {
         "type": "process",
         "path": "docker",
-        "arguments": "pause ${helper_a_container}"
+        "arguments": "kill ${gateway_container}"
       }
     },
     {
       "type": "action",
-      "name": "wait-for-reassignment",
+      "name": "wait-past-one-attempt-lease",
       "provider": {
         "type": "process",
         "path": "sleep",
-        "arguments": "200"
+        "arguments": "150"
       }
     },
     {
       "type": "action",
-      "name": "resume-helper-a",
+      "name": "start-gateway",
       "provider": {
         "type": "process",
         "path": "docker",
-        "arguments": "unpause ${helper_a_container}"
+        "arguments": "start ${gateway_container}"
       }
     }
   ],
   "rollbacks": [
     {
       "type": "action",
-      "name": "ensure-helper-a-running",
+      "name": "ensure-gateway-running",
       "provider": {
         "type": "process",
         "path": "docker",
-        "arguments": "unpause ${helper_a_container}"
+        "arguments": "start ${gateway_container}"
       }
     }
   ]

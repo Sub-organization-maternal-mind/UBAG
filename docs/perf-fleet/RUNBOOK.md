@@ -12,12 +12,14 @@ Each rung needs the previous one. All default off.
 |---|---|---|
 | `UBAG_HELPER_NODES` | 1 | Node store (allocations, per-node state, SPKI registry). Enables the per-node metrics. |
 | `UBAG_HELPER_PLANE` | 2 | Separate mTLS gRPC listener for helpers. |
-| `UBAG_HELPER_DISPATCH` | 3 | The primary dials helpers and runs placed jobs as fenced attempts (P4.14; needs `UBAG_EXECUTOR_ATTEMPTS`, `UBAG_HELPER_CLIENT_CERT_FILE`, `UBAG_HELPER_CLIENT_KEY_FILE`, `UBAG_HELPER_WORKLOAD_VERSION`). Nothing is placed until a picker is wired (P4.17): with the flag on and no picker every job still runs locally. |
+| `UBAG_HELPER_DISPATCH` | 3 | The primary dials helpers and runs placed jobs as fenced attempts (P4.14; needs `UBAG_EXECUTOR_ATTEMPTS`, `UBAG_HELPER_CLIENT_CERT_FILE`, `UBAG_HELPER_CLIENT_KEY_FILE`, `UBAG_HELPER_WORKLOAD_VERSION`). Nothing is placed until a picker is wired (P4.17): with the flag on and no picker every job still runs locally. It also turns on the attempt reconciler (P4.18; window `UBAG_HELPER_RECONCILE_WINDOW_SECONDS`, default 600) and stops the stale-job sweep from expiring attempts. |
 | `UBAG_HELPER_VOICE` | 4 | Voice media on a helper (not wired yet). |
 | `UBAG_EXECUTOR_ATTEMPTS` | - | Attempt ledger (needed by the fenced commit path; Postgres or memory store). |
 | `UBAG_EXECUTOR_LEASE_TTL_MS` | - | Queue lease TTL (`0` = legacy no expiry; otherwise 30000 to 900000). |
 
 **Containment, in order of preference:** drain the node (below); unset `UBAG_HELPER_DISPATCH`; unset `UBAG_HELPER_PLANE`; unset `UBAG_HELPER_NODES`. Each unset needs a gateway restart and leaves local execution untouched, because the local worker path never depended on these flags. Do not delete the node tables.
+
+**Before unsetting `UBAG_HELPER_DISPATCH`, drain first.** The reconcile gate goes away with the flag: a job that still has a submitted helper attempt in the ledger would then be run on this gateway like a fresh job, and its prompt would be sent a second time. Stop dispatching (drain every node, or wait until no job has an open attempt) and let in-flight attempts reach an end before the restart.
 
 ## Metrics
 
@@ -33,6 +35,7 @@ All on `GET /v1/metrics` (unauthenticated, cross-tenant aggregates; no tenant, j
 | `ubag_lease_renew_failures_total` | counter | `lease` (`queue`, `exec`, `attempt`), `reason` (`lost`, `error`) | Failed renewals. `queue` and `exec` are recorded by the local consumer today; `attempt` is recorded by the helper dispatcher once it lands, so it reads 0 until then. |
 | `ubag_helper_fenced_rejects_total` | counter | `reason` | Helper writes refused as stale or fenced (`UBAG-WORKER-NODE-FENCED-005`). |
 | `ubag_helper_policy_violations_total` | counter | `reason` | Helper streams rejected or failed for scope, content or budget violations. |
+| `ubag_helper_reconcile_total` | counter | `action` (`run`, `wait`, `resume`, `fail_closed`), `reason` | Attempt reconcile decisions (P4.18) for leased jobs that already have attempts. Only the pairs the policy can produce exist, all from the first scrape; a `wait` repeats every few seconds while a job is held. |
 
 Counters are per gateway process and reset on restart; use `increase()`. Helper-influenced text never becomes a label value: unknown reasons are folded into `other`. Heartbeat age and admission are derived from the node store at scrape time (the body is cached for 5 s), so they are only as fresh as the store.
 
@@ -108,10 +111,42 @@ Source: `RemoteWorkerRunner` (ADR-0014). Log lines carry `job_id`, `attempt_id` 
 - `worker placement refused; retrying the lease after a delay` with `reason=` `helper_unreachable`, `helper_workload_version`, `helper_registry_digest`, `helper_protocol`, `helper_node_mismatch` or `helper_clock_skew`: the picked helper is not usable, so the job was held back before anything was leased (no ledger row, nothing submitted). Fix the helper (version, adapter registry, clock, link) or drain it; the job retries every few seconds meanwhile. A steady stream for one node means the picker keeps choosing a node the primary will not use.
 - `reason=attempt_lease_held` or `attempt_conflict`: a previous attempt of the job still holds its 120 s ledger lease (a refusal or a lost helper leaves it to lapse). The job waits for the lapse; this is normal for up to two minutes after a helper loss.
 - `reason=helper_lost`: the helper was refused, unreachable or fenced before the prompt was submitted. The job goes back to the queue and gets generation n+1 after the lease lapses. `reason=attempt_lease_lost`: the ledger gave the attempt to someone else; nothing was written.
-- A job `failed_terminal` with `reconcile_required`, `submitted: true` and a `helper lost after prompt submission` log line: the helper (or the primary) was lost after the prompt left. It is never replayed. Look at the provider's own conversation for the turn; if it is there, the answer has to be collected by hand until the reconciler (P4.18) lands.
+- A job `failed_terminal` with `reconcile_required`, `submitted: true` and a `helper lost after prompt submission` log line: the helper (or the primary) was lost after the prompt left. It is never replayed. Look at the provider's own conversation for the turn; if it is there, the answer has to be collected by hand. A job whose gateway was restarted (rather than its helper lost) is settled by the attempt reconciler, which collects a finished answer from the helper by itself: see the next section.
 - `helper_output_limit` / `helper_event_invalid` on a job: the helper broke the output contract and the attempt was failed (see "Fenced writes and policy violations").
 - A cancel reaches a remote attempt within about a second through the in-process hint; a cancel written by another gateway process takes up to 2 s. If `CancelAttempt` does not land (the helper is down) the helper's own lease expiry stops the attempt, at most 110 s later.
 - Jobs with declared attachments, a conversation, a `voice.*` command type or an `antigravity_*` target are never dispatched; they run on the primary.
+
+### Attempt reconcile after a restart or helper loss
+
+Alert: `UBAGHelperReconcileFailedClosed`. Source: the reconcile gate in the worker consumer and `nodes.Reconciler` (ADR-0015). Log lines start `attempt reconcile:` and carry `job_id`, `attempt_id`, `node_id`, `generation` and `reason`. Counter: `ubag_helper_reconcile_total{action,reason}`.
+
+Every leased job is judged against the attempt ledger before it is placed or run, whichever queue it came from (a spool lease recovered after a restart, a TTL reclaim, a NATS redelivery). The ledger decides first; the helper is asked (`InspectAttempt`, read-only) only when the answer depends on it. The manager is never asked: the node store's last accepted endpoint and revocation are all it reads, so a manager outage changes nothing here. A job whose prompt may already have left is never started again.
+
+| `action` | `reason` | Meaning |
+|---|---|---|
+| `run` | `no_attempt`, `attempt_ended`, `attempt_lapsed` | Nothing live and nothing submitted: the job is placed or run as usual. After a lost attempt that never submitted, the next attempt takes generation + 1 and the old holder is fenced. |
+| `wait` | `attempt_lease_held` | The last attempt's 120 s lease (plus a 15 s margin for the helper's kill grace) has not lapsed: the job is held and retried every 10 s at most. Up to about two minutes after a gateway restart is normal. |
+| `wait` | `helper_unreachable`, `helper_still_running` | A submitted attempt whose helper does not answer, held until the window ends (`UBAG_HELPER_RECONCILE_WINDOW_SECONDS`, default 600 s, counted from the lapse of its lease); or an unsubmitted one the helper has not stopped. |
+| `resume` | `helper_holds_attempt`, `helper_finished`, `helper_saw_submit` | The helper holds the submitted attempt. Its lease is taken over (ledger first, then helper), and when it has ended the outcome is committed as its terminal event through the fenced ingest. The job completes (or fails with the helper's own failure) as if it had never been interrupted. `helper_saw_submit`: only the helper saw the prompt leave; the ledger is updated first. |
+| `fail_closed` | see below | The prompt was submitted and nothing can settle it. The job ends `failed_terminal` with `submitted: true` and `reconcile_required: true` (event `reason` = `attempt_reconcile_<reason>`), its queue lease fails and is never retried, and it is never run again. |
+
+`fail_closed` reasons:
+
+- `helper_no_record`: the helper restarted and forgot the attempt. Check the helper's uptime and logs. The prompt may be in the provider's conversation.
+- `helper_unreachable`: the helper stayed unreachable for the whole window. Fix the link or the node; conversations bound to the node are marked broken.
+- `node_revoked`: the node was revoked; it is not dialed. Conversations bound to it are marked broken.
+- `stale_helper_result`: the helper answered for another lease generation or another input than the ledger's. Nothing from the answer was used. Treat it like a fenced write (see above) and investigate the node: it is either buggy or confused, and a repeat is a reason to revoke it.
+- `attempt_fenced`: the attempt was already expired (or finished) in the ledger, so nothing the helper holds can be committed. Usually an attempt left by a gateway that ran with another configuration.
+- `helper_not_stopping`: an attempt that never submitted is still running on a helper long after its lease. The helper's lease logic is not working: investigate the node.
+
+For every `fail_closed` job: look at the provider's own conversation for the turn. Re-send it by hand only when the turn is not there; the gateway will not.
+
+Limits to know:
+
+- A resumed attempt commits only its outcome. The provisional events between the crash and the end (tokens) are not replayed, so the job's event history has a gap there; the result is complete.
+- Resume never calls `RunAttempt`. A helper that lost the attempt cannot be made to start it again by a reconcile.
+- If a helper dies after the prompt left and before any event reached the primary, and nothing can be asked of it any more, the ledger still says "not submitted": the job is reassigned. This window is the width of one event delivery; a durable helper journal would close it (ADR-0015).
+- A graceful gateway shutdown with a submitted attempt in flight still cancels the helper and fails the job closed (P4.14). Only a crash or a kill is resumed.
 
 ## Pre-canary checklist (P4.20 is still external-blocked)
 
@@ -129,4 +164,6 @@ A canary has not run and this runbook does not claim one. Before one is attempte
 
 Checked by tests or targeted checks in this slice: the metric renderer (bounded labels, per-node gauges from a memory node store, source failure visible), the executor's fenced-reject counter on a real fenced commit, the `/v1/metrics` wiring, that every metric named in the alert file is emitted by the gateway (`tools/check-alert-metrics.mjs`), and the alert file structure and runbook anchors (`tools/check-helper-alerts.mjs`).
 
-Not verified: `promtool check rules` (not available here), the expressions against live data, the Postgres node store under scrape load, any real helper, the manager, or a canary. The `lease="attempt"` series is produced by the remote runner's renewal loop (P4.14); it has only been exercised against a fake helper and a loopback helper service, never a real node.
+The attempt reconcile (P4.18) was checked against a fake helper and the real ledger (memory store) and against the real helper service over real mTLS on loopback: collect a finished attempt after a lost primary, adopt a running one and keep it alive past its original lease, a helper that forgot the attempt, a stale generation, an unreachable helper through and past the window, lost before submission reassigned at generation + 1, and the manager-down case. The chaos experiments for it are definitions only (`tests/chaos/experiments/reconcile-*.json`).
+
+Not verified: `promtool check rules` (not available here), the expressions against live data, the Postgres node store under scrape load, the Postgres attempt ledger under the reconciler, any real helper, the manager, or a canary. The `lease="attempt"` series is produced by the remote runner's renewal loop (P4.14); it has only been exercised against a fake helper and a loopback helper service, never a real node.
