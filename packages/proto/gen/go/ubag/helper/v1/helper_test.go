@@ -67,3 +67,23 @@ func TestAttemptEventRoundtripTerminalSemantics(t *testing.T) {
 		t.Fatalf("post-submit ambiguity flags lost: %v", o)
 	}
 }
+
+// The registry digest rides on both the handshake and every capacity report
+// (P4.11). Golden bytes pin its field numbers: tag 7 on HandshakeResponse and
+// tag 13 on ReportCapacityResponse (wire tags 0x3a and 0x6a).
+func TestRegistryDigestFieldNumbers(t *testing.T) {
+	hs, err := proto.MarshalOptions{Deterministic: true}.Marshal(&HandshakeResponse{RegistryDigest: "ab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := hex.EncodeToString(hs), "3a026162"; got != want {
+		t.Fatalf("HandshakeResponse.registry_digest wire bytes: got %s want %s", got, want)
+	}
+	rc, err := proto.MarshalOptions{Deterministic: true}.Marshal(&ReportCapacityResponse{RegistryDigest: "ab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := hex.EncodeToString(rc), "6a026162"; got != want {
+		t.Fatalf("ReportCapacityResponse.registry_digest wire bytes: got %s want %s", got, want)
+	}
+}
