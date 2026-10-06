@@ -15,7 +15,8 @@ Highest on origin/main: 0005. Four planned ADRs each originally claimed 0006.
 | 0010 | helper-trust-plane (landed, P4.5) | P4.5 |
 | 0011 | lease-then-place-with-delayed-retry (landed, P3.6) | P3.6 |
 | 0012 | voice-excludes-browser-jobs-on-a-shared-browser (landed, P5.5) | P5.5 |
-| 0013+ | free: take next free | later |
+| 0013 | helper-service-lease-log-and-primary-identity (landed, P4.11) | P4.11 |
+| 0014+ | free: take next free | later |
 
 ## Migrations
 
@@ -37,6 +38,7 @@ origin/main postgres highest: 0021 (0019-0021 live: voice sessions, voice instan
 - Attempt ledger flag: `UBAG_EXECUTOR_ATTEMPTS` (default off; on requires the postgres or memory store, sqlite refuses to start).
 - Queue lease flag: `UBAG_EXECUTOR_LEASE_TTL_MS` (0/unset = legacy no-expiry; otherwise 30000..900000; file-spool lease expiry + NATS ack wait; see ADR-0007 addendum).
 - Streaming flag pair: `UBAG_WORKER_STREAM_EVENTS` (Python emits) + `UBAG_WORKER_STREAM_INGEST` (Go ingests). Other flags: see BINDING.md section 3 rule 5.
+- Helper binary `apps/gateway/cmd/ubag-helper` (P4.11) is a separate process, outside the flag ladder, configured only by `UBAG_HELPER_LISTEN`, `UBAG_HELPER_NODE_ID`, `UBAG_HELPER_CA_FILE`, `UBAG_HELPER_TLS_CERT_FILE`, `UBAG_HELPER_TLS_KEY_FILE`, `UBAG_HELPER_PRIMARY_URI_SAN`, `UBAG_HELPER_PRIMARY_SPKI_SHA256`, `UBAG_HELPER_WORKLOAD_VERSION`, `UBAG_HELPER_ADAPTERS_DIR`, `UBAG_HELPER_CHROME_BIN`, `UBAG_HELPER_MAX_ATTEMPTS`. The three `*_CA_FILE`/`*_TLS_*_FILE` names are the same names the primary's helper-plane listener uses (P4.5) with the matching meaning on each side; they are never set in one process. The primary's identity on the helper side is the URI SAN `spiffe://ubag/primary/<id>` (ADR-0013). The staging client lives in `internal/helper/staging` (moved in P4.11).
 
 ## Phase map
 
