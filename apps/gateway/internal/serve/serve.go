@@ -229,6 +229,14 @@ func Run(ctx context.Context) error {
 		slog.Info("helper node store enabled", "store", storeKind)
 	}
 
+	// Helper trust plane (UBAG_HELPER_PLANE, default off): a separate mTLS gRPC
+	// listener, never the plaintext grpcServer below. Later P4 slices register
+	// their helper-facing services on hplane.server.
+	hplane, err := newHelperPlaneFromEnv(helperNodes)
+	if err != nil {
+		return fmt.Errorf("invalid helper plane configuration: %w", err)
+	}
+
 	appJWTPublicKey, err := appJWTPublicKeyFromEnv()
 	if err != nil {
 		return fmt.Errorf("invalid app JWT configuration: %w", err)
@@ -486,24 +494,54 @@ func Run(ctx context.Context) error {
 		slog.Info("starting ubag gateway grpc", "addr", grpcAddr)
 	}
 
+	helperErr := make(chan error, 1)
+	if hplane != nil {
+		helperListener, err := net.Listen("tcp", hplane.addr)
+		if err != nil {
+			return fmt.Errorf("failed to listen on helper plane address %q: %w", hplane.addr, err)
+		}
+		go func() {
+			helperErr <- hplane.server.Serve(helperListener)
+		}()
+		slog.Info("starting ubag helper plane (mTLS)", "addr", hplane.addr)
+	}
+
 	slog.Info("starting ubag gateway", "addr", addr)
 	select {
 	case err := <-serverErr:
 		if grpcListener != nil {
 			grpcServer.Stop()
 		}
+		hplane.stop(0)
 		if err != nil && err != http.ErrServerClosed {
 			return fmt.Errorf("gateway stopped: %w", err)
 		}
 		return nil
 	case err := <-grpcErr:
 		_ = httpServer.Close()
+		hplane.stop(0)
 		if err != nil && err != grpc.ErrServerStopped {
 			return fmt.Errorf("gateway grpc stopped: %w", err)
 		}
 		return nil
+	case err := <-helperErr:
+		_ = httpServer.Close()
+		if grpcListener != nil {
+			grpcServer.Stop()
+		}
+		if err != nil && err != grpc.ErrServerStopped {
+			return fmt.Errorf("gateway helper plane stopped: %w", err)
+		}
+		return nil
 	case <-ctx.Done():
 	}
+
+	helperStopped := make(chan struct{})
+	go func() {
+		hplane.stop(shutdownGraceFromEnv() / 2) // same budget as the public gRPC server below
+		close(helperStopped)
+	}()
+	defer func() { <-helperStopped }()
 
 	if grpcListener != nil {
 		// GracefulStop waits for in-flight RPCs but has no built-in budget: a
