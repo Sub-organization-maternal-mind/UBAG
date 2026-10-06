@@ -4,18 +4,34 @@
   import { api } from '$lib/api/client';
   import { snapshots } from '$lib/stores/snapshot';
   import { failedCount, normalizeJobs, parseJobsSummary } from '$lib/api/jobs';
+  import { fmtCount, fmtTime, humanize, loadFleetSummary, queueReasonRows } from '$lib/api/fleet';
+  import CapacityBar from '$lib/components/CapacityBar.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
+  import QueueReasons from '$lib/components/QueueReasons.svelte';
   import SkeletonCards from '$lib/components/SkeletonCards.svelte';
   import SkeletonTable from '$lib/components/SkeletonTable.svelte';
   import UpdatedAgo from '$lib/components/UpdatedAgo.svelte';
-  import type { MetricsResponse, Job } from '$lib/api/types';
+  import type { FleetSummary, MetricsResponse, Job } from '$lib/api/types';
   import { FAILED_STATES as FAILED_STATUS_LIST } from '$lib/api/statuses';
 
   let metrics = $state<MetricsResponse | null>(null);
   let recentJobs = $state<Job[]>([]);
+  // Queue reasons come from /v1/jobs/summary (empty unless the gateway computes them);
+  // the fleet summary is operator-only and stays null (panel hidden) unless it answers 200.
+  let queuedByReason = $state<Record<string, number>>({});
+  let oldestQueued = $state<string | null>(null);
+  let fleet = $state<FleetSummary | null>(null);
+  let hasQueueReasons = $derived(queueReasonRows(queuedByReason).length > 0);
+  // Non-eligible node states with a count, e.g. "1 draining · 1 lost".
+  let fleetOtherStates = $derived(
+    Object.entries(fleet?.nodes_by_state ?? {})
+      .filter(([state, n]) => state !== 'eligible' && n > 0)
+      .map(([state, n]) => `${n} ${humanize(state).toLowerCase()}`)
+      .join(' · ')
+  );
 
   let metricsLoading = $state(true);
   let jobsLoading = $state(true);
@@ -55,20 +71,24 @@
     metricsError = null;
     metricsDenied = false;
 
-    const [jobsRes, targetsRes, browserRes, summaryRes] = await Promise.all([
+    const [jobsRes, targetsRes, browserRes, summaryRes, fleetSummary] = await Promise.all([
       jobsResponse ?? recentJobsRead(force),
       read('/v1/targets', force),
       read('/v1/browser/summary', force),
       read('/v1/jobs/summary', force),
+      loadFleetSummary(force),
     ]);
 
     metricsLoading = false;
+    fleet = fleetSummary;
 
     // If the primary jobs call is denied/unauthorized, surface that state.
     if (jobsRes.denied) { metricsDenied = true; return; }
     if (jobsRes.unauthorized) { metricsError = 'Not authenticated — check your gateway login.'; return; }
 
     const summary = parseJobsSummary(summaryRes.data);
+    queuedByReason = summary?.queued_by_reason ?? {};
+    oldestQueued = summary?.oldest_queued_at ?? null;
     // Only gateways that predate /v1/jobs/summary need the capped list fallback.
     const legacy = summary
       ? []
@@ -167,6 +187,42 @@
     {#if metricsError}
       <ErrorPanel message={metricsError} retry={() => loadMetrics(undefined, true)} />
     {/if}
+  {/if}
+
+  {#if hasQueueReasons}
+    <QueueReasons
+      title="Waiting jobs by reason"
+      counts={queuedByReason}
+      hints
+      note={oldestQueued ? `Oldest queued job: ${fmtTime(oldestQueued)}` : ''}
+    />
+  {/if}
+
+  <!-- Shared fleet: only when GET /v1/fleet/summary answers 200 (operator, helper nodes on) -->
+  {#if fleet}
+    <section aria-labelledby="fleet-heading">
+      <div class="mb-3 flex items-center justify-between gap-3">
+        <h2 id="fleet-heading" class="text-lg font-display font-semibold text-ink">Shared Fleet</h2>
+        <a href="{base}/quotas" class="text-sm font-medium text-accent-deep hover:underline">Assigned capacity →</a>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div class="card">
+          <p class="mb-1 text-xs font-mono uppercase tracking-widest text-ink-mute">Eligible Nodes</p>
+          <p class="text-3xl font-display font-bold text-ink">
+            {fmtCount(fleet.nodes_by_state['eligible'])} / {fmtCount(fleet.nodes_total)}
+          </p>
+          {#if fleetOtherStates}
+            <p class="mt-1 text-xs text-ink-mute">{fleetOtherStates}</p>
+          {/if}
+        </div>
+        <CapacityBar name="Workload slots" used={fleet.workloads_in_use_total} limit={fleet.workload_limit_total} unit="in use" />
+        <div class="card">
+          <p class="mb-1 text-xs font-mono uppercase tracking-widest text-ink-mute">Nodes Under Pressure</p>
+          <p class="text-3xl font-display font-bold text-ink">{fmtCount(fleet.nodes_pressure_reduced)}</p>
+          <p class="mt-1 text-xs text-ink-mute">Admitting fewer workloads</p>
+        </div>
+      </div>
+    </section>
   {/if}
 
   <!-- Recent activity -->

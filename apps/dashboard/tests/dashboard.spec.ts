@@ -258,6 +258,109 @@ test('jobs attachment picker fits the Hallmark mobile breakpoints', async ({ pag
   }
 });
 
+// --- Fleet panels (P6.4): queue reasons, placement, assigned capacity ---------
+// Every gateway route is mocked by pathname so the pages render deterministically.
+const FLEET_NODES = {
+  kind: 'fleet_nodes',
+  total: 2,
+  data: [
+    {
+      node_id: 'helper-1', label: 'helper-1', region: 'eu-west', state: 'eligible', ineligible_reason: null,
+      heartbeat_at: '2026-10-06T10:00:00Z',
+      grant: { generation: 4, state: 'active', reservation_state: 'known', valid_until: '2026-10-06T22:00:00Z', max_browser_workloads: 3, cpu_millis: 1500, memory_bytes: 2684354560, voice_capable: false },
+      usage: { workloads_in_use: 1, admission_limit: 2 },
+      pressure: { admission_reduced: true, recover_at: '2026-10-06T10:05:00Z' },
+      readiness: [{ target: 'chatgpt_web', session_state: 'authenticated', count: 2, checked_at: '2026-10-06T10:00:00Z' }],
+    },
+    {
+      node_id: 'helper-2', label: 'helper-2', region: 'eu-west', state: 'ineligible', ineligible_reason: 'grant_expired',
+      heartbeat_at: null,
+      grant: { generation: 2, state: 'active', reservation_state: 'known', valid_until: '2026-10-05T22:00:00Z', max_browser_workloads: 2, cpu_millis: 1000, memory_bytes: 1073741824, voice_capable: false },
+      usage: { workloads_in_use: 0, admission_limit: 0 },
+      pressure: { admission_reduced: false, recover_at: null },
+      readiness: [],
+    },
+  ],
+};
+const FLEET_SUMMARY = {
+  kind: 'fleet_summary', nodes_total: 2,
+  nodes_by_state: { eligible: 1, ineligible: 1, draining: 0, lost: 0, unknown_reservation: 0 },
+  workload_limit_total: 2, workloads_in_use_total: 1, nodes_pressure_reduced: 1,
+  held_by_reason: { identity_busy: 2, no_capacity: 1 },
+};
+const QUEUED_JOB = {
+  job_id: 'job_0123456789ab', target: 'chatgpt_web', status: 'queued',
+  created_at: '2026-10-06T09:00:00Z', updated_at: '2026-10-06T09:00:00Z',
+  queue_reason: 'waiting_for_capacity', queue_reason_since: '2026-10-06T09:01:00Z',
+  metadata: { command_type: 'chat.prompt' },
+};
+
+async function mockFleetGateway(page: import('@playwright/test').Page, fleetStatus: number) {
+  const fleetUp = fleetStatus === 200;
+  const body: Record<string, unknown> = {
+    '/v1/jobs': { jobs: [QUEUED_JOB] },
+    '/v1/jobs/summary': {
+      total: 1, counts_by_status: { queued: 1 }, oldest_queued_at: '2026-10-06T09:00:00Z',
+      queued_by_reason: fleetUp ? { waiting_for_capacity: 1 } : {},
+    },
+    '/v1/targets': { data: [] },
+    '/v1/templates': { data: [] },
+    '/v1/rate-limits': { enabled: false, policies: [] },
+    '/v1/concurrency': { data: [] },
+    '/v1/browser/summary': { total_instances: 0, total_contexts: 0, total_tabs: 0 },
+    '/v1/browser/instances': { data: [] },
+    '/v1/browser/contexts': { data: [] },
+    '/v1/browser/tabs': { data: [] },
+    '/v1/fleet/nodes': FLEET_NODES,
+    '/v1/fleet/summary': FLEET_SUMMARY,
+  };
+  await page.route('**/v1/**', (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.startsWith('/v1/fleet/') && !fleetUp) {
+      return route.fulfill({ status: fleetStatus, contentType: 'application/json', body: '{"error":"not_implemented"}' });
+    }
+    return route.fulfill({ json: body[path] ?? {} });
+  });
+}
+
+test('fleet panels render on Overview, Jobs, Browser and Quotas when the fleet endpoint answers 200, and pass axe', async ({ page }) => {
+  await mockFleetGateway(page, 200);
+  const panels = [
+    { path: '/', visible: [page.getByRole('heading', { name: 'Shared Fleet' }), page.getByRole('heading', { name: 'Waiting jobs by reason' })] },
+    { path: '/jobs', visible: [page.getByRole('heading', { name: 'Held by placement reason' }), page.getByRole('columnheader', { name: 'Queue Reason' })] },
+    { path: '/browser', visible: [page.getByRole('heading', { name: 'Placement', exact: true }), page.getByRole('cell', { name: 'chatgpt_web: authenticated ×2' })] },
+    { path: '/quotas', visible: [page.getByRole('heading', { name: 'Assigned Capacity' }), page.getByRole('progressbar', { name: 'helper-1 usage' })] },
+  ];
+  for (const panel of panels) {
+    await page.goto(panel.path);
+    for (const locator of panel.visible) await expect(locator, panel.path).toBeVisible();
+
+    await injectAxe(page);
+    const violations = await getViolations(page, undefined, {
+      runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] },
+    });
+    const critical = violations.filter((v) => v.impact === 'critical' || v.impact === 'serious');
+    expect(
+      critical,
+      `${panel.path}: ` + JSON.stringify(critical.map((v) => ({ id: v.id, description: v.description })))
+    ).toHaveLength(0);
+  }
+});
+
+test('fleet panels stay hidden when the fleet endpoint answers 501', async ({ page }) => {
+  await mockFleetGateway(page, 501);
+  for (const path of ['/', '/jobs', '/browser', '/quotas']) {
+    await page.goto(path);
+    // The page's own content has rendered (its mocked routes answered)...
+    await expect(page.getByRole('main')).toBeVisible();
+    await page.waitForLoadState('networkidle');
+    // ...and none of the fleet or queue-reason panels did.
+    for (const name of ['Shared Fleet', 'Waiting jobs by reason', 'Held by placement reason', 'Placement', 'Assigned Capacity']) {
+      await expect(page.getByRole('heading', { name, exact: true }), `${path}: ${name}`).toHaveCount(0);
+    }
+  }
+});
+
 test.describe('Visual snapshots', () => {
   // Run at desktop only for snapshot baseline (reduce snapshot count)
   test.use({ viewport: { width: 1440, height: 900 } });

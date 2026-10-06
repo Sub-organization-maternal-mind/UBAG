@@ -1,12 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api/client';
+  import { fmtBytes, fmtCount, fmtCpu, fmtTime, humanize, loadFleetNodes } from '$lib/api/fleet';
+  import type { FleetNode } from '$lib/api/types';
+  import CapacityBar from '$lib/components/CapacityBar.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import SkeletonCards from '$lib/components/SkeletonCards.svelte';
   import SkeletonTable from '$lib/components/SkeletonTable.svelte';
+  import StatusBadge from '$lib/components/StatusBadge.svelte';
 
   // Real gateway shape: { enabled, policies: [ { action, limit, window_seconds, burst? } ] }
   interface RateLimitPolicy {
@@ -45,15 +49,12 @@
   let quotasDenied = $state(false);
   let quotasError = $state<string | null>(null);
 
-  function pct(used: number, limit: number): number {
-    if (limit <= 0) return 0;
-    return Math.min(100, Math.round((used / limit) * 100));
-  }
+  // Capacity assigned to this gateway by the fleet manager. Null (section hidden)
+  // unless GET /v1/fleet/nodes answers 200.
+  let fleetNodes = $state<FleetNode[] | null>(null);
 
-  function barColor(p: number): string {
-    if (p >= 90) return 'bg-danger';
-    if (p >= 70) return 'bg-warning';
-    return 'bg-success';
+  async function loadFleet(force = false) {
+    fleetNodes = await loadFleetNodes(force);
   }
 
   async function loadRateLimits() {
@@ -90,6 +91,7 @@
   onMount(() => {
     loadRateLimits();
     loadQuotas();
+    loadFleet();
   });
 </script>
 
@@ -162,29 +164,48 @@
     {:else}
       <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {#each quotas as q, i (q.name ?? i)}
-          {@const p = pct(q.used, q.limit)}
-          <div class="card space-y-2">
-            <div class="flex items-baseline justify-between gap-2">
-              <p class="text-sm font-medium text-ink truncate" title={q.name}>{q.name}</p>
-              <p class="text-xs text-ink-mute shrink-0">{p}%</p>
-            </div>
-            <div class="h-2 rounded-full bg-rule overflow-hidden">
-              <div
-                class="h-full rounded-full transition-all duration-500 ease-out {barColor(p)}"
-                style="width: {p}%"
-                role="progressbar"
-                aria-label="{q.name} usage"
-                aria-valuenow={q.used}
-                aria-valuemin={0}
-                aria-valuemax={q.limit}
-              ></div>
-            </div>
-            <p class="text-xs text-ink-mute">
-              {q.used.toLocaleString()} / {q.limit.toLocaleString()}{q.unit ? ' ' + q.unit : ''}
-            </p>
-          </div>
+          <CapacityBar name={q.name} used={q.used} limit={q.limit} unit={q.unit} />
         {/each}
       </div>
     {/if}
   </section>
+
+  <!-- Assigned capacity: only when GET /v1/fleet/nodes answers 200 (operator, helper nodes on) -->
+  {#if fleetNodes}
+    <section aria-labelledby="assigned-heading">
+      <div class="flex items-center justify-between mb-1">
+        <h2 id="assigned-heading" class="text-lg font-display font-semibold text-ink">Assigned Capacity</h2>
+        <button onclick={() => loadFleet(true)} class="btn btn-secondary btn-sm">Refresh</button>
+      </div>
+      <p class="mb-3 text-xs text-ink-mute max-w-prose">
+        Each bar is workload slots in use against the admission limit the gateway will place right now: the lowest of
+        the manager's grant, the node's earned ramp and the gateway ceiling, halved under resource pressure.
+      </p>
+      {#if fleetNodes.length === 0}
+        <EmptyState message="No helper nodes are assigned to this gateway." />
+      {:else}
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {#each fleetNodes as node (node.node_id)}
+            <CapacityBar
+              name={node.label}
+              used={node.usage.workloads_in_use}
+              limit={node.usage.admission_limit}
+              unit="workloads"
+            >
+              <div class="flex flex-wrap items-center gap-2">
+                <StatusBadge status={node.state} />
+                {#if node.ineligible_reason}
+                  <span class="text-xs text-ink-mute">{humanize(node.ineligible_reason)}</span>
+                {/if}
+              </div>
+              <p class="text-xs text-ink-mute">
+                Grant: {fmtCount(node.grant.max_browser_workloads)} workloads · {fmtCpu(node.grant.cpu_millis)} · {fmtBytes(node.grant.memory_bytes)}
+              </p>
+              <p class="text-xs text-ink-mute">Valid until {fmtTime(node.grant.valid_until)}</p>
+            </CapacityBar>
+          {/each}
+        </div>
+      {/if}
+    </section>
+  {/if}
 </div>

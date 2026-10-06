@@ -11,6 +11,15 @@ export interface GwResponse<T = unknown> {
 }
 
 // Job types
+// job-response.schema.json $defs.queue_reason. Unknown values are tolerated.
+export type QueueReason =
+  | 'waiting_for_worker'
+  | 'waiting_for_identity'
+  | 'waiting_for_capacity'
+  | 'waiting_for_node'
+  | 'retry_backoff'
+  | 'temporarily_unavailable';
+
 export interface Job {
   id: string;
   job_id?: string;
@@ -23,6 +32,10 @@ export interface Job {
   metadata?: Record<string, unknown>;
   result?: unknown;
   error?: string;
+  // Coarse, tenant-safe reason a queued job has not started. Reported only while
+  // status is queued, and only when the gateway computes it; absent means unknown.
+  queue_reason?: QueueReason | (string & {}) | null;
+  queue_reason_since?: string | null;
 }
 
 export interface JobCreateResponse {
@@ -286,4 +299,48 @@ export interface MetricsResponse {
   targets_total?: number;
   browser_instances?: number;
   [key: string]: unknown;
+}
+
+// Fleet — mirrors packages/openapi (FleetNode, FleetSummary). Operator-only reads
+// (fleet:read); the gateway answers 501 when it has no fleet source. A node carries
+// an opaque node_id and label only: never an address or a browser endpoint.
+export interface FleetGrant {
+  generation: number;
+  state: 'active' | 'draining' | 'revoked' | (string & {});
+  reservation_state: 'known' | 'unknown' | (string & {});
+  valid_until: string;
+  max_browser_workloads: number;
+  cpu_millis: number;
+  memory_bytes: number;
+  voice_capable: boolean;
+}
+
+export interface FleetReadiness {
+  target: string;
+  session_state: 'authenticated' | 'login_required' | 'unknown' | 'busy' | (string & {});
+  count: number;
+  checked_at: string;
+}
+
+export interface FleetNode {
+  node_id: string;
+  label: string;
+  region: string;
+  state: 'eligible' | 'ineligible' | 'draining' | 'lost' | 'unknown_reservation' | (string & {});
+  ineligible_reason: 'revoked' | 'grant_expired' | 'no_capacity' | (string & {}) | null;
+  heartbeat_at: string | null;
+  grant: FleetGrant;
+  usage: { workloads_in_use: number; admission_limit: number };
+  pressure: { admission_reduced: boolean; recover_at: string | null };
+  readiness: FleetReadiness[];
+}
+
+export interface FleetSummary {
+  nodes_total: number;
+  nodes_by_state: Record<string, number>;
+  workload_limit_total: number;
+  workloads_in_use_total: number;
+  nodes_pressure_reduced: number;
+  // Open set of fine-grained hold reasons; absent key means 0.
+  held_by_reason: Record<string, number>;
 }

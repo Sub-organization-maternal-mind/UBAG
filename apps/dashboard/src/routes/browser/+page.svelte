@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { api, listOf } from '$lib/api/client';
+  import { EM_DASH, fmtCount, fmtTime, humanize, loadFleetNodes, readinessLines } from '$lib/api/fleet';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
@@ -16,6 +17,7 @@
     BrowserTab,
     BrowserSummary,
     ConcurrencyView,
+    FleetNode,
   } from '$lib/api/types';
 
   let summary = $state<BrowserSummary | null>(null);
@@ -68,6 +70,14 @@
     if (res.status === 501 || res.status === 404) { concurrencyUnavailable = true; return; }
     if (res.error) { concurrencyUnavailable = true; return; }
     concurrency = res.data?.data ?? [];
+  }
+
+  // --- Placement across helper nodes (GET /v1/fleet/nodes, fleet:read) ---
+  // Null (section hidden) unless the gateway answers 200; 501/404/403 all read as "not available".
+  let fleetNodes = $state<FleetNode[] | null>(null);
+
+  async function loadFleet(force = false) {
+    fleetNodes = await loadFleetNodes(force);
   }
 
   async function load(silent = false) {
@@ -216,7 +226,15 @@
   onMount(() => {
     load();
     loadConcurrency();
-    const stopPolling = pollWhileVisible(() => load(true), 45_000, { immediate: false });
+    loadFleet();
+    const stopPolling = pollWhileVisible(
+      () => {
+        void loadFleet();
+        return load(true);
+      },
+      45_000,
+      { immediate: false },
+    );
     // Refit the terminal when the viewport changes.
     const onResize = () => fitTerm();
     window.addEventListener('resize', onResize);
@@ -272,6 +290,72 @@
           </div>
         {/each}
       </div>
+    {/if}
+
+    <!-- Placement: which helper nodes take new work, and why not. Hidden unless the fleet endpoint answers 200. -->
+    {#if fleetNodes}
+      <section class="space-y-2" aria-labelledby="placement-heading">
+        <div class="flex items-center justify-between">
+          <h2 id="placement-heading" class="text-sm font-semibold text-ink uppercase tracking-wider">Placement</h2>
+          <button onclick={() => loadFleet(true)} class="text-xs text-accent-deep hover:underline">Refresh</button>
+        </div>
+        {#if fleetNodes.length === 0}
+          <EmptyState message="No helper nodes." hint="Nodes appear once the fleet manager grants this gateway capacity." />
+        {:else}
+          <!-- Seven columns can overflow on a narrow screen: keep the scroll area keyboard-reachable. -->
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+          <div class="table-wrap" role="region" aria-label="Helper node placement" tabindex="0">
+            <table class="w-full text-xs">
+              <thead class="thead">
+                <tr>
+                  <th class="th">Node</th>
+                  <th class="th">Region</th>
+                  <th class="th">State</th>
+                  <th class="th">Heartbeat</th>
+                  <th class="th">Slots</th>
+                  <th class="th">Pressure</th>
+                  <th class="th">Provider sessions</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-rule">
+                {#each fleetNodes as node (node.node_id)}
+                  {@const sessions = readinessLines(node)}
+                  <tr class="transition-colors hover:bg-paper-soft/70">
+                    <td class="td font-mono text-ink" title={node.node_id}>{node.label}</td>
+                    <td class="td font-mono">{node.region || EM_DASH}</td>
+                    <td class="td">
+                      <div class="flex flex-wrap items-center gap-2">
+                        <StatusBadge status={node.state} />
+                        {#if node.ineligible_reason}
+                          <span class="text-ink-mute">{humanize(node.ineligible_reason)}</span>
+                        {/if}
+                      </div>
+                    </td>
+                    <td class="td whitespace-nowrap">{fmtTime(node.heartbeat_at)}</td>
+                    <td class="td whitespace-nowrap">{fmtCount(node.usage.workloads_in_use)} / {fmtCount(node.usage.admission_limit)}</td>
+                    <td class="td">
+                      {#if node.pressure.admission_reduced}
+                        <span class="text-warning">Reduced</span>{node.pressure.recover_at ? ` until ${fmtTime(node.pressure.recover_at)}` : ''}
+                      {:else if node.pressure.admission_reduced === false}
+                        Normal
+                      {:else}
+                        {EM_DASH}
+                      {/if}
+                    </td>
+                    <td class="td">
+                      {#each sessions as line, i (i)}
+                        <p class="font-mono">{line}</p>
+                      {:else}
+                        {EM_DASH}
+                      {/each}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </section>
     {/if}
 
     <!-- Live interactive browser: stream the real Chrome into the dashboard and
