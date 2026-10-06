@@ -27,6 +27,11 @@ func ingestTestEvent(envelope DispatchEnvelope, id, eventType string, sequence i
 
 func runIngestConsumer(t *testing.T, runner WorkerRunFunc) (jobstore.Job, *fakeWorkerLease, []jobstore.Event) {
 	t.Helper()
+	return runIngestWith(t, runner)
+}
+
+func runIngestWith(t *testing.T, runner WorkerRunner) (jobstore.Job, *fakeWorkerLease, []jobstore.Event) {
+	t.Helper()
 	store := jobstore.NewMemoryStore()
 	job, err := store.Create(context.Background(), jobstore.CreateRequest{
 		APIVersion: "2026-05-22", TenantID: "tenant_a", AppID: "app_a", Target: "mock",

@@ -72,9 +72,8 @@ type daemonJobRequest struct {
 	Payload   DispatchEnvelope `json:"payload"`
 }
 
-// runDaemonJob is the whole protocol: one request line out, then events in until
-// the terminal marker. Split out from process management so it is testable
-// without spawning anything.
+// runDaemonJob is the batch form of the protocol: it buffers every line and
+// parses them only after the terminal marker.
 //
 // A stream that ends without a marker is an error, never a success: the daemon
 // died mid-job, and returning the events collected so far would hand back a
@@ -85,26 +84,67 @@ func runDaemonJob(
 	envelope DispatchEnvelope,
 	maxRuntime time.Duration,
 ) ([]jobs.WorkerEvent, error) {
+	var body bytes.Buffer
+	err := readDaemonJob(stdin, stdout, envelope, maxRuntime, func(line string) error {
+		body.WriteString(line)
+		body.WriteByte('\n')
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return parseWorkerJSONL(body.Bytes())
+}
+
+// streamDaemonJob is the incremental form: each non-control line is parsed and
+// emitted to the sink as it arrives. The marker rules are identical, so a
+// stream that stops without one (or ends failed) returns an error and the
+// consumer discards whatever the sink already saw.
+func streamDaemonJob(
+	ctx context.Context,
+	stdin io.Writer,
+	stdout *bufio.Reader,
+	envelope DispatchEnvelope,
+	maxRuntime time.Duration,
+	sink EventSink,
+) error {
+	return readDaemonJob(stdin, stdout, envelope, maxRuntime, func(line string) error {
+		var event jobs.WorkerEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			return fmt.Errorf("worker emitted malformed JSONL")
+		}
+		return sink.Emit(ctx, event)
+	})
+}
+
+// readDaemonJob is the protocol core: one request line out, then lines in
+// (each handed to onLine, trimmed and non-empty) until the terminal marker.
+// Split out from process management so it is testable without spawning
+// anything.
+func readDaemonJob(
+	stdin io.Writer,
+	stdout *bufio.Reader,
+	envelope DispatchEnvelope,
+	maxRuntime time.Duration,
+	onLine func(line string) error,
+) error {
 	request, err := json.Marshal(daemonJobRequest{
 		JobID:     envelope.JobID,
 		DeadlineS: maxRuntime.Seconds(),
 		Payload:   envelope,
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if _, err := stdin.Write(append(request, '\n')); err != nil {
-		return nil, fmt.Errorf("worker daemon stdin: %w", err)
+		return fmt.Errorf("worker daemon stdin: %w", err)
 	}
 
-	var (
-		body      bytes.Buffer
-		bytesRead int
-	)
+	bytesRead := 0
 	for {
 		line, err := readBoundedDaemonLine(stdout, maxWorkerOutputBytes)
 		if err != nil {
-			return nil, fmt.Errorf("worker daemon ended without a terminal marker: %w", err)
+			return fmt.Errorf("worker daemon ended without a terminal marker: %w", err)
 		}
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
@@ -113,7 +153,7 @@ func runDaemonJob(
 
 		if end, ok := parseDaemonJobEnd(trimmed); ok {
 			if end.JobID != envelope.JobID {
-				return nil, fmt.Errorf(
+				return fmt.Errorf(
 					"worker daemon terminal marker job_id %q does not match active job %q",
 					end.JobID,
 					envelope.JobID,
@@ -121,19 +161,20 @@ func runDaemonJob(
 			}
 			if end.Status != "completed" {
 				if strings.TrimSpace(end.Error) != "" {
-					return nil, fmt.Errorf("worker daemon job failed: %s", end.Error)
+					return fmt.Errorf("worker daemon job failed: %s", end.Error)
 				}
-				return nil, fmt.Errorf("worker daemon job failed")
+				return fmt.Errorf("worker daemon job failed")
 			}
-			return parseWorkerJSONL(body.Bytes())
+			return nil
 		}
 
 		bytesRead += len(line) + 1
 		if bytesRead > maxWorkerOutputBytes {
-			return nil, fmt.Errorf("worker daemon stdout exceeded %d bytes", maxWorkerOutputBytes)
+			return fmt.Errorf("worker daemon stdout exceeded %d bytes", maxWorkerOutputBytes)
 		}
-		body.WriteString(trimmed)
-		body.WriteByte('\n')
+		if err := onLine(trimmed); err != nil {
+			return err
+		}
 	}
 }
 
@@ -286,6 +327,35 @@ func (r *DaemonWorkerRunner) discardDaemon() {
 func (r *DaemonWorkerRunner) RunWorker(
 	ctx context.Context, envelope DispatchEnvelope,
 ) ([]jobs.WorkerEvent, error) {
+	var events []jobs.WorkerEvent
+	err := r.runJob(ctx, envelope, func(_ context.Context, stdin io.Writer, stdout *bufio.Reader, env DispatchEnvelope, maxRuntime time.Duration) error {
+		var runErr error
+		events, runErr = runDaemonJob(stdin, stdout, env, maxRuntime)
+		return runErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return events, nil
+}
+
+// StreamWorker implements StreamingWorkerRunner: same process management and
+// failure handling as RunWorker, events emitted to the sink as they arrive.
+func (r *DaemonWorkerRunner) StreamWorker(
+	ctx context.Context, envelope DispatchEnvelope, sink EventSink,
+) error {
+	return r.runJob(ctx, envelope, func(runCtx context.Context, stdin io.Writer, stdout *bufio.Reader, env DispatchEnvelope, maxRuntime time.Duration) error {
+		return streamDaemonJob(runCtx, stdin, stdout, env, maxRuntime, sink)
+	})
+}
+
+// runJob owns everything around one daemon job (deadline, attachments, the
+// one-job mutex, lazy spawn, discard-on-failure); job runs the protocol.
+func (r *DaemonWorkerRunner) runJob(
+	ctx context.Context,
+	envelope DispatchEnvelope,
+	job func(ctx context.Context, stdin io.Writer, stdout *bufio.Reader, envelope DispatchEnvelope, maxRuntime time.Duration) error,
+) error {
 	maxRuntime := r.MaxRuntime
 	if maxRuntime <= 0 {
 		maxRuntime = defaultWorkerMaxRuntime
@@ -298,7 +368,7 @@ func (r *DaemonWorkerRunner) RunWorker(
 	cleanupAttachments, err := ProcessWorkerRunner{Artifacts: r.Artifacts}.
 		materializeAttachments(runCtx, &envelope)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if cleanupAttachments != nil {
 		defer cleanupAttachments()
@@ -308,39 +378,30 @@ func (r *DaemonWorkerRunner) RunWorker(
 	defer r.mu.Unlock()
 
 	if err := runCtx.Err(); err != nil {
-		return nil, err
+		return err
 	}
 	if err := r.ensureDaemon(); err != nil {
-		return nil, err
+		return err
 	}
 
-	type daemonResult struct {
-		events []jobs.WorkerEvent
-		err    error
-	}
-	resultCh := make(chan daemonResult, 1)
+	errCh := make(chan error, 1)
 	stdin, stdout := r.stdin, r.stdout
-	go func() {
-		events, runErr := runDaemonJob(stdin, stdout, envelope, maxRuntime)
-		resultCh <- daemonResult{events: events, err: runErr}
-	}()
+	go func() { errCh <- job(runCtx, stdin, stdout, envelope, maxRuntime) }()
 
-	var result daemonResult
 	select {
-	case result = <-resultCh:
+	case err = <-errCh:
 	case <-runCtx.Done():
 		r.discardDaemon()
-		<-resultCh
-		return nil, runCtx.Err()
+		<-errCh
+		return runCtx.Err()
 	}
-	events, err := result.events, result.err
 	if err != nil {
 		// The daemon is now of unknown state (dead, mid-line, or holding a
 		// half-finished page). Replace it rather than hand it the next job.
 		r.discardDaemon()
-		return nil, err
+		return err
 	}
-	return events, nil
+	return nil
 }
 
 // Close shuts the daemon down (gateway shutdown).
