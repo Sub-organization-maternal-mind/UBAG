@@ -42,6 +42,10 @@ The values are deliberately coarse. Tenants never see which node, which capacity
 
 Queue reasons add no job status, no event type and no error code. A queued job event may carry the same value as `data.reason`, and a provider block keeps using the `blocked` event with its own `data.reason`. Being held is not an error: `UBAG-QUEUE-BACKPRESSURE-002` stays the answer to a create request that finds the queue full.
 
+## Event streams
+
+`GET /v1/sse/jobs/{id}` resumes from the `Last-Event-ID` header. With `UBAG_SSE_CLOSE_ON_TERMINAL=true` (default off) the stream closes after a terminal event and answers `204` when a client resumes past one. `failed` and `failed_retryable` events count as terminal only when `data.retryable` is false, so retries on the same job still arrive. `UBAG_SSE_MAX_STREAMS` (default `0`, unlimited) caps open streams; over the cap the gateway answers `503` with `Retry-After`.
+
 ## Cancellation
 
 Cancellation is cooperative first. The worker receives a cancel token and checks between adapter steps. Hard cancel kills the browser context after a grace period.

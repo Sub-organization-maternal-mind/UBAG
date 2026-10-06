@@ -277,6 +277,18 @@ node tools/check-gitops.mjs
 
 ---
 
+## Event wake modes and flag inventory
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `UBAG_EVENT_NOTIFY` | `off` | `off` keeps the 50 ms event poll. `local` wakes waiters from this process only. `postgres` (LISTEN/NOTIFY) is reserved, not built; it warns and stays on the poll. |
+| `UBAG_EVENT_FALLBACK_MS` | `2000` | Safety poll while `local` is on. |
+| `UBAG_SSE_CLOSE_ON_TERMINAL` | off | Close SSE after a terminal event; `204` on resume past it. |
+| `UBAG_SSE_MAX_STREAMS` | `0` | Open SSE stream cap (`0` unlimited). |
+| `UBAG_WORKER_POOL_SIZE` | `1` | Isolated worker daemons (see `deploy/vps/README.md`). |
+
+Modes: the `local` hub only sees writes made by its own process. A single gateway replica (the small and VPS tiers) can use `local`. A future multi-replica Helm deployment on shared Postgres relies on the fallback poll for cross-replica latency (up to `UBAG_EVENT_FALLBACK_MS`) until a LISTEN/NOTIFY mode exists. LISTEN/NOTIFY needs a session-level connection, so it is incompatible with transaction-mode poolers such as PgBouncer; a future mode must use a direct connection. Rollback is `UBAG_EVENT_NOTIFY=off`.
+
 ## Release
 
 All releases are produced by goreleaser from `.goreleaser.yaml` at the repository root. Use the Makefile targets:
