@@ -197,6 +197,16 @@ paths:
           $ref: "#/components/responses/InternalError"
         "501":
           $ref: "#/components/responses/NotImplemented"
+        "503":
+          description: >-
+            Media plane cannot accept the session (UBAG-VOICE-MEDIA-UNAVAILABLE-007), retryable.
+            Returned when a bound helper node cannot take the call, and, only with
+            UBAG_VOICE_LANE_EXCLUSION on, when no relay secret is configured (a session that
+            can never connect would hold a browser lane for its whole lease).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /v1/voice/sessions/{session_id}:
     get:
       tags: [Voice]

@@ -28,3 +28,22 @@ Status: all seven findings re-verified against the code; all were real. Branch `
 
 - Dashboard vitest (no `node_modules` in the worktree), Postgres tests, `pnpm check`.
 - `go test ./internal/httpapi/` complete package: `TestAntigravityLoginRelaysCodeToOwnedWorker` fails in this environment (503 isolated worker unavailable); it is unrelated to these changes (not touched, not SSE).
+
+# Round 2 (rules lens, 4 findings; branch `feat/pf-review-rules-r2`)
+
+All four re-verified against the code; all real.
+
+## Fixed
+
+1. **P5.5 / security fix 901c913: live create refused unconditionally, high.** `voice_handlers.go` answered 503 `UBAG-VOICE-MEDIA-UNAVAILABLE-007` on every live create whenever the relay secret was empty, with no flag. The rationale (a session that never connects pins a lane) only holds with `UBAG_VOICE_LANE_EXCLUSION` on, so the refusal is now gated on `s.voiceLanes` (flag on and a concurrency registry); with the flag off, the default, create answers 201/202 as before. `createVoiceSession` in OpenAPI now lists the 503 (it already could return it when a helper node bind failed); the SDK manifests did not change on regeneration. ROLLOUT.md's flag section states the behaviour. `TestVoiceLiveSessionRefusedWhileMediaCannotConnect` now runs both flag values.
+2. **P1.8 ledger, medium.** `slices/README.md` has a P1.8 row (partial: benches and analysis merged in #192, exit gate unmet, needs the lab host) and P8.1 reads merged; PROGRESS.md and AGENT_HANDOFF.md item 4 say the same. The stale "merged when its PR is merged" status line in 24 shards now reads "merged into `feat/perf-fleet`" (all are merged).
+3. **job-lifecycle.md terminal semantics, medium.** The sentence now says `failed`, `failed_retryable` and `blocked` are all terminal whatever `data.retryable` says (matches `EventEndsJob`, OpenAPI, proto). Not done: the suggested docs check that compares the terminal list to `EventEndsJob`; follow-up.
+4. **DCO, medium.** `dco.yml` now uses `git log --no-merges`, so the 105 merge commits no longer count. The three unsigned non-merge commits (038951f, 2ee4147, 643baed) cannot be fixed without rewriting the integration history, so the decision is recorded in AGENT_HANDOFF.md item 4: open the PR to `main` from one signed squash on a fresh branch (or sign them in a rebased linear history). The workflow was not run.
+
+## Checks run
+
+`go test ./internal/httpapi/ -run 'TestVoiceLiveSessionRefused|TestVoiceCreate|TestVoiceLane'`, `node tools/make-sdks/generate-manifest.mjs` (no manifest diff), `node tools/check-contracts.mjs`.
+
+## Checks not run
+
+Full `internal/httpapi` package, docs build, the dco workflow.

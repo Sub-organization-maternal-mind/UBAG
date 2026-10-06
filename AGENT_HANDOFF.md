@@ -14,7 +14,8 @@ Open items, in the order an owner would want them:
 1. Decide whether to merge `feat/perf-fleet` to `main`; the migrations (0022 to 0025) auto-apply on deploy, additive and inert.
 2. Run the human-supervised steps nobody could run: live-DOM probes per provider (`tools/provider-refresh/`), the voice activation probe (`docs/perf-fleet/voice-activation-probe.md`), and the helper canary (`CANARY.md`, blocked on the fleet manager, certificates, WireGuard and a profile-binding route).
 3. Get a lab host and run the ladder and baseline matrix; fill `docs/benchmarks/capacity-template.md`. Only then does a capacity number exist, and only then can the pool ceiling (`UBAG_WORKER_POOL_MAX`, placeholder 3) and the Rust relay gate (P7.5 to P7.8) be decided.
-4. Land or drop P1.8 (create-path pprof and DB pool sizing), the only slice with no shard and not landed. P5.11 (helper voice media negotiator, #184) and P6.5 (dashboard voice panel, #185) are merged.
+4. P1.8 (create-path pprof and DB pool sizing) is partial (shard `docs/perf-fleet/slices/P1.8.md`, #192): benches and analysis merged; the open work is running them on the lab host (item 3). P5.11 (helper voice media negotiator, #184) and P6.5 (dashboard voice panel, #185) are merged.
+   DCO before the PR to `main`: `dco.yml` now skips merge commits, but three non-merge commits on `feat/perf-fleet` carry no `Signed-off-by` (038951f, 2ee4147, 643baed). Rewriting the integration history is not safe, so open the PR to `main` from one signed squash of the integration on a fresh branch (or sign those three in a rebased linear history); otherwise the dco job fails.
 5. Graduate flags one at a time per ROLLOUT.md; first add the compose passthrough lines for flags marked `none` in FLAGS.md.
 
 ## REMAINING WORK — architecture-audit closeout (read this first, 2026-09-28)
