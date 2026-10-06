@@ -26,6 +26,7 @@ import json
 import os
 import re
 import sys
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Iterator, List, Mapping, Optional, Sequence
@@ -1842,7 +1843,13 @@ def _page_registry_path() -> str:
     from .chat_ledger import ledger_path
 
     role = re.sub(r"[^A-Za-z0-9_.-]", "_", os.path.basename(sys.argv[0] or "")) or "worker"
-    return os.path.join(os.path.dirname(ledger_path()) or ".", "open-pages.%s.json" % role)
+    # Slot mode (UBAG_WORKER_SLOT_ID): one registry per slot, so a slot's
+    # _close_stale_pages never closes a sibling slot's live tabs. Unset = legacy name.
+    from .identity_lock import slot_id
+
+    slot = slot_id()
+    suffix = ".slot%s" % slot if slot else ""
+    return os.path.join(os.path.dirname(ledger_path()) or ".", "open-pages.%s%s.json" % (role, suffix))
 
 
 def _registry_read() -> List[str]:
@@ -1865,9 +1872,16 @@ def _registry_update(add: Optional[str] = None, remove: Optional[str] = None) ->
     path = _page_registry_path()
     try:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path + ".tmp", "w", encoding="utf-8") as fh:
-            json.dump(sorted(ids), fh)
-        os.replace(path + ".tmp", path)
+        # Unique tmp name: concurrent writers (threads, or processes sharing a
+        # registry) must not interleave into one ".tmp" file.
+        tmp = "%s.%d.%d.tmp" % (path, os.getpid(), threading.get_ident())
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(sorted(ids), fh)
+            os.replace(tmp, path)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
     except Exception:  # noqa: BLE001 - best-effort bookkeeping must never fail a job
         pass
 
@@ -1905,6 +1919,56 @@ def _close_stale_pages(endpoint: str, opener=None) -> None:
         except Exception:  # noqa: BLE001
             return
         _registry_update(remove=target_id)
+
+
+_SLOT_REGISTRY_RE = re.compile(r"^open-pages\..+\.slot([A-Za-z0-9_-]+)\.json$")
+
+
+def reap_orphan_registries(pool_size: int, endpoint: str = "", opener=None) -> int:
+    """Close tabs recorded by slots that no longer exist, then drop their files.
+
+    When the pool shrinks, slot ids >= ``pool_size`` never start again, so nobody
+    would ever reap their registries. Run once at pool start. Numeric slot ids
+    only; a registry whose tabs could not be closed (browser unreachable) is kept
+    for the next start. Returns the number of registry files removed.
+    """
+    directory = os.path.dirname(_page_registry_path()) or "."
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return 0
+    import urllib.error
+    import urllib.request
+
+    opener = opener or urllib.request.urlopen
+    removed = 0
+    for name in names:
+        match = _SLOT_REGISTRY_RE.match(name)
+        if not match or not match.group(1).isdigit() or int(match.group(1)) < pool_size:
+            continue
+        path = os.path.join(directory, name)
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except Exception:  # noqa: BLE001 - corrupt registry: nothing to close
+            data = []
+        ids = [str(x) for x in data if _TARGET_ID_RE.match(str(x))] if isinstance(data, list) else []
+        if ids and not endpoint:
+            continue  # cannot close them without an endpoint; keep for later
+        for target_id in ids:
+            try:
+                opener("%s/json/close/%s" % (endpoint.rstrip("/"), target_id), timeout=5).read()
+            except urllib.error.HTTPError:
+                pass  # already gone
+            except Exception:  # noqa: BLE001 - browser unreachable: keep the file
+                break
+        else:
+            try:
+                os.remove(path)
+                removed += 1
+            except OSError:
+                pass
+    return removed
 
 
 def _emptiness_probe_ms() -> int:

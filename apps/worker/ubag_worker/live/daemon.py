@@ -19,9 +19,11 @@ finish cleanly, discards the driver and goes cold -- i.e. today's behaviour.
 """
 from __future__ import annotations
 
+import os
 from typing import Any, Callable, Dict, Iterator, Mapping, Optional, Tuple
 
 from .engine import LiveSessionEngine, _normalize_payload
+from .identity_lock import IdentityLock, identity_lock_enabled, physical_session_key
 from .page_driver import PageDriver, create_default_driver
 from .selectors import PROVIDER_SELECTORS
 
@@ -80,6 +82,27 @@ class WarmWorkerDaemon:
         self._orchestrator = orchestrator
 
     def run_job(self, payload: Mapping[str, Any]) -> Iterator[JsonObject]:
+        """Drive one job; in slot mode, under the physical-session identity lock."""
+        if not identity_lock_enabled():
+            yield from self._run_job(payload)
+            return
+        try:
+            target = _target_from_payload(payload)
+            normalized = _normalize_payload(payload, target)
+            key = physical_session_key(
+                endpoint=os.environ.get("UBAG_REMOTE_BROWSER_ENDPOINT", ""),
+                user_data_dir=normalized.user_data_dir,
+                target=target,
+            )
+        except Exception:  # noqa: BLE001 - bad envelope: let the unlocked path report it
+            yield from self._run_job(payload)
+            return
+        # One active operation per physical session across slot processes; the
+        # kernel drops the flock if this process dies, so no stale locks.
+        with IdentityLock(key):
+            yield from self._run_job(payload)
+
+    def _run_job(self, payload: Mapping[str, Any]) -> Iterator[JsonObject]:
         """Drive one job, yielding the engine's events verbatim.
 
         The event stream is passed through untouched: the daemon changes where
