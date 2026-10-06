@@ -39,7 +39,15 @@ main) — the OET-repo session that owns it should check that run.
 
 Still true from the entry below: there is no manager CA (SPKI empty ⇒ no
 helper can pass UBAG's mTLS dial yet, decision D3), no WireGuard for UBAG, no
-enrolled helper, no canary, no capacity number. Voice config is LIVE on prod
+canary, no capacity number. **No ENROLLED helper — but a helper MACHINE
+exists** (owner corrected this 2026-10-07): `213.163.201.37` /
+`ubuntu-4cpu-8gb-sg-sin1`, 4c/8G Singapore, alive, SSH firewalled to the
+primary only, key `~/.ssh/upcloud_vps` on this PC (jump: `ssh -J vps -i
+~/.ssh/upcloud_vps root@213.163.201.37`), Docker 29.1.3 present, host key
+ED25519 fingerprint starts `WenBD0hX`. Enrollment is owner-console-only by
+design: tunnel `ssh -L 8480:127.0.0.1:8480 vps` → http://127.0.0.1:8480 →
+Add host (paste the upcloud key, confirm `WenBD0hX`) → the manager runs
+S1–S13 → because the manager's Hosts is `*`, the next UBAG poll grants it. Voice config is LIVE on prod
 (postgres store + relay secret, `job_000000001058` smoke completed); the
 two-way human demo is still the open acceptance.
 

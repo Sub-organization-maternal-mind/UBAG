@@ -9,6 +9,27 @@ real helper, certificates and live evidence are still external.**)
 **`ci` fully green again (`e49e3bb` verified on 37533190411):** every job
 success including the formerly-red "Gateway (Go) full suite, serialized".
 
+**CORRECTION (same night, owner challenge accepted): "no helper VPS exists"
+was wrong.** A helper VPS exists and is alive: `213.163.201.37`
+(`ubuntu-4cpu-8gb-sg-sin1`, 4 CPU / 8 GB, Singapore — the exact machine of the
+OET fleet reference; the 2026-10-01 "vps2 retired" note retired it from the
+UBAG platform role, it did not delete the machine). Its SSH is firewalled to
+the primary only (22 filtered from this workstation and everywhere else
+tested; ICMP answers at ~199 ms), and `~/.ssh/upcloud_vps` on this PC jumps
+through the primary into it fine (Docker 29.1.3 present, 1 container present
+— provisioning must preserve it — 83 GiB free disk). Host key fingerprints
+captured from the primary for the owner's confirm step: ED25519
+`SHA256:WenBD0hXWUHSMZyU+jM/RqldZyRpvAB81YF7qCnKWh8` (first 8: `WenBD0hX`).
+What is still true: **no helper is ENROLLED.** The primary's own key is
+denied on the helper, so enrollment needs the `upcloud_vps` private key given
+to the manager through the Add-Host flow, and that flow is
+owner-console-only by design (owner account + TOTP MFA; the CLI has no enroll
+verb; the sync token is release-scoped). The earlier "blocked" table rows
+that said "no helper exists to run on" should be read as "no ENROLLED helper
+exists" — the machine-side prerequisite is satisfied, and the two human steps
+(console login; paste key + confirm `WenBD0hX`) are the only remaining gates
+to a real allocation on this helper.
+
 ## 2026-10-07 — The fleet loop closed in code (both repos), flag-inert as always
 
 Three pieces landed today, all inert until an operator sets env:
