@@ -167,10 +167,12 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
           # 0008 needs pgvector + pg_partman (not-yet-wired Phase 2 schema);
           # the production entrypoint skips it via OPTIONAL_MIGRATIONS — same here.
+          rc=0
           for f in migrations/postgres/*.sql; do
             case "$f" in *0008_blueprint_schema.sql) continue;; esac
-            psql "$UBAG_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -q -f "$f"
+            psql "$UBAG_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -q -f "$f" || rc=1
           done
+          exit $rc
       - name: go test ./... (short)
         # -short keeps this job to what a contended 2-core runner can judge
         # honestly: the suites that scale their own work with the machine
@@ -269,18 +271,35 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-      nats:
-        image: nats:2.10-alpine
-        ports: ['4222:4222']
-        options: >-
-          --health-cmd "wget -qO- http://localhost:8222/healthz"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with: { go-version: "${{ env.GO_VERSION }}" }
+      # JetStream must be ON for the dispatcher tests and a GitHub Actions
+      # service container cannot take command args (-js), so NATS runs exactly
+      # like the main job: docker run, then a ready wait.
+      - name: Start NATS with JetStream
+        run: |
+          docker run -d --name nats-js -p 4222:4222 nats:2.10-alpine -js
+          for i in $(seq 1 30); do
+            docker exec nats-js nats-server --help >/dev/null 2>&1 && docker logs nats-js 2>&1 | grep -q "Server is ready" && break
+            sleep 1
+          done
+      # Same as the main job: without the schema the env-gated Postgres tests
+      # fail with "gateway_conversations is missing" instead of passing.
+      - name: Apply Postgres migrations
+        env:
+          UBAG_TEST_POSTGRES_DSN: postgres://ubag:ubag-test@localhost:5432/ubag_test?sslmode=disable
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
+          # 0008 needs pgvector + pg_partman (not-yet-wired Phase 2 schema);
+          # the production entrypoint skips it via OPTIONAL_MIGRATIONS — same here.
+          rc=0
+          for f in migrations/postgres/*.sql; do
+            case "$f" in *0008_blueprint_schema.sql) continue;; esac
+            psql "$UBAG_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -q -f "$f" || rc=1
+          done
+          exit $rc
       - name: go test ./... (full, -p 1)
         working-directory: apps/gateway
         env:
