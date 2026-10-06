@@ -2,6 +2,7 @@ package topology
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -9,15 +10,18 @@ import (
 )
 
 // BenchmarkPostgresAdmissionAcquireRelease measures the shared-admission token
-// acquire + release on the lanes the create path uses (one dynamic target lane
-// plus the tenant and global ceilings), 100 concurrent clients, one tenant.
+// acquire + release, 100 concurrent clients, one tenant. By default it uses ONE
+// dynamic target lane, the production shape: the tenant and global lanes exist
+// only when UBAG_ADMISSION_MAX_INFLIGHT_* is set (concurrency.go
+// acquireShared), and docker-compose.vps.yml leaves them empty. Set
+// UBAG_BENCH_ADMISSION_EXTRA_LANES=1 to add tenant:bench and global:all and
+// measure that configuration (about twice the cost, one lock per lane).
 func BenchmarkPostgresAdmissionAcquireRelease(b *testing.B) {
 	db := benchutil.OpenPostgres(b)
 	backend := NewPostgresTokenBackend(db)
-	lanes := []Lane{
-		{Key: "bench-lane|mock|app_bench", Cap: 1 << 20, Dynamic: true},
-		{Key: "tenant:bench", Cap: 1 << 20},
-		{Key: "global:all", Cap: 1 << 20},
+	lanes := []Lane{{Key: "bench-lane|mock|app_bench", Cap: 1 << 20, Dynamic: true}}
+	if os.Getenv("UBAG_BENCH_ADMISSION_EXTRA_LANES") == "1" {
+		lanes = append(lanes, Lane{Key: "tenant:bench", Cap: 1 << 20}, Lane{Key: "global:all", Cap: 1 << 20})
 	}
 	benchutil.Run(b, db, func(int64) {
 		ctx := context.Background()
