@@ -777,9 +777,10 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return true, lease.Fail(ctx)
 	}
 
+	events = dropStaleAttemptEvents(envelope, events)
+	// Sized after the drop: a longer slice would submit zero-valued tail events.
 	normalizedEvents := make([]jobstore.WorkerEvent, len(events))
 	terminalEvents := 0
-	events = dropStaleAttemptEvents(envelope, events)
 	// The submission boundary is judged on everything this attempt produced: a
 	// streamed run applied its earlier events during the run, so carry the
 	// sink's prompt_submitted sighting into the evidence.

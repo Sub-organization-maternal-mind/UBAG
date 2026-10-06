@@ -94,6 +94,39 @@ func TestDropStaleAttemptEvents(t *testing.T) {
 	}
 }
 
+// A stale-stamped event is dropped without leaving zero-valued tail events that
+// the apply loop would submit (store error -> failed lease on a good run).
+func TestRunOnceDropsStaleAttemptEventWithoutZeroTail(t *testing.T) {
+	t.Setenv("UBAG_WORKER_ATTEMPT_EVENT_IDS", "true")
+	store := jobstore.NewMemoryStore()
+	job, err := store.Create(context.Background(), jobstore.CreateRequest{
+		APIVersion: "2026-05-22", TenantID: "t", AppID: "a", Target: "mock",
+		CommandType: "submit", Input: map[string]any{"prompt": "x"}, TraceID: "trace_stale",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := &fakeWorkerLease{jobID: job.ID, leaseID: "lease_stale", envelope: EnvelopeFromJob(job)}
+	consumer := WorkerConsumer{
+		Queue: fakeWorkerQueue{lease: lease},
+		Jobs:  store,
+		Runner: WorkerRunFunc(func(_ context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			return []jobstore.WorkerEvent{
+				{EventID: "e_stale", Type: "running", Sequence: 1, TraceID: envelope.TraceID, Data: map[string]any{"status": "running", "attempt_id": "other_attempt"}},
+				{EventID: "e_run", Type: "running", Sequence: 2, TraceID: envelope.TraceID, Data: map[string]any{"status": "running"}},
+				{EventID: "e_done", Type: "completed", Sequence: 3, TraceID: envelope.TraceID, Data: map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "ok"}}},
+			}, nil
+		}),
+	}
+	if processed, err := consumer.RunOnce(context.Background()); err != nil || !processed {
+		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+	loaded, _, _ := store.Get(context.Background(), job.ID)
+	if loaded.Status != jobstore.StatusCompleted || !lease.completed || lease.failed {
+		t.Fatalf("status=%s completed=%v failed=%v, want completed lease", loaded.Status, lease.completed, lease.failed)
+	}
+}
+
 // Collision regression: same (job, seq) events from two attempts are both kept
 // once ids are attempt-scoped; a same-attempt replay still dedupes.
 func TestRetryAttemptEventsNotDeduped(t *testing.T) {
