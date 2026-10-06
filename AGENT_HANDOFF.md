@@ -28,14 +28,14 @@ and `401` otherwise, and the production gateway polls it every 30 s over the
 `deploy/vps/env.local`; the bridge attachment is declarative in
 `docker-compose.vps.yml`). The empty list is correct: no helper is enrolled,
 and the manager's Hosts is `*`, so an enrolled helper is granted with no
-further config. Two transients: the manager's owner settings were written to
-`.env.production` (durable) and hand-added to the generated `fleet.env` — the
-OET-repo commit that passes them through the sync allowlist (`6f9e7449a`
-there) was awaiting a ship window at session end, and until it ships+syncs a
-manual rollout would regenerate `fleet.env` without them; re-add
-`FLEET_UBAG_ENABLED=true` / `FLEET_UBAG_HOSTS=*` /
-`FLEET_UBAG_TOKEN_FILE=<secrets>/fleet_ubag_token` to fleet.env or ship that
-commit first.
+further config. No transients left on the manager side: the sync-allowlist pass-through for
+the `Fleet__Ubag__*` owner settings is in the OET repo's main (shipped with
+`c9d705b6`'s push, ancestors include the pass-through commit), and the owner
+settings themselves live durably in `/opt/oetwebapp/.env.production`. The
+next sync dispatch regenerates `fleet.env` from them. One watch item from the
+concurrent session: fleet run 37536884725 failed Guards on their commit
+`0466c3a22` (predates the pass-through change; the verifier passes on current
+main) — the OET-repo session that owns it should check that run.
 
 Still true from the entry below: there is no manager CA (SPKI empty ⇒ no
 helper can pass UBAG's mTLS dial yet, decision D3), no WireGuard for UBAG, no
