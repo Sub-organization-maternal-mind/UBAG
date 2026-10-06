@@ -335,13 +335,15 @@ func eventually(t *testing.T, what string, cond func() bool) {
 
 // eventuallyWithin is for a condition whose settling time is bounded by
 // something outside the test's control. The clearest case is ICE noticing that
-// the peer vanished: Pion detects that with its own failure/consent timers, not
-// with anything the test drives, and on the Linux CI runner that takes
-// noticeably longer than on a Windows host - the same code passed at 8697f1b
-// and then timed out at 10s on two consecutive runs. Such a wait needs a
-// budget above this file's other timeouts (15s and 20s are already used here),
-// or it fails intermittently with nothing actually wrong. The condition itself
-// is unchanged: this widens when we give up, never what is asserted.
+// the peer vanished: a client that closes sends nothing, so the server only
+// learns from Pion's own consent-freshness checks, which run on the order of
+// tens of seconds and get slower on a loaded runner. Measured on the Linux CI
+// runner: under 20s once and still not arrived at 20s the next time, while the
+// identical code settles in well under a second on a workstation. Such a wait
+// needs a budget above this file's other timeouts (15s and 20s are already used
+// here) and above the mechanism it is waiting on, or it fails intermittently
+// with nothing actually wrong. The condition itself is unchanged: this widens
+// when we give up, never what is asserted.
 func eventuallyWithin(t *testing.T, what string, budget time.Duration, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(budget)
@@ -584,7 +586,7 @@ func TestVoiceHubEndedOnItsOwnIsReportedToTheService(t *testing.T) {
 	// The media path ends on its own (here: the client vanishes): the hub reports
 	// it and the service then ends the call.
 	pc.Close() // the client goes away
-	eventuallyWithin(t, "MediaEnded", 20*time.Second, func() bool { return len(sink.endedReasons()) > 0 })
+	eventuallyWithin(t, "MediaEnded", 60*time.Second, func() bool { return len(sink.endedReasons()) > 0 })
 	if reason := sink.endedReasons()[0]; reason == "" || strings.Contains(reason, " ") {
 		t.Fatalf("reason %q must be a short token", reason)
 	}

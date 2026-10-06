@@ -39,11 +39,11 @@ func newFleetPollerFromEnv(store nodes.Store) (*nodes.Poller, error) {
 	if store == nil {
 		return nil, nil
 	}
-	rawURL, cfg, ok, err := nodes.PollerConfigFromEnv(os.LookupEnv)
+	rawURL, token, cfg, ok, err := nodes.PollerConfigFromEnv(os.LookupEnv)
 	if err != nil || !ok {
 		return nil, err
 	}
-	src, err := nodes.NewHTTPSource(rawURL, nil)
+	src, err := nodes.NewHTTPSource(rawURL, token, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", nodes.EnvFleetManagerURL, err)
 	}

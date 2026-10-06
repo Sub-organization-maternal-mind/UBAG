@@ -62,6 +62,27 @@ graduation hidden in a compose default, a deleted compose line);
 `tools/check-fleet-canary.mjs` pass (compose render skipped again — no Docker on
 this host); both YAML files parse; `pnpm test:load:offline` 115/115.
 
+**4. The Go suite's wall-clock tests needed a fair runner, not bigger budgets.**
+Chasing the two flaky tests with larger timeouts was treating the symptom, and
+the CI evidence said so: after the helperclient fix, `main` went red on
+`20_workloads` cases (130s, deadline 110s) *and* the voicehub peer-vanish wait
+still missed at 20s. The cause is contention, not the numbers. `go test ./...`
+runs several package binaries at once, each with its own `GOMAXPROCS`, on a
+2-core runner; the same code settles in under a second on a workstation. So:
+
+- The main `Gateway (Go)` job now runs `go test -short -race ./...`.
+- A new `Gateway (Go) full suite, serialized` job runs the **complete** suite
+  with `-p 1 -race -timeout 45m`, on a runner that is not competing with every
+  other package, with the same Postgres/NATS services so those tests do not skip
+  silently.
+
+Nothing is dropped: `isoLadder()` and the voice jitter/bench suites already honour
+`testing.Short()` (5 files repo-wide), so `-short` defers their heaviest cases to
+the full job rather than skipping them. This is the honest fix — the previous
+two attempts widened budgets against a machine that is simply slower, and the
+third data point (130s against a 110s deadline) proved the budget was never going
+to be the thing that was wrong.
+
 ## 2026-10-06 — Third CI red fixed; `ci` green; and what is physically blocked
 
 **`ci` is now fully green on `aab1432`** (Operator, Lint & contracts,

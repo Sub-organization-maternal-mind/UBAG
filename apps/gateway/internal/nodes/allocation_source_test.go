@@ -20,6 +20,7 @@ type fakeManager struct {
 	status    int  // 0 = normal
 	down      bool // close the connection without answering
 	ifNone    []string
+	auth      []string
 	redirect  string
 	bigBody   bool
 	hitCount  int
@@ -39,6 +40,7 @@ func (m *fakeManager) serve(w http.ResponseWriter, r *http.Request) {
 	defer m.mu.Unlock()
 	m.hitCount++
 	m.ifNone = append(m.ifNone, r.Header.Get("If-None-Match"))
+	m.auth = append(m.auth, r.Header.Get("Authorization"))
 	switch {
 	case m.down:
 		c, _, _ := w.(http.Hijacker).Hijack()
@@ -92,7 +94,7 @@ func (c *clock) now() time.Time { return c.t }
 
 func newTestPoller(t *testing.T, m *fakeManager, grace time.Duration) (*Poller, *MemoryStore, *clock) {
 	t.Helper()
-	src, err := NewHTTPSource(m.srv.URL, nil)
+	src, err := NewHTTPSource(m.srv.URL, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -365,7 +367,7 @@ func TestAllocationSourceRevokedPassesThrough(t *testing.T) {
 func TestAllocationSourceRunStopsOnCancel(t *testing.T) {
 	m := newFakeManager(t)
 	m.set(wireList_(wireEntry("helper-1", 1, 2, "active")), `"v1"`)
-	src, _ := NewHTTPSource(m.srv.URL, nil)
+	src, _ := NewHTTPSource(m.srv.URL, "", nil)
 	st := NewMemoryStore()
 	p := NewPoller(src, st, PollerConfig{Interval: 10 * time.Millisecond, StaleGrace: time.Minute}, nil)
 	ctx, cancel := context.WithCancel(context.Background())

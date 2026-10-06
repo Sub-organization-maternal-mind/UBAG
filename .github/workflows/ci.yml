@@ -171,7 +171,14 @@ jobs:
             case "$f" in *0008_blueprint_schema.sql) continue;; esac
             psql "$UBAG_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -q -f "$f"
           done
-      - name: go test ./...
+      - name: go test ./... (short)
+        # -short keeps this job to what a contended 2-core runner can judge
+        # honestly: the suites that scale their own work with the machine
+        # (helperclient's 1/2/5/10/20 isolation ladder, the voice jitter tests,
+        # the media benches) drop their heaviest cases here and run in full in
+        # the gateway-full job below, on a runner that is not competing with
+        # every other package for CPU. Nothing is lost: gateway-full runs the
+        # complete suite, just serialized.
         working-directory: apps/gateway
         env:
           GOTOOLCHAIN: local
@@ -179,7 +186,7 @@ jobs:
           UBAG_TEST_NATS_URL: nats://localhost:4222
         run: |
           set +e
-          go test -race -coverprofile=coverage.out ./... 2>&1 | tee /tmp/gotest.log
+          go test -short -race -coverprofile=coverage.out ./... 2>&1 | tee /tmp/gotest.log
           rc=${PIPESTATUS[0]}
           [ "$rc" -eq 0 ] || exit "$rc"
           echo "go test clean"
@@ -231,6 +238,72 @@ jobs:
           git diff --cached --quiet && exit 0
           git commit -m "ci: go test failure log for ${GITHUB_SHA} [skip ci]"
           git push -f origin HEAD:ci-logs-gateway
+
+  gateway-full:
+    name: Gateway (Go) full suite, serialized
+    runs-on: ubuntu-latest
+    # The complete gateway suite, run with the machine to itself.
+    #
+    # Several suites assert on wall-clock behaviour that is only meaningful when
+    # the runner is not oversubscribed: helperclient's lost-helper ladder drives
+    # up to 20 concurrent attempts, and the voicehub peer-vanish wait depends on
+    # Pion's consent-freshness checks taking tens of seconds. Run next to every
+    # other package on a 2-core runner, both miss their deadlines while passing
+    # on a workstation. So the main Gateway job runs -short (same coverage,
+    # heaviest cases deferred) and this job runs everything with -p 1 and a
+    # generous timeout. Same services as the main job: without them the
+    # Postgres/NATS/MinIO tests skip silently, which is the gap the main job's
+    # comment warns about.
+    permissions:
+      contents: write
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ubag
+          POSTGRES_PASSWORD: ubag-test
+          POSTGRES_DB: ubag_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ubag"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      nats:
+        image: nats:2.10-alpine
+        ports: ['4222:4222']
+        options: >-
+          --health-cmd "wget -qO- http://localhost:8222/healthz"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with: { go-version: "${{ env.GO_VERSION }}" }
+      - name: go test ./... (full, -p 1)
+        working-directory: apps/gateway
+        env:
+          GOTOOLCHAIN: local
+          UBAG_TEST_POSTGRES_DSN: postgres://ubag:ubag-test@localhost:5432/ubag_test?sslmode=disable
+          UBAG_TEST_NATS_URL: nats://localhost:4222
+        run: |
+          set +e
+          go test -p 1 -race -timeout 45m ./... 2>&1 | tee /tmp/gotest-full.log
+          rc=${PIPESTATUS[0]}
+          [ "$rc" -eq 0 ] || exit "$rc"
+          echo "full suite clean"
+      - name: Publish failure log
+        if: failure()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/ci-artifacts"
+          cp -f /tmp/gotest-full.log "$GITHUB_WORKSPACE/ci-artifacts/gotest-full.log" 2>/dev/null || true
+          cd "$GITHUB_WORKSPACE"
+          git config user.name "ubag-ci" && git config user.email "ci@github-actions[bot]"
+          for log in ci-artifacts/*; do if [ -f "$log" ]; then git add -f "$log"; fi; done
+          git diff --cached --quiet && exit 0
+          git commit -m "ci: full-suite failure log for ${GITHUB_SHA} [skip ci]"
+          git push -f origin HEAD:ci-logs-gateway-full
 
   worker:
     name: Worker (Python)

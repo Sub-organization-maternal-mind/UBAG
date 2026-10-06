@@ -20,6 +20,7 @@ import (
 // whole helper plane; these only configure where grants come from).
 const (
 	EnvFleetManagerURL    = "UBAG_FLEET_MANAGER_URL"
+	EnvFleetManagerToken  = "UBAG_FLEET_MANAGER_TOKEN"
 	EnvFleetPollSeconds   = "UBAG_FLEET_POLL_SECONDS"
 	EnvFleetStaleGraceSec = "UBAG_FLEET_GRANT_STALE_GRACE_SECONDS"
 
@@ -59,27 +60,48 @@ type AllocationSource interface {
 // HTTPSource polls a manager endpoint that serves the allocation_list
 // definition of node-allocation.schema.json with ETag support.
 type HTTPSource struct {
-	url    string
+	url   string
+	token string
 	client *http.Client
 }
 
 var _ AllocationSource = (*HTTPSource)(nil)
 
+// maxTokenBytes bounds the bearer token: even a generous manager token is a
+// few hundred bytes, so 4 KiB rejects accidental pastes of a whole file.
+const maxTokenBytes = 4096
+
 // NewHTTPSource validates rawURL (http or https, host required, no embedded
-// credentials) and builds a source. Redirects are never followed: a manager
-// that redirects is treated as a bad response, not chased to another host.
-// A nil client uses a 10 s timeout default.
-func NewHTTPSource(rawURL string, client *http.Client) (*HTTPSource, error) {
+// credentials) and builds a source. A non-empty token is sent as the
+// Authorization: Bearer credential on every poll (the manager side defines
+// what it accepts; an empty token sends no Authorization header at all).
+// Redirects are never followed: a manager that redirects is treated as a bad
+// response, not chased to another host. A nil client uses a 10 s timeout
+// default.
+func NewHTTPSource(rawURL, token string, client *http.Client) (*HTTPSource, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
 		return nil, fmt.Errorf("%w: manager url must be http(s) with a host and no credentials", ErrInvalid)
+	}
+	token = strings.TrimSpace(token)
+	if token != "" {
+		// Reject anything http.Header would refuse at write time anyway, or that
+		// could smuggle a second header: printable ASCII without spaces only.
+		for _, r := range token {
+			if r <= 0x20 || r >= 0x7f {
+				return nil, fmt.Errorf("%w: %s must be a single header-safe value", ErrInvalid, EnvFleetManagerToken)
+			}
+		}
+		if len(token) > maxTokenBytes {
+			return nil, fmt.Errorf("%w: %s over %d bytes", ErrInvalid, EnvFleetManagerToken, maxTokenBytes)
+		}
 	}
 	c := http.Client{Timeout: 10 * time.Second}
 	if client != nil {
 		c = *client
 	}
 	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &HTTPSource{url: u.String(), client: &c}, nil
+	return &HTTPSource{url: u.String(), token: token, client: &c}, nil
 }
 
 func (s *HTTPSource) Fetch(ctx context.Context, etag string) (Snapshot, error) {
@@ -88,6 +110,9 @@ func (s *HTTPSource) Fetch(ctx context.Context, etag string) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	req.Header.Set("Accept", "application/json")
+	if s.token != "" {
+		req.Header.Set("Authorization", "Bearer "+s.token)
+	}
 	if etag != "" {
 		req.Header.Set("If-None-Match", etag)
 	}
@@ -198,15 +223,18 @@ type PollerConfig struct {
 	StaleGrace time.Duration // how long last-known-good stays usable with the manager unreachable
 }
 
-// PollerConfigFromEnv reads the three UBAG_FLEET_* variables via lookup (e.g.
+// PollerConfigFromEnv reads the UBAG_FLEET_* variables via lookup (e.g.
 // os.LookupEnv). An unset or empty URL means "not configured" (ok=false, no
-// error). Any malformed or out-of-range value is an error: fail closed at
-// startup rather than silently running with a surprising grace.
-func PollerConfigFromEnv(lookup func(string) (string, bool)) (rawURL string, cfg PollerConfig, ok bool, err error) {
+// error). The token is returned verbatim for NewHTTPSource (empty = poll
+// unauthenticated, exactly the pre-token behaviour). Any malformed or
+// out-of-range value is an error: fail closed at startup rather than silently
+// running with a surprising grace.
+func PollerConfigFromEnv(lookup func(string) (string, bool)) (rawURL, token string, cfg PollerConfig, ok bool, err error) {
 	get := func(k string) string { v, _ := lookup(k); return strings.TrimSpace(v) }
 	if rawURL = get(EnvFleetManagerURL); rawURL == "" {
-		return "", PollerConfig{}, false, nil
+		return "", "", PollerConfig{}, false, nil
 	}
+	token = get(EnvFleetManagerToken)
 	cfg = PollerConfig{Interval: DefaultPollInterval, StaleGrace: DefaultStaleGrace}
 	secs := func(k string, lo, hi time.Duration, dst *time.Duration) error {
 		v := get(k)
@@ -222,12 +250,12 @@ func PollerConfigFromEnv(lookup func(string) (string, bool)) (rawURL string, cfg
 		return nil
 	}
 	if err = secs(EnvFleetPollSeconds, minPollInterval, maxPollInterval, &cfg.Interval); err != nil {
-		return "", PollerConfig{}, false, err
+		return "", "", PollerConfig{}, false, err
 	}
 	if err = secs(EnvFleetStaleGraceSec, 0, maxStaleGrace, &cfg.StaleGrace); err != nil {
-		return "", PollerConfig{}, false, err
+		return "", "", PollerConfig{}, false, err
 	}
-	return rawURL, cfg, true, nil
+	return rawURL, token, cfg, true, nil
 }
 
 // Poller copies the manager's grants into the Store and degrades them when the

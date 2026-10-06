@@ -14,7 +14,7 @@ func TestFakeFleetManagerBodyParsesWithTheRealSource(t *testing.T) {
 	if url == "" {
 		t.Skip("UBAG_FAKE_MANAGER_URL not set")
 	}
-	src, err := NewHTTPSource(url, nil)
+	src, err := NewHTTPSource(url, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
