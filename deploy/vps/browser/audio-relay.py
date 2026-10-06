@@ -26,7 +26,9 @@ WIRE PROTOCOL v2 (breaking vs v1; both directions use the same framing)
       {"op":"hello","session_id":"<str 1..128>","exp":<unix seconds, int>,
        "token":"<hex>"}
     token = hex(HMAC-SHA256(secret, f"voice-relay|{session_id}|{exp}"))
-    where secret is the UTF-8 bytes of env UBAG_VOICE_RELAY_SECRET.
+    where secret is the UTF-8 bytes of env UBAG_VOICE_RELAY_SECRET (or, when
+    UBAG_VOICE_RELAY_KEY_FILE is set, of that file's content, re-read on every
+    hello; see relay_secret()).
     BOUND hello (optional, helper-hosted voice, P5.7): the hello may also
     carry node_id (str 1..128, no "|") and generation (int 1..2**53-1), BOTH
     or neither, and then
@@ -88,7 +90,12 @@ TCP and the container's OWN virtual audio devices.
 
 Usage: audio-relay.py [--addr 127.0.0.1:9099]
 Environment: UBAG_VOICE_RELAY_ADDR (default 127.0.0.1:9099),
-UBAG_VOICE_RELAY_SECRET (required; fail closed when empty),
+UBAG_VOICE_RELAY_SECRET (required unless UBAG_VOICE_RELAY_KEY_FILE is set;
+fail closed when empty),
+UBAG_VOICE_RELAY_KEY_FILE (optional; helper-hosted voice: a file the Helper Node
+writes the per-attempt relay key to before each call and removes after it; it
+replaces UBAG_VOICE_RELAY_SECRET, which is then ignored, and a missing or empty
+file refuses every session),
 UBAG_VOICE_RELAY_IDLE_S (default 30),
 UBAG_VOICE_RELAY_NODE_ID (optional; helper deployments: require a bound hello
 for exactly this node).
@@ -187,6 +194,7 @@ SPEAKER_MONITOR = f"{SPEAKER_SINK}.monitor"
 HELLO_TIMEOUT_S = 5.0
 HELLO_MAX_FUTURE_S = 300
 MAX_BOUND_GENERATION = 2**53 - 1  # JSON-safe integer bound shared with the gateway
+KEY_FILE_MAX_BYTES = 256     # a per-attempt relay key is 64 hex characters
 MAX_PENDING = 4              # connections allowed to sit in the handshake
 DEVICE_READY_WAIT_S = 8.0    # < the gateway's 10 s ready timeout
 HEALTH_INTERVAL_S = 5.0      # device re-check cadence once ready
@@ -309,10 +317,27 @@ def relay_token(secret: bytes, session_id: str, exp: int,
 _last_bound: tuple[str, int] | None = None
 
 
+def relay_secret() -> bytes:
+    """The hello key. UBAG_VOICE_RELAY_KEY_FILE (helper-hosted voice, P5.10) wins
+    over UBAG_VOICE_RELAY_SECRET: the Helper Node writes the primary-derived
+    per-attempt key there before each call and removes it afterwards, and it is
+    read on EVERY hello, so no relay restart is needed per attempt. A missing or
+    empty file means no key (every session refused), never a fallback to the env
+    secret."""
+    path = os.environ.get("UBAG_VOICE_RELAY_KEY_FILE", "")
+    if not path:
+        return os.environ.get("UBAG_VOICE_RELAY_SECRET", "").encode("utf-8")
+    try:
+        with open(path, "rb") as f:
+            return f.read(KEY_FILE_MAX_BYTES + 1).strip()[:KEY_FILE_MAX_BYTES]
+    except OSError:
+        return b""
+
+
 def authenticate(conn: socket.socket) -> str:
     """Read and verify the hello frame; return the session id or raise
     HandshakeError. The 5 s deadline covers the WHOLE frame (slow-drip safe)."""
-    secret = os.environ.get("UBAG_VOICE_RELAY_SECRET", "").encode("utf-8")
+    secret = relay_secret()
     if not secret:
         raise HandshakeError("unconfigured")
     try:
@@ -980,7 +1005,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="UBAG voice audio relay")
     parser.add_argument("--addr", default=os.environ.get("UBAG_VOICE_RELAY_ADDR", "127.0.0.1:9099"))
     args = parser.parse_args()
-    if not os.environ.get("UBAG_VOICE_RELAY_SECRET"):
+    if not (os.environ.get("UBAG_VOICE_RELAY_SECRET") or os.environ.get("UBAG_VOICE_RELAY_KEY_FILE")):
         print("audio-relay: UBAG_VOICE_RELAY_SECRET is empty; refusing ALL sessions (fail closed)",
               file=sys.stderr)
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
