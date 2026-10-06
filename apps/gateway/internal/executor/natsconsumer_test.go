@@ -119,6 +119,7 @@ type fakeNATSMsg struct {
 	headers    nats.Header
 	acked      int
 	nakDelay   time.Duration
+	inProgress int
 	termReason string
 }
 
@@ -173,6 +174,7 @@ func (m *fakeNATSMsg) NakWithDelay(delay time.Duration) error {
 }
 
 func (m *fakeNATSMsg) InProgress() error {
+	m.inProgress++
 	return nil
 }
 

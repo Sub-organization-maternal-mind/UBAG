@@ -31,6 +31,7 @@ origin/main postgres highest: 0021 (0019-0021 live: voice sessions, voice instan
 - Routes: `/v1/fleet/*` guarded by scope `fleet:read`; internal node routes under `internal/nodes`.
 - Flag ladder: `UBAG_HELPER_NODES` < `UBAG_HELPER_PLANE` < `UBAG_HELPER_DISPATCH` < `UBAG_HELPER_VOICE` (each requires the previous).
 - Attempt ledger flag: `UBAG_EXECUTOR_ATTEMPTS` (default off; on requires the postgres or memory store, sqlite refuses to start).
+- Queue lease flag: `UBAG_EXECUTOR_LEASE_TTL_MS` (0/unset = legacy no-expiry; otherwise 30000..900000; file-spool lease expiry + NATS ack wait; see ADR-0007 addendum).
 - Streaming flag pair: `UBAG_WORKER_STREAM_EVENTS` (Python emits) + `UBAG_WORKER_STREAM_INGEST` (Go ingests). Other flags: see BINDING.md section 3 rule 5.
 
 ## Phase map

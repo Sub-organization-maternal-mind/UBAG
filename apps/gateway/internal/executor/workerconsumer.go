@@ -151,11 +151,19 @@ type WorkerConsumer struct {
 	inflight atomic.Int64
 }
 
-// LeaseHeartbeater is implemented by queue leases whose redelivery timer must
-// be extended while a long-running job executes.
+// LeaseHeartbeater is the optional WorkerLease capability for queue leases whose
+// redelivery timer must be extended while a long-running job executes (NATS
+// InProgress; the file spool's mtime renewal under UBAG_EXECUTOR_LEASE_TTL_MS).
+// It is the lease-renewal seam: leases without it are simply not renewed. A
+// renewal that returns ErrLeaseLost tells the consumer the queue has already
+// handed the job to someone else, so the local run is cancelled.
 type LeaseHeartbeater interface {
 	Heartbeat(ctx context.Context) error
 }
+
+// ErrLeaseLost is returned by a renewal when the queue lease no longer belongs
+// to the holder (expired and reclaimed).
+var ErrLeaseLost = errors.New("queue lease lost")
 
 const (
 	execLeaseTTL             = 90 * time.Second
@@ -484,6 +492,12 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			if finalErr == nil && found && finalJob.Status == jobstore.StatusCanceled {
 				c.observeTerminalJob(finalJob)
 				return true, lease.Cancel(opCtx)
+			}
+			if finalErr == nil && found && jobstore.TerminalStatus(finalJob.Status) {
+				// Ended under the running worker (stale-job reaper timeout,
+				// terminal write elsewhere): the watcher stopped the run; close
+				// the lease instead of re-queueing a finished job.
+				return c.finishTerminalLeasedJob(opCtx, lease, finalJob)
 			}
 			if !ambiguous {
 				_ = lease.Retry(ctx)
@@ -1050,7 +1064,10 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 				// Keep the queue message and the execution lease alive for as
 				// long as the job runs.
 				if beater != nil {
-					_ = beater.Heartbeat(runCtx)
+					if err := beater.Heartbeat(runCtx); errors.Is(err, ErrLeaseLost) {
+						cancel()
+						return
+					}
 				}
 				if execToken != "" {
 					if err := c.ExecLeases.RenewToken(runCtx, execToken, execLeaseTTL, time.Now().UTC()); errors.Is(err, topology.ErrTokenLost) {
@@ -1070,7 +1087,7 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 				if err != nil || !found {
 					continue
 				}
-				if job.Status == jobstore.StatusCanceled {
+				if jobstore.TerminalStatus(job.Status) {
 					cancel()
 					return
 				}
@@ -1087,9 +1104,11 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 // cancelWatchFallback is the safety-net Get cadence while the event hub is on.
 const cancelWatchFallback = 2 * time.Second
 
+// jobCanceled reports whether the job reached ANY terminal state under the
+// running worker (cancel, or a stale-job reaper timeout), so the run stops.
 func (c *WorkerConsumer) jobCanceled(ctx context.Context, jobID string) bool {
 	job, found, err := c.Jobs.Get(ctx, jobID)
-	return err == nil && found && job.Status == jobstore.StatusCanceled
+	return err == nil && found && jobstore.TerminalStatus(job.Status)
 }
 
 func (c *WorkerConsumer) applyFailure(ctx context.Context, lease WorkerLease, envelope DispatchEnvelope, cause error) error {
@@ -1716,6 +1735,11 @@ func (l fileSpoolWorkerLease) QueueName() string {
 
 func (l fileSpoolWorkerLease) Envelope() DispatchEnvelope {
 	return l.lease.Envelope
+}
+
+// Heartbeat renews the spool lease (no-op without UBAG_EXECUTOR_LEASE_TTL_MS).
+func (l fileSpoolWorkerLease) Heartbeat(ctx context.Context) error {
+	return l.spool.RenewLease(ctx, l.lease)
 }
 
 func (l fileSpoolWorkerLease) Complete(ctx context.Context) error {

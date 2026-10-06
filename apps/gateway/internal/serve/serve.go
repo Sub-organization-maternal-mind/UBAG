@@ -364,6 +364,14 @@ func Run(ctx context.Context) error {
 	// never read again, so their growth is bounded here (env-configurable TTL
 	// + max-count; both disabled turns the sweeper into a no-op).
 	if spool, ok := rawDispatcher.(*executor.FileSpoolDispatcher); ok {
+		if spool.LeaseTTL() > 0 {
+			go func() {
+				if err := spool.RunLeaseReclaimer(ctx, 0); err != nil && err != context.Canceled {
+					slog.Error("spool lease reclaimer stopped", "error", err)
+				}
+			}()
+			slog.Info("spool lease expiry enabled", "ttl_ms", spool.LeaseTTL().Milliseconds())
+		}
 		retention, err := spoolRetentionFromEnv()
 		if err != nil {
 			return fmt.Errorf("invalid spool retention configuration: %w", err)
@@ -620,6 +628,11 @@ func newDispatcherFromEnv() (executor.Dispatcher, error) {
 		dispatcher := executor.NewFileSpoolDispatcher(spoolDir)
 		// Default off: legacy file mode leases scheduled jobs immediately.
 		dispatcher.SetHonorNotBefore(envBool("UBAG_FILESPOOL_HONOR_NOT_BEFORE"))
+		leaseTTL, err := executorLeaseTTLFromEnv()
+		if err != nil {
+			return nil, err
+		}
+		dispatcher.SetLeaseTTL(leaseTTL)
 		// A previous process may have died mid-RunOnce (upgrade, crash, killed
 		// window): its leases are stranded in spool/leased forever unless they
 		// are returned to pending at startup.
@@ -727,6 +740,35 @@ func configureEventNotify(store interface{ EnableEventNotify(time.Duration) }) e
 	store.EnableEventNotify(fallback)
 	slog.Info("job event wake hub enabled", "mode", mode, "fallback_ms", fallback.Milliseconds())
 	return nil
+}
+
+const (
+	minExecutorLeaseTTL = 30 * time.Second // three missed 10 s renewals
+	maxExecutorLeaseTTL = 15 * time.Minute // same ceiling as the attempt ledger
+)
+
+// executorLeaseTTLFromEnv reads UBAG_EXECUTOR_LEASE_TTL_MS: the QUEUE lease TTL
+// (file-spool leased/ file, NATS ack wait), renewed by the consumer heartbeat
+// (10 s) and reclaimed when it lapses. 0/unset keeps the legacy no-expiry
+// behaviour. It is not a new lease concept: the exec lease (90 s, per-job
+// token) and the helper attempt lease (120 s, generation fence) are unchanged.
+func executorLeaseTTLFromEnv() (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv("UBAG_EXECUTOR_LEASE_TTL_MS"))
+	if raw == "" {
+		return 0, nil
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil || ms < 0 {
+		return 0, fmt.Errorf("UBAG_EXECUTOR_LEASE_TTL_MS must be a non-negative integer number of milliseconds (0 disables)")
+	}
+	ttl := time.Duration(ms) * time.Millisecond
+	if ttl == 0 {
+		return 0, nil
+	}
+	if ttl < minExecutorLeaseTTL || ttl > maxExecutorLeaseTTL {
+		return 0, fmt.Errorf("UBAG_EXECUTOR_LEASE_TTL_MS must be 0 or between %d and %d", minExecutorLeaseTTL.Milliseconds(), maxExecutorLeaseTTL.Milliseconds())
+	}
+	return ttl, nil
 }
 
 // configureExecutorAttempts applies UBAG_EXECUTOR_ATTEMPTS (default off): the
@@ -1548,13 +1590,18 @@ func newStaleJobReaperFromEnv(jobs jobstore.Store, concurrency *topology.Concurr
 	if intervalSecs == 0 {
 		intervalSecs = 60
 	}
-	return &executor.StaleJobReaper{
+	reaper := &executor.StaleJobReaper{
 		Jobs:        jobs,
 		Concurrency: concurrency,
 		Notifier:    notifier,
 		MaxLifetime: time.Duration(maxLifetimeSecs) * time.Second,
 		Interval:    time.Duration(intervalSecs) * time.Second,
 	}
+	if envBool("UBAG_EXECUTOR_ATTEMPTS") {
+		// configureExecutorAttempts already refused startup if the store has no ledger.
+		reaper.Attempts, _ = jobs.(jobstore.AttemptStore)
+	}
+	return reaper
 }
 
 // newQueuedJobReconcilerFromEnv builds the create-then-enqueue crash reconciler.
@@ -1767,7 +1814,16 @@ func workerQueueFromEnv(dispatcher executor.Dispatcher, maxRuntime time.Duration
 		// STILL RUNNING. A second worker would then drive the SAME shared browser
 		// profile — generating the report twice and risking interleaved/cross-patient
 		// output. Refuse to start rather than allow duplicate in-flight execution.
-		if ackWait <= maxRuntime {
+		// UBAG_EXECUTOR_LEASE_TTL_MS makes the ack wait the lease TTL: the
+		// consumer heartbeat (InProgress, every 10 s) renews it, so it may be
+		// shorter than the max runtime; a dead holder is redelivered after TTL.
+		leaseTTL, err := executorLeaseTTLFromEnv()
+		if err != nil {
+			return nil, err
+		}
+		if leaseTTL > 0 {
+			ackWait = leaseTTL
+		} else if ackWait <= maxRuntime {
 			return nil, fmt.Errorf(
 				"UBAG_NATS_WORKER_ACK_WAIT_MS (%s) must be greater than UBAG_WORKER_MAX_RUNTIME_MS (%s): a shorter ack wait causes JetStream to redeliver and duplicate still-running jobs",
 				ackWait, maxRuntime)
