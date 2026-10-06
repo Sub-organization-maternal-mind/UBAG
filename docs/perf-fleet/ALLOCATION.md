@@ -20,7 +20,7 @@ origin/main postgres highest: 0021 (0019-0021 live: voice sessions, voice instan
 | Postgres | SQLite | Purpose (dependency order) |
 |---|---|---|
 | 0022_gateway_job_attempts | 0014_gateway_job_attempts | attempts |
-| 0023_helper_nodes | 0015_helper_nodes | nodes + registry |
+| 0023_helper_nodes (landed, P4.4) | n/a (SQLite edge profile refuses helper mode; 0015 stays unused) | nodes + registry |
 | 0024_helper_profiles | 0016_helper_profiles | profiles |
 | 0025_voice_lease_generation | n/a | voice lease generation |
 | 0026+ | 0017+ | free; P1.6 tenant-keyed topology upsert reserves one if schema impact exists |
