@@ -1,5 +1,6 @@
 import {
   UBAG_JOB_STATUSES,
+  UBAG_QUEUE_REASONS,
   UBAG_TERMINAL_JOB_STATUSES,
 } from "./generated/contract-manifest.js";
 
@@ -100,6 +101,13 @@ export interface UbagAttachmentUpload extends UbagJobAttachment {
 /** Job statuses, generated from the contract schema (job-response.schema.json). */
 export type UbagJobStatus = keyof typeof UBAG_JOB_STATUSES | (string & {});
 
+/**
+ * Coarse reason a queued job has not started, generated from the contract schema
+ * (job-response.schema.json). Tenant-safe: it never names a node or another project.
+ * Open to unknown strings so a newer gateway never breaks an older client.
+ */
+export type UbagQueueReason = (typeof UBAG_QUEUE_REASONS)[number] | (string & {});
+
 /** The terminal statuses a job never leaves (contract-derived). */
 export const UBAG_TERMINAL_STATUSES: ReadonlySet<string> = new Set(UBAG_TERMINAL_JOB_STATUSES);
 
@@ -146,6 +154,10 @@ export interface UbagJobResponse {
   metadata?: UbagJobMetadata;
   trace_id: string;
   events_url?: string;
+  /** Why the job is still queued. Absent (or null) when the gateway has nothing to say; only meaningful while queued. */
+  queue_reason?: UbagQueueReason | null;
+  /** When the current queue_reason began (restarts when the reason changes). */
+  queue_reason_since?: string | null;
 }
 
 export interface UbagListJobsParams {
@@ -526,6 +538,80 @@ export interface UbagBrowserTopologySummary {
   instances_by_state: Record<string, number>;
   contexts_by_login_state: Record<string, number>;
   tabs_by_state: Record<string, number>;
+  trace_id: string;
+}
+
+/** Host-level placement state of a helper node; provider readiness is reported separately. */
+export type UbagFleetNodeState = "eligible" | "ineligible" | "draining" | "lost" | "unknown_reservation" | (string & {});
+
+export interface UbagFleetGrant {
+  generation: number;
+  state: "active" | "draining" | "revoked" | (string & {});
+  reservation_state: "known" | "unknown" | (string & {});
+  valid_until: string;
+  max_browser_workloads: number;
+  cpu_millis: number;
+  memory_bytes: number;
+  voice_capable: boolean;
+}
+
+export interface UbagFleetUsage {
+  workloads_in_use: number;
+  /** Most workloads the gateway will place on the node right now (0 while not eligible). */
+  admission_limit: number;
+}
+
+export interface UbagFleetPressure {
+  admission_reduced: boolean;
+  recover_at: string | null;
+}
+
+export interface UbagFleetReadiness {
+  target: string;
+  session_state: "authenticated" | "login_required" | "unknown" | "busy" | (string & {});
+  count: number;
+  checked_at: string;
+}
+
+/** One helper node. Opaque id and label only: no address, hostname, endpoint or browser endpoint. */
+export interface UbagFleetNode {
+  node_id: string;
+  label: string;
+  region: string;
+  state: UbagFleetNodeState;
+  /** Set only while state is "ineligible". */
+  ineligible_reason: "revoked" | "grant_expired" | "no_capacity" | (string & {}) | null;
+  heartbeat_at: string | null;
+  grant: UbagFleetGrant;
+  usage: UbagFleetUsage;
+  pressure: UbagFleetPressure;
+  readiness: UbagFleetReadiness[];
+}
+
+export interface UbagListFleetNodesParams {
+  /** 1..256; the default returns every node. */
+  limit?: number;
+}
+
+export interface UbagFleetNodeListResponse {
+  api_version: string;
+  kind: "fleet_nodes" | (string & {});
+  /** Nodes known; more than data.length means limit cut the list. */
+  total: number;
+  data: UbagFleetNode[];
+  trace_id: string;
+}
+
+export interface UbagFleetSummary {
+  api_version: string;
+  kind: "fleet_summary" | (string & {});
+  nodes_total: number;
+  nodes_by_state: Record<"eligible" | "ineligible" | "draining" | "lost" | "unknown_reservation", number>;
+  workload_limit_total: number;
+  workloads_in_use_total: number;
+  nodes_pressure_reduced: number;
+  /** Queued jobs held per fine-grained reason; an absent key is 0. Operator detail behind the coarse queue_reason. */
+  held_by_reason: Record<string, number>;
   trace_id: string;
 }
 

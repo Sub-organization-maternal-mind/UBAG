@@ -68,6 +68,10 @@ function loadJobVocabularies() {
   );
   const statuses = responseSchema?.$defs?.job_status?.enum;
   const eventTypes = eventSchema?.properties?.type?.enum;
+  const queueReasons = responseSchema?.$defs?.queue_reason?.enum;
+  if (!Array.isArray(queueReasons) || queueReasons.length === 0) {
+    throw new Error("job-response.schema.json missing $defs.queue_reason.enum");
+  }
   if (!Array.isArray(statuses) || statuses.length === 0) {
     throw new Error("job-response.schema.json missing $defs.job_status.enum");
   }
@@ -83,7 +87,7 @@ function loadJobVocabularies() {
   for (const status of statuses) {
     jobStatuses[status] = { terminal: TERMINAL_STATUSES.includes(status) };
   }
-  return { jobStatuses, jobEventTypes: eventTypes };
+  return { jobStatuses, jobEventTypes: eventTypes, jobQueueReasons: queueReasons };
 }
 
 function loadErrorCategories() {
@@ -106,14 +110,14 @@ if (Object.keys(endpoints).length === 0) {
   throw new Error("No endpoints found in openapi.yaml — check YAML indentation");
 }
 const errorCodes = loadErrorCodes(errorsJson);
-const { jobStatuses, jobEventTypes } = loadJobVocabularies();
+const { jobStatuses, jobEventTypes, jobQueueReasons } = loadJobVocabularies();
 const errorCategories = loadErrorCategories();
 const fingerprints = {
   "job-request": sha256("packages/shared-schemas/schemas/job-request.schema.json"),
   "job-response": sha256("packages/shared-schemas/schemas/job-response.schema.json"),
 };
 
-const manifest = { apiVersion: API_VERSION, endpoints, errorCodes, jobStatuses, jobEventTypes, errorCategories, fingerprints };
+const manifest = { apiVersion: API_VERSION, endpoints, errorCodes, jobStatuses, jobEventTypes, jobQueueReasons, errorCategories, fingerprints };
 const outputs = [
   {
     path: "packages/sdk-typescript/src/generated/contract-manifest.ts",
@@ -154,6 +158,7 @@ export const UBAG_ERROR_CODES = ${JSON.stringify(m.errorCodes, null, 2)} as cons
 export const UBAG_ERROR_CATEGORIES = ${JSON.stringify(m.errorCategories)} as const;
 export const UBAG_JOB_STATUSES = ${JSON.stringify(m.jobStatuses, null, 2)} as const;
 export const UBAG_JOB_EVENT_TYPES = ${JSON.stringify(m.jobEventTypes)} as const;
+export const UBAG_QUEUE_REASONS = ${JSON.stringify(m.jobQueueReasons)} as const;
 export const UBAG_TERMINAL_JOB_STATUSES = ${JSON.stringify(m.jobEventTypes ? Object.entries(m.jobStatuses).filter(([, v]) => v.terminal).map(([k]) => k) : [])} as const;
 export const UBAG_SCHEMA_FINGERPRINTS = ${JSON.stringify(m.fingerprints, null, 2)} as const;
 `;
@@ -182,6 +187,9 @@ function renderGo(m) {
     .join("\n");
   const eventTypes = m.jobEventTypes
     .map((t) => `\t${JSON.stringify(t)},`)
+    .join("\n");
+  const queueReasons = m.jobQueueReasons
+    .map((r) => `\t${JSON.stringify(r)},`)
     .join("\n");
   const categories = m.errorCategories
     .map((c) => `\t${JSON.stringify(c)},`)
@@ -220,6 +228,10 @@ ${statuses}
 
 var UbagJobEventTypes = []string{
 ${eventTypes}
+}
+
+var UbagQueueReasons = []string{
+${queueReasons}
 }
 
 var UbagErrorCategories = []string{

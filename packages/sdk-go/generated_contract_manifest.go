@@ -56,6 +56,8 @@ var UbagEndpoints = map[string]ManifestEndpoint{
 	"GET /v1/browser/tabs":                           {Method: "GET", Path: "/v1/browser/tabs"},
 	"GET /v1/browser/summary":                        {Method: "GET", Path: "/v1/browser/summary"},
 	"GET /v1/concurrency":                            {Method: "GET", Path: "/v1/concurrency"},
+	"GET /v1/fleet/nodes":                            {Method: "GET", Path: "/v1/fleet/nodes"},
+	"GET /v1/fleet/summary":                          {Method: "GET", Path: "/v1/fleet/summary"},
 	"GET /v1/sso/config":                             {Method: "GET", Path: "/v1/sso/config"},
 	"PUT /v1/sso/config":                             {Method: "PUT", Path: "/v1/sso/config"},
 	"POST /v1/sso/oidc/callback":                     {Method: "POST", Path: "/v1/sso/oidc/callback"},
@@ -313,6 +315,15 @@ var UbagJobEventTypes = []string{
 	"warning",
 }
 
+var UbagQueueReasons = []string{
+	"waiting_for_worker",
+	"waiting_for_identity",
+	"waiting_for_capacity",
+	"waiting_for_node",
+	"retry_backoff",
+	"temporarily_unavailable",
+}
+
 var UbagErrorCategories = []string{
 	"auth",
 	"authz",
@@ -339,5 +350,5 @@ var UbagErrorCategories = []string{
 
 var UbagSchemaFingerprints = map[string]string{
 	"job-request":  "c97e105265015aee85de030cfc1721260eb3492ea75fefb501e2c0bdb2336138",
-	"job-response": "63259dd3e85713a3269bd05aa9987e1efe6e7fe94476561f6bdb903c855d4f26",
+	"job-response": "f861eb8af9c6a1604c2928320a653fdc11226a209352c7932fbdb3fc74bb7c3b",
 }

@@ -69,6 +69,11 @@
           "maxLength": 128,
           "description": "Attempt that produced this event (worker daemon protocol v2). It lives inside data because the event envelope is closed. When present, event_id MUST be derived from it so a retried attempt's events never collide with an earlier attempt's: the reference derivation is evt_ + the first 16 hex chars of sha256(job_id:attempt_id:sequence); without attempt_id it stays sha256(job_id:sequence). Events of one job may mix both forms across a deploy. Semantics: token and token_streaming events are PROVISIONAL, a live view of one attempt that a consumer may discard if that attempt is abandoned (no terminal event, daemon died, lease fenced); the job result comes only from a terminal event of the current attempt, never from concatenated token events."
         },
+        "reason": {
+          "type": "string",
+          "maxLength": 128,
+          "description": "Short identifier-like token that explains the event. On a queued event it is the coarse queue reason, one of the queue_reason values in job-response.schema.json (the same value the job reports as queue_reason); on a blocked event it is the worker's block reason (for example manual_login_required). Reusing the existing queued and blocked event types with this field means queue reasons add no new event type and no new error category."
+        },
         "stream_end_reason": {
           "enum": ["provider_done", "deadline", "stalled", "cancelled", "error"],
           "description": "Why the provider stream stopped, on the terminal event of a streamed job. Anything other than provider_done means the text is not a complete answer: a deadline cut ends the job timed_out (never completed), with the text under data.partial and not in the result (decision D4)."

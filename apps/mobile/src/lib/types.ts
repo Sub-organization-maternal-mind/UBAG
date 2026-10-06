@@ -94,6 +94,16 @@ export interface VersionStatus {
   trace_id: string;
 }
 
+// Coarse, tenant-safe reason a queued job has not started
+// (job-response.schema.json $defs.queue_reason). Unknown values are tolerated.
+export type QueueReason =
+  | "waiting_for_worker"
+  | "waiting_for_identity"
+  | "waiting_for_capacity"
+  | "waiting_for_node"
+  | "retry_backoff"
+  | "temporarily_unavailable";
+
 export interface JobResponse {
   api_version: string;
   job_id: string;
@@ -106,6 +116,10 @@ export interface JobResponse {
   events_url: string;
   created_at?: string;
   updated_at?: string;
+  // Optional; absent (or null) when the gateway has nothing to say. Only
+  // meaningful while status is "queued".
+  queue_reason?: QueueReason | (string & {}) | null;
+  queue_reason_since?: string | null;
 }
 
 export interface JobListResponse {

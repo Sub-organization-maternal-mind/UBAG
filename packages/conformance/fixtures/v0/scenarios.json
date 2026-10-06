@@ -3684,6 +3684,43 @@
       }
     },
     {
+      "id": "jobs.get.queued-reason",
+      "category": "jobs",
+      "title": "Get job reports a coarse queue reason and when it began while queued",
+      "request": {
+        "method": "GET",
+        "path": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1BE",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "job_id": "job_01HXY5ZS3KAFQ3PZ8NQ8C7H1BE",
+          "idempotent_replay": false,
+          "status": "queued",
+          "target": "chatgpt_web",
+          "metadata": {
+            "queued_at": "2026-05-22T00:00:01Z",
+            "retries": 0
+          },
+          "queue_reason": "waiting_for_identity",
+          "queue_reason_since": "2026-05-22T00:00:03Z",
+          "trace_id": "trace_job_get_queued",
+          "events_url": "/v1/jobs/job_01HXY5ZS3KAFQ3PZ8NQ8C7H1BE/events"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.status": "queued",
+        "body.queue_reason": "waiting_for_identity",
+        "body.queue_reason_since": "2026-05-22T00:00:03Z"
+      }
+    },
+    {
       "id": "jobs.events.list.ok",
       "category": "events",
       "title": "Job event list uses cursor pagination",
@@ -4403,6 +4440,178 @@
         "ok": true,
         "body.kind": "concurrency_ceilings",
         "body.data.0.current_cap": 4
+      }
+    },
+    {
+      "id": "fleet.nodes.ok",
+      "category": "fleet",
+      "title": "Fleet nodes lists opaque nodes with grant, usage, pressure and readiness kept apart from host state",
+      "request": {
+        "method": "GET",
+        "path": "/v1/fleet/nodes?limit=2",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "fleet_nodes",
+          "total": 2,
+          "data": [
+            {
+              "node_id": "node-eu-1",
+              "label": "eu-west #1",
+              "region": "eu-west",
+              "state": "eligible",
+              "ineligible_reason": null,
+              "heartbeat_at": "2026-05-22T00:00:10Z",
+              "grant": {
+                "generation": 7,
+                "state": "active",
+                "reservation_state": "known",
+                "valid_until": "2026-05-22T01:00:00Z",
+                "max_browser_workloads": 3,
+                "cpu_millis": 1500,
+                "memory_bytes": 2684354560,
+                "voice_capable": false
+              },
+              "usage": {
+                "workloads_in_use": 1,
+                "admission_limit": 3
+              },
+              "pressure": {
+                "admission_reduced": false,
+                "recover_at": null
+              },
+              "readiness": [
+                {
+                  "target": "chatgpt_web",
+                  "session_state": "authenticated",
+                  "count": 1,
+                  "checked_at": "2026-05-22T00:00:05Z"
+                },
+                {
+                  "target": "gemini_web",
+                  "session_state": "login_required",
+                  "count": 1,
+                  "checked_at": "2026-05-22T00:00:05Z"
+                }
+              ]
+            },
+            {
+              "node_id": "node-eu-2",
+              "label": "eu-west #2",
+              "region": "eu-west",
+              "state": "lost",
+              "ineligible_reason": null,
+              "heartbeat_at": "2026-05-22T00:00:00Z",
+              "grant": {
+                "generation": 4,
+                "state": "active",
+                "reservation_state": "known",
+                "valid_until": "2026-05-22T01:00:00Z",
+                "max_browser_workloads": 2,
+                "cpu_millis": 1000,
+                "memory_bytes": 1610612736,
+                "voice_capable": false
+              },
+              "usage": {
+                "workloads_in_use": 0,
+                "admission_limit": 0
+              },
+              "pressure": {
+                "admission_reduced": true,
+                "recover_at": "2026-05-22T00:02:00Z"
+              },
+              "readiness": []
+            }
+          ],
+          "trace_id": "trace_fleet_nodes"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "fleet_nodes",
+        "body.total": 2,
+        "body.data.0.state": "eligible",
+        "body.data.0.readiness.0.session_state": "authenticated",
+        "body.data.1.state": "lost"
+      }
+    },
+    {
+      "id": "fleet.summary.ok",
+      "category": "fleet",
+      "title": "Fleet summary returns node counts, slot totals and held-job counts by fine-grained reason",
+      "request": {
+        "method": "GET",
+        "path": "/v1/fleet/summary",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "api_version": "2026-05-22",
+          "kind": "fleet_summary",
+          "nodes_total": 2,
+          "nodes_by_state": {
+            "eligible": 1,
+            "ineligible": 0,
+            "draining": 0,
+            "lost": 1,
+            "unknown_reservation": 0
+          },
+          "workload_limit_total": 3,
+          "workloads_in_use_total": 1,
+          "nodes_pressure_reduced": 1,
+          "held_by_reason": {
+            "local_slots_busy": 7,
+            "identity_busy": 4,
+            "no_capacity": 2
+          },
+          "trace_id": "trace_fleet_summary"
+        }
+      },
+      "expect": {
+        "ok": true,
+        "body.kind": "fleet_summary",
+        "body.nodes_total": 2,
+        "body.held_by_reason.identity_busy": 4
+      }
+    },
+    {
+      "id": "fleet.nodes.not-implemented",
+      "category": "fleet",
+      "title": "Fleet nodes answers 501 when the deployment has no fleet source",
+      "request": {
+        "method": "GET",
+        "path": "/v1/fleet/nodes",
+        "headers": {
+          "Authorization": "Bearer app_secret_fixture",
+          "Ubag-Api-Version": "2026-05-22"
+        }
+      },
+      "response": {
+        "status": 501,
+        "body": {
+          "error": {
+            "code": "UBAG-NOT-IMPLEMENTED-001",
+            "category": "internal",
+            "message": "fleet source is not configured",
+            "retryable": false,
+            "trace_id": "trace_fleet_not_implemented"
+          }
+        }
+      },
+      "expect": {
+        "throws": "UbagApiError",
+        "error.code": "UBAG-NOT-IMPLEMENTED-001",
+        "error.retryable": false
       }
     },
     {

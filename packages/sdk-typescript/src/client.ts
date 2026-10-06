@@ -21,6 +21,8 @@ import {
   type UbagConcurrencyListResponse,
   type UbagConversationListResponse,
   type UbagCreateJobRequest,
+  type UbagFleetNodeListResponse,
+  type UbagFleetSummary,
   type UbagArtifactDownloadResponse,
   type UbagArtifactListResponse,
   type UbagArtifactResponse,
@@ -37,6 +39,7 @@ import {
   type UbagListConcurrencyParams,
   type UbagListConversationsParams,
   type UbagListEventsParams,
+  type UbagListFleetNodesParams,
   type UbagListJobEventsParams,
   type UbagListJobsParams,
   type UbagListJobsResponse,
@@ -567,6 +570,22 @@ export class UbagClient {
     addOptionalQuery(query, "limit", params.limit);
     const suffix = query.size > 0 ? `?${query.toString()}` : "";
     return this.request("GET", `/v1/concurrency${suffix}`, options);
+  }
+
+  /** Operator view of the helper nodes (fleet:read). Rejects with a 501 UbagApiError when the gateway has no fleet source. */
+  async listFleetNodes(
+    params: UbagListFleetNodesParams = {},
+    options: UbagRequestOptions = {}
+  ): Promise<UbagFleetNodeListResponse> {
+    const query = new URLSearchParams();
+    addOptionalQuery(query, "limit", params.limit);
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request("GET", `/v1/fleet/nodes${suffix}`, options);
+  }
+
+  /** Operator fleet totals and held-job counts by reason (fleet:read). Rejects with a 501 UbagApiError when the gateway has no fleet source. */
+  async getFleetSummary(options: UbagRequestOptions = {}): Promise<UbagFleetSummary> {
+    return this.request("GET", "/v1/fleet/summary", options);
   }
 
   async ssoLogout(request: UbagSsoLogoutRequest = {}, options: UbagRequestOptions = {}): Promise<UbagLogoutResult> {
