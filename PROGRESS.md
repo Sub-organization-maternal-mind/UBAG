@@ -6,6 +6,9 @@ endpoint, and UBAG can authenticate to it and bind helper profiles. The
 manager's image build runs in the OET repo's fleet workflow; enrollment of a
 real helper, certificates and live evidence are still external.**)
 
+**`ci` fully green again (`e49e3bb` verified on 37533190411):** every job
+success including the formerly-red "Gateway (Go) full suite, serialized".
+
 ## 2026-10-07 — The fleet loop closed in code (both repos), flag-inert as always
 
 Three pieces landed today, all inert until an operator sets env:
@@ -64,6 +67,29 @@ bind-time node check against registered non-revoked nodes).
   iteration, which is how this stayed invisible). Not my code: f623698 and
   a91109c failed identically while the older Integration-tests job passed the
   same tests in the same commits.
+
+**The poll went live the same evening (Phase 1's first real integration path).**
+The OET side rolled the manager out from a tree containing the endpoint
+(fleet run 37531175412, workflow_dispatch sync; the running manager is the
+exact digest that build produced, `sha256:5ffaae3b...`), and the primary now
+runs the whole chain: the manager answers `GET /internal/ubag/allocations`
+with `200 {"schema_version":1,...,"allocations":[]}` for the bearer token and
+`401` with no/wrong token (empty list: no helper is enrolled yet, so there is
+nothing to grant — fail-closed by design); the UBAG gateway carries
+`UBAG_HELPER_NODES=true` + `UBAG_FLEET_MANAGER_URL` +
+`UBAG_FLEET_MANAGER_TOKEN` (48-hex, root-only on the box, never printed;
+`env.local` backups kept), polls the manager over the fleet bridge, and logs
+**zero allocation-poll failures** across consecutive poll windows. The
+gateway's attachment to the fleet bridge is now declarative
+(`oet_fleet_net`, external, in `docker-compose.vps.yml`, `e81e483`) — a
+manual `docker network connect` dies with the next ci-deploy recreate. Two
+settings remain transient until the OET pass-through commit ships: the
+manager's `Fleet__Ubag__*` owner settings were written into the generated
+`fleet.env` (regenerated on every rollout) — the pass-through entries that
+make them durable from `.env.production` are committed in the OET repo and
+await a ship window. Dispatch stays OFF on the gateway (no helper exists;
+the profile-bind routes answer 501 as designed) and the manager's Hosts is
+`*`, so an enrolled helper is picked up with no further config.
 
 **What this unblocks and what stays external.** With the manager running and
 `Fleet__Ubag__Enabled` + `Fleet__Ubag__Hosts` set in its compose env, UBAG
