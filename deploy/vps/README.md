@@ -107,6 +107,16 @@ dropped as a duplicate. Per-job worker targets (mock, generic) stay on the batch
 path. The flag only shows live tokens together with `UBAG_WORKER_STREAM_EVENTS`,
 and should be paired with `UBAG_WORKER_STRICT_SUBMIT`.
 
+Streamed events are batched: token deltas that arrive within
+`UBAG_WORKER_STREAM_FLUSH_MS` (default 50, `0` = one store write per event) merge
+into one token event, and everything pending is written in one transaction with
+one waiter wake. The first token after a quiet period is written at once, any
+non-token event flushes at once, and the pending tail is flushed before the
+terminal is applied or the failure recorded. `UBAG_WORKER_STREAM_MAX_BYTES`
+(default 8 MiB) is the per-attempt byte budget that replaces the batch path's
+512-event / 1 MiB caps for streams; an overrun fails the attempt, it never
+truncates.
+
 ## Antigravity CLI OAuth slots (opt-in, not yet production-verified)
 
 The `antigravity-oauth` profile installs the official `agy` Linux CLI into
