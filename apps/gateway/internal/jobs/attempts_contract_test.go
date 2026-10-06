@@ -2,8 +2,10 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -470,6 +472,96 @@ func runAttemptStoreContract(t *testing.T, mk func(t *testing.T) attemptEnv) {
 			if wm, _ := event.Data["worker_event"].(map[string]any); wm != nil && strings.HasPrefix(fmt.Sprint(wm["event_id"]), "stale_") {
 				t.Fatalf("a stale-generation event reached the job: %#v", event)
 			}
+		}
+	})
+
+	t.Run("a fenced commit leaves the job untouched even with a terminal event", func(t *testing.T) {
+		env := mk(t)
+		job := env.newJob(t)
+		a := begin(t, env, job, "att_old", 0, 30*time.Second)
+		if _, err := env.store.CommitEvents(ctx, a.Ref(), []WorkerEvent{attemptEvent(job, "old_running", 2, "running", map[string]any{"status": "running"})}); err != nil {
+			t.Fatal(err)
+		}
+		env.clock.Advance(time.Minute)
+		b := begin(t, env, job, "att_new", 1, 0)
+		before, _, err := env.store.Get(ctx, job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		eventsBefore := eventCount(t, env.store, job.ID)
+
+		done := attemptEvent(job, "stale_done", 3, "completed", map[string]any{"status": "completed", "result": map[string]any{"text": "stale answer"}})
+		_, err = env.store.CommitEvents(ctx, a.Ref(), []WorkerEvent{done})
+		wantAttemptErr(t, err, ErrAttemptFenced)
+		forged := a.Ref()
+		forged.Generation = b.Generation // right generation, wrong attempt id
+		_, err = env.store.CommitEvents(ctx, forged, []WorkerEvent{done})
+		wantAttemptErr(t, err, ErrAttemptFenced)
+
+		after, _, err := env.store.Get(ctx, job.ID)
+		if err != nil || !reflect.DeepEqual(before, after) {
+			t.Fatalf("a fenced commit mutated the job:\nbefore %#v\nafter  %#v (err=%v)", before, after, err)
+		}
+		if after.Status != StatusRunning || after.Result != nil {
+			t.Fatalf("job = %s result=%v, want running with no result", after.Status, after.Result)
+		}
+		if got := eventCount(t, env.store, job.ID); got != eventsBefore {
+			t.Fatalf("a fenced commit wrote %d events", got-eventsBefore)
+		}
+		// The rejected event did not consume its dedupe key: the current attempt
+		// can still commit the same key.
+		got, err := env.store.CommitEvents(ctx, b.Ref(), []WorkerEvent{done})
+		if err != nil || got.Status != StatusCompleted {
+			t.Fatalf("current attempt could not use the key a stale writer was refused: status=%s err=%v", got.Status, err)
+		}
+	})
+
+	t.Run("commit redacts secret-bearing data and rejects secret values", func(t *testing.T) {
+		env := mk(t)
+		job := env.newJob(t)
+		a := begin(t, env, job, "att_one", 0, 0)
+		secret := attemptEvent(job, "e_secret", 2, "token", map[string]any{
+			"status":  "token_streaming",
+			"delta":   map[string]any{"text": "hi"},
+			"cookie":  "sessionid=abc123",
+			"api_key": "sk-live-AAAA",
+			"nested":  map[string]any{"password": "hunter2", "note": "fine"},
+			"list":    []any{map[string]any{"storage_state": "state-blob"}},
+		})
+		if _, err := env.store.CommitEvents(ctx, a.Ref(), []WorkerEvent{secret}); err != nil {
+			t.Fatal(err)
+		}
+		events, _, err := env.store.ListEvents(ctx, job.ID, 0, 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var committed Event
+		for _, event := range events {
+			if event.Type == "token" {
+				committed = event
+			}
+		}
+		if committed.Data["cookie"] != "[redacted]" || committed.Data["api_key"] != "[redacted]" {
+			t.Fatalf("secret keys were not redacted: %#v", committed.Data)
+		}
+		if nested, _ := committed.Data["nested"].(map[string]any); nested["password"] != "[redacted]" || nested["note"] != "fine" {
+			t.Fatalf("nested data = %#v", committed.Data["nested"])
+		}
+		raw, _ := json.Marshal(events)
+		for _, leak := range []string{"sessionid=abc123", "sk-live-AAAA", "hunter2", "state-blob"} {
+			if strings.Contains(string(raw), leak) {
+				t.Fatalf("secret %q reached the event log: %s", leak, raw)
+			}
+		}
+
+		// A secret-looking VALUE (not just key) is refused outright, all or nothing.
+		before := eventCount(t, env.store, job.ID)
+		leaky := attemptEvent(job, "e_leaky", 3, "token", map[string]any{"delta": map[string]any{"text": "Bearer abcdefghijklmnopqrstuvwxyz"}})
+		if _, err := env.store.CommitEvents(ctx, a.Ref(), []WorkerEvent{leaky}); err == nil {
+			t.Fatal("a bearer-token value was committed")
+		}
+		if got := eventCount(t, env.store, job.ID); got != before {
+			t.Fatalf("refused secret value wrote %d events", got-before)
 		}
 	})
 }

@@ -593,6 +593,14 @@ func resultFromWorkerEvent(event WorkerEvent, data map[string]any) any {
 	}
 }
 
+// ValidateWorkerEventData runs the exact data checks every store applies to a
+// worker event (size cap, then payload policy once unsafe keys are dropped), so
+// a remote-ingest layer can classify an unacceptable payload before it commits
+// instead of guessing from an opaque store error.
+func ValidateWorkerEventData(eventType string, data map[string]any) error {
+	return validateWorkerEventData(eventType, data)
+}
+
 func validateWorkerEventData(eventType string, data map[string]any) error {
 	if data == nil {
 		return nil

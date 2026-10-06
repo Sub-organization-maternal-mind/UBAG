@@ -168,6 +168,21 @@ type ScopedStore interface {
 	GetScoped(ctx context.Context, id string, tenantID string, appID string) (Job, bool, error)
 }
 
+// FencedApplier is the optional Store capability behind UBAG_EXECUTOR_ATTEMPTS
+// that lets a remote writer (a helper node) land events without being able to
+// outlive its lease. CommitEvents atomically applies the batch to the job
+// exactly as ApplyWorkerEvent would, but only when ref is the job's active
+// attempt at the presented generation: the fence check and the per-event key
+// dedupe run in ONE transaction, so a stale writer can neither land an event
+// nor consume a dedupe key. Otherwise nothing is written and the error
+// satisfies errors.Is(err, ErrAttemptFenced). A batch that drives the job
+// terminal closes the attempt (finished); a replay against a finished attempt
+// is accepted and, the job being terminal, changes nothing. Memory and
+// Postgres implement it as part of AttemptStore; SQLite does not.
+type FencedApplier interface {
+	CommitEvents(ctx context.Context, ref AttemptRef, events []WorkerEvent) (Job, error)
+}
+
 type EventLister interface {
 	ListAllEvents(ctx context.Context, filter EventListFilter) ([]Event, error)
 }
