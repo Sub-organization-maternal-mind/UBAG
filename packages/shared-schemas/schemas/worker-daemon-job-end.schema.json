@@ -52,8 +52,16 @@
         },
         "state": {
           "enum": ["idle", "busy", "draining"],
-          "description": "probe only: whether the daemon is between jobs."
-        }
+          "description": "probe only: whether the daemon is between jobs; for a readiness probe, busy means the physical-session identity is held by a job (no login_state is reported)."
+        },
+        "target": { "type": "string", "description": "readiness probe only: the provider target that was checked." },
+        "login_state": {
+          "enum": ["authenticated", "login_required", "unknown"],
+          "description": "readiness probe only: result of detect_login_state. unknown also covers selector drift and probe errors. Provider readiness, not host health."
+        },
+        "selector_version": { "type": "string", "description": "readiness probe only: selector baseline version in use for the target." },
+        "cached": { "const": true, "description": "readiness probe only: answered from the rate-limit cache; the provider page was not touched." },
+        "error": { "const": "readiness_probe_failed", "description": "readiness probe only: the payload was unusable (unknown target, malformed envelope). Generic by design." }
       }
     }
   }
