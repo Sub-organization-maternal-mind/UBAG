@@ -165,3 +165,34 @@ func TestHelperWorkerEnvIsAllowlistMinusRemoteBrowserAndNoVNC(t *testing.T) {
 		t.Fatal("DSN leaked into helper env")
 	}
 }
+
+// P4.16: a helper addresses its browser profile by the opaque profile_ref
+// alone. Every caller-supplied profile path and identity label is stripped from
+// the spec, wherever the envelope carries it.
+func TestHelperAttemptSpecStripsProfileIdentityFields(t *testing.T) {
+	env := helperTestEnvelope()
+	env.Job.Options["account_binding_id"] = "acct_victim"
+	env.Job.Context = map[string]any{
+		"account_binding_id": "acct_victim",
+		"user_data_dir":      "var/profiles/victim",
+		"profile_dir":        "victim",
+		"profile_path":       "victim",
+		"manual_session":     map[string]any{"account_binding_id": "acct_victim"},
+	}
+	spec, err := NewHelperAttemptSpec(env, "att_1", "pr_ref")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.ProfileRef != "pr_ref" {
+		t.Fatalf("profile_ref = %q", spec.ProfileRef)
+	}
+	raw, _ := json.Marshal(spec)
+	for _, leak := range []string{"account_binding_id", "acct_victim", "user_data_dir", "profile_dir", "profile_path", "var/profiles/victim", "manual_session"} {
+		if strings.Contains(string(raw), leak) {
+			t.Errorf("helper spec leaks %q: %s", leak, raw)
+		}
+	}
+	if _, ok := env.Job.Options["account_binding_id"]; !ok {
+		t.Fatal("projection mutated the source envelope options")
+	}
+}
