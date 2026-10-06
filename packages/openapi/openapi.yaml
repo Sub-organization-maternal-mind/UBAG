@@ -1313,6 +1313,175 @@ paths:
           $ref: "#/components/responses/InternalError"
         "501":
           $ref: "#/components/responses/NotImplemented"
+  /v1/fleet/profiles:
+    get:
+      tags: [Fleet]
+      operationId: listFleetProfiles
+      summary: List a tenant's active helper profile bindings.
+      description: >-
+        Operator view of one tenant's active profile_ref bindings, optionally
+        narrowed to one provider. A profile_ref is an opaque handle for one
+        logged-in browser profile on one helper node; bindings exist only after
+        an operator bound them here, and logins happen out of band on the node
+        (safe mode never logs in). Requires the fleet:manage action, which only
+        the platform-level superadmin role holds. Answers 501 when this
+        deployment has no profile-binding source.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: tenant_id
+          in: query
+          required: true
+          description: The tenant whose bindings to list. There is no cross-tenant listing.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: provider
+          in: query
+          required: false
+          description: Narrow the list to one provider (job target id, for example chatgpt_web).
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      responses:
+        "200":
+          description: Profile bindings returned.
+          headers:
+            Ubag-Api-Version-Used:
+              $ref: "#/components/headers/UbagApiVersionUsed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FleetProfileListResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+    post:
+      tags: [Fleet]
+      operationId: bindFleetProfile
+      summary: Bind a tenant's provider identity to a helper node's browser profile.
+      description: >-
+        Registers (tenant, provider, identity_ref, node_id) and returns the
+        minted opaque profile_ref, idempotent for an already-active tuple. The
+        node must be a registered, non-revoked fleet node; the operator performs
+        the provider login on that node out of band afterwards, and the binding
+        stays queue-only until the login exists. Binding again after a revoke
+        mints a NEW profile_ref and requires a fresh login. Requires the
+        fleet:manage action (superadmin only) and, when MFA is enabled on the
+        gateway, a completed MFA verification. Every accepted bind is audited as
+        profile.bound before the response, and a failed audit append refuses the
+        bind. Answers 501 when this deployment has no profile-binding source.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FleetProfileBindRequest"
+      responses:
+        "200":
+          description: Profile bound (or already active) and returned.
+          headers:
+            Ubag-Api-Version-Used:
+              $ref: "#/components/headers/UbagApiVersionUsed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FleetProfileResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          description: Request body exceeds the gateway body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
+  /v1/fleet/profiles/{profile_ref}/revoke:
+    post:
+      tags: [Fleet]
+      operationId: revokeFleetProfile
+      summary: Revoke a tenant's helper profile binding.
+      description: >-
+        Retires one of the tenant's active profile_ref bindings; idempotent, so
+        revoking an unknown or already-revoked ref answers with revoked=false
+        rather than 404, and another tenant's ref is indistinguishable from an
+        unknown one. Revocation is sticky: the profile_ref never becomes active
+        again. Requires the fleet:manage action (superadmin only) and, when MFA
+        is enabled, a completed MFA verification. Every accepted revoke is
+        audited as profile.revoked. Answers 501 when this deployment has no
+        profile-binding source.
+      parameters:
+        - $ref: "#/components/parameters/UbagApiVersion"
+        - name: profile_ref
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FleetProfileRevokeRequest"
+      responses:
+        "200":
+          description: Revocation processed; revoked reports whether an active binding was retired.
+          headers:
+            Ubag-Api-Version-Used:
+              $ref: "#/components/headers/UbagApiVersionUsed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FleetProfileRevokeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "413":
+          description: Request body exceeds the gateway body limit.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "501":
+          $ref: "#/components/responses/NotImplemented"
   /v1/sso/config:
     get:
       tags: [SSO]
@@ -5136,6 +5305,142 @@ components:
           additionalProperties:
             type: integer
             minimum: 0
+        trace_id:
+          type: string
+          minLength: 1
+    FleetProfileBinding:
+      type: object
+      additionalProperties: false
+      required: [profile_ref, tenant_id, provider, identity_ref, node_id, state, created_at]
+      properties:
+        profile_ref:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Opaque handle for one logged-in browser profile on one node. Reveals neither tenant nor identity.
+        tenant_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        provider:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: The job target id the profile is for (for example chatgpt_web).
+        identity_ref:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: The opaque slot reference the topology lanes use.
+        node_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: The helper node whose browser profile holds the login. No address or endpoint.
+        state:
+          type: string
+          const: active
+          description: List and bind responses carry active bindings only; a revoked ref never returns.
+        created_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: string
+          format: date-time
+    FleetProfileListResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, total, data, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        kind:
+          type: string
+          const: fleet_profiles
+        total:
+          type: integer
+          minimum: 0
+        data:
+          type: array
+          maxItems: 256
+          items:
+            $ref: "#/components/schemas/FleetProfileBinding"
+        trace_id:
+          type: string
+          minLength: 1
+    FleetProfileResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, data, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        kind:
+          type: string
+          const: fleet_profile
+        data:
+          $ref: "#/components/schemas/FleetProfileBinding"
+        trace_id:
+          type: string
+          minLength: 1
+    FleetProfileBindRequest:
+      type: object
+      additionalProperties: false
+      required: [tenant_id, provider, identity_ref, node_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        idempotency_key:
+          type: string
+          description: Accepted for parity with the idempotent-mutation convention. The bind itself is naturally idempotent; the key is not required and is not recorded.
+        tenant_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        provider:
+          type: string
+          minLength: 1
+          maxLength: 128
+        identity_ref:
+          type: string
+          minLength: 1
+          maxLength: 128
+        node_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+    FleetProfileRevokeRequest:
+      type: object
+      additionalProperties: false
+      required: [tenant_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        idempotency_key:
+          type: string
+          description: Accepted for parity with the idempotent-mutation convention. Revocation is idempotent; the key is not required and is not recorded.
+        tenant_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+    FleetProfileRevokeResponse:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, revoked, trace_id]
+      properties:
+        api_version:
+          type: string
+          pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        kind:
+          type: string
+          const: fleet_profile_revoked
+        revoked:
+          type: boolean
+          description: True when an active binding was retired; false for an unknown, other-tenant or already-revoked ref.
         trace_id:
           type: string
           minLength: 1

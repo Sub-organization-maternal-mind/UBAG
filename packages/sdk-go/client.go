@@ -428,6 +428,41 @@ func (client *Client) GetFleetSummary(ctx context.Context, options ...RequestOpt
 	return client.request(ctx, http.MethodGet, "/v1/fleet/summary", nil, client.resolveOptions(options...))
 }
 
+// ListFleetProfilesParams scopes GET /v1/fleet/profiles. TenantID is required;
+// there is no cross-tenant listing.
+type ListFleetProfilesParams struct {
+	TenantID string
+	Provider string
+}
+
+// ListFleetProfiles returns a tenant's active helper profile bindings
+// (fleet:manage). It returns an *APIError with status 501 when the gateway has
+// no profile-binding source.
+func (client *Client) ListFleetProfiles(ctx context.Context, params ListFleetProfilesParams, options ...RequestOption) (JSON, error) {
+	pairs := make([][2]string, 0, 2)
+	if params.TenantID != "" {
+		pairs = append(pairs, [2]string{"tenant_id", params.TenantID})
+	}
+	if params.Provider != "" {
+		pairs = append(pairs, [2]string{"provider", params.Provider})
+	}
+	return client.request(ctx, http.MethodGet, "/v1/fleet/profiles"+encodeQueryPairs(pairs), nil, client.resolveOptions(options...))
+}
+
+// BindFleetProfile registers (tenant, provider, identity, node) and returns the
+// minted opaque profile_ref (fleet:manage; MFA-gated when MFA is on). It is
+// idempotent per tuple; binding after a revoke mints a NEW profile_ref.
+func (client *Client) BindFleetProfile(ctx context.Context, request JSON, options ...RequestOption) (JSON, error) {
+	return client.mutateGeneric(ctx, "/v1/fleet/profiles", request, options...)
+}
+
+// RevokeFleetProfile retires one of the tenant's active profile bindings
+// (fleet:manage; MFA-gated when MFA is on). Idempotent: unknown,
+// other-tenant and already-revoked refs answer revoked=false.
+func (client *Client) RevokeFleetProfile(ctx context.Context, profileRef string, request JSON, options ...RequestOption) (JSON, error) {
+	return client.mutateGeneric(ctx, "/v1/fleet/profiles/"+url.PathEscape(profileRef)+"/revoke", request, options...)
+}
+
 func (client *Client) SSOLogout(ctx context.Context, request JSON, options ...RequestOption) (JSON, error) {
 	return client.mutateGeneric(ctx, "/v1/sso/logout", request, options...)
 }

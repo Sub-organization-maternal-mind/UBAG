@@ -88,6 +88,8 @@ func (s *Server) simpleRoutes() []routeDecl {
 		{"/v1/concurrency", s.handleConcurrency},
 		{"/v1/fleet/nodes", s.handleFleetRead},
 		{"/v1/fleet/summary", s.handleFleetRead},
+		{"/v1/fleet/profiles", s.handleFleetProfiles},
+		{"/v1/fleet/profiles/{profile_ref}/revoke", s.handleFleetProfileRevoke},
 		{"/v1/conversations", s.handleConversations},
 		{"/v1/jobs", s.handleJobs},
 		{"/v1/jobs/batch", s.handleBatchJobs},

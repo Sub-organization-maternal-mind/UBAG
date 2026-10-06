@@ -28,6 +28,9 @@ The full UBAG Gateway REST API reference is available in machine-readable OpenAP
 | GET | /v1/browser/summary | Browser session summary |
 | GET | /v1/fleet/nodes | Operator view of the helper nodes: state, grant, usage, pressure, readiness (`fleet:read`; `501` without a fleet source) |
 | GET | /v1/fleet/summary | Operator fleet totals and held-job counts by reason (`fleet:read`; `501` without a fleet source) |
+| GET | /v1/fleet/profiles | A tenant's active helper profile bindings, by `tenant_id` and optional `provider` (`fleet:manage`; `501` without a profile source) |
+| POST | /v1/fleet/profiles | Bind (tenant, provider, identity, node) and mint the opaque `profile_ref`; validates the node is registered and not revoked (`fleet:manage`, MFA-gated; `501` without a profile source) |
+| POST | /v1/fleet/profiles/{profile_ref}/revoke | Idempotent revocation; unknown or already-revoked refs answer `revoked=false` (`fleet:manage`, MFA-gated; `501` without a profile source) |
 | GET | /v1/metrics | Gateway metrics |
 | GET | /v1/audit | Audit log |
 | GET | /v1/templates | List templates |
@@ -182,6 +185,6 @@ Typed clients: TypeScript `@ubag/sdk` (`VoiceMediaClient`, `textPart`,
 ### Queue reasons, fleet and SSE notes
 
 - `queue_reason` and `queue_reason_since` are optional on a queued job; absence means unknown. `/v1/jobs/summary` adds `queued_by_reason`.
-- `/v1/fleet/*` needs `fleet:read` (superadmin only: the views are cross-tenant) and answers `501` without a fleet source.
+- `/v1/fleet/*` needs `fleet:read` (superadmin only: the views are cross-tenant) and answers `501` without a fleet source. The profile write routes under `/v1/fleet/profiles` need `fleet:manage` (also superadmin only) and, when MFA is enabled, a completed MFA verification; a bind is audited as `profile.bound` and a revoke as `profile.revoked`, both in the target tenant's chain.
 - `GET /v1/sse/jobs/{id}` honours `Last-Event-ID` and `after_sequence` (larger cursor wins, negative is `400`); it answers `204` when resumed at or past a terminal event (flag on or off) and `503` with `Retry-After` at the stream cap.
 

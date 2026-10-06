@@ -164,6 +164,7 @@ var adminRoutePrefixes = []string{
 	"/v1/admin/",                 // region:manage, JIT elevation approve
 	"/v1/privacy/",               // data:export, data:erase
 	"/v1/antigravity/",           // role:manage (provider account management)
+	"/v1/fleet/",                 // fleet:manage (profile bind/revoke)
 	"/v1/sso/config",             // role:manage
 	"/v1/scim/v2/",               // role:manage
 	"/v1/siem/config",            // role:manage

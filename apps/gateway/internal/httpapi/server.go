@@ -323,6 +323,14 @@ type Config struct {
 	// routes, like Topology.
 	Fleet FleetSource
 
+	// FleetProfiles and FleetNodes back the operator profile-binding routes
+	// (GET/POST /v1/fleet/profiles, POST /v1/fleet/profiles/{ref}/revoke):
+	// the tenant-owned ProfileStore and the node registry the bind-time
+	// node check reads. Nil profiles answer 501; nil nodes refuse every
+	// bind (an unverifiable node is never bound).
+	FleetProfiles ProfileBindingSource
+	FleetNodes    ProfileNodeRegistry
+
 	// QueueHolds supplies queue_reason (the queued jobs this gateway's consumer is
 	// holding back and why). Nil omits queue_reason and leaves queued_by_reason
 	// empty, as before.
@@ -403,6 +411,8 @@ type Server struct {
 	alerts              *alerts.Manager
 	topology            topology.Store
 	fleet               FleetSource
+	fleetProfiles       ProfileBindingSource
+	fleetNodes          ProfileNodeRegistry
 	queueHolds          QueueHoldSource
 	concurrency         *topology.ConcurrencyRegistry
 	conversations       *conversations.Manager
@@ -682,6 +692,8 @@ func NewServer(config Config) *Server {
 		alerts:             config.Alerts,
 		topology:           config.Topology,
 		fleet:              config.Fleet,
+		fleetProfiles:      config.FleetProfiles,
+		fleetNodes:         config.FleetNodes,
 		queueHolds:         config.QueueHolds,
 		concurrency:        config.Concurrency,
 		conversations:      config.Conversations,
@@ -3546,7 +3558,7 @@ func (s *Server) authorizeGatewayAction(w http.ResponseWriter, r *http.Request, 
 	if s.mfaSvc != nil {
 		switch action {
 		case "secret:rotate", "data:erase", "auth:pat:issue", "role:manage",
-			"region:manage", "data:export", "rate_limit:manage":
+			"region:manage", "data:export", "rate_limit:manage", "fleet:manage":
 			if !principal.MFAVerified {
 				s.emitAuthorizationAudit(r, principal, action, "deny-mfa-required")
 				s.writeError(w, r, http.StatusForbidden, authzError("UBAG-AUTHZ-MFA-REQUIRED-001", "this action requires MFA verification"))

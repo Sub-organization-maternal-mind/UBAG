@@ -157,6 +157,18 @@ export const UBAG_ENDPOINTS = {
     "method": "GET",
     "path": "/v1/fleet/summary"
   },
+  "GET /v1/fleet/profiles": {
+    "method": "GET",
+    "path": "/v1/fleet/profiles"
+  },
+  "POST /v1/fleet/profiles": {
+    "method": "POST",
+    "path": "/v1/fleet/profiles"
+  },
+  "POST /v1/fleet/profiles/{profile_ref}/revoke": {
+    "method": "POST",
+    "path": "/v1/fleet/profiles/{profile_ref}/revoke"
+  },
   "GET /v1/sso/config": {
     "method": "GET",
     "path": "/v1/sso/config"

@@ -21,8 +21,14 @@ import {
   type UbagConcurrencyListResponse,
   type UbagConversationListResponse,
   type UbagCreateJobRequest,
+  type UbagBindFleetProfileRequest,
   type UbagFleetNodeListResponse,
+  type UbagFleetProfileListResponse,
+  type UbagFleetProfileResponse,
+  type UbagFleetProfileRevokeResponse,
   type UbagFleetSummary,
+  type UbagListFleetProfilesParams,
+  type UbagRevokeFleetProfileRequest,
   type UbagArtifactDownloadResponse,
   type UbagArtifactListResponse,
   type UbagArtifactResponse,
@@ -586,6 +592,57 @@ export class UbagClient {
   /** Operator fleet totals and held-job counts by reason (fleet:read). Rejects with a 501 UbagApiError when the gateway has no fleet source. */
   async getFleetSummary(options: UbagRequestOptions = {}): Promise<UbagFleetSummary> {
     return this.request("GET", "/v1/fleet/summary", options);
+  }
+
+  /** List a tenant's active helper profile bindings (fleet:manage). Rejects with a 501 UbagApiError when the gateway has no profile-binding source. */
+  async listFleetProfiles(
+    params: UbagListFleetProfilesParams,
+    options: UbagRequestOptions = {}
+  ): Promise<UbagFleetProfileListResponse> {
+    const query = new URLSearchParams();
+    addOptionalQuery(query, "tenant_id", params.tenant_id);
+    addOptionalQuery(query, "provider", params.provider);
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request("GET", `/v1/fleet/profiles${suffix}`, options);
+  }
+
+  /** Bind (tenant, provider, identity, node) and return the minted profile_ref (fleet:manage; MFA-gated when MFA is on). Idempotent per tuple. */
+  async bindFleetProfile(
+    request: UbagBindFleetProfileRequest,
+    options: UbagRequestOptions = {}
+  ): Promise<UbagFleetProfileResponse> {
+    const apiVersion = request.api_version ?? options.apiVersion ?? this.apiVersion;
+    const idempotencyKey = request.idempotency_key ?? options.idempotencyKey ?? generateIdempotencyKey();
+    return this.request("POST", "/v1/fleet/profiles", {
+      ...options,
+      apiVersion,
+      idempotencyKey,
+      body: {
+        ...request,
+        api_version: apiVersion,
+        idempotency_key: idempotencyKey
+      }
+    });
+  }
+
+  /** Revoke one of the tenant's active profile bindings (fleet:manage; MFA-gated when MFA is on). Idempotent: unknown refs answer revoked=false. */
+  async revokeFleetProfile(
+    profileRef: string,
+    request: UbagRevokeFleetProfileRequest,
+    options: UbagRequestOptions = {}
+  ): Promise<UbagFleetProfileRevokeResponse> {
+    const apiVersion = request.api_version ?? options.apiVersion ?? this.apiVersion;
+    const idempotencyKey = request.idempotency_key ?? options.idempotencyKey ?? generateIdempotencyKey();
+    return this.request("POST", `/v1/fleet/profiles/${encodeURIComponent(profileRef)}/revoke`, {
+      ...options,
+      apiVersion,
+      idempotencyKey,
+      body: {
+        ...request,
+        api_version: apiVersion,
+        idempotency_key: idempotencyKey
+      }
+    });
   }
 
   async ssoLogout(request: UbagSsoLogoutRequest = {}, options: UbagRequestOptions = {}): Promise<UbagLogoutResult> {

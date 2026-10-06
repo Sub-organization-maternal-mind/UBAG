@@ -28,8 +28,9 @@ const asyncPlacementHolds = 64
 // placer over the accepted grants and the picker the remote runner asks. It
 // exists only with UBAG_HELPER_DISPATCH on.
 type helperFleet struct {
-	placer *nodes.Placer
-	picker *executor.FleetPicker
+	placer   *nodes.Placer
+	picker   *executor.FleetPicker
+	profiles helperauth.ProfileStore
 }
 
 // newFleetPollerFromEnv builds the manager grant poller behind
@@ -87,7 +88,7 @@ func newHelperFleetFromEnv(ctx context.Context, store nodes.Store, poller *nodes
 	if err != nil {
 		return nil, err
 	}
-	return &helperFleet{placer: placer, picker: &executor.FleetPicker{Placer: placer, Profiles: profiles}}, nil
+	return &helperFleet{placer: placer, picker: &executor.FleetPicker{Placer: placer, Profiles: profiles}, profiles: profiles}, nil
 }
 
 // newFleetViewFromEnv builds the operator read view behind GET /v1/fleet/*
@@ -192,3 +193,12 @@ func (r helperReporter) Report(ctx context.Context, a nodes.Allocation) (nodes.R
 }
 
 var _ capacityConn = (*helperclient.Conn)(nil)
+
+// fleetProfilesSource reports the profile registry the operator binding routes
+// use, or nil when the helper dispatch plane is off (the routes answer 501).
+func fleetProfilesSource(fleet *helperFleet) helperauth.ProfileStore {
+	if fleet == nil {
+		return nil
+	}
+	return fleet.profiles
+}

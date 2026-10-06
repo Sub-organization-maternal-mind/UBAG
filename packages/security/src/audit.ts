@@ -36,7 +36,9 @@ export const AUDIT_EVENT_NAMES = [
   "asset.token_issued",
   "asset.read",
   "asset.write",
-  "helper.policy_violation"
+  "helper.policy_violation",
+  "profile.bound",
+  "profile.revoked"
 ] as const;
 
 export type AuditEventName = (typeof AUDIT_EVENT_NAMES)[number];

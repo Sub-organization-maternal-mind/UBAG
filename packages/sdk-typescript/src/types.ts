@@ -615,6 +615,65 @@ export interface UbagFleetSummary {
   trace_id: string;
 }
 
+/** One tenant-owned helper profile binding: a logged-in browser profile on one node, as an opaque ref. */
+export interface UbagFleetProfileBinding {
+  profile_ref: string;
+  tenant_id: string;
+  provider: string;
+  identity_ref: string;
+  node_id: string;
+  state: "active" | (string & {});
+  created_at: string;
+  revoked_at?: string;
+}
+
+export interface UbagListFleetProfilesParams {
+  /** Required: the tenant whose bindings to list. There is no cross-tenant listing. */
+  tenant_id: string;
+  /** Narrow the list to one provider (job target id). */
+  provider?: string;
+}
+
+export interface UbagFleetProfileListResponse {
+  api_version: string;
+  kind: "fleet_profiles" | (string & {});
+  total: number;
+  data: UbagFleetProfileBinding[];
+  trace_id: string;
+}
+
+export interface UbagFleetProfileResponse {
+  api_version: string;
+  kind: "fleet_profile" | (string & {});
+  data: UbagFleetProfileBinding;
+  trace_id: string;
+}
+
+export interface UbagBindFleetProfileRequest {
+  api_version?: string;
+  idempotency_key?: string;
+  tenant_id: string;
+  /** The job target id the profile is for (for example chatgpt_web). */
+  provider: string;
+  identity_ref: string;
+  /** A registered, non-revoked helper node id. */
+  node_id: string;
+}
+
+export interface UbagRevokeFleetProfileRequest {
+  api_version?: string;
+  idempotency_key?: string;
+  tenant_id: string;
+}
+
+export interface UbagFleetProfileRevokeResponse {
+  api_version: string;
+  kind: "fleet_profile_revoked" | (string & {});
+  /** True when an active binding was retired; false for unknown, other-tenant or already-revoked refs. */
+  revoked: boolean;
+  trace_id: string;
+}
+
 export interface UbagLogoutResult {
   api_version: string;
   revoked: boolean;

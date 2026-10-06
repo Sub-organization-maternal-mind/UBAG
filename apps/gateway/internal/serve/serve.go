@@ -395,7 +395,11 @@ func Run(ctx context.Context) error {
 		VoiceMetrics: voiceMetrics,
 		HelperNodes:  helperNodes,
 		Fleet:        fleetView,
-		QueueHolds:   holdSource,
+		// Operator profile-binding routes (P4.16 follow-up): wired only with the
+		// helper plane on; the bind-time node check reads the same node store.
+		FleetProfiles: fleetProfilesSource(fleet),
+		FleetNodes:    helperNodes,
+		QueueHolds:    holdSource,
 		// Provider voice is started by worker control jobs and a session is only
 		// "connected" once the provider is verified ready. Disable only for
 		// media-path development (UBAG_VOICE_PROVIDER_ACTIVATION=0).

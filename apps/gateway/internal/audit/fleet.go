@@ -25,6 +25,8 @@ const (
 	EventAssetTokenIssued    = "asset.token_issued"
 	EventHelperPolicyViolate = "helper.policy_violation"
 	EventViewerOpened        = "viewer.opened"
+	EventProfileBound        = "profile.bound"
+	EventProfileRevoked      = "profile.revoked"
 )
 
 // ErrAuditUnavailable is returned when a mandatory audit append fails. The
