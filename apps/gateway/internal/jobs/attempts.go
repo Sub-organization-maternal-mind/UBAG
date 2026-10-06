@@ -156,6 +156,8 @@ type BeginAttemptRequest struct {
 // attempt returns it unchanged; MarkSubmitted keeps the first timestamp;
 // CommitEvents re-applying events dedupes on the worker event key.
 type AttemptStore interface {
+	// FencedApplier is the commit half of the ledger: CommitEvents (see its doc).
+	FencedApplier
 	// BeginAttempt leases the next attempt. It fails with ErrAttemptConflict
 	// when ExpectedGeneration is not the job's latest generation or when the
 	// latest attempt still holds an unexpired lease; a lapsed active
@@ -169,13 +171,6 @@ type AttemptStore interface {
 	RenewAttempt(ctx context.Context, ref AttemptRef, ttl time.Duration) (Attempt, error)
 	// MarkSubmitted records the submission boundary once; idempotent.
 	MarkSubmitted(ctx context.Context, ref AttemptRef) (Attempt, error)
-	// CommitEvents atomically applies the batch to the job exactly as
-	// Store.ApplyWorkerEvent would, but only when ref is the job's active
-	// attempt at the presented generation; otherwise nothing is written and the
-	// error satisfies errors.Is(err, ErrAttemptFenced). A batch that drives the
-	// job terminal closes the attempt (finished); a replay against a finished
-	// attempt is accepted and, the job being terminal, changes nothing.
-	CommitEvents(ctx context.Context, ref AttemptRef, events []WorkerEvent) (Job, error)
 	// ExpireAttempts marks active attempts whose lease lapsed as expired and
 	// returns them (oldest lease first, at most limit; 0 means
 	// DefaultExpireBatch). After this returns, a late writer for such an
