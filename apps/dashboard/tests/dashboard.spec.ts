@@ -361,6 +361,69 @@ test('fleet panels stay hidden when the fleet endpoint answers 501', async ({ pa
   }
 });
 
+// --- Voice sessions and capabilities panel (P6.5) on the Browser page ---------
+const VOICE_CAPABILITIES = {
+  kind: 'capabilities',
+  data: [
+    { target: 'gemini_web', display_name: 'Gemini Web', voice: { live: true, supported: true, configured: true, verified: false, verified_note: 'No live acceptance run recorded.', available: true, free_resources: 1, available_accounts: 1 } },
+    { target: 'mock', display_name: 'Mock', voice: { live: false, supported: false, configured: false, verified: false, available: false, free_resources: 0 } },
+  ],
+};
+const VOICE_SESSIONS = {
+  kind: 'voice_sessions',
+  data: [
+    { session_id: 'vs_connected0001', target: 'gemini_web', mode: 'live', status: 'connected', muted: false, identity_ref: 'acct-1', instance_ref: 'inst-1', created_at: '2026-10-06T10:00:00Z', updated_at: '2026-10-06T10:01:00Z' },
+    { session_id: 'vs_queued000002', target: 'gemini_web', mode: 'live', status: 'queued', muted: false, created_at: '2026-10-06T10:02:00Z', updated_at: '2026-10-06T10:02:00Z' },
+  ],
+};
+
+async function mockVoiceGateway(page: import('@playwright/test').Page, status: { capabilities: number; sessions: number }) {
+  await page.route('**/v1/**', (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (s: number, body: unknown) => route.fulfill({ status: s, contentType: 'application/json', body: JSON.stringify(s === 200 ? body : { error: 'unavailable' }) });
+    if (path === '/v1/capabilities') return json(status.capabilities, VOICE_CAPABILITIES);
+    if (path === '/v1/voice/sessions') return json(status.sessions, VOICE_SESSIONS);
+    const empty: Record<string, unknown> = {
+      '/v1/browser/summary': { total_instances: 0, total_contexts: 0, total_tabs: 0 },
+      '/v1/concurrency': { data: [] },
+    };
+    return route.fulfill({ json: empty[path] ?? { data: [] } });
+  });
+}
+
+test('voice panel renders capabilities and sessions on the Browser page when both routes answer 200, and passes axe', async ({ page }) => {
+  await mockVoiceGateway(page, { capabilities: 200, sessions: 200 });
+  await page.goto('/browser');
+  await expect(page.getByRole('heading', { name: 'Voice Sessions', exact: true })).toBeVisible();
+
+  const caps = page.getByRole('region', { name: 'Voice capabilities by target' });
+  await expect(caps.getByRole('columnheader', { name: 'Verified' })).toBeVisible();
+  await expect(caps.getByRole('row', { name: /gemini_web/ })).toBeVisible();
+  await expect(caps.getByText('mock', { exact: true })).toHaveCount(0); // not voice-capable
+
+  const sessions = page.getByRole('region', { name: 'Voice sessions' });
+  await expect(sessions.getByRole('cell', { name: 'acct-1 · inst-1' })).toBeVisible();
+  await expect(sessions.getByRole('cell', { name: 'Waiting for account' })).toBeVisible();
+
+  await injectAxe(page);
+  const violations = await getViolations(page, undefined, {
+    runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa'] },
+  });
+  const critical = violations.filter((v) => v.impact === 'critical' || v.impact === 'serious');
+  expect(critical, JSON.stringify(critical.map((v) => ({ id: v.id, description: v.description })))).toHaveLength(0);
+});
+
+test('voice panel stays hidden when voice sessions or capabilities answer 501 or 404', async ({ page }) => {
+  for (const status of [{ capabilities: 200, sessions: 501 }, { capabilities: 404, sessions: 200 }]) {
+    await mockVoiceGateway(page, status);
+    await page.goto('/browser');
+    await expect(page.getByRole('main')).toBeVisible();
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('heading', { name: 'Voice Sessions', exact: true }), JSON.stringify(status)).toHaveCount(0);
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+  }
+});
+
 test.describe('Visual snapshots', () => {
   // Run at desktop only for snapshot baseline (reduce snapshot count)
   test.use({ viewport: { width: 1440, height: 900 } });

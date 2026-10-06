@@ -7,6 +7,7 @@
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import LiveBrowser from '$lib/components/LiveBrowser.svelte';
+  import VoiceSessions from '$lib/components/VoiceSessions.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import SkeletonCards from '$lib/components/SkeletonCards.svelte';
   import UpdatedAgo from '$lib/components/UpdatedAgo.svelte';
@@ -357,6 +358,9 @@
         {/if}
       </section>
     {/if}
+
+    <!-- Voice: per-target capabilities and this tenant's sessions. Hidden unless voice and capabilities both answer 200. -->
+    <VoiceSessions />
 
     <!-- Live interactive browser: stream the real Chrome into the dashboard and
          drive it (log into providers) without a separate window. -->

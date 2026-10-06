@@ -344,3 +344,43 @@ export interface FleetSummary {
   // Open set of fine-grained hold reasons; absent key means 0.
   held_by_reason: Record<string, number>;
 }
+
+// Voice — mirrors GET /v1/capabilities (the per-target `voice` object) and
+// GET /v1/voice/sessions (the session rows). A session row never carries a
+// helper node id: the gateway keeps it internal, so placement is shown from the
+// provider identity and browser instance the session holds.
+export interface VoiceCapability {
+  /** The adapter declares live voice. */
+  supported: boolean;
+  /** This gateway has the voice store, media plane and provider activation wired. */
+  configured: boolean;
+  /** A live two-way acceptance run is recorded; `verified_note` carries the text. */
+  verified: boolean;
+  verified_note: string;
+  /** Configured and a free authenticated account + environment exists now. */
+  available: boolean;
+  /** Free eligible account + environment pairs. */
+  free_resources: number;
+}
+
+export interface VoiceTargetRow {
+  target: string;
+  display_name: string;
+  voice: VoiceCapability;
+}
+
+export interface VoiceSessionRow {
+  session_id: string;
+  target: string;
+  mode: string;
+  status: 'queued' | 'connecting' | 'connected' | 'terminated' | (string & {});
+  muted: boolean;
+  identity_ref: string;
+  instance_ref: string;
+  created_at: string;
+  updated_at: string;
+  /** Set only when the gateway reports one (the session object is open). */
+  queue_reason: string;
+  /** Set only when the gateway reports one; never a node id or address. */
+  node_label: string;
+}

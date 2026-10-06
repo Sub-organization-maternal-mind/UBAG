@@ -104,4 +104,4 @@ Statuses below were taken from each shard's own Status line at the integration t
 | P7.9 | Publish measured capacity and close the ledger | partial |
 | P8.1 | Flag graduation and rollout runbook | merged when its PR is merged |
 | P1.8 | Create-path pprof + DB pool sizing | no shard at this tip (not landed) |
-| P6.5 | Dashboard voice sessions and capabilities panel | no shard at this tip (not landed) |
+| P6.5 | Dashboard voice sessions and capabilities panel | merged |
