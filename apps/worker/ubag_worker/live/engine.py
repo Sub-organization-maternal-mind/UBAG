@@ -203,6 +203,8 @@ class LiveSessionEngine:
         orch_signal = None
 
         sequence = 1
+        _attempt = payload.get("attempt")
+        attempt_id = str(_attempt.get("id") or "") if isinstance(_attempt, Mapping) else ""
 
         def emit(event_type: str, data: Mapping[str, Any]) -> JsonObject:
             nonlocal sequence
@@ -213,6 +215,7 @@ class LiveSessionEngine:
                 sequence=sequence,
                 event_type=event_type,
                 data=data,
+                attempt_id=attempt_id,
             )
             sequence += 1
             return event

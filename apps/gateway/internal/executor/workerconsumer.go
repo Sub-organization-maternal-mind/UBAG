@@ -415,6 +415,9 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		c.Metrics.ObserveQueueWait(leasedAt.Sub(queueEnteredAt))
 	}
 	envelope := EnvelopeFromJobWithConversation(ctx, job, c.Conversations)
+	if attemptEventIDsEnabled() {
+		envelope.Attempt = &DispatchAttempt{ID: lease.LeaseID()}
+	}
 	if jobstore.TerminalStatus(job.Status) {
 		return c.finishTerminalLeasedJob(ctx, lease, job)
 	}
@@ -504,6 +507,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 
 	normalizedEvents := make([]jobstore.WorkerEvent, len(events))
 	terminalEvents := 0
+	events = dropStaleAttemptEvents(envelope, events)
 	for index, event := range events {
 		normalized, err := normalizeWorkerEvent(envelope, event)
 		if err != nil {
@@ -1079,7 +1083,7 @@ func (c *WorkerConsumer) applyFailure(ctx context.Context, lease WorkerLease, en
 		"message":     sanitizeWorkerError(cause),
 	}
 	event := jobstore.WorkerEvent{
-		EventID:    "gateway_worker_failure:" + lease.JobID() + ":" + lease.LeaseID(),
+		EventID:    failureEventID(lease, envelope),
 		JobID:      lease.JobID(),
 		APIVersion: envelope.APIVersion,
 		Type:       "failed",
@@ -1560,6 +1564,42 @@ func parseWorkerJSONL(output []byte) ([]jobstore.WorkerEvent, error) {
 		return nil, err
 	}
 	return events, nil
+}
+
+// attemptEventIDsEnabled gates attempt-scoped event ids (default off).
+func attemptEventIDsEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_WORKER_ATTEMPT_EVENT_IDS"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// failureEventID is stable per (job, lease); with an attempt it also carries
+// the attempt id so a retry attempt's failure is never deduped away.
+func failureEventID(lease WorkerLease, envelope DispatchEnvelope) string {
+	id := "gateway_worker_failure:" + lease.JobID() + ":" + lease.LeaseID()
+	if envelope.Attempt != nil && envelope.Attempt.ID != "" {
+		id += ":" + envelope.Attempt.ID
+	}
+	return id
+}
+
+// dropStaleAttemptEvents drops events stamped (data.attempt_id) by a different
+// attempt than the one this envelope leased. Unstamped events pass (mixed-id
+// tolerance across a deploy).
+func dropStaleAttemptEvents(envelope DispatchEnvelope, events []jobstore.WorkerEvent) []jobstore.WorkerEvent {
+	if envelope.Attempt == nil || envelope.Attempt.ID == "" {
+		return events
+	}
+	kept := make([]jobstore.WorkerEvent, 0, len(events))
+	for _, event := range events {
+		if id, _ := event.Data["attempt_id"].(string); id != "" && id != envelope.Attempt.ID {
+			continue
+		}
+		kept = append(kept, event)
+	}
+	return kept
 }
 
 func normalizeWorkerEvent(envelope DispatchEnvelope, event jobstore.WorkerEvent) (jobstore.WorkerEvent, error) {

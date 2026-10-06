@@ -44,7 +44,16 @@ type DispatchEnvelope struct {
 	// the envelope is byte-identical to the pre-feature form.
 	Conversation *DispatchConversation `json:"conversation,omitempty"`
 	Client       map[string]any        `json:"client,omitempty"`
-	CreatedAt    time.Time             `json:"created_at"`
+	// Attempt identifies this local delivery attempt. Set by the consumer only
+	// when UBAG_WORKER_ATTEMPT_EVENT_IDS is on; absent => legacy event ids.
+	// lease_generation / expires_at join in P4.2.
+	Attempt   *DispatchAttempt `json:"attempt,omitempty"`
+	CreatedAt time.Time        `json:"created_at"`
+}
+
+// DispatchAttempt is the worker-envelope attempt block (additive, omitempty).
+type DispatchAttempt struct {
+	ID string `json:"id"`
 }
 
 // DispatchConversation is the worker-envelope conversation-affinity block. The
