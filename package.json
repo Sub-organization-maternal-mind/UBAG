@@ -32,7 +32,7 @@
     "test:adapter-registry": "pnpm --filter @ubag/adapter-registry typecheck && pnpm --filter @ubag/adapter-registry test",
     "test:security": "pnpm --filter @ubag/security test && pnpm --filter @ubag/security validate",
     "test:worker": "node tools/run-python-worker-tests.mjs",
-    "test:load:offline": "node --test tests/load/acceptance.test.mjs tests/load/workloads.test.mjs tests/load/baseline-matrix.test.mjs",
+    "test:load:offline": "node --test tests/load/acceptance.test.mjs tests/load/ladder.test.mjs tests/load/workloads.test.mjs tests/load/baseline-matrix.test.mjs",
     "test:sidecar": "pnpm --filter @ubag/sidecar typecheck && pnpm --filter @ubag/sidecar test",
     "test:sdk:typescript": "pnpm --filter @ubag/sdk typecheck && pnpm --filter @ubag/sdk test",
     "test:sdk:go": "node tools/run-go-tests.mjs packages/sdk-go",

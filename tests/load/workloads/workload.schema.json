@@ -11,7 +11,7 @@
     "kind": { "enum": ["text", "attachment", "audio-upload", "mixed", "voice"] },
     "description": { "type": "string", "minLength": 1 },
     "harness_support": {
-      "description": "implemented: tests/load/acceptance.mjs generates this traffic today. planned: the manifest records the intended workload; no generator exists yet.",
+      "description": "implemented: tests/load/acceptance.mjs or tests/load/ladder.mjs generates this traffic today. planned: the manifest records the intended workload; no generator exists yet.",
       "enum": ["implemented", "planned"]
     },
     "provider_scenario": {

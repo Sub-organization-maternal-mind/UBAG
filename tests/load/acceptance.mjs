@@ -17,6 +17,7 @@
  * treats every unmeasured threshold as a FAILURE.
  */
 import { PRESSURE_RULES, parseTargets, startCgroupSampler } from './lib/cgroup.mjs';
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { arch, platform } from 'node:os';
