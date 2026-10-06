@@ -65,7 +65,8 @@ export async function startFake(opts = {}) {
   // Stage histograms (ubag_job_stage_duration_seconds) plus the queue-depth gauge, only with perfMetrics. Every observation is stageSeconds long.
   const perfMetricLines = () => {
     const le = [0.05, 0.25, 1].map((b) => [b, o.stageSeconds <= b ? st.completed : 0]);
-    const lines = ['ubag_queue_depth{queue="default"} ' + [...st.jobs.values()].filter((j) => j.status === 'queued').length];
+    const queued = [...st.jobs.values()].filter((j) => j.status === 'queued').length; // real gateway shape: per-state series plus _live (queued+assigned) and _total
+    const lines = [`ubag_queue_depth{queue="default",state="queued"} ${queued}`, 'ubag_queue_depth{queue="default",state="assigned"} 0', `ubag_queue_depth_live{queue="default"} ${queued}`, `ubag_queue_depth_total{queue="default"} ${st.jobs.size}`];
     for (const stage of ['browser_prep', 'provider_submit', 'first_token']) {
       const l = `stage="${stage}",adapter_family="${FAMILY}"`;
       for (const [b, n] of le) lines.push(`ubag_job_stage_duration_seconds_bucket{${l},le="${b}"} ${n}`);
@@ -207,7 +208,7 @@ export async function startFake(opts = {}) {
           const full = synthetic ? `Synthetic answer: ${job.prompt.slice(0, 200)}${job.artifacts?.length ? ` [attachments: ${job.artifacts.length}]` : ''}` : `Mock response for chat.prompt on mock (${m[1]}): ${job.prompt}`;
           const text = o.resultBug === 'wrong' ? (synthetic ? 'Synthetic answer: some other job' : `Mock response for chat.prompt on mock (job_other): ${job.prompt}`)
             : o.resultBug === 'truncated' ? full.slice(0, full.length - 8)
-              : o.resultBug === 'duplicated' ? `${full} ${job.prompt}` : full;
+              : o.resultBug === 'duplicated' ? `${full} ${synthetic ? full : job.prompt}` : full;
           body.result = { output: { text } };
         }
         json(res, 200, body);

@@ -622,9 +622,11 @@ async function verifyJob(ctx, s) {
       else rec.count('results_verified');
     } else if (cfg.target === 'synthetic_chat') { // the P7.1 fixture answers 'Synthetic answer: <first 200 chars of the prompt>'; DOM extraction may collapse whitespace
       const norm = (x) => x.replace(/\s+/g, ' ').trim();
-      const want = `Synthetic answer: ${norm(s.prompt.slice(0, 200))}`; const got = norm(text);
-      if (got.startsWith(want)) rec.count('results_verified');
+      // exact match (modulo whitespace and the optional attachment count): anything after the echo is a duplicated or garbled result. First real run: confirm the DOM text matches.
+      const want = `Synthetic answer: ${norm(s.prompt.slice(0, 200))}`; const got = norm(text).replace(/ \[attachments: \d+\]$/, '');
+      if (got === want) rec.count('results_verified');
       else if (want.startsWith(got)) bad('result text is a proper prefix of the fixture echo (truncated result)', 'truncated_results');
+      else if (countOf(got, want) > 1) bad('the fixture echo appears more than once in the result (duplicated result)', 'duplicate_results');
       else bad('result text is not the fixture echo of this prompt (wrong result)');
     } else rec.count('results_verified');
   }

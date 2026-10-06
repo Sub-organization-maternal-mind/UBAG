@@ -432,6 +432,9 @@ describe('acceptance integrity gates fail closed', () => {
     const wrong = await run(cfgFor(await startFake({ resultBug: 'wrong' }), SYN));
     assert.equal(wrong.summary.result_mismatches, 6);
     assert.equal(wrong.summary.truncated_results, 0);
+    const duplicated = await run(cfgFor(await startFake({ resultBug: 'duplicated' }), SYN));
+    assert.equal(duplicated.summary.duplicate_results, 6); // the echo twice: content after the echo is never accepted
+    assert.equal(duplicated.summary.truncated_results, 0);
   });
 
   it('a cross-tenant read is a FAIL', async () => {
