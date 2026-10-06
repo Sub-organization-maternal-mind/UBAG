@@ -28,6 +28,7 @@ func render(t *testing.T, src NodeSource, now time.Time) string {
 
 func TestCountersBoundedLabels(t *testing.T) {
 	RecordLeaseRenewFailure(LeaseAttempt, ReasonLost)
+	RecordLeaseRenewFailure(LeaseVoice, ReasonError)
 	RecordLeaseRenewFailure("weird-"+strings.Repeat("x", 50), ReasonError)
 	RecordFencedReject("stale_generation")
 	RecordFencedReject("data names another job_id") // helper-influenced text must not become a label
@@ -35,6 +36,7 @@ func TestCountersBoundedLabels(t *testing.T) {
 	out := render(t, nil, time.Now())
 	for _, want := range []string{
 		`ubag_lease_renew_failures_total{lease="attempt",reason="lost"} `,
+		`ubag_lease_renew_failures_total{lease="voice",reason="error"} `,
 		`ubag_lease_renew_failures_total{lease="other",reason="error"} `,
 		`ubag_helper_fenced_rejects_total{reason="stale_generation"} `,
 		`ubag_helper_fenced_rejects_total{reason="other"} `,

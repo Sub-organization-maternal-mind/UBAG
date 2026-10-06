@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -186,6 +187,9 @@ func Run(ctx context.Context) error {
 	}
 	defer closeVoice()
 	voiceMetrics := voice.NewMediaCounters()
+	// The helper-hosted voice negotiator (P5.11) is built with the helper plane below; the
+	// lease sweeper started here tells it which sessions it ended.
+	var voiceRemoteRef atomic.Pointer[voice.RemoteNegotiator]
 	if hub, ok := voiceMedia.(*voice.MediaHub); ok {
 		hub.Metrics = voiceMetrics
 		voiceMetrics.SetMicQueueDepthFunc(hub.MicQueueDepth)
@@ -215,6 +219,11 @@ func Run(ctx context.Context) error {
 						if hub, ok := voiceMedia.(*voice.MediaHub); ok {
 							for _, id := range swept {
 								hub.Disconnect(id)
+							}
+						}
+						if remote := voiceRemoteRef.Load(); remote != nil {
+							for _, id := range swept {
+								remote.Disconnect(id) // ends the call on its node; a no-op for sessions this replica does not supervise
 							}
 						}
 					}
@@ -281,6 +290,19 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("invalid helper voice configuration: %w", err)
 	}
 	go runVoiceNodeRelease(ctx, voiceNodes, voiceStore)
+	// The media plane of those calls (P5.11): node-bound sessions are offered to their
+	// node, every other session stays on the primary's own hub.
+	voiceRemote, err := newVoiceRemoteFromEnv(voiceStore, helperNodes, voiceNodes)
+	if err != nil {
+		return fmt.Errorf("invalid helper voice media configuration: %w", err)
+	}
+	voiceMediaPlane := voiceMedia
+	if voiceRemote != nil {
+		defer voiceRemote.Close()
+		voiceRemoteRef.Store(voiceRemote)
+		voiceMediaPlane = &voice.NodeRouter{Local: voiceMedia, Remote: voiceRemote}
+		slog.Info("helper-hosted voice media enabled")
+	}
 	// Operator fleet view and queue reasons (P6.2): read-only, on with the node
 	// store. Interfaces stay nil (routes answer 501, queue_reason is omitted)
 	// without UBAG_HELPER_NODES.
@@ -355,7 +377,7 @@ func Run(ctx context.Context) error {
 		FacadeMaxWait: facadeMaxWait,
 
 		VoiceStore: voiceStore,
-		VoiceMedia: voiceMedia,
+		VoiceMedia: voiceMediaPlane,
 
 		AdmissionKindCounts: func(ctx context.Context) (map[string]int, error) {
 			if enterprise.admission == nil {

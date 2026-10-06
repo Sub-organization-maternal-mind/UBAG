@@ -274,6 +274,28 @@ func (a *Admission) Settle(won voice.Session) (nodeID string) {
 	return nodeID
 }
 
+// ProfileRef is the node-side identity of a helper-hosted account: the tenant's ACTIVE
+// profile_ref for (target, identity) on node. It is what a text job on that profile
+// takes on the node's identity gate, so a call the node admits under it excludes a
+// job on the same account there (P5.11). voice.ErrNoProfile when the account has no
+// active profile on the node (revoked, or never bound); the registry is tenant-scoped,
+// so another tenant's profile never matches.
+func (p *Placer) ProfileRef(ctx context.Context, tenantID, target, identityRef, nodeID string) (string, error) {
+	if p == nil || p.Profiles == nil {
+		return "", voice.ErrNoProfile
+	}
+	bindings, err := p.Profiles.List(ctx, tenantID, target)
+	if err != nil {
+		return "", err
+	}
+	for _, b := range boundTo(bindings, tenantID, target, identityRef) {
+		if b.NodeID == nodeID {
+			return b.ProfileRef, nil
+		}
+	}
+	return "", voice.ErrNoProfile
+}
+
 // Held reports how many sessions this process holds a node slot for.
 func (p *Placer) Held() int {
 	if p == nil {
