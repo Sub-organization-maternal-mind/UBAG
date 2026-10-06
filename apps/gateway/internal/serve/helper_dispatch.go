@@ -87,6 +87,7 @@ func newHelperRemoteFromEnv(jobs jobstore.Store, nodeStore nodes.Store, plane *h
 		WorkloadVersion: values["UBAG_HELPER_WORKLOAD_VERSION"],
 		RegistryDigest:  digest,
 		MaxRuntime:      maxRuntime,
+		Nodes:           nodeStore, // the reconciler dials a node by id at its last accepted endpoint
 	})
 	if err != nil {
 		return nil, err
@@ -95,4 +96,33 @@ func newHelperRemoteFromEnv(jobs jobstore.Store, nodeStore nodes.Store, plane *h
 		slog.Warn("UBAG_HELPER_DISPATCH is on but no helper picker is configured: every job runs on this gateway until the placer is wired")
 	}
 	return runner, nil
+}
+
+// newHelperReconcilerFromEnv builds the ledger-first attempt reconciler (P4.18)
+// for the dispatch runner; nil when dispatch is off (runner is nil). The consumer
+// asks it about every leased job before the job is placed or run, so a job whose
+// prompt may already have left is resumed or failed for reconciling and never run
+// again. The manager is not consulted: it reads the node store's last accepted state.
+//
+// Env:
+//
+//	UBAG_HELPER_RECONCILE_WINDOW_SECONDS  how long a submitted attempt may stay unresolved with its helper
+//	                                      unreachable, from the moment its lease lapsed (default 600; 60..86400)
+func newHelperReconcilerFromEnv(jobs jobstore.Store, nodeStore nodes.Store, runner *executor.RemoteWorkerRunner) (*nodes.Reconciler, error) {
+	if runner == nil {
+		return nil, nil
+	}
+	secs, err := intFromEnv("UBAG_HELPER_RECONCILE_WINDOW_SECONDS", int(nodes.DefaultReconcileWindow/time.Second))
+	if err != nil {
+		return nil, err
+	}
+	window := time.Duration(secs) * time.Second
+	if window < time.Minute || window > nodes.MaxReconcileWindow {
+		return nil, fmt.Errorf("UBAG_HELPER_RECONCILE_WINDOW_SECONDS must be between 60 and %d", int(nodes.MaxReconcileWindow/time.Second))
+	}
+	ledger, ok := jobs.(nodes.Ledger)
+	if !ok {
+		return nil, fmt.Errorf("UBAG_HELPER_DISPATCH=true needs a job store with the attempt ledger (postgres, or memory for tests)")
+	}
+	return &nodes.Reconciler{Ledger: ledger, Inspector: runner, Registry: nodeStore, Config: nodes.ReconcileConfig{Window: window}}, nil
 }

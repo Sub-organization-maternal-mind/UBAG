@@ -259,6 +259,12 @@ func Run(ctx context.Context) error {
 	if helperRemote != nil {
 		slog.Info("helper dispatch enabled")
 	}
+	// Attempt reconcile (P4.18, with dispatch): ledger first, before a leased job is
+	// placed or run.
+	helperReconciler, err := newHelperReconcilerFromEnv(jobs, helperNodes, helperRemote)
+	if err != nil {
+		return fmt.Errorf("invalid helper reconcile configuration: %w", err)
+	}
 
 	appJWTPublicKey, err := appJWTPublicKeyFromEnv()
 	if err != nil {
@@ -365,6 +371,9 @@ func Run(ctx context.Context) error {
 		consumer.VoiceLanes = voiceLanes
 		consumer.Remote = helperRemote
 		consumer.Cancels = helperCancels
+		if helperReconciler != nil { // never a typed-nil interface: the gate holds every job without a ledger
+			consumer.Reconcile = helperReconciler
+		}
 		if closer, ok := consumer.Queue.(interface{ Close() }); ok {
 			defer closer.Close()
 		}
@@ -1782,7 +1791,11 @@ func newStaleJobReaperFromEnv(jobs jobstore.Store, concurrency *topology.Concurr
 		MaxLifetime: time.Duration(maxLifetimeSecs) * time.Second,
 		Interval:    time.Duration(intervalSecs) * time.Second,
 	}
-	if envBool("UBAG_EXECUTOR_ATTEMPTS") {
+	// With helper dispatch on the reconciler owns the fence of a submitted attempt
+	// (P4.18): a lapsed attempt must stay writable until the reconciler has collected
+	// the helper's outcome or failed the job closed, so the sweep does not expire it.
+	// An unsubmitted lapsed attempt needs no expiry: the next BeginAttempt supersedes it.
+	if envBool("UBAG_EXECUTOR_ATTEMPTS") && !envBool("UBAG_HELPER_DISPATCH") {
 		// configureExecutorAttempts already refused startup if the store has no ledger.
 		reaper.Attempts, _ = jobs.(jobstore.AttemptStore)
 	}
