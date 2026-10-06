@@ -27,6 +27,18 @@ WIRE PROTOCOL v2 (breaking vs v1; both directions use the same framing)
        "token":"<hex>"}
     token = hex(HMAC-SHA256(secret, f"voice-relay|{session_id}|{exp}"))
     where secret is the UTF-8 bytes of env UBAG_VOICE_RELAY_SECRET.
+    BOUND hello (optional, helper-hosted voice, P5.7): the hello may also
+    carry node_id (str 1..128, no "|") and generation (int 1..2**53-1), BOTH
+    or neither, and then
+    token = hex(HMAC-SHA256(secret, f"voice-relay|{session_id}|{exp}|{node_id}|{generation}"))
+    so the credential only verifies for that node and lease generation. A
+    helper never holds the global relay secret: its UBAG_VOICE_RELAY_SECRET
+    is the primary-derived PER-ATTEMPT relay key (hex string, see
+    apps/gateway/internal/voice/attempt.go). When UBAG_VOICE_RELAY_NODE_ID is
+    set the relay accepts only a bound hello naming that node (else
+    "unauthorized"), and it refuses a hello whose generation is lower than the
+    last one accepted for the same session_id ("unauthorized": stale writer).
+    An unbound hello is the legacy primary-hosted form and is unchanged.
     The relay FAILS CLOSED: an empty/unset secret refuses every session.
     It also refuses: hello not fully received within 5 s (whole-frame
     deadline), first frame not a control hello, malformed hello, exp already
@@ -77,7 +89,9 @@ TCP and the container's OWN virtual audio devices.
 Usage: audio-relay.py [--addr 127.0.0.1:9099]
 Environment: UBAG_VOICE_RELAY_ADDR (default 127.0.0.1:9099),
 UBAG_VOICE_RELAY_SECRET (required; fail closed when empty),
-UBAG_VOICE_RELAY_IDLE_S (default 30).
+UBAG_VOICE_RELAY_IDLE_S (default 30),
+UBAG_VOICE_RELAY_NODE_ID (optional; helper deployments: require a bound hello
+for exactly this node).
 Dependencies: pulseaudio (pacat/pactl), libopus0 (via opus_bridge ctypes),
 installed by the browser image.
 """
@@ -115,6 +129,7 @@ SPEAKER_MONITOR = f"{SPEAKER_SINK}.monitor"
 
 HELLO_TIMEOUT_S = 5.0
 HELLO_MAX_FUTURE_S = 300
+MAX_BOUND_GENERATION = 2**53 - 1  # JSON-safe integer bound shared with the gateway
 MAX_PENDING = 4              # connections allowed to sit in the handshake
 DEVICE_READY_WAIT_S = 8.0    # < the gateway's 10 s ready timeout
 HEALTH_INTERVAL_S = 5.0      # device re-check cadence once ready
@@ -185,9 +200,17 @@ def write_control(sock: socket.socket, msg: dict) -> None:
 
 # --- authentication ------------------------------------------------------
 
-def relay_token(secret: bytes, session_id: str, exp: int) -> str:
-    return hmac.new(secret, f"voice-relay|{session_id}|{exp}".encode("utf-8"),
-                    hashlib.sha256).hexdigest()
+def relay_token(secret: bytes, session_id: str, exp: int,
+                node_id: str | None = None, generation: int | None = None) -> str:
+    msg = f"voice-relay|{session_id}|{exp}"
+    if node_id is not None:  # bound hello: node and lease generation are signed
+        msg += f"|{node_id}|{generation}"
+    return hmac.new(secret, msg.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+# Last accepted (session_id, generation): fences a stale lease generation.
+# ponytail: one slot (the relay serves one session at a time); a map if that changes.
+_last_bound: tuple[str, int] | None = None
 
 
 def authenticate(conn: socket.socket) -> str:
@@ -215,12 +238,26 @@ def authenticate(conn: socket.socket) -> str:
             or isinstance(exp, bool) or not isinstance(exp, int)
             or not isinstance(token, str)):
         raise HandshakeError("bad_hello")
+    node_id, generation = hello.get("node_id"), hello.get("generation")
+    bound = node_id is not None or generation is not None
+    if bound and (not isinstance(node_id, str) or not 0 < len(node_id) <= 128 or "|" in node_id
+                  or isinstance(generation, bool) or not isinstance(generation, int)
+                  or not 0 < generation <= MAX_BOUND_GENERATION):
+        raise HandshakeError("bad_hello")
     now = time.time()
     if exp < now or exp > now + HELLO_MAX_FUTURE_S:
         raise HandshakeError("expired")
-    if not hmac.compare_digest(token.encode("utf-8"),
-                               relay_token(secret, session_id, exp).encode("utf-8")):
+    expected = relay_token(secret, session_id, exp, node_id, generation) if bound         else relay_token(secret, session_id, exp)
+    if not hmac.compare_digest(token.encode("utf-8"), expected.encode("utf-8")):
         raise HandshakeError("unauthorized")
+    required_node = os.environ.get("UBAG_VOICE_RELAY_NODE_ID", "")
+    if required_node and (not bound or node_id != required_node):
+        raise HandshakeError("unauthorized")
+    if bound:
+        global _last_bound
+        if _last_bound is not None and _last_bound[0] == session_id and generation < _last_bound[1]:
+            raise HandshakeError("unauthorized")
+        _last_bound = (session_id, generation)
     return session_id
 
 
