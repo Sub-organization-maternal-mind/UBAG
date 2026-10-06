@@ -111,7 +111,9 @@ func disallowedKeyReason(normalized string) (string, bool) {
 	// number and usage count respectively), not credentials. first_token is the
 	// stage-timing key (data.timings_ms.first_token, UBAG_WORKER_STAGE_TIMINGS): without
 	// this exemption every job that reports stage timings fails when its terminal event is applied.
-	if normalized == "token_index" || normalized == "token_count" || normalized == "first_token" {
+	// token_events is the integer count in a deadline-cut data.partial (job-event schema); without
+	// it UBAG_WORKER_STRICT_STREAM_END would turn a timed_out terminal into a validation failure.
+	if normalized == "token_index" || normalized == "token_count" || normalized == "first_token" || normalized == "token_events" {
 		return "", false
 	}
 	if isSecretReferenceKey(normalized) {
