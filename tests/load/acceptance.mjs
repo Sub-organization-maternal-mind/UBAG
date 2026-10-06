@@ -557,7 +557,7 @@ export async function createJob(ctx, key, { prompt = 'load job', retryStatuses, 
 }
 
 /** Poll many jobs with bounded concurrency until terminal / lost / deadline. */
-export async function pollMany(ctx, jobs, deadlineAt) {
+async function pollMany(ctx, jobs, deadlineAt) {
   const { cfg, rec } = ctx;
   const states = jobs.map((j) => ({ ...j, next: 0, status: null, firstRunAt: null, terminalAt: null, lost: false }));
   let pending = states;
