@@ -4570,6 +4570,7 @@
           "workloads_in_use_total": 1,
           "nodes_pressure_reduced": 1,
           "held_by_reason": {
+            "local_slots_busy": 7,
             "identity_busy": 4,
             "no_capacity": 2
           },

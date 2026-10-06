@@ -350,5 +350,5 @@ var UbagErrorCategories = []string{
 
 var UbagSchemaFingerprints = map[string]string{
 	"job-request":  "c97e105265015aee85de030cfc1721260eb3492ea75fefb501e2c0bdb2336138",
-	"job-response": "04c7db6454e69c313464b8480cf2cc6db4d42b0cd5b883fca2d05a5d5445d33f",
+	"job-response": "f861eb8af9c6a1604c2928320a653fdc11226a209352c7932fbdb3fc74bb7c3b",
 }

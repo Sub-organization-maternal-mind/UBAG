@@ -32,11 +32,11 @@ A job that is still `queued` may carry two optional fields on its response:
 | `queue_reason` | Meaning |
 |----------------|---------|
 | `waiting_for_worker` | Every worker is busy and this job is behind others. |
-| `waiting_for_identity` | The provider account this job needs is running another job. One operation runs per identity at a time. |
+| `waiting_for_identity` | The provider account or the browser this job needs is in use, by another job or by a live voice session. One operation runs per identity at a time. |
 | `waiting_for_capacity` | The capacity assigned to the gateway, including helper capacity, is fully used or temporarily reduced. |
 | `waiting_for_node` | The job is tied to a helper node (a bound provider profile or an existing conversation) that is not available right now. |
 | `retry_backoff` | A retryable failure is waiting out its delay before the next attempt. |
-| `temporarily_unavailable` | The gateway cannot place work at the moment and retries on its own. |
+| `temporarily_unavailable` | The gateway cannot start the job at the moment (a fleet, profile, ledger or helper check could not be completed, or an earlier attempt's outcome is still being confirmed) and retries on its own. |
 
 The values are deliberately coarse. Tenants never see which node, which capacity reservation or which other project is involved; operators read the fine-grained reasons, as counts only, from `GET /v1/fleet/summary` (`held_by_reason`, needs the `fleet:read` action, held by the operator and admin roles). `GET /v1/jobs/summary` groups the queued jobs by the same coarse values in `queued_by_reason`.
 

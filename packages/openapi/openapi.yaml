@@ -5091,27 +5091,25 @@ components:
         held_by_reason:
           type: object
           description: >-
-            Queued jobs currently held, counted by the fine-grained reason. Keys
-            absent from the object have a count of 0, and the object is empty
-            while nothing is held. Each reason maps to the coarse queue_reason a
-            tenant sees on the job: worker_busy to waiting_for_worker;
-            identity_busy to waiting_for_identity; no_capacity to
-            waiting_for_capacity; no_eligible_node and affinity_unavailable to
-            waiting_for_node; retry_backoff to retry_backoff; fleet_unreadable,
-            profiles_unreadable, profile_selection and reserve_failed to
-            temporarily_unavailable.
+            Queued jobs currently held, counted by the fine-grained hold reason
+            the gateway reports. Keys are short identifier tokens and the set is
+            open: a gateway may report a reason this document does not list, so
+            clients show unknown keys as they are. A key that is absent has a
+            count of 0, and the object is empty while nothing is held. Each
+            reason maps to the coarse queue_reason a tenant sees on the job.
+            waiting_for_worker: local_slots_busy. waiting_for_identity:
+            identity_busy, voice_session_active, voice_admission_in_flight.
+            waiting_for_capacity: no_capacity. waiting_for_node:
+            no_eligible_node, affinity_unavailable. retry_backoff:
+            retry_backoff. temporarily_unavailable: every other hold, such as
+            fleet_unreadable, profiles_unreadable, profile_selection,
+            reserve_failed, lane_state_unavailable, ledger_unavailable,
+            picker_error, placement_invalid, helper_unreachable,
+            attempt_lease_held, attempt_conflict, attempt_lease_lost and
+            helper_lost.
+          maxProperties: 64
           propertyNames:
-            enum:
-              - worker_busy
-              - identity_busy
-              - no_capacity
-              - no_eligible_node
-              - affinity_unavailable
-              - retry_backoff
-              - fleet_unreadable
-              - profiles_unreadable
-              - profile_selection
-              - reserve_failed
+            pattern: "^[a-z][a-z0-9_]{0,63}$"
           additionalProperties:
             type: integer
             minimum: 0
