@@ -408,6 +408,18 @@ func (a *remoteAttempt) run(ctx context.Context, placed *Placement) error {
 	}
 	defer a.conn.Close()
 
+	// attempt.granted is appended BEFORE the lease is taken (fail closed): if the
+	// tenant's audit chain cannot take it, nothing was leased or sent, so the job
+	// is simply held back. Without an audit store nothing is recorded.
+	if cfg.Audit != nil {
+		fleet := &audit.Fleet{Store: cfg.Audit}
+		rec := a.auditRecord(fleet, audit.EventAttemptGranted, "ok", latest+1)
+		if err := fleet.Guard(ctx, rec, func() error { return nil }); err != nil {
+			a.log().Error("attempt.granted audit append failed; holding the job back", "error", err)
+			return &HelperRetryError{Reason: "audit_unavailable", RetryAfter: cfg.RetryDelay, Err: err}
+		}
+	}
+
 	att, err := cfg.Store.BeginAttempt(ctx, jobstore.BeginAttemptRequest{
 		JobID: a.env.JobID, AttemptID: a.attemptID, NodeID: a.node, ExpectedGeneration: latest,
 		TTL: cfg.LeaseTTL, InputFingerprint: a.fingerprint, WorkloadVersion: cfg.WorkloadVersion,
@@ -447,7 +459,25 @@ func (a *remoteAttempt) run(ctx context.Context, placed *Placement) error {
 	err = a.stream(runCtx)
 	cancel(nil)
 	<-keeperDone
-	return a.finish(err)
+	if err = a.finish(err); err == nil && cfg.Audit != nil {
+		// The job is already terminal here, so this is a record, not a gate.
+		fleet := &audit.Fleet{Store: cfg.Audit}
+		actx, acancel := detachedOpContext(ctx)
+		defer acancel()
+		if _, aerr := cfg.Audit.Append(actx, a.auditRecord(fleet, audit.EventAttemptCommitted, "ok", a.generation)); aerr != nil {
+			a.log().Error("attempt.committed audit append failed", "error", aerr)
+		}
+	}
+	return err
+}
+
+// auditRecord is the attempt's record on the job's own tenant chain: ids and the
+// generation only, never prompt, attachment or output content.
+func (a *remoteAttempt) auditRecord(f *audit.Fleet, action, outcome string, generation uint64) audit.Record {
+	rec := f.AttemptEvent(a.env.TenantID, action, a.node, a.env.JobID, outcome,
+		map[string]any{"attempt_id": a.attemptID, "lease_generation": generation, "node_id": a.node})
+	rec.AppID = a.env.AppID
+	return rec
 }
 
 // connect dials the helper and checks it is the helper this primary expects.

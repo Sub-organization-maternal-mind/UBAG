@@ -464,6 +464,13 @@ func (s *Server) handleVoiceSessionCreate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// A live session on a media plane that can never connect (no relay secret)
+	// would only hold an account and a browser lane, and the lane exclusion
+	// (P5.5) would hold every job on that lane back for the whole lease.
+	if m, ok := s.voiceMedia.(interface{ MediaAvailable() bool }); ok && !m.MediaAvailable() {
+		s.voiceMediaUnavailable(w, r)
+		return
+	}
 	// Budgets (active leases and queued backlog per tenant) are enforced INSIDE
 	// the store's admission transaction, so concurrent creates and replicas
 	// cannot overshoot them: with the active budget spent a session can only

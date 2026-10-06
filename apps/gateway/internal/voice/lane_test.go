@@ -169,3 +169,12 @@ type failingStore struct{ Store }
 func (failingStore) ListLeaseHolders(context.Context, time.Time) ([]LeaseHolder, error) {
 	return nil, errors.New("store down")
 }
+
+func TestMediaHubAvailabilityFollowsTheRelaySecret(t *testing.T) {
+	if (&MediaHub{Dialer: &TCPRelayDialer{}}).MediaAvailable() {
+		t.Fatal("a hub with no relay secret must report media unavailable")
+	}
+	if !(&MediaHub{Dialer: &TCPRelayDialer{Secret: []byte("s")}}).MediaAvailable() {
+		t.Fatal("a hub with a relay secret must report media available")
+	}
+}
