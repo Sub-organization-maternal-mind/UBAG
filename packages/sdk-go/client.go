@@ -149,6 +149,12 @@ type ListBrowserInstancesParams struct {
 	State string
 }
 
+// ListFleetNodesParams filters GET /v1/fleet/nodes. Limit is 1..256; zero (the
+// default) returns every node.
+type ListFleetNodesParams struct {
+	Limit int
+}
+
 type ListProviderContextsParams struct {
 	Limit      int
 	InstanceID string
@@ -403,6 +409,23 @@ func (client *Client) GetConcurrency(ctx context.Context, params ListParams, opt
 		pairs = append(pairs, [2]string{"limit", strconv.Itoa(params.Limit)})
 	}
 	return client.request(ctx, http.MethodGet, "/v1/concurrency"+encodeQueryPairs(pairs), nil, client.resolveOptions(options...))
+}
+
+// ListFleetNodes is the operator view of the helper nodes (fleet:read). It
+// returns an *APIError with status 501 when the gateway has no fleet source.
+func (client *Client) ListFleetNodes(ctx context.Context, params ListFleetNodesParams, options ...RequestOption) (JSON, error) {
+	pairs := make([][2]string, 0, 1)
+	if params.Limit > 0 {
+		pairs = append(pairs, [2]string{"limit", strconv.Itoa(params.Limit)})
+	}
+	return client.request(ctx, http.MethodGet, "/v1/fleet/nodes"+encodeQueryPairs(pairs), nil, client.resolveOptions(options...))
+}
+
+// GetFleetSummary returns the operator fleet totals and the held-job counts by
+// reason (fleet:read). It returns an *APIError with status 501 when the gateway
+// has no fleet source.
+func (client *Client) GetFleetSummary(ctx context.Context, options ...RequestOption) (JSON, error) {
+	return client.request(ctx, http.MethodGet, "/v1/fleet/summary", nil, client.resolveOptions(options...))
 }
 
 func (client *Client) SSOLogout(ctx context.Context, request JSON, options ...RequestOption) (JSON, error) {

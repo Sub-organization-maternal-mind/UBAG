@@ -297,6 +297,10 @@ func invokeScenario(t *testing.T, client *Client, scenario fixtureScenario) (JSO
 		return client.GetBrowserTopologySummary(ctx, options...)
 	case request.Method == http.MethodGet && parsed.Path == "/v1/concurrency":
 		return client.GetConcurrency(ctx, listParamsFromQuery(parsed.Query()), options...)
+	case request.Method == http.MethodGet && parsed.Path == "/v1/fleet/nodes":
+		return client.ListFleetNodes(ctx, listFleetNodesParamsFromQuery(parsed.Query()), options...)
+	case request.Method == http.MethodGet && parsed.Path == "/v1/fleet/summary":
+		return client.GetFleetSummary(ctx, options...)
 	case request.Method == http.MethodPost && parsed.Path == "/v1/sso/logout":
 		return client.SSOLogout(ctx, request.Body, options...)
 	case request.Method == http.MethodPost && parsed.Path == "/v1/audit/export":
@@ -394,6 +398,11 @@ func listBrowserTabsParamsFromQuery(query url.Values) ListBrowserTabsParams {
 		ContextID: query.Get("context_id"),
 		State:     query.Get("state"),
 	}
+}
+
+func listFleetNodesParamsFromQuery(query url.Values) ListFleetNodesParams {
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	return ListFleetNodesParams{Limit: limit}
 }
 
 func listJobEventsParamsFromQuery(query url.Values) ListJobEventsParams {

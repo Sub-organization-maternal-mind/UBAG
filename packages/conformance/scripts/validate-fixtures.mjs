@@ -47,6 +47,9 @@ const requiredEndpointIds = new Set([
   "jobs.create.accepted",
   "jobs.create.idempotent-replay",
   "jobs.get.completed",
+  "jobs.get.queued-reason",
+  "fleet.nodes.ok",
+  "fleet.summary.ok",
   "jobs.events.list.ok",
   "jobs.events.stream-sse.ok",
   "jobs.artifacts.list.ok",
@@ -160,6 +163,12 @@ if (/"storage_state_uri"/i.test(serializedFixture)) {
 for (const scenario of fixture.scenarios ?? []) {
   const body = scenario.response?.body;
   if (!body || typeof body !== "object") continue;
+
+  // Fleet reads identify a node by opaque id and label only (no address,
+  // hostname, endpoint, certificate pin or browser endpoint).
+  if (scenario.category === "fleet" && /"(endpoint|hostname|host|ip|nat_ip|remote_endpoint|uri_san|spki\w*)"\s*:/i.test(JSON.stringify(body))) {
+    errors.push(`${scenario.id} must not expose a node address, hostname, endpoint or certificate pin`);
+  }
 
   if (scenario.id === "alerts.config.ok") {
     if (/password/i.test(JSON.stringify(body))) {
@@ -502,7 +511,7 @@ async function validateBodiesAgainstOpenApi() {
   }));
 
   for (const scenario of fixture.scenarios ?? []) {
-    const covered = ["browser", "concurrency", "jobs"].includes(scenario.category) || scenario.id.startsWith("jobs.");
+    const covered = ["browser", "concurrency", "fleet", "jobs"].includes(scenario.category) || scenario.id.startsWith("jobs.");
     if (!covered || !scenario.request || !scenario.response) continue;
     const label = `scenario ${scenario.id}`;
     const path = String(scenario.request.path).split("?")[0];

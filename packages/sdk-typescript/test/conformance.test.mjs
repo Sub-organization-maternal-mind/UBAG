@@ -247,6 +247,14 @@ async function invokeScenario(client, scenario) {
       limit: parsed.searchParams.get('limit') === null ? undefined : Number(parsed.searchParams.get('limit'))
     }, options);
   }
+  if (request.method === 'GET' && route === '/v1/fleet/nodes') {
+    return client.listFleetNodes({
+      limit: parsed.searchParams.get('limit') === null ? undefined : Number(parsed.searchParams.get('limit'))
+    }, options);
+  }
+  if (request.method === 'GET' && route === '/v1/fleet/summary') {
+    return client.getFleetSummary(options);
+  }
   if (request.method === 'POST' && route === '/v1/sso/logout') {
     return client.ssoLogout(resolveSdkPlaceholders(request.body ?? {}), options);
   }
