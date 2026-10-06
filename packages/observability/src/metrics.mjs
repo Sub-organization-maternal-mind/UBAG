@@ -42,7 +42,8 @@ export const METRIC_LABEL_CARDINALITY_BUDGET = Object.freeze({
   terminal_state: "fixed",
   endpoint_kind: "bounded",
   error_class: "bounded",
-  artifact_type: "bounded"
+  artifact_type: "bounded",
+  direction: "fixed"
 });
 
 // Closed stage set; mirrors job-event.schema.json data.timings_ms keys.
@@ -180,6 +181,14 @@ export const OBSERVABILITY_METRICS = Object.freeze([
     unit: "seconds",
     labels: ["stage", "adapter_family"],
     description: "Per-stage job duration parsed from worker data.timings_ms; stage is the closed JOB_STAGES set."
+  }),
+  metric({
+    name: "ubag_voice_relay_frame_age_seconds",
+    type: "histogram",
+    owner: "gateway",
+    unit: "seconds",
+    labels: ["direction"],
+    description: "Gateway-side voice relay frame age; direction is the fixed set mic (RTP read to relay Send returned) and speaker (relay Recv to speaker WriteSample returned). Buckets 5ms..1.28s."
   }),
   metric({
     name: "ubag_adapter_requests_total",
