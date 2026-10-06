@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -54,7 +55,7 @@ func (f *remoteFixture) helperEvents(jobID string) []jobstore.Event {
 	}
 	var out []jobstore.Event
 	for _, e := range events {
-		if _, ok := e.Data["helper"]; ok {
+		if _, ok := e.Data["attempt_id"]; ok {
 			out = append(out, e)
 		}
 	}
@@ -105,9 +106,8 @@ func TestRemoteRunCompletesTheJobThroughTheFencedIngest(t *testing.T) {
 	var types []string
 	for _, e := range events {
 		types = append(types, e.Type)
-		h, _ := e.Data["helper"].(map[string]any)
-		if h["node_id"] != "node_a" || e.Data["attempt_id"] == "" {
-			t.Fatalf("event %s lacks provenance: %#v", e.Type, e.Data)
+		if _, leaked := e.Data["helper"]; leaked || strings.Contains(fmt.Sprint(e.Data), "node_a") || e.Data["attempt_id"] == "" {
+			t.Fatalf("event %s leaks the node or lacks the attempt id: %#v", e.Type, e.Data)
 		}
 	}
 	if want := []string{"running", "prompt_submitted", "token", "completed"}; !slices.Equal(types, want) {

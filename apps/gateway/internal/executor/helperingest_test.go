@@ -202,8 +202,10 @@ func TestHelperIngestCommitsAnAttemptEndToEnd(t *testing.T) {
 		if meta == nil {
 			continue // the job's own queued event
 		}
-		helper, _ := event.Data["helper"].(map[string]any)
-		if event.Data["attempt_id"] != "att_one" || helper["node_id"] != "node_a" || !strings.HasPrefix(meta["event_id"].(string), "att_one:") {
+		if _, leaked := event.Data["helper"]; leaked || strings.Contains(fmt.Sprint(event.Data), "node_a") {
+			t.Fatalf("event %s leaks the fleet node: %#v", event.Type, event.Data)
+		}
+		if event.Data["attempt_id"] != "att_one" || !strings.HasPrefix(meta["event_id"].(string), "att_one:") {
 			t.Fatalf("event %s lacks node-namespaced provenance: %#v", event.Type, event.Data)
 		}
 	}
@@ -336,11 +338,11 @@ func TestHelperIngestRejectsIdentityClaimsInsideData(t *testing.T) {
 		t.Fatal("an identity claim must reject the event, not fail the attempt")
 	}
 	// The bound value itself is harmless, and anything else the helper put under
-	// the gateway's provenance keys is overwritten.
+	// the gateway's provenance keys is dropped.
 	accept(t, g, hev(1, evStarted, `{"tenant_id":"tenant_a","helper":{"node_id":"node_b"}}`))
 	data := f.lastData(t)
-	if helper, _ := data["helper"].(map[string]any); helper["node_id"] != "node_a" {
-		t.Fatalf("helper provenance = %#v, want the authenticated node", data["helper"])
+	if _, present := data["helper"]; present {
+		t.Fatalf("helper-supplied provenance survived: %#v", data["helper"])
 	}
 	if _, present := data["tenant_id"]; present {
 		t.Fatalf("identity key leaked into the event: %#v", data)

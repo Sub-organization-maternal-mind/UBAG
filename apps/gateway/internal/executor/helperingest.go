@@ -452,10 +452,11 @@ func (g *HelperIngest) project(ev *helperv1.AttemptEvent) (we jobstore.WorkerEve
 		}
 	}
 
-	// Node-namespaced provenance: the gateway stamps who produced the event under
-	// its own keys, after (and over) anything the helper sent.
+	// Job events reach tenants verbatim, and fleet node ids / lease generations
+	// are not tenant data: provenance lives in the attempt ledger and the audit
+	// chain, never in event data. A helper-supplied "helper" key is dropped too.
 	data["attempt_id"] = g.b.AttemptID
-	data["helper"] = map[string]any{"node_id": g.b.NodeID, "lease_generation": g.b.Generation}
+	delete(data, "helper")
 	if err := jobstore.ValidateWorkerEventData(eventType, data); err != nil {
 		return we, 0, false, helperErr(ErrHelperEventInvalid, "payload refused by the store policy")
 	}
@@ -617,7 +618,6 @@ func (g *HelperIngest) failAttempt(ctx context.Context, cause error) (jobstore.J
 			"reconcile_required": g.submitted,
 			"stream_end_reason":  "error",
 			"attempt_id":         g.b.AttemptID,
-			"helper":             map[string]any{"node_id": g.b.NodeID, "lease_generation": g.b.Generation},
 		},
 	}
 	// Outlive a cancelled stream context: the failure must still land.

@@ -80,7 +80,7 @@ Alert: `UBAGHelperDrainStuck`.
 
 Drain stops new attempts and lets in-flight work finish; non-voice attempts may be cancelled only after the grace (default 5 min, max 1 h); voice calls are never cancelled by drain. A node stuck for 30 min is holding work or was never released.
 
-1. `ubag_helper_node_drain_state` 1 = draining, 2 = revoked. Check whether attempts are still running on it (job events carry `data.helper.node_id`).
+1. `ubag_helper_node_drain_state` 1 = draining, 2 = revoked. Check whether attempts are still running on it (job events deliberately carry no node id; use the attempt ledger and the `attempt.*` audit records, or the primary log lines with `node_id`).
 2. Voice calls in progress will finish on their own; wait or end the call through the normal voice path.
 3. A revoked node's registry entry is sticky and a re-admitted helper gets a new node id. Do not try to un-revoke.
 

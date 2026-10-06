@@ -181,8 +181,8 @@ func TestReconcileGateCollectsAFinishedAttemptAfterAGatewayRestart(t *testing.T)
 	if len(events) != 1 || events[0].Type != "completed" || events[0].Data["attempt_id"] != "att_crashed" {
 		t.Fatalf("helper events = %+v", events)
 	}
-	if h, _ := events[0].Data["helper"].(map[string]any); h["node_id"] != "node_a" {
-		t.Fatalf("provenance = %#v", events[0].Data["helper"])
+	if _, leaked := events[0].Data["helper"]; leaked {
+		t.Fatalf("fleet provenance leaked into the event: %#v", events[0].Data["helper"])
 	}
 	if attempts := rf.attempts(job.ID); len(attempts) != 1 || attempts[0].State != jobstore.AttemptFinished || !attempts[0].Submitted() {
 		t.Fatalf("attempts = %+v", attempts)

@@ -35,7 +35,7 @@ All must be true before step 1. Anything unchecked means stop.
 
 1. Set the ladder flags on the primary and restart it. Local execution is unaffected.
 2. Watch `ubag_helper_nodes{admission}`: the node must go to `eligible` and `ubag_helper_node_admission_limit` must read 1 (new helper starts at 1 browser workload; the ramp adds more only after healthy time, not for the canary). `ubag_helper_node_heartbeat_age_seconds` must stay under 45 s for 10 minutes.
-3. Submit one job for the canary tenant with target `mock`. It must complete, its events must carry `data.helper.node_id`, and `ubag_helper_placements_total` must show one remote placement.
+3. Submit one job for the canary tenant with target `mock`. It must complete, its events must carry the attempt id (`data.attempt_id`) and must NOT carry any node id (tenants never see fleet placement), and `ubag_helper_placements_total` must show one remote placement.
 4. Run the env dump scan on the helper container (see Evidence): it must find no secrets.
 
 Pass: job completed on the helper, heartbeat flat, `ubag_lease_renew_failures_total{lease="attempt"}`, fenced rejects and policy violations all unchanged from the start.
