@@ -19,6 +19,7 @@ import (
 // (attempt assets, staging, ...) are registered on server by later slices.
 type helperPlane struct {
 	addr   string
+	auth   *helperauth.Authenticator
 	server *grpc.Server
 }
 
@@ -63,11 +64,11 @@ func newHelperPlaneFromEnv(store nodes.Store) (*helperPlane, error) {
 	auth := &helperauth.Authenticator{
 		Registry: store,
 		OnReject: func(reason helperauth.Reason, nodeID string) {
-			// ponytail: one log line per rejection; P4.8 aggregates and audits.
+			// one log line per rejection; the audit chain gets an aggregate (serve.go).
 			slog.Warn("helper plane rejected a peer", "reason", reason, "node_id", nodeID)
 		},
 	}
-	return &helperPlane{addr: addr, server: auth.NewServer(auth.ServerTLSConfig(pool, keyPair.GetCertificate))}, nil
+	return &helperPlane{addr: addr, auth: auth, server: auth.NewServer(auth.ServerTLSConfig(pool, keyPair.GetCertificate))}, nil
 }
 
 // stop shuts the plane down; a nil plane is a no-op. budget <= 0 closes
