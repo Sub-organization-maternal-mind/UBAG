@@ -363,6 +363,26 @@ or no real FIFO). Non-lab numbers are NON-AUTHORITATIVE; fake parec, the client
 and real PulseAudio/Chrome CPU are outside the relay's figures. The pure rule and
 parser logic is covered by `tests/test_bench_relay_rules.py`.
 
+### Rust-gate A/B harness and evaluator (`tools/voice-relay-bench`, `tools/benchmark/rust-gate.mjs`)
+
+The pre-registered rule for ever replacing the Python relay lives in `tests/load/voice-relay-gate.json` (seed, 95 % CI, limits); the verdict record is
+`docs/handoffs/rust-relay-gate-verdict.md`. No Rust exists; both tools are the machinery a candidate would be judged by.
+
+`tools/voice-relay-bench/run.mjs` drives any relay implementation as a black box over the framed TCP protocol on identical seeded input: a byte compare over 66
+scenarios (the shared v2 fixture's hello and framing cases, every Opus duration, corrupt, empty and max-size packets, mute interleavings, a partial final PCM chunk,
+busy, stale lease generation), interleaved paired runs (CPU per call-minute and RSS from `/proc`, mic and speaker transit p50/p95/p99, drops, optional
+`--mixed-probe`) and a reconnect leak check. A parec shim, a pactl shim and a FIFO sink stand in for PulseAudio; the relay under test sees only its existing env seams.
+
+```
+node tools/voice-relay-bench/run.mjs --self-test                      # Python vs Python, fake codec: proves the harness (offline, any OS, ~1 min)
+node tools/voice-relay-bench/run.mjs --a "python3 deploy/vps/browser/audio-relay.py --addr {addr}" --b "<candidate> --addr {addr}" --lab-host --host-class "<helper>" --out ab.json
+node tools/benchmark/rust-gate.mjs --baseline relay-baseline.json --ab ab.json --rollback-drill pass --require go
+```
+
+The evaluator answers `stop`, `prototype` (stage 0 only: the P7.5 profile permits writing a candidate), `go`, `inconclusive` or `invalid` (self-test, laptop, fake codec,
+another libopus or seed). Claims are judged on the paired CI, not the point estimate. Real runs belong on a dedicated Linux lab helper with real libopus, never the shared
+VPS; anything else is NON-AUTHORITATIVE. `pnpm test:rust-gate` runs the offline tests (needs Python 3.9+ for the self-test cases, which skip without it).
+
 ## Offline self-tests
 
 ```
