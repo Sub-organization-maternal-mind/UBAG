@@ -33,3 +33,18 @@ Branch `feat/pf-review-correctness`, base `feat/perf-fleet`. All eight findings 
 
 - Drive `packages/conformance/fixtures/streaming/sse-resume.json` against the handler in a Go test.
 - Decide whether `queue_reason` should cover assigned-but-held jobs (contract change).
+
+## Round 2 (P1.8 and P5.5 findings), branch `feat/pf-review-correctness-2`
+
+Three findings re-verified: two fixed, one already resolved upstream. No new flags, no migrations.
+
+### Fixed
+1. **P1.8 headline hypothesis contradicted by its own benches; admission lane shape wrong (medium).** Confirmed: `AcquireToken` locks every lane in its loop (the shard said "per dynamic lane"), production runs one lane (tenant/global lanes only exist when `UBAG_ADMISSION_MAX_INFLIGHT_*` is set, and `docker-compose.vps.yml` leaves them empty), and the three-lane bench roughly doubled the measured cost. `BenchmarkPostgresAdmissionAcquireRelease` now defaults to one dynamic lane (`UBAG_BENCH_ADMISSION_EXTRA_LANES=1` restores tenant+global). New `BenchmarkPostgresCreatePathComposite` (`storekit/benchutil/composite_bench_test.go`) with `UBAG_BENCH_SKIP=audit,idempotency,admission,create` toggles. `docs/perf-fleet/slices/P1.8.md`: table row corrected, the admission lane lock is now the leading hypothesis, the reviewer's non-authoritative numbers are recorded as reviewer-reported, and audit-append decoupling is no longer recommended until a composite A/B shows a gain.
+2. **P1.8 runbook probe `grep -c pg_advisory` can never match (medium).** Confirmed: goroutine dumps hold function names, not SQL. The runbook now greps `audit.(*PostgresStore).Append`, `topology.(*SQLTokenBackend).AcquireToken` and `database/sql.(*DB).conn` (pool waiters) and offers the `pg_stat_activity` advisory wait-event query.
+
+### Skipped
+3. **P5.5 live voice-session create answers an undocumented 503 when no relay is configured (medium).** Real when reported, but already resolved on `feat/perf-fleet` by the rules review before this round landed: the refusal is gated behind `UBAG_VOICE_LANE_EXCLUSION` (default off, so production's current posture is unchanged) and the 503 is documented on `createVoiceSession` in OpenAPI. That is the reviewer's second suggested option; my competing 501 change was dropped on rebase.
+
+### Checks
+- Run: `go vet ./internal/storekit/... ./internal/topology`.
+- Not run: any benchmark (needs Postgres), full suites.
