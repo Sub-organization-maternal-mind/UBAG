@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
@@ -84,8 +85,20 @@ func runDaemonJob(
 	envelope DispatchEnvelope,
 	maxRuntime time.Duration,
 ) ([]jobs.WorkerEvent, error) {
+	return runDaemonJobTracked(stdin, stdout, envelope, maxRuntime, nil)
+}
+
+// runDaemonJobTracked is runDaemonJob that also records into submitted (when
+// non-nil) that a prompt_submitted line went by.
+func runDaemonJobTracked(
+	stdin io.Writer,
+	stdout *bufio.Reader,
+	envelope DispatchEnvelope,
+	maxRuntime time.Duration,
+	submitted *atomic.Bool,
+) ([]jobs.WorkerEvent, error) {
 	var body bytes.Buffer
-	err := readDaemonJob(stdin, stdout, envelope, maxRuntime, func(line string) error {
+	err := readDaemonJob(stdin, stdout, envelope, maxRuntime, submitted, func(line string) error {
 		body.WriteString(line)
 		body.WriteByte('\n')
 		return nil
@@ -108,7 +121,19 @@ func streamDaemonJob(
 	maxRuntime time.Duration,
 	sink EventSink,
 ) error {
-	return readDaemonJob(stdin, stdout, envelope, maxRuntime, func(line string) error {
+	return streamDaemonJobTracked(ctx, stdin, stdout, envelope, maxRuntime, sink, nil)
+}
+
+func streamDaemonJobTracked(
+	ctx context.Context,
+	stdin io.Writer,
+	stdout *bufio.Reader,
+	envelope DispatchEnvelope,
+	maxRuntime time.Duration,
+	sink EventSink,
+	submitted *atomic.Bool,
+) error {
+	return readDaemonJob(stdin, stdout, envelope, maxRuntime, submitted, func(line string) error {
 		var event jobs.WorkerEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
 			return fmt.Errorf("worker emitted malformed JSONL")
@@ -126,6 +151,7 @@ func readDaemonJob(
 	stdout *bufio.Reader,
 	envelope DispatchEnvelope,
 	maxRuntime time.Duration,
+	submitted *atomic.Bool,
 	onLine func(line string) error,
 ) error {
 	request, err := json.Marshal(daemonJobRequest{
@@ -166,6 +192,10 @@ func readDaemonJob(
 				return fmt.Errorf("worker daemon job failed")
 			}
 			return nil
+		}
+
+		if submitted != nil && lineIsPromptSubmitted(trimmed) {
+			submitted.Store(true)
 		}
 
 		bytesRead += len(line) + 1
@@ -328,9 +358,9 @@ func (r *DaemonWorkerRunner) RunWorker(
 	ctx context.Context, envelope DispatchEnvelope,
 ) ([]jobs.WorkerEvent, error) {
 	var events []jobs.WorkerEvent
-	err := r.runJob(ctx, envelope, func(_ context.Context, stdin io.Writer, stdout *bufio.Reader, env DispatchEnvelope, maxRuntime time.Duration) error {
+	err := r.runJob(ctx, envelope, func(_ context.Context, stdin io.Writer, stdout *bufio.Reader, env DispatchEnvelope, maxRuntime time.Duration, submitted *atomic.Bool) error {
 		var runErr error
-		events, runErr = runDaemonJob(stdin, stdout, env, maxRuntime)
+		events, runErr = runDaemonJobTracked(stdin, stdout, env, maxRuntime, submitted)
 		return runErr
 	})
 	if err != nil {
@@ -344,8 +374,8 @@ func (r *DaemonWorkerRunner) RunWorker(
 func (r *DaemonWorkerRunner) StreamWorker(
 	ctx context.Context, envelope DispatchEnvelope, sink EventSink,
 ) error {
-	return r.runJob(ctx, envelope, func(runCtx context.Context, stdin io.Writer, stdout *bufio.Reader, env DispatchEnvelope, maxRuntime time.Duration) error {
-		return streamDaemonJob(runCtx, stdin, stdout, env, maxRuntime, sink)
+	return r.runJob(ctx, envelope, func(runCtx context.Context, stdin io.Writer, stdout *bufio.Reader, env DispatchEnvelope, maxRuntime time.Duration, submitted *atomic.Bool) error {
+		return streamDaemonJobTracked(runCtx, stdin, stdout, env, maxRuntime, sink, submitted)
 	})
 }
 
@@ -354,8 +384,14 @@ func (r *DaemonWorkerRunner) StreamWorker(
 func (r *DaemonWorkerRunner) runJob(
 	ctx context.Context,
 	envelope DispatchEnvelope,
-	job func(ctx context.Context, stdin io.Writer, stdout *bufio.Reader, envelope DispatchEnvelope, maxRuntime time.Duration) error,
-) error {
+	job func(ctx context.Context, stdin io.Writer, stdout *bufio.Reader, envelope DispatchEnvelope, maxRuntime time.Duration, submitted *atomic.Bool) error,
+) (err error) {
+	// With UBAG_WORKER_STRICT_SUBMIT every failure is typed ErrNotSubmitted or
+	// ErrAmbiguous from the prompt_submitted marker this job's stream carried
+	// (in-process state only; the durable ledger is P3.8). Flag off: untouched.
+	var submitted atomic.Bool
+	defer func() { err = classifySubmission(err, submitted.Load()) }()
+
 	maxRuntime := r.MaxRuntime
 	if maxRuntime <= 0 {
 		maxRuntime = defaultWorkerMaxRuntime
@@ -386,7 +422,7 @@ func (r *DaemonWorkerRunner) runJob(
 
 	errCh := make(chan error, 1)
 	stdin, stdout := r.stdin, r.stdout
-	go func() { errCh <- job(runCtx, stdin, stdout, envelope, maxRuntime) }()
+	go func() { errCh <- job(runCtx, stdin, stdout, envelope, maxRuntime, &submitted) }()
 
 	select {
 	case err = <-errCh:
