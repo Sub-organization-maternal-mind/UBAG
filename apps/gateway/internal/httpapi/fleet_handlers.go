@@ -37,7 +37,7 @@ const maxFleetNodes = nodes.MaxNodes
 // getFleetSummary).
 //
 // Authorization runs before the 501 so a role without fleet:read (anything but
-// operator and admin) gets 403 whether or not a fleet exists, and learns nothing
+// superadmin) gets 403 whether or not a fleet exists, and learns nothing
 // about the deployment. A deployment with no fleet source (UBAG_HELPER_NODES off)
 // answers 501. Nothing here is tenant-scoped, and nothing returned carries an
 // address, hostname or endpoint.

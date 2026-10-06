@@ -7,12 +7,13 @@ Files next to this one: `slices.json` (slice specs + dependencies), `workitems.j
 
 ## 1. Ground truth (verified, do not re-investigate)
 
-- Integration branch is `feat/perf-fleet` (off origin/main e0667b5). Production runs sha a8880d3 = origin/main minus 1 commit
-  (2026-10-06 read-only probe), so voice, shared admission, execution leases, migrations 0019-0021 and the acceptance harness are LIVE.
-- Production config: UBAG_WORKER_DAEMON=true, UBAG_WORKER_CONCURRENCY=1, UBAG_EXECUTOR_MODE=file, UBAG_GATEWAY_STORE=postgres,
-  UBAG_VOICE_STORE=memory, voice sessions enabled but UBAG_VOICE_RELAY_SECRET is empty (live media unavailable), GOMAXPROCS=1,
-  GOMEMLIMIT=950MiB, UBAG_WORKER_POLL_INTERVAL_MS=75. Gateway container 1 CPU / 1300 MiB; browser container 2 CPU / 4 GiB.
-  Host: 8 cores / 24 GiB shared with ~15 stacks, load average ~10. A separate voice-canary pair of containers also runs there.
+- Integration branch is `feat/perf-fleet` (off origin/main e0667b5). Treat what main already ships (voice, shared admission, execution
+  leases, migrations 0019-0021, the acceptance harness) as LIVE in production.
+- This repo is public: the deployed commit, secret posture, container and host sizing and co-tenancy are NOT recorded here. They live in a
+  private ops note held by the owner. Slices use only the documented defaults in `docker-compose.vps.yml` and `deploy/vps/env.example`
+  (env var names and non-secret defaults): UBAG_WORKER_DAEMON, UBAG_WORKER_CONCURRENCY, UBAG_EXECUTOR_MODE, UBAG_GATEWAY_STORE,
+  UBAG_VOICE_STORE (default memory), UBAG_VOICE_RELAY_SECRET (unset by default, so live media is unavailable), GOMAXPROCS, GOMEMLIMIT,
+  UBAG_WORKER_POLL_INTERVAL_MS. Any other production fact is a `follow_ups` item for the owner, not something to commit.
 - The plan's "starting point" table is largely TRUE for config; but many plan CAPABILITIES do not exist (no lease generation / fencing,
   exec lease is 90 s renewed every 10 s, no node registry, no helper proto, no incremental events, blind 3x resubmit exists,
   deadline-cut streams are reported completed). See `reader-summaries.json` plan_claim_checks.

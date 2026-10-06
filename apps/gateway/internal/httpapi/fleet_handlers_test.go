@@ -8,11 +8,11 @@ import (
 
 var fleetPaths = []string{"/v1/fleet/nodes", "/v1/fleet/summary"}
 
-// fleet:read is held by operator and admin only (authz table pinned in
+// fleet:read is held by superadmin only (authz table pinned in
 // internal/authz). With no fleet source wired, both of them see the documented
 // 501, never a body, and the error carries no fleet detail.
 func TestFleetRoutesReturn501ForFleetReaders(t *testing.T) {
-	for _, role := range []string{"operator", "admin"} {
+	for _, role := range []string{"superadmin"} {
 		server := NewServer(Config{AppSecret: "dev-secret", ActorRole: role}).Handler()
 		for _, path := range fleetPaths {
 			resp := doJSON(server, http.MethodGet, path, "", authHeaders(""))
@@ -34,7 +34,7 @@ func TestFleetRoutesReturn501ForFleetReaders(t *testing.T) {
 // Authorization runs before the 501: a role without fleet:read gets 403 on a
 // deployment with no fleet, so the status never tells it whether one exists.
 func TestFleetRoutesDenyRolesWithoutFleetRead(t *testing.T) {
-	for _, role := range []string{"viewer", "developer", "service"} {
+	for _, role := range []string{"viewer", "developer", "operator", "admin", "service"} {
 		server := NewServer(Config{AppSecret: "dev-secret", ActorRole: role}).Handler()
 		for _, path := range fleetPaths {
 			resp := doJSON(server, http.MethodGet, path, "", authHeaders(""))
@@ -46,7 +46,7 @@ func TestFleetRoutesDenyRolesWithoutFleetRead(t *testing.T) {
 }
 
 func TestFleetRoutesRequireAuthentication(t *testing.T) {
-	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "operator"}).Handler()
+	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "superadmin"}).Handler()
 	for _, path := range fleetPaths {
 		resp := doJSON(server, http.MethodGet, path, "", map[string]string{"Ubag-Api-Version": DefaultAPIVersion})
 		if resp.Code != http.StatusUnauthorized {
@@ -56,7 +56,7 @@ func TestFleetRoutesRequireAuthentication(t *testing.T) {
 }
 
 func TestFleetRoutesAreReadOnly(t *testing.T) {
-	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "admin"}).Handler()
+	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "superadmin"}).Handler()
 	for _, path := range fleetPaths {
 		for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 			resp := doJSON(server, method, path, "{}", authHeaders("idem-fleet-1"))

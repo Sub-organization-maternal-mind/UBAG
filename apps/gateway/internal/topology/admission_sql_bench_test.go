@@ -14,14 +14,15 @@ import (
 // dynamic target lane, the production shape: the tenant and global lanes exist
 // only when UBAG_ADMISSION_MAX_INFLIGHT_* is set (concurrency.go
 // acquireShared), and docker-compose.vps.yml leaves them empty. Set
-// UBAG_BENCH_ADMISSION_EXTRA_LANES=1 to add tenant:bench and global:all and
-// measure that configuration (about twice the cost, one lock per lane).
+// UBAG_BENCH_ADMISSION_EXTRA_LANES=1 to add bench-only tenant and global lanes
+// (never the real tenant:<id> or global:all keys) and measure that
+// configuration (about twice the cost, one lock per lane).
 func BenchmarkPostgresAdmissionAcquireRelease(b *testing.B) {
 	db := benchutil.OpenPostgres(b)
 	backend := NewPostgresTokenBackend(db)
 	lanes := []Lane{{Key: "bench-lane|mock|app_bench", Cap: 1 << 20, Dynamic: true}}
 	if os.Getenv("UBAG_BENCH_ADMISSION_EXTRA_LANES") == "1" {
-		lanes = append(lanes, Lane{Key: "tenant:bench", Cap: 1 << 20}, Lane{Key: "global:all", Cap: 1 << 20})
+		lanes = append(lanes, Lane{Key: "bench:tenant", Cap: 1 << 20}, Lane{Key: "bench:global", Cap: 1 << 20})
 	}
 	benchutil.Run(b, db, func(int64) {
 		ctx := context.Background()

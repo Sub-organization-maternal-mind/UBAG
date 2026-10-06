@@ -38,7 +38,7 @@ A job that is still `queued` may carry two optional fields on its response:
 | `retry_backoff` | A retryable failure is waiting out its delay before the next attempt. |
 | `temporarily_unavailable` | The gateway cannot start the job at the moment (a fleet, profile, ledger or helper check could not be completed, or an earlier attempt's outcome is still being confirmed) and retries on its own. |
 
-The values are deliberately coarse. Tenants never see which node, which capacity reservation or which other project is involved; operators read the fine-grained reasons, as counts only, from `GET /v1/fleet/summary` (`held_by_reason`, needs the `fleet:read` action, held by the operator and admin roles). `GET /v1/jobs/summary` groups the queued jobs by the same coarse values in `queued_by_reason`.
+The values are deliberately coarse. Tenants never see which node, which capacity reservation or which other project is involved; operators read the fine-grained reasons, as counts only, from `GET /v1/fleet/summary` (`held_by_reason`, needs the `fleet:read` action, held by the platform-level superadmin role only: the view is cross-tenant). `GET /v1/jobs/summary` groups the queued jobs by the same coarse values in `queued_by_reason`.
 
 Queue reasons add no job status, no event type and no error code. A queued job event may carry the same value as `data.reason`, and a provider block keeps using the `blocked` event with its own `data.reason`. Being held is not an error: `UBAG-QUEUE-BACKPRESSURE-002` stays the answer to a create request that finds the queue full.
 
