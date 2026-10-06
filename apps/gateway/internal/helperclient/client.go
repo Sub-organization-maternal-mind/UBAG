@@ -123,9 +123,12 @@ func NewFromKeyPair(cas *x509.CertPool, kp *helperauth.KeyPair, registry Registr
 	})
 }
 
-// Conn is a connection to one Helper Node.
+// Conn is a connection to one Helper Node. Both services ride the one verified
+// connection: HelperService (attempts) and HelperVoiceService (voice, P5.11; a node
+// that does not serve it answers Unimplemented).
 type Conn struct {
 	helperv1.HelperServiceClient
+	helperv1.HelperVoiceServiceClient
 	cc *grpc.ClientConn
 }
 
@@ -160,7 +163,11 @@ func (d *Dialer) Dial(_ context.Context, nodeID, endpoint string) (*Conn, error)
 	if err != nil {
 		return nil, fmt.Errorf("helperclient: dial: %w", err)
 	}
-	return &Conn{HelperServiceClient: helperv1.NewHelperServiceClient(cc), cc: cc}, nil
+	return &Conn{
+		HelperServiceClient:      helperv1.NewHelperServiceClient(cc),
+		HelperVoiceServiceClient: helperv1.NewHelperVoiceServiceClient(cc),
+		cc:                       cc,
+	}, nil
 }
 
 func (d *Dialer) now() time.Time {

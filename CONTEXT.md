@@ -198,3 +198,7 @@ _Avoid_: Helper Node (a Helper Node is a remote machine; slots live on the prima
 **Browser Lane**:
 The physical browser a CDP endpoint reaches, named tenant-free by its host and port (`topology.BrowserLaneKey`). A live voice session owns its lane exclusively; browser-driving jobs share it with each other but never with a live session, and the reverse (ADR-0012). The session's own lease in the voice store is its hold; jobs and voice admissions register transiently in the `ConcurrencyRegistry`.
 _Avoid_: identity (a job names no account), instance (a topology row; several can reach one browser)
+
+**Node-bound session**:
+A live voice session whose media a Helper Node hosts (`Session.NodeID` is set; its account has a profile on that node, ADR-0017). Its lease generation fences every control call and every event: the primary negotiates it through `voice.RemoteNegotiator`, never through its own media hub, and the node, not the primary, holds the media (ADR-0018). A session with no node is primary-hosted.
+_Avoid_: remote session, helper session (the session is the tenant's; the node only hosts its media)

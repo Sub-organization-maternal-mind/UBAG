@@ -539,6 +539,29 @@ WHERE session_id = ? AND tenant_id = ? AND status <> 'terminated'`,
 	return requireSQLiteChange(res)
 }
 
+func (s *SQLiteStore) CommitMuted(ctx context.Context, tenantID, sessionID string, fence LeaseFence, muted bool, now time.Time) error {
+	if !fence.valid() {
+		return ErrBadBinding
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE gateway_voice_sessions SET muted = ?, updated_at = ?
+WHERE session_id = ? AND tenant_id = ? AND status <> 'terminated' AND node_id = ? AND lease_generation = ?`,
+		boolToInt(muted), formatSQLiteTime(now), sessionID, tenantID, fence.NodeID, int64(fence.Generation))
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n > 0 {
+		return nil
+	}
+	current, found, err := s.Get(ctx, tenantID, sessionID)
+	if err != nil {
+		return err
+	}
+	return fenceMiss(current, found, fence)
+}
+
 func (s *SQLiteStore) Terminate(ctx context.Context, tenantID, sessionID string, now time.Time, reason string) error {
 	// Idempotent: already-terminated rows match the predicate and rewrite the
 	// same values (reason is refreshed, which is harmless and keeps this one

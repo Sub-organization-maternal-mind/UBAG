@@ -23,6 +23,7 @@ const (
 	LeaseQueue   = "queue"   // spool/NATS delivery lease (P4.3)
 	LeaseExec    = "exec"    // execution lease token (admission)
 	LeaseAttempt = "attempt" // attempt ledger lease (helper dispatcher)
+	LeaseVoice   = "voice"   // helper-hosted voice call: media lease and the node's own lease (P5.11)
 )
 
 // Renewal failure reasons.
@@ -32,7 +33,7 @@ const (
 )
 
 var (
-	leaseKinds   = []string{LeaseQueue, LeaseExec, LeaseAttempt}
+	leaseKinds   = []string{LeaseQueue, LeaseExec, LeaseAttempt, LeaseVoice}
 	leaseReasons = []string{ReasonLost, ReasonError}
 	// The reason sets mirror the executor's fixed audit reasons. Anything else
 	// (helper-influenced text such as "data names another job_id") is folded

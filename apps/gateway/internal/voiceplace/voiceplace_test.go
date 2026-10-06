@@ -148,6 +148,44 @@ func TestPlacementTakesOneNodeSlotAndTheAccountsLane(t *testing.T) {
 	}
 }
 
+// The node admits a call under the account's profile_ref, the key a text job on that
+// profile takes, so the two exclude each other there too (P5.11).
+func TestPlacementProfileRefIsTheTenantsActiveProfileOnThatNode(t *testing.T) {
+	e := newEnv(t)
+	e.fleet.node("node-a", 2, nil)
+	e.fleet.node("node-b", 2, nil)
+	onA := e.bind(t, "acct-1", "node-a")
+	onB := e.bind(t, "acct-1", "node-b")
+	ctx := t.Context()
+
+	if got, err := e.placer.ProfileRef(ctx, tenant, target, "acct-1", "node-a"); err != nil || got != onA {
+		t.Fatalf("node-a = %q, %v; want %q", got, err, onA)
+	}
+	if got, err := e.placer.ProfileRef(ctx, tenant, target, "acct-1", "node-b"); err != nil || got != onB || onA == onB {
+		t.Fatalf("node-b = %q, %v; want %q (a different profile)", got, err, onB)
+	}
+	for name, args := range map[string][4]string{
+		"another tenant":   {"tenant_b", target, "acct-1", "node-a"},
+		"another account":  {tenant, target, "acct-2", "node-a"},
+		"another node":     {tenant, target, "acct-1", "node-z"},
+		"another provider": {tenant, "gemini_web", "acct-1", "node-a"},
+	} {
+		if got, err := e.placer.ProfileRef(ctx, args[0], args[1], args[2], args[3]); !errors.Is(err, voice.ErrNoProfile) || got != "" {
+			t.Errorf("%s: ProfileRef = %q, %v; want ErrNoProfile", name, got, err)
+		}
+	}
+	if revoked, err := e.profiles.Revoke(ctx, tenant, onA, t0); err != nil || !revoked {
+		t.Fatal(revoked, err)
+	}
+	if _, err := e.placer.ProfileRef(ctx, tenant, target, "acct-1", "node-a"); !errors.Is(err, voice.ErrNoProfile) {
+		t.Fatalf("a revoked profile must not be offered: %v", err)
+	}
+	var nilPlacer *Placer
+	if _, err := nilPlacer.ProfileRef(ctx, tenant, target, "acct-1", "node-a"); !errors.Is(err, voice.ErrNoProfile) {
+		t.Fatalf("a nil placer = %v", err)
+	}
+}
+
 func TestPlacementSettleKeepsOnlyTheWinnersReservation(t *testing.T) {
 	e := newEnv(t)
 	e.fleet.node("node-a", 2, nil)

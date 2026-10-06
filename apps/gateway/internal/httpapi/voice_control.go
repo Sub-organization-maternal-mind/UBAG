@@ -294,22 +294,32 @@ func truncateReason(reason string) string {
 }
 
 // terminateVoiceSession ends a session record. With the terminating hold on
-// (UBAG_HELPER_VOICE) and provider voice requested on this replica, the account
-// and environment stay reserved until the deactivate job acks (VoiceMediaEnded)
-// or voice.TerminatingHoldMax passes, so a successor cannot activate on a
-// provider UI that is still being torn down. Otherwise leases free at once, as
-// before. The caller drops the media path AFTER this returns, which is what
-// fires VoiceMediaEnded, so the hold always exists before its ack.
-func (s *Server) terminateVoiceSession(ctx context.Context, tenantID, sessionID string, now time.Time, reason string) error {
+// (UBAG_HELPER_VOICE) the account and environment stay reserved until the provider
+// confirms it left voice mode, or voice.TerminatingHoldMax passes, so a successor
+// cannot activate on a provider UI that is still being torn down:
+//   - a primary-hosted session holds once provider voice was requested on this
+//     replica; the deactivate job acks (VoiceMediaEnded);
+//   - a session hosted on a Helper Node always holds: the node tears the provider
+//     down itself and acks with ENDED (or answers UNKNOWN when nothing ever ran
+//     there), which the node negotiator turns into ReleaseHold.
+//
+// Otherwise leases free at once, as before. The caller drops the media path AFTER
+// this returns, which is what fires the ack, so the hold always exists before it.
+func (s *Server) terminateVoiceSession(ctx context.Context, sess voice.Session, now time.Time, reason string) error {
 	if s.voiceHold {
-		s.voiceLife.mu.Lock()
-		requested := s.voiceLife.get(sessionID, false) != nil
-		s.voiceLife.mu.Unlock()
-		if requested {
-			return s.voice.BeginTerminate(ctx, tenantID, sessionID, now, reason, voice.TerminatingHoldMax)
+		held := false
+		if sess.NodeID != "" {
+			_, held = nodeSessionMedia(s.voiceMedia)
+		} else {
+			s.voiceLife.mu.Lock()
+			held = s.voiceLife.get(sess.ID, false) != nil
+			s.voiceLife.mu.Unlock()
+		}
+		if held {
+			return s.voice.BeginTerminate(ctx, sess.TenantID, sess.ID, now, reason, voice.TerminatingHoldMax)
 		}
 	}
-	return s.voice.Terminate(ctx, tenantID, sessionID, now, reason)
+	return s.voice.Terminate(ctx, sess.TenantID, sess.ID, now, reason)
 }
 
 // failVoiceSession ends a session whose provider voice could not be started:
@@ -322,10 +332,10 @@ func (s *Server) failVoiceSession(sess voice.Session, reason string) {
 	s.voiceLife.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := s.terminateVoiceSession(ctx, sess.TenantID, sess.ID, time.Now().UTC(), reason); err != nil {
+	if err := s.terminateVoiceSession(ctx, sess, time.Now().UTC(), reason); err != nil {
 		slog.Error("terminating voice session after activation failure failed", "session_id", sess.ID, "error", err)
 	}
-	s.dropVoiceMedia(sess.ID)
+	s.dropVoiceMedia(ctx, sess, reason)
 }
 
 // maybeMarkVoiceConnected advances connecting -> connected once the provider
