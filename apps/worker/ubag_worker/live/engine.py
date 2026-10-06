@@ -483,6 +483,53 @@ class LiveSessionEngine:
         job: "_NormalizedJob",
         timer: Optional[StageTimer] = None,
     ) -> JsonObject:
+        """Run the interaction; with UBAG_WORKER_STRICT_SUBMIT a post-submit failure is terminal.
+
+        Flag off (default): exactly :meth:`_run_interaction_inner` - any exception
+        propagates and :meth:`iter_events` retries the whole interaction, resubmit
+        included. Flag on: once the prompt is submitted, a non-deterministic
+        exception can no longer be retried (the provider may already be answering),
+        so it becomes a terminal ``failed_terminal`` with ``submitted`` and
+        ``reconcile_required``. Pre-submit failures still raise and retry.
+        """
+        progress: JsonObject = {"events": [], "submitted": False}
+        try:
+            return self._run_interaction_inner(driver, job, timer, progress)
+        except (DriftDetectedError, ManualActionRequired, LiveSessionError):
+            raise
+        except Exception as exc:  # noqa: BLE001 - classified by the submit marker
+            if not (progress["submitted"] and _env_flag("UBAG_WORKER_STRICT_SUBMIT", False)):
+                raise
+            try:
+                thread_url = driver.current_thread_url(self._selectors) or ""
+            except Exception:  # noqa: BLE001 - best-effort; never mask the failure
+                thread_url = ""
+            data: JsonObject = {
+                "status": "failed_terminal",
+                "target": job.target,
+                "stream_end_reason": "error",
+                "submitted": True,
+                "retryable": False,
+                "reconcile_required": True,
+                "reason": "post_submit_failure",
+                # Exception class only: never echo provider/page detail.
+                "message": (
+                    "prompt was submitted but the interaction failed (%s); the "
+                    "provider thread must be reconciled before any retry"
+                ) % type(exc).__name__,
+            }
+            if thread_url:
+                data["current_thread_url"] = thread_url
+            progress["events"].append(("failed_terminal", data))
+            return {"events": progress["events"], "blocked": None}
+
+    def _run_interaction_inner(
+        self,
+        driver: PageDriver,
+        job: "_NormalizedJob",
+        timer: Optional[StageTimer],
+        progress: JsonObject,
+    ) -> JsonObject:
         """Run the buffered pre-submit + submit + read interaction.
 
         Returns ``{"events": [(type, data), ...], "blocked": {...} | None}``.
@@ -491,7 +538,7 @@ class LiveSessionEngine:
         events. Tokens are collected and replayed in order; for the final-result
         use case (Fix / Cross-Check) this is functionally identical to streaming.
         """
-        events: List = []
+        events: List = progress["events"]
         timer = timer if timer is not None else StageTimer()
 
         # Conversation affinity. Runs BEFORE start_new_chat. When the gateway
@@ -631,6 +678,15 @@ class LiveSessionEngine:
 
         with timer.span("provider_submit"):
             driver.submit_prompt(self._selectors, job.prompt)
+
+        # Submit marker: past this line a retry would resubmit. Emitted only under
+        # UBAG_WORKER_STRICT_SUBMIT so the default event stream stays byte-identical.
+        progress["submitted"] = True
+        if _env_flag("UBAG_WORKER_STRICT_SUBMIT", False):
+            events.append(("prompt_submitted", {
+                "status": "prompt_submitted",
+                "target": job.target,
+            }))
 
         # Reasoning modes need a longer ceiling; use the reasoning floor only when
         # this provider enables a slow thinking mode and config is on.
