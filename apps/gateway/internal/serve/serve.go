@@ -114,6 +114,13 @@ func Run(ctx context.Context) error {
 	}
 	breakerRegistry := resilience.NewRegistry(resilience.DefaultConfig())
 	dispatcher := resilience.DispatcherMiddleware(rawDispatcher, breakerRegistry)
+	// Helper dispatch (UBAG_HELPER_DISPATCH, default off): the cancel API hints
+	// this registry so the helper running a remote attempt is stopped at once.
+	var helperCancels *executor.CancelRegistry
+	if envBool("UBAG_HELPER_DISPATCH") {
+		helperCancels = executor.NewCancelRegistry()
+		dispatcher = executor.NewCancelNotifier(dispatcher, helperCancels)
+	}
 	jobs, idempotencyStore, db, storeKind, closeStores, err := newStoresFromEnv(ctx)
 	if err != nil {
 		return fmt.Errorf("invalid store configuration: %w", err)
@@ -242,6 +249,17 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("invalid helper plane configuration: %w", err)
 	}
 
+	// Helper dispatch (UBAG_HELPER_DISPATCH, default off): the primary dials the
+	// helper itself (decision D3) and runs placed jobs as fenced attempts there.
+	// The picker is NoHelperPicker until the placer is wired (P4.17).
+	helperRemote, err := newHelperRemoteFromEnv(jobs, helperNodes, hplane, enterprise.audit, executor.NoHelperPicker{})
+	if err != nil {
+		return fmt.Errorf("invalid helper dispatch configuration: %w", err)
+	}
+	if helperRemote != nil {
+		slog.Info("helper dispatch enabled")
+	}
+
 	appJWTPublicKey, err := appJWTPublicKeyFromEnv()
 	if err != nil {
 		return fmt.Errorf("invalid app JWT configuration: %w", err)
@@ -345,6 +363,8 @@ func Run(ctx context.Context) error {
 		}
 		consumer.Metrics = server
 		consumer.VoiceLanes = voiceLanes
+		consumer.Remote = helperRemote
+		consumer.Cancels = helperCancels
 		if closer, ok := consumer.Queue.(interface{ Close() }); ok {
 			defer closer.Close()
 		}
