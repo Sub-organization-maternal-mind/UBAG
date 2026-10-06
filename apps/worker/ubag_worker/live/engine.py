@@ -14,6 +14,14 @@ The engine turns a job payload + :class:`ProviderSelectors` + a
 It enforces every safe-mode invariant: manual login only, user-owned persistent
 profiles only, no credential/cookie/token ingestion, and no CAPTCHA solving.
 Selector drift surfaces as ``UBAG-ADAPTER-DRIFT-014`` blocked events.
+
+By default the interaction (new chat -> config -> submit -> stream -> read) is
+buffered and replayed, so a transient browser hiccup retries the whole thing.
+With ``UBAG_WORKER_STREAM_EVENTS`` the pre-submit part stays buffered (retry-safe)
+but everything from ``prompt_submitted`` on is yielded live: tokens arrive before
+the final read, a post-submit failure is a terminal ``failed_terminal`` (the prompt
+is never resubmitted), and the terminal event is no longer the last line
+(``conversation.thread_bound`` / ``concurrency.cap_changed`` follow it).
 """
 
 from __future__ import annotations
@@ -87,6 +95,8 @@ _DEFAULT_LOGIN_READY_EXTENDED_S = 45.0
 # How many times to attempt the buffered interaction (config -> submit -> read)
 # before giving up, so a transient browser/CDP hiccup self-heals within the job.
 _DEFAULT_INTERACTION_ATTEMPTS = 3
+# Live token events per interaction under UBAG_WORKER_STREAM_EVENTS (gateway cap: 512).
+_DEFAULT_STREAM_TOKEN_EVENT_BUDGET = 400
 
 # Telemetry event types appended additively when an orchestrator is wired in.
 # The gateway worker-consumer intercepts both BEFORE applying the canonical
@@ -352,19 +362,41 @@ class LiveSessionEngine:
             # hard failure). Deterministic outcomes — selector drift, manual action,
             # an audio-unsupported target — are NOT retried.
             interaction = None
-            attempts = _interaction_attempts()
-            for attempt in range(1, attempts + 1):
+            blocked = None
+            timings_on = stage_timings_enabled()
+            streaming = _stream_events_enabled()
+            if streaming:
+                # UBAG_WORKER_STREAM_EVENTS: pre-submit events stay buffered and
+                # retry-safe; from prompt_submitted on, events are yielded live. The
+                # terminal event is NOT the end of the stream: thread_bound and
+                # cap_changed follow it, so consumers read to the daemon JOB_END.
+                steps = self._streamed_interaction(driver, job, timer)
                 try:
-                    interaction = self._run_interaction(driver, job, timer)
-                    break
-                except (DriftDetectedError, ManualActionRequired, LiveSessionError):
-                    raise
-                except Exception:  # noqa: BLE001 - transient browser/CDP hiccup
-                    if attempt >= attempts:
+                    while True:
+                        try:
+                            event_type, data = next(steps)
+                        except StopIteration as stop:
+                            blocked = stop.value
+                            break
+                        if timings_on and event_type == "completed":
+                            data = {**data, "timings_ms": timer.as_dict()}
+                        yield emit(event_type, data)
+                finally:
+                    steps.close()
+            else:
+                attempts = _interaction_attempts()
+                for attempt in range(1, attempts + 1):
+                    try:
+                        interaction = self._run_interaction(driver, job, timer)
+                        break
+                    except (DriftDetectedError, ManualActionRequired, LiveSessionError):
                         raise
-                    driver.reset(self._selectors.target_url)
+                    except Exception:  # noqa: BLE001 - transient browser/CDP hiccup
+                        if attempt >= attempts:
+                            raise
+                        driver.reset(self._selectors.target_url)
+                blocked = interaction.get("blocked") if interaction else None
 
-            blocked = interaction.get("blocked") if interaction else None
             if blocked is not None:
                 yield emit("blocked", {
                     "status": "blocked",
@@ -376,11 +408,11 @@ class LiveSessionEngine:
                 })
                 return
 
-            timings_on = stage_timings_enabled()
-            for event_type, data in (interaction["events"] if interaction else []):
-                if timings_on and event_type == "completed":
-                    data = {**data, "timings_ms": timer.as_dict()}
-                yield emit(event_type, data)
+            if not streaming:
+                for event_type, data in (interaction["events"] if interaction else []):
+                    if timings_on and event_type == "completed":
+                        data = {**data, "timings_ms": timer.as_dict()}
+                    yield emit(event_type, data)
 
         except ConversationThreadNotFoundError as exc:
             # The bound provider chat vanished and the caller chose "fail" (the
@@ -500,28 +532,82 @@ class LiveSessionEngine:
         except Exception as exc:  # noqa: BLE001 - classified by the submit marker
             if not (progress["submitted"] and _env_flag("UBAG_WORKER_STRICT_SUBMIT", False)):
                 raise
-            try:
-                thread_url = driver.current_thread_url(self._selectors) or ""
-            except Exception:  # noqa: BLE001 - best-effort; never mask the failure
-                thread_url = ""
-            data: JsonObject = {
-                "status": "failed_terminal",
-                "target": job.target,
-                "stream_end_reason": "error",
-                "submitted": True,
-                "retryable": False,
-                "reconcile_required": True,
-                "reason": "post_submit_failure",
-                # Exception class only: never echo provider/page detail.
-                "message": (
-                    "prompt was submitted but the interaction failed (%s); the "
-                    "provider thread must be reconciled before any retry"
-                ) % type(exc).__name__,
-            }
-            if thread_url:
-                data["current_thread_url"] = thread_url
-            progress["events"].append(("failed_terminal", data))
+            progress["events"].append(self._post_submit_failure(driver, job, exc))
             return {"events": progress["events"], "blocked": None}
+
+    def _post_submit_failure(
+        self, driver: PageDriver, job: "_NormalizedJob", exc: BaseException
+    ) -> tuple:
+        """The terminal ``failed_terminal`` event for a failure after submit."""
+        try:
+            thread_url = driver.current_thread_url(self._selectors) or ""
+        except Exception:  # noqa: BLE001 - best-effort; never mask the failure
+            thread_url = ""
+        data: JsonObject = {
+            "status": "failed_terminal",
+            "target": job.target,
+            "stream_end_reason": "error",
+            "submitted": True,
+            "retryable": False,
+            "reconcile_required": True,
+            "reason": "post_submit_failure",
+            # Exception class only: never echo provider/page detail.
+            "message": (
+                "prompt was submitted but the interaction failed (%s); the "
+                "provider thread must be reconciled before any retry"
+            ) % type(exc).__name__,
+        }
+        if thread_url:
+            data["current_thread_url"] = thread_url
+        return ("failed_terminal", data)
+
+    def _streamed_interaction(
+        self,
+        driver: PageDriver,
+        job: "_NormalizedJob",
+        timer: Optional[StageTimer],
+    ) -> Iterator[tuple]:
+        """UBAG_WORKER_STREAM_EVENTS: yield ``(type, data)`` pairs as they happen.
+
+        Everything before ``prompt_submitted`` (new chat, config, attach) is held in
+        a buffer so a transient browser/CDP hiccup still retries the whole
+        interaction without double-emitting. The moment submit returns, the buffer
+        is flushed and every later event is yielded live: tokens before the final
+        read. After that point a retry would resubmit the prompt, so an ordinary
+        exception becomes a terminal ``failed_terminal`` (never a retry), and the
+        stream is never replayed. Returns the ``blocked`` descriptor (or ``None``).
+        """
+        attempts = _interaction_attempts()
+        for attempt in range(1, attempts + 1):
+            progress: JsonObject = {"events": [], "submitted": False}
+            held: List = []
+            steps = self._interaction_steps(driver, job, timer, progress, streaming=True)
+            try:
+                while True:
+                    try:
+                        item = next(steps)
+                    except StopIteration as stop:
+                        # A block is decided before submit: held events are dropped,
+                        # exactly like the buffered path.
+                        return stop.value
+                    if progress["submitted"]:
+                        yield from held
+                        held.clear()
+                        yield item
+                    else:
+                        held.append(item)
+            except (DriftDetectedError, ManualActionRequired, LiveSessionError):
+                raise
+            except Exception as exc:  # noqa: BLE001 - classified by the submit marker
+                if progress["submitted"]:
+                    yield from held
+                    yield self._post_submit_failure(driver, job, exc)
+                    return None
+                if attempt >= attempts:
+                    raise
+                driver.reset(self._selectors.target_url)
+            finally:
+                steps.close()
 
     def _run_interaction_inner(
         self,
@@ -539,6 +625,31 @@ class LiveSessionEngine:
         use case (Fix / Cross-Check) this is functionally identical to streaming.
         """
         events: List = progress["events"]
+        steps = self._interaction_steps(driver, job, timer, progress)
+        try:
+            while True:
+                events.append(next(steps))
+        except StopIteration as stop:
+            return {"events": events, "blocked": stop.value}
+
+    def _interaction_steps(
+        self,
+        driver: PageDriver,
+        job: "_NormalizedJob",
+        timer: Optional[StageTimer],
+        progress: JsonObject,
+        *,
+        streaming: bool = False,
+    ) -> Iterator[tuple]:
+        """Generator behind both interaction modes: yields ``(type, data)`` pairs.
+
+        Returns the ``blocked`` descriptor (``None`` when the job ran). Sets
+        ``progress["submitted"]`` the instant ``submit_prompt`` returns, before the
+        next yield, so the caller can tell buffered pre-submit events from live ones.
+        ``streaming`` (UBAG_WORKER_STREAM_EVENTS) also bounds the token events: past
+        the budget, deltas coalesce into one trailing token event, keeping a long
+        stream under the gateway's per-run event cap. Off keeps one event per delta.
+        """
         timer = timer if timer is not None else StageTimer()
 
         # Conversation affinity. Runs BEFORE start_new_chat. When the gateway
@@ -580,7 +691,7 @@ class LiveSessionEngine:
         if not resumed and job.new_chat_enabled and self._selectors.new_chat is not None:
             with timer.span("browser_prep"):
                 started_new_chat = driver.start_new_chat(self._selectors)
-            events.append(("session.new_chat", {
+            yield ("session.new_chat", {
                 "status": "new_chat" if started_new_chat else "new_chat_skipped",
                 "target": job.target,
                 "adapter": self._selectors.provider_id,
@@ -590,33 +701,33 @@ class LiveSessionEngine:
                     if started_new_chat
                     else "no New-chat control found; continuing in the current chat"
                 ),
-            }))
+            })
 
         if job.config_enabled and self._selectors.settings:
             with timer.span("browser_prep"):
                 applied_settings = driver.ensure_provider_config(
                     self._selectors, overrides=job.provider_config
                 )
-            events.append(("session.configured", {
+            yield ("session.configured", {
                 "status": "configured",
                 "target": job.target,
                 "adapter": self._selectors.provider_id,
                 "settings": list(applied_settings),
                 "message": "enforced provider model/option settings before submit",
-            }))
+            })
         elif self._selectors.settings:
             # Config disabled for this job (_enabled=false or operator gate
             # off): skip the picker entirely and record WHY, so a drifted
             # model menu can never fail a job the operator chose to run
             # unconfigured. The prompt still submits in the account's current
             # mode — best-effort, never blocked.
-            events.append(("session.configured", {
+            yield ("session.configured", {
                 "status": "skipped_config_disabled",
                 "target": job.target,
                 "adapter": self._selectors.provider_id,
                 "settings": [],
                 "message": "provider settings skipped: config disabled for this job",
-            }))
+            })
 
         attach_paths = list(job.attachment_local_paths)
         # Back-compat: an older gateway materializes a single dictation-audio job
@@ -635,19 +746,19 @@ class LiveSessionEngine:
                 None,
             )
             if rejected is not None:
-                return {"events": events, "blocked": {
+                return {
                     "reason": "attachment_type_rejected",
                     "retryable": False,
                     "message": (
                         "Attachment %r has an invalid kind/content-type pair; "
                         "refusing to attach untrusted metadata."
                     ) % rejected["key"],
-                }}
+                }
             attach_supported = (
                 self._selectors.file_input is not None and bool(attach_paths)
             )
             if not attach_supported:
-                return {"events": events, "blocked": {
+                return {
                     "reason": "attachment_not_supported_by_target",
                     "retryable": False,
                     "message": (
@@ -655,7 +766,7 @@ class LiveSessionEngine:
                         "or the attachments were not materialized to local files); "
                         "refusing to submit without the requested attachments."
                     ),
-                }}
+                }
             # A missing/drifted file input raises DriftDetectedError, caught by the
             # existing drift handler — never a silent hang. attach_files takes the
             # full list, so all files land in one operation.
@@ -667,26 +778,27 @@ class LiveSessionEngine:
             attached_kinds = [item["kind"] for item in job.attachments]
             if not attached_kinds and job.audio_artifact_key:
                 attached_kinds = ["audio"]
-            events.append(("file.attached", {
+            yield ("file.attached", {
                 "status": "file_attached",
                 "target": job.target,
                 "adapter": self._selectors.provider_id,
                 "artifact_keys": attached_keys,
                 "attachment_kinds": attached_kinds,
                 "count": len(attach_paths),
-            }))
+            })
 
         with timer.span("provider_submit"):
             driver.submit_prompt(self._selectors, job.prompt)
 
         # Submit marker: past this line a retry would resubmit. Emitted only under
-        # UBAG_WORKER_STRICT_SUBMIT so the default event stream stays byte-identical.
+        # UBAG_WORKER_STRICT_SUBMIT (implied by UBAG_WORKER_STREAM_EVENTS) so the
+        # default event stream stays byte-identical.
         progress["submitted"] = True
-        if _env_flag("UBAG_WORKER_STRICT_SUBMIT", False):
-            events.append(("prompt_submitted", {
+        if streaming or _env_flag("UBAG_WORKER_STRICT_SUBMIT", False):
+            yield ("prompt_submitted", {
                 "status": "prompt_submitted",
                 "target": job.target,
-            }))
+            })
 
         # Reasoning modes need a longer ceiling; use the reasoning floor only when
         # this provider enables a slow thinking mode and config is on.
@@ -694,8 +806,11 @@ class LiveSessionEngine:
         if self._selectors.reasoning and job.config_enabled:
             stream_timeout_s = max(stream_timeout_s, _reasoning_response_timeout_s())
 
-        token_index = 0
+        token_index = 0  # token EVENTS emitted
+        delta_count = 0  # deltas received (== token_index unless coalesced)
         partial_parts: List[str] = []
+        tail_parts: List[str] = []  # deltas coalesced past token_budget
+        token_budget = _stream_token_budget() if streaming else None
         # first_token = submit -> first delta (blocked inside the generator's first
         # next()); provider_stream = first delta -> end of stream. A stream with no
         # deltas books its whole wait under provider_stream.
@@ -705,17 +820,31 @@ class LiveSessionEngine:
             if t_first is None:
                 t_first = time.perf_counter()
                 timer.add("first_token", t_first - t_wait)
-            events.append(("token", {
+            delta_count += 1
+            partial_parts.append(delta)
+            if token_budget is not None and token_index >= token_budget:
+                tail_parts.append(delta)
+                continue
+            yield ("token", {
                 "status": "token_streaming",
                 "target": job.target,
                 "token_index": token_index,
                 "delta": {"text": delta},
-            }))
+            })
             token_index += 1
-            partial_parts.append(delta)
 
         t_end = time.perf_counter()
         timer.add("provider_stream", t_end - (t_first if t_first is not None else t_wait))
+
+        if tail_parts:
+            # ponytail: one trailing event, not a live tail; P2.2 per-attempt budgets lift the cap.
+            yield ("token", {
+                "status": "token_streaming",
+                "target": job.target,
+                "token_index": token_index,
+                "delta": {"text": "".join(tail_parts)},
+            })
+            token_index += 1
 
         # Truncation guard (D4): a stream cut by its deadline is NOT a finished
         # answer. With the flag on it ends timed_out; the partial text rides in
@@ -726,7 +855,7 @@ class LiveSessionEngine:
             "UBAG_WORKER_STRICT_STREAM_END", False
         ):
             partial_text = "".join(partial_parts)
-            events.append(("timed_out", {
+            yield ("timed_out", {
                 "status": "timed_out",
                 "target": job.target,
                 "stream_end_reason": "deadline",
@@ -736,27 +865,27 @@ class LiveSessionEngine:
                 "metadata": {
                     "adapter": self._selectors.provider_id,
                     "selector_version": self._selectors.selector_version,
-                    "token_count": token_index,
+                    "token_count": delta_count,
                 },
-            }))
-            return {"events": events, "blocked": None}
+            })
+            return None
 
         return_mode = str((job.options or {}).get("return_mode") or "final")
         with timer.span("extraction"):
             result_text = driver.read_final_response(self._selectors, return_mode=return_mode)
             dom_signature = driver.dom_signature(self._selectors)
 
-        events.append(("completed", {
+        yield ("completed", {
             "status": "completed",
             "target": job.target,
             "result": {"type": "text", "text": result_text},
             "metadata": {
                 "adapter": self._selectors.provider_id,
                 "selector_version": self._selectors.selector_version,
-                "token_count": token_index,
+                "token_count": delta_count,
                 "dom_signature": dom_signature,
             },
-        }))
+        })
 
         # Bind / rebind the conversation key AFTER the response, once the provider
         # has assigned/settled the canonical chat URL. Best-effort like
@@ -773,16 +902,23 @@ class LiveSessionEngine:
         if bind_after_response or rebind_after_response or (
             self._chat_sink is not None and not resumed
         ):
-            chat_url = driver.current_thread_url(self._selectors)
+            try:
+                chat_url = driver.current_thread_url(self._selectors)
+            except Exception:  # noqa: BLE001
+                # Streaming: the terminal event is already out, so a second terminal
+                # (failed_terminal) is not allowed; the bind is best-effort. Buffered
+                # path keeps propagating (the whole interaction retries).
+                if not streaming:
+                    raise
         if chat_url and (bind_after_response or rebind_after_response):
             event_type = (
                 CONVERSATION_THREAD_REBOUND_EVENT_TYPE
                 if rebind_after_response
                 else CONVERSATION_THREAD_BOUND_EVENT_TYPE
             )
-            events.append((event_type, {
+            yield (event_type, {
                 _CONVERSATION_THREAD_REF_FIELD: chat_url,
-            }))
+            })
         if chat_url and self._chat_sink is not None and not resumed:
             # Best-effort: a ledger failure must never fail a job that already
             # produced a good answer (worst case: one chat is never reaped).
@@ -795,7 +931,8 @@ class LiveSessionEngine:
             except Exception:  # noqa: BLE001
                 pass
 
-        return {"events": events, "blocked": None}
+        return None
+
 
 def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _NormalizedJob:
     # Shared envelope normalization (live/envelope.py) with the engine's
@@ -879,6 +1016,26 @@ def _login_ready_extended_s() -> float:
         os.environ.get("UBAG_LOGIN_READY_EXTENDED_S"),
         _DEFAULT_LOGIN_READY_EXTENDED_S,
     )
+
+
+def _stream_events_enabled() -> bool:
+    """UBAG_WORKER_STREAM_EVENTS: yield events live after submit (default off)."""
+
+    return _env_flag("UBAG_WORKER_STREAM_EVENTS", False)
+
+
+def _stream_token_budget() -> int:
+    """Max live token events per interaction (env-overridable).
+
+    The gateway rejects a worker run of more than 512 events; one token event per
+    ~0.4 s poll can exceed that on a long reasoning stream. The default leaves
+    headroom for the lifecycle, terminal and telemetry events.
+    """
+
+    raw = os.environ.get("UBAG_WORKER_STREAM_MAX_TOKEN_EVENTS", "").strip()
+    if raw.isdigit() and int(raw) >= 1:
+        return int(raw)
+    return _DEFAULT_STREAM_TOKEN_EVENT_BUDGET
 
 
 def _interaction_attempts() -> int:
