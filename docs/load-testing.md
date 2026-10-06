@@ -196,6 +196,12 @@ Production exposes the same quantity as the histogram
 `ubag_voice_media_frames_dropped_total{direction="speaker"}` (the series used to be
 declared but never incremented).
 
+Client-link quality is sampled from `pc.GetStats()` every 2 s per live media
+session into label-free series: `ubag_voice_inbound_jitter_seconds` (histogram),
+`ubag_voice_inbound_packets_received_total` / `ubag_voice_inbound_packets_lost_total`
+(loss ratio = lost / (received + lost)) and the gauge `ubag_voice_mic_queue_depth`
+(frames queued toward relays, summed across sessions at scrape time).
+
 Offline bench (no network, no VPS): a real `MediaHub` plus a pion client over
 loopback against the in-test `fakeRelay` echo, client mic paced at the 20 ms
 Opus frame duration, sessions ramped 1/5/10/20 with one `fakeRelay` each:

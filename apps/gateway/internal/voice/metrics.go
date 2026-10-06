@@ -19,6 +19,29 @@ type MediaCounters struct {
 	sessionsEnded     map[string]*atomic.Int64
 	sessionsConnected atomic.Int64
 	frameAge          map[string]*frameAgeHist // guarded by mu
+	jitter            jitterHist               // guarded by mu
+	packetsReceived   atomic.Int64
+	packetsLost       atomic.Int64
+	queueDepth        atomic.Pointer[func() int]
+}
+
+// JitterBuckets are the ubag_voice_inbound_jitter_seconds upper bounds in
+// seconds: 1ms doubling to 512ms (RTP jitter on a healthy link is a few ms;
+// beyond ~80ms it is audible).
+var JitterBuckets = [...]float64{0.001, 0.002, 0.004, 0.008, 0.016, 0.032, 0.064, 0.128, 0.256, 0.512}
+
+type jitterHist struct {
+	buckets [len(JitterBuckets)]uint64 // non-cumulative; the +Inf remainder is count-sum(buckets)
+	count   uint64
+	sum     float64
+}
+
+// JitterSnapshot is the inbound-jitter histogram (non-cumulative buckets,
+// index-aligned with JitterBuckets).
+type JitterSnapshot struct {
+	Buckets [len(JitterBuckets)]uint64
+	Count   uint64
+	Sum     float64
 }
 
 // FrameAgeBuckets are the ubag_voice_relay_frame_age_seconds upper bounds in
@@ -91,6 +114,58 @@ func (m *MediaCounters) ObserveFrameAge(direction string, age time.Duration) {
 		}
 	}
 	m.mu.Unlock()
+}
+
+// ObserveInboundJitter implements LinkObserver. No per-session label.
+func (m *MediaCounters) ObserveInboundJitter(seconds float64) {
+	if seconds < 0 || seconds != seconds { // negative or NaN
+		return
+	}
+	m.mu.Lock()
+	m.jitter.count++
+	m.jitter.sum += seconds
+	for i, bound := range JitterBuckets {
+		if seconds <= bound {
+			m.jitter.buckets[i]++
+			break
+		}
+	}
+	m.mu.Unlock()
+}
+
+// SnapshotJitter returns the inbound-jitter histogram.
+func (m *MediaCounters) SnapshotJitter() JitterSnapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return JitterSnapshot{Buckets: m.jitter.buckets, Count: m.jitter.count, Sum: m.jitter.sum}
+}
+
+// AddInboundPackets implements LinkObserver (deltas; non-positive ignored).
+func (m *MediaCounters) AddInboundPackets(received, lost int64) {
+	if received > 0 {
+		m.packetsReceived.Add(received)
+	}
+	if lost > 0 {
+		m.packetsLost.Add(lost)
+	}
+}
+
+// InboundPackets returns the cumulative received and lost packet totals.
+func (m *MediaCounters) InboundPackets() (received, lost int64) {
+	return m.packetsReceived.Load(), m.packetsLost.Load()
+}
+
+// SetMicQueueDepthFunc registers the live mic-queue-depth reader (the hub's
+// MicQueueDepth); the gauge is evaluated at scrape time.
+func (m *MediaCounters) SetMicQueueDepthFunc(fn func() int) { m.queueDepth.Store(&fn) }
+
+// MicQueueDepth returns the frames currently queued toward relays (0 until a
+// reader is registered).
+func (m *MediaCounters) MicQueueDepth() int {
+	if fn := m.queueDepth.Load(); fn != nil && *fn != nil {
+		return (*fn)()
+	}
+	return 0
 }
 
 // SnapshotFrameAge returns both directions (zero-valued until observed so the

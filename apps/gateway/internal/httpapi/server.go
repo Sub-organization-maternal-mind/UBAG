@@ -1142,6 +1142,7 @@ func (s *Server) writeMetricsBody(ctx context.Context, w io.Writer) error {
 		_, _ = fmt.Fprint(w, "ubag_voice_sessions_ended_total{reason=\"peer_connection_failed\"} 0\n")
 	}
 	writeVoiceFrameAge(w, s.voiceMetrics)
+	writeVoiceLinkQuality(w, s.voiceMetrics)
 	if s.voice != nil {
 		active, queued, err := s.voice.GlobalSessionCounts(ctx)
 		if err == nil {
@@ -4220,6 +4221,35 @@ func writeVoiceFrameAge(w io.Writer, counters *voice.MediaCounters) {
 		_, _ = fmt.Fprintf(w, "ubag_voice_relay_frame_age_seconds_sum{%s} %.6f\n", labels, snap.Sum)
 		_, _ = fmt.Fprintf(w, "ubag_voice_relay_frame_age_seconds_count{%s} %d\n", labels, snap.Count)
 	}
+}
+
+// writeVoiceLinkQuality renders the label-free client-link series: inbound
+// jitter histogram, received/lost packet totals and the mic queue depth gauge.
+// A nil sink renders zeroed series so the families always exist.
+func writeVoiceLinkQuality(w io.Writer, counters *voice.MediaCounters) {
+	var snap voice.JitterSnapshot
+	var received, lost int64
+	var depth int
+	if counters != nil {
+		snap = counters.SnapshotJitter()
+		received, lost = counters.InboundPackets()
+		depth = counters.MicQueueDepth()
+	}
+	_, _ = fmt.Fprint(w, "# TYPE ubag_voice_inbound_jitter_seconds histogram\n")
+	var cumulative uint64
+	for i, bound := range voice.JitterBuckets {
+		cumulative += snap.Buckets[i]
+		_, _ = fmt.Fprintf(w, "ubag_voice_inbound_jitter_seconds_bucket{le=\"%s\"} %d\n", strconv.FormatFloat(bound, 'g', -1, 64), cumulative)
+	}
+	_, _ = fmt.Fprintf(w, "ubag_voice_inbound_jitter_seconds_bucket{le=\"+Inf\"} %d\n", snap.Count)
+	_, _ = fmt.Fprintf(w, "ubag_voice_inbound_jitter_seconds_sum %.6f\n", snap.Sum)
+	_, _ = fmt.Fprintf(w, "ubag_voice_inbound_jitter_seconds_count %d\n", snap.Count)
+	_, _ = fmt.Fprint(w, "# TYPE ubag_voice_inbound_packets_received_total counter\n")
+	_, _ = fmt.Fprintf(w, "ubag_voice_inbound_packets_received_total %d\n", received)
+	_, _ = fmt.Fprint(w, "# TYPE ubag_voice_inbound_packets_lost_total counter\n")
+	_, _ = fmt.Fprintf(w, "ubag_voice_inbound_packets_lost_total %d\n", lost)
+	_, _ = fmt.Fprint(w, "# TYPE ubag_voice_mic_queue_depth gauge\n")
+	_, _ = fmt.Fprintf(w, "ubag_voice_mic_queue_depth %d\n", depth)
 }
 
 func writeDurationHistogram(

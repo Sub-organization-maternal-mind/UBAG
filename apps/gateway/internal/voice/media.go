@@ -112,6 +112,96 @@ func (h *MediaHub) observeAge(direction string, since time.Time) {
 	}
 }
 
+// LinkObserver is optionally implemented by a MediaMetrics sink to receive the
+// client-link quality sampled from pc.GetStats. Aggregates only: there is no
+// session label anywhere (the metrics endpoint is unauthenticated).
+type LinkObserver interface {
+	// ObserveInboundJitter records one inbound audio RTP jitter sample (seconds).
+	ObserveInboundJitter(seconds float64)
+	// AddInboundPackets adds received/lost packet deltas since the last sample.
+	AddInboundPackets(received, lost int64)
+}
+
+// defaultStatsInterval is how often each live session's pc.GetStats is
+// sampled; MediaHub.StatsInterval overrides it (negative disables).
+const defaultStatsInterval = 2 * time.Second
+
+// inboundAudioStats folds a stats report into the worst inbound audio jitter
+// (seconds) and the summed received/lost packet totals. ok is false until an
+// audio stream has received a packet. Lost is clamped per stream (RTP loss
+// can go negative on duplicates).
+func inboundAudioStats(report webrtc.StatsReport) (jitter float64, received, lost int64, ok bool) {
+	for _, stat := range report {
+		var in webrtc.InboundRTPStreamStats
+		switch v := stat.(type) {
+		case webrtc.InboundRTPStreamStats:
+			in = v
+		case *webrtc.InboundRTPStreamStats:
+			if v == nil {
+				continue
+			}
+			in = *v
+		default:
+			continue
+		}
+		if in.Kind != "audio" || in.PacketsReceived == 0 {
+			continue
+		}
+		ok = true
+		if in.Jitter > jitter {
+			jitter = in.Jitter
+		}
+		received += int64(in.PacketsReceived)
+		if in.PacketsLost > 0 {
+			lost += int64(in.PacketsLost)
+		}
+	}
+	return jitter, received, lost, ok
+}
+
+// sampleLink runs for the life of one media session, folding pc.GetStats
+// into the sink at a fixed interval. Cumulative totals become deltas; a total
+// that goes backwards (stream replaced) yields a zero delta, never negative.
+func (h *MediaHub) sampleLink(ms *mediaSession) {
+	obs, ok := h.Metrics.(LinkObserver)
+	interval := h.StatsInterval
+	if interval == 0 {
+		interval = defaultStatsInterval
+	}
+	if !ok || interval < 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	var lastReceived, lastLost int64
+	for {
+		select {
+		case <-ms.done:
+			return
+		case <-ticker.C:
+		}
+		jitter, received, lost, have := inboundAudioStats(ms.pc.GetStats())
+		if !have {
+			continue
+		}
+		obs.ObserveInboundJitter(jitter)
+		obs.AddInboundPackets(received-lastReceived, lost-lastLost)
+		lastReceived, lastLost = received, lost
+	}
+}
+
+// MicQueueDepth sums the mic frames currently queued toward relays across
+// live sessions (each queue is bounded at micBufferDepth).
+func (h *MediaHub) MicQueueDepth() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	total := 0
+	for _, ms := range h.sessions {
+		total += len(ms.mic)
+	}
+	return total
+}
+
 type noopMediaMetrics struct{}
 
 func (noopMediaMetrics) AddFramesDropped(string, int64) {}
@@ -308,6 +398,9 @@ type MediaHub struct {
 	Dialer  RelayDialer
 	ICE     *ICEConfig // NAT traversal (nil = host candidates on the OS port range)
 	Metrics MediaMetrics
+	// StatsInterval is the pc.GetStats sampling period for link-quality
+	// metrics (zero = 2s, negative = off).
+	StatsInterval time.Duration
 
 	OnConnected func(Session)
 	// AuthorizeControl verifies the credential a client presents on the
@@ -560,6 +653,7 @@ func (h *MediaHub) HandleOffer(ctx context.Context, session Session, sdpOffer st
 
 	go ms.pumpMicToRelay(hub)
 	go ms.pumpRelayToSpeaker(hub)
+	go hub.sampleLink(ms)
 	return pc.LocalDescription().SDP, nil
 }
 

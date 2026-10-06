@@ -54,6 +54,24 @@ func TestMetricVoiceFrameAgeHistogramAlwaysPresent(t *testing.T) {
 	}
 }
 
+func TestMetricVoiceLinkQualityAlwaysPresentAndLabelFree(t *testing.T) {
+	server := NewServer(Config{Version: "test", AppSecret: "dev-secret"})
+	body := doJSON(server.Handler(), http.MethodGet, "/v1/metrics", "", nil).Body.String()
+	for _, expected := range []string{
+		`# TYPE ubag_voice_inbound_jitter_seconds histogram`,
+		`ubag_voice_inbound_jitter_seconds_bucket{le="0.001"} 0`,
+		`ubag_voice_inbound_jitter_seconds_bucket{le="+Inf"} 0`,
+		"ubag_voice_inbound_jitter_seconds_count 0\n",
+		"ubag_voice_inbound_packets_received_total 0\n",
+		"ubag_voice_inbound_packets_lost_total 0\n",
+		"ubag_voice_mic_queue_depth 0\n",
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("metrics missing %q", expected)
+		}
+	}
+}
+
 func TestMetricRouteLatencyCarriesMethodClass(t *testing.T) {
 	server := NewServer(Config{Version: "test", AppSecret: "dev-secret"})
 	handler := server.Handler()
