@@ -134,6 +134,10 @@ services:
       UBAG_VOICE_MEDIA_PORT_MAX: ${UBAG_VOICE_MEDIA_PORT_MAX:-}
       # Drop mic/speaker frames queued longer than this (0/empty = count bound only).
       UBAG_VOICE_QUEUE_MAX_AGE_MS: ${UBAG_VOICE_QUEUE_MAX_AGE_MS:-}
+      # Control jobs carry the browser-context index on multi-context environments (empty/0 = off).
+      UBAG_VOICE_CONTEXT_INDEX: ${UBAG_VOICE_CONTEXT_INDEX:-}
+      # Per-environment relay port = registered CDP port + offset (empty/0 = fixed port).
+      UBAG_VOICE_AUDIO_RELAY_PORT_OFFSET: ${UBAG_VOICE_AUDIO_RELAY_PORT_OFFSET:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -278,7 +282,12 @@ services:
       # UBAG_VOICE_AUDIO_ENABLED=1; the relay refuses all sessions without a
       # UBAG_VOICE_RELAY_SECRET (same value as on the gateway).
       UBAG_VOICE_AUDIO_ENABLED: ${UBAG_VOICE_AUDIO_ENABLED:-0}
-      UBAG_VOICE_RELAY_ADDR: ${UBAG_VOICE_RELAY_ADDR:-0.0.0.0:9099}
+      # Empty = the entrypoint's 0.0.0.0:9099 (or CDP proxy port + offset when
+      # UBAG_VOICE_RELAY_PORT_OFFSET is set). UBAG_VOICE_ENV_ID namespaces the
+      # Pulse devices and mic FIFO per environment (empty = historic names).
+      UBAG_VOICE_RELAY_ADDR: ${UBAG_VOICE_RELAY_ADDR:-}
+      UBAG_VOICE_RELAY_PORT_OFFSET: ${UBAG_VOICE_RELAY_PORT_OFFSET:-}
+      UBAG_VOICE_ENV_ID: ${UBAG_VOICE_ENV_ID:-}
       UBAG_VOICE_RELAY_SECRET: ${UBAG_VOICE_RELAY_SECRET:-}
       # Opt-in relay measurement: a JSON stats line every 10 s in /run/ubag/audio-relay.log.
       UBAG_VOICE_RELAY_STATS: ${UBAG_VOICE_RELAY_STATS:-0}

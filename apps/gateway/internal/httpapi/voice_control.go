@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -87,6 +88,47 @@ func (s *Server) voiceInstanceEndpoint(ctx context.Context, sess voice.Session) 
 	return ""
 }
 
+// voiceContextIndex returns the zero-based browser-context index the worker
+// must attach to when the session's environment hosts several provider
+// contexts (the worker fails closed on an ambiguous browser otherwise). The
+// index is the session's own (target, identity) context among the instance's
+// topology contexts in creation order, which mirrors the order the browser
+// opened them. ok=false with a nil error means a single-context environment
+// (or the flag is off): no index is sent and today's behaviour is unchanged.
+// A multi-context environment whose context cannot be pinned fails closed
+// instead of guessing.
+func (s *Server) voiceContextIndex(ctx context.Context, sess voice.Session) (index int, ok bool, err error) {
+	if !s.voiceContextIdx || s.topology == nil {
+		return 0, false, nil
+	}
+	contexts, err := s.topology.ListContexts(ctx, topology.ContextFilter{TenantID: sess.TenantID, InstanceID: sess.InstanceRef, Limit: 1000})
+	if err != nil {
+		return 0, false, errors.New("listing the environment's browser contexts failed")
+	}
+	if len(contexts) <= 1 {
+		return 0, false, nil
+	}
+	sort.SliceStable(contexts, func(i, j int) bool {
+		if !contexts[i].CreatedAt.Equal(contexts[j].CreatedAt) {
+			return contexts[i].CreatedAt.Before(contexts[j].CreatedAt)
+		}
+		return contexts[i].ContextID < contexts[j].ContextID
+	})
+	match := -1
+	for i, c := range contexts {
+		if c.TargetID == sess.Target && c.IdentityRef == sess.IdentityRef && c.InstanceID == sess.InstanceRef {
+			if match >= 0 {
+				return 0, false, errors.New("browser context is ambiguous for this session's identity")
+			}
+			match = i
+		}
+	}
+	if match < 0 {
+		return 0, false, errors.New("session's browser context is not registered on its environment")
+	}
+	return match, true, nil
+}
+
 // runVoiceControl creates and dispatches one control job and waits for its
 // terminal result. It returns the worker's result map (always carrying
 // "state" on success) or an error describing why no verified result exists.
@@ -97,6 +139,18 @@ func (s *Server) runVoiceControl(ctx context.Context, sess voice.Session, action
 	endpoint := s.voiceInstanceEndpoint(ctx, sess)
 	if endpoint == "" {
 		return nil, errors.New("leased browser environment has no registered CDP endpoint")
+	}
+	input := map[string]any{
+		"provider_id":  sess.Target,
+		"cdp_endpoint": endpoint,
+		"action":       action,
+	}
+	index, hasIndex, err := s.voiceContextIndex(ctx, sess)
+	if err != nil {
+		return nil, err
+	}
+	if hasIndex {
+		input["context"] = index
 	}
 	job, err := s.jobs.Create(ctx, jobstore.CreateRequest{
 		APIVersion:     s.apiVersion,
@@ -110,11 +164,7 @@ func (s *Server) runVoiceControl(ctx context.Context, sess voice.Session, action
 			"app_version": "1",
 			"sdk":         map[string]any{"name": "ubag-gateway", "version": "1"},
 		},
-		Input: map[string]any{
-			"provider_id":  sess.Target,
-			"cdp_endpoint": endpoint,
-			"action":       action,
-		},
+		Input:   input,
 		Options: map[string]any{"priority": "high", "timeout_seconds": int(timeout.Seconds())},
 		TraceID: generatedTraceID(),
 	})
