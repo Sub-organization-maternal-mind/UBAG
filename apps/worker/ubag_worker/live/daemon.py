@@ -188,7 +188,9 @@ class WarmWorkerDaemon:
         page empty, otherwise a brand-new cold one."""
         warm = self._warm.pop(key, None)
         if warm is not None:
-            if warm.prepare_for_next_job(selectors):
+            if self._resume_in_place(warm, selectors, payload) or warm.prepare_for_next_job(
+                selectors
+            ):
                 try:
                     warm.clear_attachment_state()
                     return warm
@@ -201,6 +203,31 @@ class WarmWorkerDaemon:
 
         options = payload.get("options") if isinstance(payload, Mapping) else None
         return self._driver_factory(options)
+
+    @staticmethod
+    def _resume_in_place(warm: PageDriver, selectors: Any, payload: Mapping[str, Any]) -> bool:
+        """UBAG_WARM_RESUME_FASTPATH (default off): skip the new-chat gate only
+        when this job resumes the very thread the warm page already shows.
+
+        The warm key (tenant, provider, profile) already matched to get here; the
+        driver must additionally prove the live page's URL equals the job's
+        conversation thread_ref. Any mismatch or doubt returns False and the full
+        ``prepare_for_next_job`` gate runs. ``clear_attachment_state`` still runs
+        in the caller; the engine's ``resume_thread`` still re-confirms the turn.
+        """
+        if os.environ.get("UBAG_WARM_RESUME_FASTPATH", "").strip().lower() not in (
+            "1", "true", "yes", "on",
+        ):
+            return False
+        try:
+            from .envelope import _conversation_binding
+
+            key, thread_ref, _ = _conversation_binding(payload)
+            return bool(
+                key is not None and thread_ref and warm.can_resume_in_place(selectors, thread_ref)
+            )
+        except Exception:  # noqa: BLE001 - any doubt keeps the full gate
+            return False
 
     def close(self) -> None:
         """Release every warm driver (daemon shutdown)."""

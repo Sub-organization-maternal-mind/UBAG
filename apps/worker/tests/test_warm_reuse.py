@@ -297,3 +297,131 @@ class TestDriftIsFailLoudNotWrongPatient:
         # ...but the read that would return the answer refuses to guess.
         with pytest.raises(DriftDetectedError):
             driver.read_final_response(GEMINI_WEB)
+
+
+# --- UBAG_WARM_RESUME_FASTPATH (daemon; default off) -------------------------
+
+THREAD = "https://gemini.google.com/app/abc123"
+
+
+class _GateSpyDriver(MockPageDriver):
+    def __init__(self) -> None:
+        super().__init__()
+        self.response_container_visible = False
+        self.gate_runs = 0
+        self.attachment_clears = 0
+
+    def prepare_for_next_job(self, selectors):
+        self.gate_runs += 1
+        return super().prepare_for_next_job(selectors)
+
+    def clear_attachment_state(self):
+        self.attachment_clears += 1
+        super().clear_attachment_state()
+
+
+class _ThreadEngine:
+    """Completes a job and leaves the page on THREAD."""
+
+    def __init__(self, selectors, **_kw):
+        pass
+
+    def iter_events(self, payload, *, driver=None):
+        driver.thread_url = THREAD
+        yield {"type": "completed", "data": {}}
+
+
+def _fp_payload(thread_ref=None, tenant="t1", profile="/profiles/gemini"):
+    payload = {
+        "tenant_id": tenant,
+        "job": {"target": "gemini_web", "options": {"user_data_dir": profile}},
+    }
+    if thread_ref is not None:
+        payload["conversation"] = {"key": "conv-1", "thread_ref": thread_ref}
+    return payload
+
+
+def _fp_daemon():
+    from ubag_worker.live.daemon import WarmWorkerDaemon
+
+    built = []
+
+    def factory(_options):
+        built.append(_GateSpyDriver())
+        return built[-1]
+
+    return WarmWorkerDaemon(driver_factory=factory, engine_factory=_ThreadEngine), built
+
+
+@pytest.fixture
+def _fastpath(monkeypatch):
+    monkeypatch.setenv("UBAG_PROFILE_DIR", "/profiles")
+    monkeypatch.setenv("UBAG_WARM_RESUME_FASTPATH", "1")
+
+
+class TestWarmResumeFastPath:
+    def test_same_thread_resume_skips_the_new_chat_gate(self, _fastpath):
+        daemon, built = _fp_daemon()
+        list(daemon.run_job(_fp_payload()))  # first job leaves the page on THREAD
+        list(daemon.run_job(_fp_payload(THREAD)))
+
+        assert len(built) == 1  # warm page reused
+        assert built[0].gate_runs == 0
+        assert built[0].started_new_chat is False
+        assert built[0].attachment_clears == 1  # clear_attachment_state still runs
+
+    def test_flag_off_keeps_the_full_gate(self, _fastpath, monkeypatch):
+        monkeypatch.delenv("UBAG_WARM_RESUME_FASTPATH")
+        daemon, built = _fp_daemon()
+        list(daemon.run_job(_fp_payload()))
+        list(daemon.run_job(_fp_payload(THREAD)))
+
+        assert built[0].gate_runs == 1 and built[0].started_new_chat is True
+
+    def test_url_mismatch_runs_the_full_gate(self, _fastpath):
+        daemon, built = _fp_daemon()
+        list(daemon.run_job(_fp_payload()))
+        list(daemon.run_job(_fp_payload(THREAD + "-other")))
+
+        assert built[0].gate_runs == 1 and built[0].started_new_chat is True
+
+    def test_no_conversation_runs_the_full_gate(self, _fastpath):
+        daemon, built = _fp_daemon()
+        list(daemon.run_job(_fp_payload()))
+        list(daemon.run_job(_fp_payload()))
+
+        assert built[0].gate_runs == 1
+
+    def test_different_tenant_or_profile_never_reuses_the_page(self, _fastpath):
+        daemon, built = _fp_daemon()
+        list(daemon.run_job(_fp_payload()))
+        list(daemon.run_job(_fp_payload(THREAD, tenant="t2")))
+        assert len(built) == 2 and built[0].closed is True
+
+        list(daemon.run_job(_fp_payload(THREAD, tenant="t2", profile="/profiles/other")))
+        assert len(built) == 3 and built[1].closed is True
+        assert all(b.gate_runs == 0 for b in built)  # cold pages never ran the gate
+
+    def test_closed_page_is_not_resumed_in_place(self, _fastpath):
+        daemon, built = _fp_daemon()
+        list(daemon.run_job(_fp_payload()))
+        built[0].closed = True
+        list(daemon.run_job(_fp_payload(THREAD)))
+
+        assert built[0].gate_runs == 1  # full gate ran, not the fast path
+
+    def test_base_driver_never_claims_in_place(self):
+        assert _BareDriver().can_resume_in_place(GEMINI_WEB, THREAD) is False
+
+    def test_live_driver_requires_exact_url_and_live_page(self):
+        driver = PlaywrightPageDriver()
+        assert driver.can_resume_in_place(GEMINI_WEB, THREAD) is False  # no page
+
+        class _P(_StubPage):
+            url = THREAD
+
+        driver._page = _P()
+        assert driver.can_resume_in_place(GEMINI_WEB, THREAD) is True
+        assert driver.can_resume_in_place(GEMINI_WEB, THREAD + "x") is False
+        driver._page = _P(closed=True)
+        assert driver.can_resume_in_place(GEMINI_WEB, THREAD) is False
