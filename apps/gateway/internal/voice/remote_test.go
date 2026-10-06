@@ -385,12 +385,19 @@ func TestRemoteMuteIsForwardedAndMustBeConfirmedByTheNode(t *testing.T) {
 	if err := r.neg.MuteSession(t.Context(), r.sess, false); err != nil || r.media.isMuted(call.Key()) {
 		t.Fatalf("unmute: %v, muted=%v", err, r.media.isMuted(call.Key()))
 	}
-	// A node that cannot be reached must not be reported as muted.
-	r.neg.cfg.Endpoint = func(context.Context, string) (string, error) { return "", errors.New("no endpoint") }
-	r.neg.Disconnect(r.sess.ID) // forget the supervised call so the control call needs a fresh dial
-	eventually(t, "supervisor gone", func() bool { return r.neg.callFor(r.sess.ID, call.AttemptID) == nil })
-	if err := r.neg.MuteSession(t.Context(), r.sess, true); !errors.Is(err, ErrNodeUnavailable) {
+	// A node that cannot be reached must not be reported as muted (a replica with no supervised
+	// call has to dial, and the dial fails).
+	cfg := remoteConfig(r.store, nil2dial)
+	other, err := NewRemoteNegotiator(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	if err := other.MuteSession(t.Context(), r.sess, true); !errors.Is(err, ErrNodeUnavailable) {
 		t.Fatalf("mute with the node unreachable = %v, want ErrNodeUnavailable", err)
+	}
+	if r.media.isMuted(call.Key()) {
+		t.Fatal("the unreachable replica's mute reached the node")
 	}
 }
 
@@ -1274,11 +1281,15 @@ func TestRemoteCloseStopsEverySupervisor(t *testing.T) {
 	if r.neg.callFor(r.sess.ID, r.att) != nil || r.h.closes.Load() == 0 {
 		t.Fatal("Close left a supervisor or a connection behind")
 	}
-	if _, err := r.neg.HandleOffer(context.Background(), r.sess, "v=0"); err == nil {
-		// A closed negotiator may still answer an offer but must not start a supervisor.
-		if r.neg.callFor(r.sess.ID, r.att) != nil {
-			t.Fatal("a closed negotiator started a supervisor")
-		}
+	// A closed negotiator starts no call: the offer fails and the call it just started on the node is ended.
+	if _, err := r.neg.HandleOffer(context.Background(), r.sess, "v=0"); !errors.Is(err, ErrNodeUnavailable) {
+		t.Fatalf("an offer to a closed negotiator = %v, want ErrNodeUnavailable", err)
+	}
+	if r.neg.callFor(r.sess.ID, r.att) != nil {
+		t.Fatal("a closed negotiator started a supervisor")
+	}
+	if r.h.count("control:VOICE_CONTROL_OP_TERMINATE") == 0 {
+		t.Fatal("the call started by the refused offer was not ended on the node")
 	}
 }
 

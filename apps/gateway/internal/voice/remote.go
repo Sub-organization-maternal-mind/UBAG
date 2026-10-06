@@ -433,7 +433,10 @@ func (n *RemoteNegotiator) HandleOffer(ctx context.Context, s Session, sdpOffer 
 			return abort(n.callError("mute", err))
 		}
 	}
-	if !n.register(c) {
+	switch n.register(c) {
+	case registerClosed:
+		return abort(fmt.Errorf("%w: the gateway is shutting down", ErrNodeUnavailable))
+	case registerShared:
 		c.cancel() // a concurrent offer for the same lease already supervises the call
 		_ = conn.Close()
 	}
@@ -649,19 +652,26 @@ func (n *RemoteNegotiator) newCall(parent context.Context, b AttemptBinding, con
 	return c
 }
 
-// register makes c the session's supervised call and starts it. It reports false
-// when a call of the same lease is already supervised (nothing is started then). An
-// older generation's call is retired: its node is told to end it.
-func (n *RemoteNegotiator) register(c *remoteCall) bool {
+type registration int
+
+const (
+	registerStarted registration = iota // c is the session's supervised call now
+	registerShared                      // a call of the same lease is already supervised: nothing was started
+	registerClosed                      // the negotiator is closed: nothing was started
+)
+
+// register makes c the session's supervised call and starts it. An older generation's
+// call is retired: its node is told to end it.
+func (n *RemoteNegotiator) register(c *remoteCall) registration {
 	n.mu.Lock()
 	if n.closed {
 		n.mu.Unlock()
-		return false
+		return registerClosed
 	}
 	old := n.calls[c.b.SessionID]
 	if old != nil && old.b.AttemptID == c.b.AttemptID {
 		n.mu.Unlock()
-		return false
+		return registerShared
 	}
 	n.calls[c.b.SessionID] = c
 	n.wg.Add(2)
@@ -689,7 +699,7 @@ func (n *RemoteNegotiator) register(c *remoteCall) bool {
 		c.finish()
 	}()
 	go func() { defer n.wg.Done(); defer c.finish(); c.events() }()
-	return true
+	return registerStarted
 }
 
 // finish stops the call's loops and releases its connection. It is idempotent.
