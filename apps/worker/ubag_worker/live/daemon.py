@@ -81,6 +81,15 @@ class WarmWorkerDaemon:
         # UBAG_ORCHESTRATOR_ENABLED is truthy) keeps behavior byte-identical.
         self._orchestrator = orchestrator
 
+    def warm_key(self, payload: Mapping[str, Any]) -> str:
+        """One-way hash of the physical session (protocol v2 JOB_END ``warm_key``)."""
+        target = _target_from_payload(payload)
+        return physical_session_key(
+            endpoint=os.environ.get("UBAG_REMOTE_BROWSER_ENDPOINT", ""),
+            user_data_dir=_normalize_payload(payload, target).user_data_dir,
+            target=target,
+        )
+
     def run_job(self, payload: Mapping[str, Any]) -> Iterator[JsonObject]:
         """Drive one job; in slot mode, under the physical-session identity lock."""
         if not identity_lock_enabled():

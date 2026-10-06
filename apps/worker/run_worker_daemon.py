@@ -31,11 +31,15 @@ from ubag_worker.live.daemon import WarmWorkerDaemon  # noqa: E402
 from ubag_worker.live.daemon_protocol import serve  # noqa: E402
 
 
+def _orchestrator_enabled() -> bool:
+    raw = os.environ.get("UBAG_ORCHESTRATOR_ENABLED", "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
 def _orchestrator_if_enabled(worker_id: str = "worker-daemon"):
     """LiveOrchestrator only when UBAG_ORCHESTRATOR_ENABLED is truthy (inert
     by default — matches the repo convention for risky runtime features)."""
-    raw = os.environ.get("UBAG_ORCHESTRATOR_ENABLED", "").strip().lower()
-    if raw not in ("1", "true", "yes", "on"):
+    if not _orchestrator_enabled():
         return None
     from ubag_worker.live.orchestrator import LiveOrchestrator
 
@@ -57,6 +61,15 @@ def _reap_orphan_slot_registries() -> None:
 
 
 def main() -> int:
+    from ubag_worker.live.identity_lock import slot_id
+
+    # Per-process AIMD would emit conflicting caps across pool slots.
+    if slot_id() is not None and _orchestrator_enabled():
+        sys.stderr.write(
+            "[ubag-daemon] UBAG_ORCHESTRATOR_ENABLED is not supported in slot mode "
+            "(UBAG_WORKER_SLOT_ID is set); refusing to start\n"
+        )
+        return 2
     _reap_orphan_slot_registries()
     daemon = WarmWorkerDaemon(orchestrator=_orchestrator_if_enabled())
 
