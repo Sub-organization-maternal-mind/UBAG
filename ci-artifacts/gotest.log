@@ -1,0 +1,75 @@
+# github.com/ubag/ubag/apps/gateway/internal/nodes [github.com/ubag/ubag/apps/gateway/internal/nodes.test]
+internal/nodes/allocation_source_test.go:400:33: not enough arguments in call to NewHTTPSource
+	have (string, nil)
+	want (string, string, *http.Client)
+internal/nodes/allocation_source_test.go:410:22: assignment mismatch: 4 variables but PollerConfigFromEnv returns 5 values
+internal/nodes/allocation_source_test.go:413:21: assignment mismatch: 4 variables but PollerConfigFromEnv returns 5 values
+internal/nodes/allocation_source_test.go:417:20: assignment mismatch: 4 variables but PollerConfigFromEnv returns 5 values
+internal/nodes/allocation_source_test.go:428:23: assignment mismatch: 4 variables but PollerConfigFromEnv returns 5 values
+ok  	github.com/ubag/ubag/apps/gateway/cmd/gateway	1.044s	coverage: 0.0% of statements [no tests to run]
+ok  	github.com/ubag/ubag/apps/gateway/cmd/ubag	1.043s	coverage: 28.8% of statements
+	github.com/ubag/ubag/apps/gateway/cmd/ubag-helper		coverage: 0.0% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/abac	1.029s	coverage: 75.0% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/alerts	1.240s	coverage: 37.9% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/antigravity	1.030s	coverage: 56.7% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/appjwt	1.751s	coverage: 86.2% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/artifacts	1.186s	coverage: 35.1% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/attachments	1.012s	coverage: 64.0% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/attemptcap	1.233s	coverage: 84.0% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/audit	1.232s	coverage: 59.8% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/authz	1.011s	coverage: 85.0% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/backup	1.198s	coverage: 54.7% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/cli	1.849s	coverage: 71.4% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/cli/tui	1.016s	coverage: 44.9% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/compliance	1.014s	coverage: 86.8% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/conversations	1.167s	coverage: 53.5% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/crypto	1.422s	coverage: 84.7% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/executor	48.246s	coverage: 81.4% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/grpcapi	1.518s	coverage: 44.6% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/helper	3.370s	coverage: 92.2% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/helper/runner	18.523s	coverage: 89.1% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/helper/staging	1.262s	coverage: 87.1% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/helper/voicehub	6.715s	coverage: 89.2% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/helperapi	2.525s	coverage: 76.0% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/helperauth	3.090s	coverage: 91.9% of statements
+	github.com/ubag/ubag/apps/gateway/internal/helperauth/authtest		coverage: 0.0% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/helperclient	18.496s	coverage: 83.6% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/helpermetrics	1.014s	coverage: 99.1% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/httpapi	15.715s	coverage: 67.3% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/idempotency	1.061s	coverage: 47.4% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/jitadmin	1.011s	coverage: 93.5% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/jobcore	1.019s	coverage: 54.5% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/jobs	9.541s	coverage: 70.0% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/mfa	4.773s	coverage: 86.5% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/middleware	1.034s	coverage: 56.5% of statements
+FAIL	github.com/ubag/ubag/apps/gateway/internal/nodes [build failed]
+ok  	github.com/ubag/ubag/apps/gateway/internal/obs	1.093s	coverage: 76.7% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/outbox	1.028s	coverage: 22.2% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/pat	1.128s	coverage: 89.9% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/payloadpolicy	1.018s	coverage: 80.8% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/plugins	1.143s	coverage: 67.0% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/profile	1.013s	coverage: 88.6% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/ratelimit	1.871s	coverage: 79.7% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/region	1.013s	coverage: 90.9% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/resilience	1.141s	coverage: 90.2% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/responsecache	1.174s	coverage: 58.5% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/retrypolicy	1.010s	coverage: 92.7% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/scim	1.290s	coverage: 57.3% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/semanticcache	1.011s	coverage: 84.1% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/serve	1.643s	coverage: 49.4% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/session	1.256s	coverage: 56.3% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/siem	1.074s	coverage: 67.0% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/sqlitestore	4.637s	coverage: 74.3% of statements
+	github.com/ubag/ubag/apps/gateway/internal/sqlitetest		coverage: 0.0% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/sso	1.993s	coverage: 69.9% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/storekit	1.010s	coverage: 12.5% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/storekit/benchutil	1.019s	coverage: 32.8% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/templates	1.012s	coverage: 92.6% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/tiermigrate	1.012s	coverage: 82.4% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/topology	2.603s	coverage: 64.6% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/voice	14.898s	coverage: 77.4% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/voiceplace	1.025s	coverage: 95.0% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/webhooks	19.565s	coverage: 53.1% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/workerdaemon	1.249s	coverage: 38.1% of statements
+ok  	github.com/ubag/ubag/apps/gateway/internal/workflow	1.157s	coverage: 55.7% of statements
+FAIL
