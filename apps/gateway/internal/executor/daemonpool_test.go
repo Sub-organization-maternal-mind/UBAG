@@ -374,6 +374,22 @@ func TestDaemonPoolSaturationReturnsABoundedOverload(t *testing.T) {
 	})
 }
 
+// With the strict-submit boundary on, a placement refusal never reached a daemon:
+// it reads as not-submitted, and the overload stays matchable so the consumer
+// still retries the lease after a delay instead of failing the job.
+func TestDaemonPoolOverloadStaysRetryableUnderStrictSubmit(t *testing.T) {
+	t.Setenv("UBAG_WORKER_STRICT_SUBMIT", "1")
+	pool, _ := newHelperPool(t, 1, func(p *DaemonPool) { p.MaxWait = 100 * time.Millisecond })
+	a := runAsync(pool, context.Background(), poolEnv("job_pool_a", "chatgpt_web", 600))
+	waitUntil(t, "slot busy", func() bool { busy, _ := pool.testCounts(); return busy == 1 })
+
+	_, err := pool.RunWorker(context.Background(), poolEnv("job_pool_b", "chatgpt_web", 0))
+	if !errors.Is(err, ErrPoolOverloaded) || !errors.Is(err, ErrNotSubmitted) || errors.Is(err, ErrAmbiguous) {
+		t.Fatalf("error = %v, want overloaded + not-submitted", err)
+	}
+	mustWindow(t, a)
+}
+
 // A cancelled waiter leaves the queue; it never occupies a slot or strands one.
 func TestDaemonPoolCancelledWaiterLeavesTheQueue(t *testing.T) {
 	pool, _ := newHelperPool(t, 1, nil)
