@@ -182,6 +182,10 @@ services:
       UBAG_WORKER_STREAM_INGEST: ${UBAG_WORKER_STREAM_INGEST:-}
       UBAG_WORKER_STREAM_EVENTS: ${UBAG_WORKER_STREAM_EVENTS:-}
       UBAG_WORKER_STRICT_SUBMIT: ${UBAG_WORKER_STRICT_SUBMIT:-}
+      # Worker profile-directory policy (legacy|namespaced) and the warm resume
+      # fast path; both reach the worker through the AllowedEnv allowlist.
+      UBAG_PROFILE_OPTIONS_POLICY: ${UBAG_PROFILE_OPTIONS_POLICY:-}
+      UBAG_WARM_RESUME_FASTPATH: ${UBAG_WARM_RESUME_FASTPATH:-}
       # Stream batching (gateway; empty = defaults): coalescing window in ms
       # (0 = one write per event) and the per-attempt byte budget.
       UBAG_WORKER_STREAM_FLUSH_MS: ${UBAG_WORKER_STREAM_FLUSH_MS:-}

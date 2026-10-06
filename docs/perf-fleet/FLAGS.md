@@ -21,9 +21,9 @@ Column meanings.
 | `UBAG_SSE_CLOSE_ON_TERMINAL` | gateway | off | none | managed | `apps/gateway/internal/httpapi/server.go` |
 | `UBAG_FILESPOOL_HONOR_NOT_BEFORE` | gateway | off | none | managed | `apps/gateway/internal/serve/serve.go` |
 | `UBAG_REDACT_REMOTE_ENDPOINT` | gateway | off | none | managed | `apps/gateway/internal/httpapi/topology_handlers.go` |
-| `UBAG_PROFILE_OPTIONS_POLICY` | worker | legacy | none | managed | `apps/worker/ubag_worker/live/envelope.py` |
+| `UBAG_PROFILE_OPTIONS_POLICY` | worker | legacy | empty | managed | `apps/worker/ubag_worker/live/envelope.py` |
 | `UBAG_VOICE_RECONCILER_FAIL_CLOSED` | gateway | off | empty | managed | `apps/gateway/internal/serve/serve.go` |
-| `UBAG_WARM_RESUME_FASTPATH` | worker | off | none | managed | `apps/worker/ubag_worker/live/daemon.py` |
+| `UBAG_WARM_RESUME_FASTPATH` | worker | off | empty | managed | `apps/worker/ubag_worker/live/daemon.py` |
 | `UBAG_EXECUTOR_ATTEMPTS` | gateway | off | none | managed | `apps/gateway/internal/serve/serve.go` |
 | `UBAG_HELPER_NODES` | gateway | off | none | managed | `apps/gateway/internal/serve/helper_nodes.go` |
 | `UBAG_HELPER_PLANE` | gateway | off | none | managed | `apps/gateway/internal/serve/helper_plane.go` |

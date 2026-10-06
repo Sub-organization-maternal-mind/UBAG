@@ -66,6 +66,10 @@ var AllowedEnv = map[string]struct{}{
 	"UBAG_SYNTHETIC_PROVIDER":     {},
 	"UBAG_SYNTHETIC_PROVIDER_URL": {},
 	"UBAG_WORKER_STAGE_TIMINGS":   {},
+	// Tenant-isolation / warm-path worker flags (non-secret): without these here a
+	// gateway-spawned worker silently stays in legacy profile mode.
+	"UBAG_PROFILE_OPTIONS_POLICY": {},
+	"UBAG_WARM_RESUME_FASTPATH":   {},
 }
 
 // FilterEnv returns the allowlisted environment minus the keys in deny
