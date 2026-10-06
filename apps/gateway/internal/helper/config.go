@@ -36,6 +36,9 @@ const (
 	EnvAdaptersDir     = "UBAG_HELPER_ADAPTERS_DIR"        // adapter registry directory (default ./adapters)
 	EnvChromeBin       = "UBAG_HELPER_CHROME_BIN"          // optional explicit Chrome path; else looked up on PATH
 	EnvMaxAttempts     = "UBAG_HELPER_MAX_ATTEMPTS"        // concurrent attempts, 1..8 (default 1)
+	EnvWorkerScript    = "UBAG_HELPER_WORKER_SCRIPT"       // path of apps/worker/run_worker_daemon.py (the warm worker the pool runs)
+	EnvWorkerPython    = "UBAG_HELPER_WORKER_PYTHON"       // interpreter for it (default "python")
+	EnvProfileRoot     = "UBAG_HELPER_PROFILE_ROOT"        // directory the node's browser profiles live under (the worker's UBAG_PROFILE_DIR)
 	defaultAdaptersDir = "adapters"
 	shutdownGrace      = 20 * time.Second
 )
@@ -142,6 +145,12 @@ type Settings struct {
 	AdaptersDir     string
 	ChromeBin       string
 	MaxAttempts     int
+	// WorkerScript, WorkerPython and ProfileRoot configure the worker pool the
+	// binary wires in (internal/helper/runner). They are optional here so the
+	// service core stays usable without a worker; cmd/ubag-helper requires the script.
+	WorkerScript string
+	WorkerPython string
+	ProfileRoot  string
 }
 
 // SettingsFromEnv validates the process environment (KEY=VALUE entries, e.g.
@@ -160,6 +169,7 @@ func SettingsFromEnv(environ []string, lookPath func(string) (string, error)) (S
 		Listen: env[EnvListen], NodeID: env[EnvNodeID], CAFile: env[EnvCAFile], TLSCertFile: env[EnvTLSCertFile],
 		TLSKeyFile: env[EnvTLSKeyFile], PrimaryURISAN: env[EnvPrimaryURISAN], WorkloadVersion: env[EnvWorkloadVersion],
 		AdaptersDir: env[EnvAdaptersDir], MaxAttempts: 1,
+		WorkerScript: env[EnvWorkerScript], WorkerPython: env[EnvWorkerPython], ProfileRoot: env[EnvProfileRoot],
 	}
 	if st.AdaptersDir == "" {
 		st.AdaptersDir = defaultAdaptersDir

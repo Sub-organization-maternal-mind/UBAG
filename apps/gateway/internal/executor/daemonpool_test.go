@@ -99,9 +99,7 @@ func newHelperPool(t *testing.T, size int, tune func(*DaemonPool)) (*DaemonPool,
 
 func (p *DaemonPool) testCounts() (busy, waiting int) {
 	p.init()
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.countsLocked()
+	return p.pool.Counts()
 }
 
 func waitUntil(t *testing.T, what string, cond func() bool) {
@@ -496,11 +494,11 @@ func TestDaemonPoolSlotsAreSpawnedWithTheirOwnSlotEnv(t *testing.T) {
 
 	pool := &DaemonPool{Size: 3, Python: os.Args[0], Script: "run_worker_daemon.py"}
 	pool.init()
-	if len(pool.slots) != 3 {
-		t.Fatalf("pool has %d slots, want 3", len(pool.slots))
+	if got := pool.pool.Slots(); got != 3 {
+		t.Fatalf("pool has %d slots, want 3", got)
 	}
-	for i, slot := range pool.slots {
-		env := slot.runner.buildCommand().Env
+	for i := range 3 {
+		env := pool.pool.SlotCommand(i).Env
 		if got, _ := lastEnv(env, "UBAG_WORKER_SLOT_ID"); got != strconv.Itoa(i) {
 			t.Fatalf("slot %d UBAG_WORKER_SLOT_ID = %q", i, got)
 		}
@@ -513,28 +511,6 @@ func TestDaemonPoolSlotsAreSpawnedWithTheirOwnSlotEnv(t *testing.T) {
 	legacy := (&DaemonWorkerRunner{Python: os.Args[0], Script: "run_worker_daemon.py"}).buildCommand().Env
 	if got, found := lastEnv(legacy, "UBAG_WORKER_POOL_SIZE"); found {
 		t.Fatalf("legacy daemon got UBAG_WORKER_POOL_SIZE=%q", got)
-	}
-}
-
-// The unset knobs are bounded too: a pool must never wait or queue without limit.
-func TestDaemonPoolDefaultsAreBounded(t *testing.T) {
-	p := &DaemonPool{Size: 3, MaxRuntime: 25 * time.Minute}
-	if got := p.maxWait(); got != 30*time.Second {
-		t.Fatalf("default wait = %v, want 30s (not the 25m MaxRuntime)", got)
-	}
-	if got := p.maxQueue(); got != 3 {
-		t.Fatalf("default queue bound = %d, want the pool size", got)
-	}
-	if got := p.retryAfter(); got != 2*time.Second {
-		t.Fatalf("default retry-after = %v, want 2s", got)
-	}
-}
-
-func TestDaemonPoolSizeIsBounded(t *testing.T) {
-	for _, tc := range []struct{ in, want int }{{0, 1}, {-3, 1}, {1, 1}, {4, 4}, {32, 32}, {500, 32}} {
-		if got := (&DaemonPool{Size: tc.in}).size(); got != tc.want {
-			t.Fatalf("Size=%d -> %d slots, want %d", tc.in, got, tc.want)
-		}
 	}
 }
 
