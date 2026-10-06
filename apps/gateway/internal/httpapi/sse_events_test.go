@@ -30,6 +30,13 @@ type sseFixture struct {
 
 func newSSEFixture(t *testing.T, heartbeat time.Duration) *sseFixture {
 	t.Helper()
+	return newSSEFixtureCfg(t, heartbeat, nil, nil)
+}
+
+// newSSEFixtureCfg lets a test wrap the store (e.g. with a wake hub) and set
+// server Config fields.
+func newSSEFixtureCfg(t *testing.T, heartbeat time.Duration, wrap func(*jobstore.MemoryStore) jobstore.Store, mutate func(*Config)) *sseFixture {
+	t.Helper()
 	if heartbeat > 0 {
 		previous := sseHeartbeatInterval
 		sseHeartbeatInterval = heartbeat
@@ -44,7 +51,15 @@ func newSSEFixture(t *testing.T, heartbeat time.Duration) *sseFixture {
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
-	handler := NewServer(Config{AppSecret: "dev-secret", TenantID: sseTestTenant, AppID: sseTestApp, Jobs: store}).Handler()
+	var jobs jobstore.Store = store
+	if wrap != nil {
+		jobs = wrap(store)
+	}
+	cfg := Config{AppSecret: "dev-secret", TenantID: sseTestTenant, AppID: sseTestApp, Jobs: jobs}
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	handler := NewServer(cfg).Handler()
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 	return &sseFixture{store: store, server: server, job: job}
@@ -134,7 +149,7 @@ func TestSSEReplaysFromZeroAndDoesNotCloseOnTerminalEvent(t *testing.T) {
 		"status": "completed", "result": map[string]any{"type": "text", "text": "done"},
 	})
 
-	// Last-Event-ID is ignored today: replay always starts at sequence 0.
+	// An unknown Last-Event-ID falls back to a replay from sequence 0.
 	frames, _, resp := f.openSSE(t, "", map[string]string{"Last-Event-ID": "does-not-matter"})
 	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
 		t.Fatalf("content-type = %q, want text/event-stream", ct)
