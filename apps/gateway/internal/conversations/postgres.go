@@ -11,8 +11,9 @@ import (
 
 // PostgresStore is a Store backed by Postgres (github.com/jackc/pgx/v5/stdlib,
 // driver "pgx"). Its schema is migration-driven
-// (migrations/postgres/0010_conversations.sql); Ready asserts the table exists
-// and never creates it. Bind upserts by the full conversation key via
+// (migrations/postgres/0010_conversations.sql plus the node_id/profile_ref
+// columns from 0024_helper_profiles.sql); Ready asserts the table and those
+// columns exist and never creates them. Bind upserts by the full conversation key via
 // ON CONFLICT DO UPDATE.
 type PostgresStore struct {
 	db *sql.DB
@@ -25,7 +26,7 @@ func NewPostgresStore(db *sql.DB) *PostgresStore {
 
 const pgConversationColumns = `
 tenant_id, app_id, target, conversation_key, provider_thread_ref, state,
-created_at, last_used_at, last_job_id`
+created_at, last_used_at, last_job_id, node_id, profile_ref`
 
 func (s *PostgresStore) Ready(ctx context.Context) error {
 	if s == nil || s.db == nil {
@@ -34,7 +35,20 @@ func (s *PostgresStore) Ready(ctx context.Context) error {
 	if err := s.db.PingContext(ctx); err != nil {
 		return err
 	}
-	return storekit.RequirePostgresObject(ctx, s.db, "gateway_conversations")
+	if err := storekit.RequirePostgresObject(ctx, s.db, "gateway_conversations"); err != nil {
+		return err
+	}
+	var columns int
+	if err := s.db.QueryRowContext(ctx, `
+SELECT COUNT(1) FROM information_schema.columns
+WHERE table_schema = current_schema() AND table_name = 'gateway_conversations'
+  AND column_name IN ('node_id', 'profile_ref')`).Scan(&columns); err != nil {
+		return err
+	}
+	if columns != 2 {
+		return fmt.Errorf("conversations: gateway_conversations.node_id/profile_ref are missing; apply migrations/postgres/0024_helper_profiles.sql")
+	}
+	return nil
 }
 
 func (s *PostgresStore) Resolve(ctx context.Context, key Key) (Conversation, bool, error) {
@@ -66,17 +80,22 @@ func (s *PostgresStore) Bind(ctx context.Context, conv Conversation) (Conversati
 	if s == nil || s.db == nil {
 		return Conversation{}, fmt.Errorf("conversations: postgres store is not configured")
 	}
-	prepareBind(&conv)
+	if err := prepareBind(&conv); err != nil {
+		return Conversation{}, err
+	}
 	if _, err := s.db.ExecContext(ctx, `
 INSERT INTO gateway_conversations (`+pgConversationColumns+`)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (tenant_id, app_id, target, conversation_key) DO UPDATE SET
 	provider_thread_ref = excluded.provider_thread_ref,
 	state = excluded.state,
 	last_used_at = excluded.last_used_at,
-	last_job_id = excluded.last_job_id`,
+	last_job_id = excluded.last_job_id,
+	node_id = excluded.node_id,
+	profile_ref = excluded.profile_ref`,
 		conv.TenantID, conv.AppID, conv.Target, conv.ConversationKey,
-		conv.ProviderThreadRef, conv.State, conv.CreatedAt, nullableTime(conv.LastUsedAt), conv.LastJobID); err != nil {
+		conv.ProviderThreadRef, conv.State, conv.CreatedAt, nullableTime(conv.LastUsedAt), conv.LastJobID,
+		conv.NodeID, conv.ProfileRef); err != nil {
 		return Conversation{}, fmt.Errorf("conversations: bind: %w", err)
 	}
 	got, found, err := s.Resolve(ctx, keyOf(conv))
@@ -107,6 +126,24 @@ func (s *PostgresStore) MarkBroken(ctx context.Context, key Key, at time.Time) (
 		return Conversation{}, false, err
 	}
 	return s.Resolve(ctx, key)
+}
+
+func (s *PostgresStore) MarkNodeBroken(ctx context.Context, nodeID string) (int, error) {
+	if s == nil || s.db == nil {
+		return 0, fmt.Errorf("conversations: postgres store is not configured")
+	}
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return 0, nil
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE gateway_conversations SET state = $1 WHERE node_id = $2 AND state = $3`,
+		StateBroken, nodeID, StateActive)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 func (s *PostgresStore) Touch(ctx context.Context, key Key, jobID string, at time.Time) error {
@@ -181,7 +218,8 @@ func scanPostgresConversations(rows *sql.Rows) ([]Conversation, error) {
 		var conv Conversation
 		var lastUsedAt sql.NullTime
 		if err := rows.Scan(&conv.TenantID, &conv.AppID, &conv.Target, &conv.ConversationKey,
-			&conv.ProviderThreadRef, &conv.State, &conv.CreatedAt, &lastUsedAt, &conv.LastJobID); err != nil {
+			&conv.ProviderThreadRef, &conv.State, &conv.CreatedAt, &lastUsedAt, &conv.LastJobID,
+			&conv.NodeID, &conv.ProfileRef); err != nil {
 			return nil, err
 		}
 		conv.CreatedAt = conv.CreatedAt.UTC()

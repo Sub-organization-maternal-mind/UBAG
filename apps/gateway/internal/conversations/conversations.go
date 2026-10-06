@@ -41,6 +41,14 @@ type Key struct {
 // Conversation is a durable binding from a caller conversation key to a
 // provider chat thread. ProviderThreadRef is a chat URL only — never cookies,
 // storage state, or noVNC URLs.
+//
+// NodeID and ProfileRef are the helper-plane affinity (UBAG_HELPER_PLANE): the
+// helper node and the opaque profile_ref whose logged-in browser profile holds
+// the chat thread. Both are empty for a conversation run by the local worker.
+// They are set together or not at all, and are internal routing metadata: they
+// never appear in the tenant-facing JSON (fleet node ids are not tenant data).
+// A lost node marks its conversations broken in place (MarkNodeBroken); the
+// thread is never moved to another node or profile.
 type Conversation struct {
 	TenantID          string    `json:"tenant_id"`
 	AppID             string    `json:"app_id"`
@@ -51,6 +59,8 @@ type Conversation struct {
 	CreatedAt         time.Time `json:"created_at"`
 	LastUsedAt        time.Time `json:"last_used_at"`
 	LastJobID         string    `json:"last_job_id,omitempty"`
+	NodeID            string    `json:"-"`
+	ProfileRef        string    `json:"-"`
 }
 
 // Filter constrains a List query. Results are ordered by LastUsedAt
@@ -81,6 +91,12 @@ type Store interface {
 	// Touch records that key was used by jobID at at without changing the
 	// binding's thread ref or state. A missing key is a no-op, never an error.
 	Touch(ctx context.Context, key Key, jobID string, at time.Time) error
+	// MarkNodeBroken transitions every active binding whose NodeID is nodeID
+	// (any tenant: a lost node takes all its threads with it) to
+	// State=broken and returns how many it changed. The binding itself
+	// (node, profile, thread ref) is left intact, so nothing is migrated to
+	// another node. An empty nodeID matches nothing.
+	MarkNodeBroken(ctx context.Context, nodeID string) (int, error)
 	// List returns bindings matching filter ordered by LastUsedAt descending
 	// (most recently used first).
 	List(ctx context.Context, filter Filter) ([]Conversation, error)
@@ -108,9 +124,24 @@ func matchesKey(conv Conversation, key Key) bool {
 		conv.ConversationKey == key.ConversationKey
 }
 
+// maxAffinityLen bounds node_id and profile_ref (nodes.nodeIDRe allows 64, the
+// helper profile_ref pattern 128).
+const maxAffinityLen = 128
+
+// ErrInvalidAffinity: node_id and profile_ref must be set together (a half
+// binding cannot be resumed anywhere) and be bounded.
+var ErrInvalidAffinity = fmt.Errorf("conversations: node_id and profile_ref must be set together and at most %d bytes", maxAffinityLen)
+
 // prepareBind normalises an incoming binding prior to an upsert. A Bind always
-// records an active thread, so State is forced to StateActive.
-func prepareBind(conv *Conversation) {
+// records an active thread, so State is forced to StateActive. It fails closed
+// on a half-set or oversized helper affinity.
+func prepareBind(conv *Conversation) error {
+	conv.NodeID = strings.TrimSpace(conv.NodeID)
+	conv.ProfileRef = strings.TrimSpace(conv.ProfileRef)
+	if (conv.NodeID == "") != (conv.ProfileRef == "") ||
+		len(conv.NodeID) > maxAffinityLen || len(conv.ProfileRef) > maxAffinityLen {
+		return ErrInvalidAffinity
+	}
 	conv.TenantID = strings.TrimSpace(conv.TenantID)
 	conv.AppID = strings.TrimSpace(conv.AppID)
 	conv.Target = strings.TrimSpace(conv.Target)
@@ -126,6 +157,7 @@ func prepareBind(conv *Conversation) {
 		conv.LastUsedAt = conv.CreatedAt
 	}
 	conv.LastUsedAt = conv.LastUsedAt.UTC().Truncate(time.Microsecond)
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +195,9 @@ func (m *MemoryStore) Bind(_ context.Context, conv Conversation) (Conversation, 
 	if m == nil {
 		return Conversation{}, fmt.Errorf("conversations: store is not configured")
 	}
-	prepareBind(&conv)
+	if err := prepareBind(&conv); err != nil {
+		return Conversation{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -223,6 +257,25 @@ func (m *MemoryStore) Touch(_ context.Context, key Key, jobID string, at time.Ti
 	}
 	// A missing key is a no-op, never an error.
 	return nil
+}
+
+func (m *MemoryStore) MarkNodeBroken(_ context.Context, nodeID string) (int, error) {
+	nodeID = strings.TrimSpace(nodeID)
+	if m == nil || nodeID == "" {
+		return 0, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	changed := 0
+	for _, chain := range m.byTenant {
+		for i := range chain {
+			if chain[i].NodeID == nodeID && chain[i].State == StateActive {
+				chain[i].State = StateBroken
+				changed++
+			}
+		}
+	}
+	return changed, nil
 }
 
 func (m *MemoryStore) List(_ context.Context, filter Filter) ([]Conversation, error) {
@@ -332,6 +385,15 @@ func (m *Manager) Touch(ctx context.Context, key Key, jobID string, at time.Time
 		return nil
 	}
 	return m.store.Touch(ctx, key, jobID, at)
+}
+
+// MarkNodeBroken marks every active binding on nodeID broken (see
+// Store.MarkNodeBroken). A nil manager is a no-op.
+func (m *Manager) MarkNodeBroken(ctx context.Context, nodeID string) (int, error) {
+	if m == nil || m.store == nil {
+		return 0, nil
+	}
+	return m.store.MarkNodeBroken(ctx, nodeID)
 }
 
 // List returns bindings matching filter. Unlike the hot-path methods, List is

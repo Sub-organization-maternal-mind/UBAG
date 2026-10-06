@@ -46,7 +46,9 @@ var (
 
 	// Local-only job options: the worker resolves these to a profile directory
 	// on the primary's filesystem, meaningless (and path-leaking) on a helper.
-	helperDroppedOptions = []string{"user_data_dir", "profile_dir", "profile_path"}
+	// account_binding_id is the caller-supplied identity label; on a helper the
+	// identity is the primary-issued profile_ref only.
+	helperDroppedOptions = []string{"user_data_dir", "profile_dir", "profile_path", "account_binding_id"}
 	// Primary-local input fields injected by attachment materialisation.
 	helperDroppedInputs = []string{"attachment_local_paths", "audio_local_path"}
 
