@@ -7,21 +7,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
-	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/jobs"
+	"github.com/ubag/ubag/apps/gateway/internal/workerdaemon"
 )
 
 // daemonJobEndKey marks the terminal control line of a job. It mirrors JOB_END
 // in ubag_worker/live/daemon_protocol.py -- keep the two in sync.
-const daemonJobEndKey = "__ubag_job_end__"
+const daemonJobEndKey = workerdaemon.JobEndKey
 
 // DaemonWorkerRunner drives jobs through ONE long-lived worker process instead of
 // spawning a worker per job (ProcessWorkerRunner). The daemon keeps browser pages
@@ -55,33 +53,20 @@ type DaemonWorkerRunner struct {
 	slotID   int
 	poolSize int
 
-	mu     sync.Mutex
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	// stdoutFile is our read end of the daemon's stdout. Pipes are created
-	// explicitly rather than via cmd.StdoutPipe() because Cmd.Wait() closes the
-	// pipes it creates: the reaper goroutine below would then be free to close
-	// stdout the instant the daemon exits, truncating a report mid-read. Owning
-	// the fd means only discardDaemon() closes it, after the read is done.
-	stdoutFile *os.File
-	// exited is closed by the reaper goroutine when the daemon process dies, so
-	// ensureDaemon can tell a live daemon from a corpse. exec.Cmd cannot: it only
-	// populates ProcessState once Wait() returns.
-	exited chan struct{}
+	procOnce sync.Once
+	proc     *workerdaemon.Process
 }
 
-type daemonJobEnd struct {
-	End    bool   `json:"__ubag_job_end__"`
-	JobID  string `json:"job_id"`
-	Status string `json:"status"`
-	Error  string `json:"error"`
-}
-
-type daemonJobRequest struct {
-	JobID     string           `json:"job_id"`
-	DeadlineS float64          `json:"deadline_s"`
-	Payload   DispatchEnvelope `json:"payload"`
+// process is the supervised daemon behind this runner, built on first use so the
+// exported fields and test hooks can be set after construction.
+func (r *DaemonWorkerRunner) process() *workerdaemon.Process {
+	r.procOnce.Do(func() {
+		r.proc = &workerdaemon.Process{
+			Python: r.Python, Script: r.Script, NewCommand: r.newCommand,
+			SlotMode: r.slotMode, SlotID: r.slotID, PoolSize: r.poolSize,
+		}
+	})
+	return r.proc
 }
 
 // runDaemonJob is the batch form of the protocol: it buffers every line and
@@ -153,10 +138,10 @@ func streamDaemonJobTracked(
 	})
 }
 
-// readDaemonJob is the protocol core: one request line out, then lines in
-// (each handed to onLine, trimmed and non-empty) until the terminal marker.
-// Split out from process management so it is testable without spawning
-// anything.
+// readDaemonJob is the protocol core (workerdaemon.ReadJob): one request line
+// out, then lines in (each handed to onLine, trimmed and non-empty) until the
+// terminal marker. Split out from process management so it is testable without
+// spawning anything.
 func readDaemonJob(
 	stdin io.Writer,
 	stdout *bufio.Reader,
@@ -165,216 +150,26 @@ func readDaemonJob(
 	submitted *atomic.Bool,
 	onLine func(line string) error,
 ) error {
-	request, err := json.Marshal(daemonJobRequest{
+	var observe func(string)
+	if submitted != nil {
+		observe = func(line string) {
+			if lineIsPromptSubmitted(line) {
+				submitted.Store(true)
+			}
+		}
+	}
+	return workerdaemon.ReadJob(stdin, stdout, workerdaemon.Request{
 		JobID:     envelope.JobID,
 		DeadlineS: maxRuntime.Seconds(),
 		Payload:   envelope,
-	})
-	if err != nil {
-		return err
-	}
-	if _, err := stdin.Write(append(request, '\n')); err != nil {
-		return fmt.Errorf("worker daemon stdin: %w", err)
-	}
-
-	bytesRead := 0
-	for {
-		line, err := readBoundedDaemonLine(stdout, maxWorkerOutputBytes)
-		if err != nil {
-			return fmt.Errorf("worker daemon ended without a terminal marker: %w", err)
-		}
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			continue
-		}
-
-		if end, ok := parseDaemonJobEnd(trimmed); ok {
-			if end.JobID != envelope.JobID {
-				return fmt.Errorf(
-					"worker daemon terminal marker job_id %q does not match active job %q",
-					end.JobID,
-					envelope.JobID,
-				)
-			}
-			if end.Status != "completed" {
-				if strings.TrimSpace(end.Error) != "" {
-					return fmt.Errorf("worker daemon job failed: %s", end.Error)
-				}
-				return fmt.Errorf("worker daemon job failed")
-			}
-			return nil
-		}
-
-		if submitted != nil && lineIsPromptSubmitted(trimmed) {
-			submitted.Store(true)
-		}
-
-		bytesRead += len(line) + 1
-		if bytesRead > maxWorkerOutputBytes {
-			return fmt.Errorf("worker daemon stdout exceeded %d bytes", maxWorkerOutputBytes)
-		}
-		if err := onLine(trimmed); err != nil {
-			return err
-		}
-	}
+	}, maxWorkerOutputBytes, observe, onLine)
 }
 
 func readBoundedDaemonLine(reader *bufio.Reader, limit int) (string, error) {
-	if limit <= 0 {
-		return "", fmt.Errorf("worker daemon stdout line limit is invalid")
-	}
-	var line bytes.Buffer
-	for {
-		fragment, isPrefix, err := reader.ReadLine()
-		if err != nil {
-			if line.Len() > 0 || len(fragment) > 0 {
-				return "", fmt.Errorf("worker daemon output truncated mid-line")
-			}
-			return "", err
-		}
-		if line.Len()+len(fragment) > limit {
-			return "", fmt.Errorf("worker daemon stdout line exceeded %d bytes", limit)
-		}
-		_, _ = line.Write(fragment)
-		if !isPrefix {
-			return line.String(), nil
-		}
-	}
+	return workerdaemon.ReadBoundedLine(reader, limit)
 }
 
-// parseDaemonJobEnd reports whether a line is the terminal control marker. The
-// marker carries no "type", so it would fail parseWorkerJSONL's validation if it
-// were ever treated as an event -- it must be consumed as control.
-func parseDaemonJobEnd(line string) (daemonJobEnd, bool) {
-	if !strings.Contains(line, daemonJobEndKey) {
-		return daemonJobEnd{}, false
-	}
-	var end daemonJobEnd
-	if err := json.Unmarshal([]byte(line), &end); err != nil || !end.End {
-		return daemonJobEnd{}, false
-	}
-	return end, true
-}
-
-func (r *DaemonWorkerRunner) buildCommand() *exec.Cmd {
-	if r.newCommand != nil {
-		return r.newCommand()
-	}
-	python := strings.TrimSpace(r.Python)
-	if python == "" {
-		python = "python"
-	}
-	cmd := exec.Command(python, strings.TrimSpace(r.Script))
-	// Same scrubbed env as the per-job worker: the daemon is long-lived, so
-	// leaking the gateway's environment into it would be worse, not better.
-	cmd.Env = minimalWorkerEnv()
-	if r.slotMode {
-		// Appended last: for duplicate keys the last entry wins, so a stray
-		// UBAG_WORKER_SLOT_ID in the gateway's own environment cannot renumber a slot.
-		cmd.Env = append(cmd.Env,
-			fmt.Sprintf("UBAG_WORKER_SLOT_ID=%d", r.slotID),
-			fmt.Sprintf("UBAG_WORKER_POOL_SIZE=%d", r.poolSize),
-		)
-	}
-	cmd.Stderr = &limitedBuffer{max: maxWorkerStderrBytes}
-	return cmd
-}
-
-// daemonExited reports whether the daemon process has died. Callers must hold mu.
-func (r *DaemonWorkerRunner) daemonExited() bool {
-	if r.exited == nil {
-		return true
-	}
-	select {
-	case <-r.exited:
-		return true
-	default:
-		return false
-	}
-}
-
-// ensureDaemon starts the daemon if it is not already running. Callers must hold
-// mu. A daemon that has died is reaped and replaced, so one crash cannot wedge
-// every future job.
-func (r *DaemonWorkerRunner) ensureDaemon() error {
-	if r.cmd != nil && !r.daemonExited() {
-		return nil
-	}
-	r.discardDaemon()
-
-	if r.newCommand == nil && strings.TrimSpace(r.Script) == "" {
-		return fmt.Errorf("worker daemon script is not configured")
-	}
-
-	cmd := r.buildCommand()
-	inRead, inWrite, err := os.Pipe()
-	if err != nil {
-		return err
-	}
-	outRead, outWrite, err := os.Pipe()
-	if err != nil {
-		inRead.Close()
-		inWrite.Close()
-		return err
-	}
-	cmd.Stdin = inRead
-	cmd.Stdout = outWrite
-
-	if err := cmd.Start(); err != nil {
-		inRead.Close()
-		inWrite.Close()
-		outRead.Close()
-		outWrite.Close()
-		return fmt.Errorf("start worker daemon: %w", err)
-	}
-	// The child owns its ends now. Dropping ours matters for stdout: otherwise
-	// the read end never sees EOF when the daemon dies, and a job would block
-	// forever instead of failing.
-	inRead.Close()
-	outWrite.Close()
-
-	exited := make(chan struct{})
-	go func() {
-		_ = cmd.Wait()
-		close(exited)
-	}()
-
-	r.cmd = cmd
-	r.stdin = inWrite
-	r.stdoutFile = outRead
-	r.stdout = bufio.NewReaderSize(outRead, 64*1024)
-	r.exited = exited
-	if r.slotMode {
-		slog.Info("worker daemon started", "pid", cmd.Process.Pid, "slot", r.slotID)
-	} else {
-		slog.Info("worker daemon started", "pid", cmd.Process.Pid)
-	}
-	return nil
-}
-
-// discardDaemon tears the daemon down so the NEXT job starts a fresh one. Called
-// whenever a job did not end cleanly: the daemon's warm page may hold a
-// half-rendered turn, and reusing it could bleed one job's output into the next.
-// Callers must hold mu.
-func (r *DaemonWorkerRunner) discardDaemon() {
-	if r.cmd == nil {
-		return
-	}
-	if r.stdin != nil {
-		_ = r.stdin.Close()
-	}
-	if r.cmd.Process != nil {
-		_ = r.cmd.Process.Kill()
-	}
-	// The reaper goroutine owns Wait(); calling it here too would race it.
-	if r.exited != nil {
-		<-r.exited
-	}
-	if r.stdoutFile != nil {
-		_ = r.stdoutFile.Close()
-	}
-	r.cmd, r.stdin, r.stdout, r.stdoutFile, r.exited = nil, nil, nil, nil, nil
-}
+func (r *DaemonWorkerRunner) buildCommand() *exec.Cmd { return r.process().BuildCommand() }
 
 // daemonJobFunc runs the protocol for one job on an already-started daemon.
 // submitted records that a prompt_submitted line went by (UBAG_WORKER_STRICT_SUBMIT).
@@ -462,9 +257,8 @@ func (r *DaemonWorkerRunner) runJob(
 	return r.runExclusive(ctx, envelope, maxRuntime, &submitted, job)
 }
 
-// runExclusive takes the one-job mutex and runs the job. The mutex is not
-// context-aware, so a DaemonPool reserves the slot first and only then calls this:
-// the lock is then uncontended and never parks a cancelled caller.
+// runExclusive runs the job on this runner's daemon, one job at a time. The run
+// timeout starts only once the daemon is held (workerdaemon.Process.Run).
 func (r *DaemonWorkerRunner) runExclusive(
 	ctx context.Context,
 	envelope DispatchEnvelope,
@@ -472,94 +266,14 @@ func (r *DaemonWorkerRunner) runExclusive(
 	submitted *atomic.Bool,
 	job daemonJobFunc,
 ) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.runLocked(ctx, envelope, maxRuntime, submitted, job)
-}
-
-// runLocked runs one job on this runner's daemon. Callers must hold mu.
-//
-// The run timeout starts HERE, after the daemon is held. It used to start before
-// the mutex, so a job queued behind another one spent its own MaxRuntime budget
-// waiting and could time out without ever having run.
-func (r *DaemonWorkerRunner) runLocked(
-	ctx context.Context,
-	envelope DispatchEnvelope,
-	maxRuntime time.Duration,
-	submitted *atomic.Bool,
-	job daemonJobFunc,
-) error {
-	runCtx, cancel := context.WithTimeout(ctx, maxRuntime)
-	defer cancel()
-
-	if err := runCtx.Err(); err != nil {
-		return err
-	}
-	if err := r.ensureDaemon(); err != nil {
-		return err
-	}
-
-	errCh := make(chan error, 1)
-	stdin, stdout := r.stdin, r.stdout
-	go func() { errCh <- job(runCtx, stdin, stdout, envelope, maxRuntime, submitted) }()
-
-	var err error
-	select {
-	case err = <-errCh:
-	case <-runCtx.Done():
-		// Cancel, caller deadline or MaxRuntime: kill THIS daemon only. A pool's
-		// other slots are separate processes and keep their warm pages.
-		r.discardDaemon()
-		<-errCh
-		return runCtx.Err()
-	}
-	if err != nil {
-		// The daemon is now of unknown state (dead, mid-line, or holding a
-		// half-finished page). Replace it rather than hand it the next job.
-		r.discardDaemon()
-		return err
-	}
-	return nil
+	return r.process().Run(ctx, maxRuntime, func(runCtx context.Context, stdin io.Writer, stdout *bufio.Reader) error {
+		return job(runCtx, stdin, stdout, envelope, maxRuntime, submitted)
+	})
 }
 
 // Close shuts the daemon down (gateway shutdown).
-func (r *DaemonWorkerRunner) Close() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.discardDaemon()
-}
-
-// drain shuts the daemon down gracefully: once the active job is done (mu is
-// held only by a running job) it closes the daemon's stdin, which ends the
-// worker's serve loop on EOF so it closes its warm pages itself, and waits up to
-// grace for the process to exit before falling back to a kill.
-func (r *DaemonWorkerRunner) drain(grace time.Duration) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.cmd == nil {
-		return
-	}
-	if r.stdin != nil {
-		_ = r.stdin.Close()
-	}
-	if r.exited != nil && grace > 0 {
-		timer := time.NewTimer(grace)
-		defer timer.Stop()
-		select {
-		case <-r.exited:
-		case <-timer.C:
-		}
-	}
-	r.discardDaemon()
-}
+func (r *DaemonWorkerRunner) Close() { r.process().Close() }
 
 // killForTest kills the daemon process without clearing the runner's handles, so
 // a test can assert the next job restarts it the way a real crash would.
-func (r *DaemonWorkerRunner) killForTest() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.cmd != nil && r.cmd.Process != nil {
-		_ = r.cmd.Process.Kill()
-		<-r.exited // deterministic: the runner must observe a corpse, not a race
-	}
-}
+func (r *DaemonWorkerRunner) killForTest() { r.process().KillForTest() }
