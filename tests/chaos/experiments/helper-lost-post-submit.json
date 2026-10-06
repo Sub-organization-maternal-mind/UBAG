@@ -1,0 +1,97 @@
+{
+  "title": "Helper lost after the prompt is submitted",
+  "description": "Kills the helper process after PROMPT_SUBMITTED was committed. The primary must never replay the job: it fails closed as failed_terminal with submitted=true and reconcile_required=true, fails the queue lease without retrying it, and a redelivery of the job places nothing. Expected: exactly one attempt in the ledger, marked submitted; the job is terminal and is not dispatched again.",
+  "tags": [
+    "helper",
+    "fleet",
+    "submission-boundary",
+    "reconcile"
+  ],
+  "status": "definition_only",
+  "requires": [
+    "UBAG_HELPER_NODES",
+    "UBAG_HELPER_PLANE",
+    "UBAG_HELPER_DISPATCH",
+    "UBAG_EXECUTOR_ATTEMPTS",
+    "a placer or manager adaptor wired as the HelperPicker (P4.17)",
+    "two Helper Nodes (helper_a, helper_b) on a lab host that is not the shared VPS"
+  ],
+  "covered_by": [
+    "TestRemoteHelperLostAfterSubmissionFailsClosedAndIsNeverReplayed",
+    "TestRemoteEarlierSubmittedAttemptFailsTheJobClosed",
+    "TestRemoteShutdownStopsTheHelperAndNeverLeavesASubmittedJobReplayable"
+  ],
+  "configuration": {
+    "helper_a_container": {
+      "type": "env",
+      "key": "UBAG_CHAOS_HELPER_A_CONTAINER"
+    },
+    "helper_net": {
+      "type": "env",
+      "key": "UBAG_CHAOS_HELPER_NET"
+    }
+  },
+  "steady-states": {
+    "before": {
+      "title": "Gateway is ready before the fault",
+      "probes": [
+        {
+          "type": "probe",
+          "name": "gateway-ready",
+          "tolerance": 200,
+          "provider": {
+            "type": "http",
+            "url": "${gateway_url}/v1/ready",
+            "timeout": 5
+          }
+        }
+      ]
+    },
+    "after": {
+      "title": "Gateway is ready after the fault and recovery",
+      "probes": [
+        {
+          "type": "probe",
+          "name": "gateway-ready",
+          "tolerance": 200,
+          "provider": {
+            "type": "http",
+            "url": "${gateway_url}/v1/ready",
+            "timeout": 5
+          }
+        }
+      ]
+    }
+  },
+  "method": [
+    {
+      "type": "action",
+      "name": "kill-helper-a",
+      "provider": {
+        "type": "process",
+        "path": "docker",
+        "arguments": "kill ${helper_a_container}"
+      }
+    },
+    {
+      "type": "action",
+      "name": "wait-past-one-attempt-lease",
+      "provider": {
+        "type": "process",
+        "path": "sleep",
+        "arguments": "150"
+      }
+    }
+  ],
+  "rollbacks": [
+    {
+      "type": "action",
+      "name": "start-helper-a",
+      "provider": {
+        "type": "process",
+        "path": "docker",
+        "arguments": "start ${helper_a_container}"
+      }
+    }
+  ]
+}

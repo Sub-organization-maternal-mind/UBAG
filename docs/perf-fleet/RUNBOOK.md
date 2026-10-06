@@ -12,7 +12,7 @@ Each rung needs the previous one. All default off.
 |---|---|---|
 | `UBAG_HELPER_NODES` | 1 | Node store (allocations, per-node state, SPKI registry). Enables the per-node metrics. |
 | `UBAG_HELPER_PLANE` | 2 | Separate mTLS gRPC listener for helpers. |
-| `UBAG_HELPER_DISPATCH` | 3 | Dispatch to helpers (not wired yet at the time of writing). |
+| `UBAG_HELPER_DISPATCH` | 3 | The primary dials helpers and runs placed jobs as fenced attempts (P4.14; needs `UBAG_EXECUTOR_ATTEMPTS`, `UBAG_HELPER_CLIENT_CERT_FILE`, `UBAG_HELPER_CLIENT_KEY_FILE`, `UBAG_HELPER_WORKLOAD_VERSION`). Nothing is placed until a picker is wired (P4.17): with the flag on and no picker every job still runs locally. |
 | `UBAG_HELPER_VOICE` | 4 | Voice media on a helper (not wired yet). |
 | `UBAG_EXECUTOR_ATTEMPTS` | - | Attempt ledger (needed by the fenced commit path; Postgres or memory store). |
 | `UBAG_EXECUTOR_LEASE_TTL_MS` | - | Queue lease TTL (`0` = legacy no expiry; otherwise 30000 to 900000). |
@@ -101,6 +101,18 @@ Alerts: `UBAGHelperFencedWrites`, `UBAGHelperPolicyViolations`.
 - Fenced (`UBAG-WORKER-NODE-FENCED-005`): a helper wrote with a superseded lease generation. The ledger refused it and nothing was written; the legitimate holder is unaffected. One-off hits after a reconnect are expected; a steady stream means a helper missed its cancel or a lease is flapping (see lease renewal failures).
 - Policy violations: wrong node, tenant, job or attempt, a sequence gap, a disallowed event type, malformed or oversize output. The attempt is failed (`helper_output_limit` or `helper_event_invalid`) or the write is rejected. The audit chain holds one record per reason and session: `attempt.fenced_rejected` and `helper.policy_violation`, actor `node:<id>`, with only ids and fixed reason text. A wrong-scope or wrong-node violation from a certified helper is a security event: revoke the node, then investigate.
 
+### Remote attempt held back, lost or failed for reconcile
+
+Source: `RemoteWorkerRunner` (ADR-0014). Log lines carry `job_id`, `attempt_id` and `node_id`, never tenant data.
+
+- `worker placement refused; retrying the lease after a delay` with `reason=` `helper_unreachable`, `helper_workload_version`, `helper_registry_digest`, `helper_protocol`, `helper_node_mismatch` or `helper_clock_skew`: the picked helper is not usable, so the job was held back before anything was leased (no ledger row, nothing submitted). Fix the helper (version, adapter registry, clock, link) or drain it; the job retries every few seconds meanwhile. A steady stream for one node means the picker keeps choosing a node the primary will not use.
+- `reason=attempt_lease_held` or `attempt_conflict`: a previous attempt of the job still holds its 120 s ledger lease (a refusal or a lost helper leaves it to lapse). The job waits for the lapse; this is normal for up to two minutes after a helper loss.
+- `reason=helper_lost`: the helper was refused, unreachable or fenced before the prompt was submitted. The job goes back to the queue and gets generation n+1 after the lease lapses. `reason=attempt_lease_lost`: the ledger gave the attempt to someone else; nothing was written.
+- A job `failed_terminal` with `reconcile_required`, `submitted: true` and a `helper lost after prompt submission` log line: the helper (or the primary) was lost after the prompt left. It is never replayed. Look at the provider's own conversation for the turn; if it is there, the answer has to be collected by hand until the reconciler (P4.18) lands.
+- `helper_output_limit` / `helper_event_invalid` on a job: the helper broke the output contract and the attempt was failed (see "Fenced writes and policy violations").
+- A cancel reaches a remote attempt within about a second through the in-process hint; a cancel written by another gateway process takes up to 2 s. If `CancelAttempt` does not land (the helper is down) the helper's own lease expiry stops the attempt, at most 110 s later.
+- Jobs with declared attachments, a conversation, a `voice.*` command type or an `antigravity_*` target are never dispatched; they run on the primary.
+
 ## Pre-canary checklist (P4.20 is still external-blocked)
 
 A canary has not run and this runbook does not claim one. Before one is attempted, all of the following are the operator's to confirm:
@@ -117,4 +129,4 @@ A canary has not run and this runbook does not claim one. Before one is attempte
 
 Checked by tests or targeted checks in this slice: the metric renderer (bounded labels, per-node gauges from a memory node store, source failure visible), the executor's fenced-reject counter on a real fenced commit, the `/v1/metrics` wiring, that every metric named in the alert file is emitted by the gateway (`tools/check-alert-metrics.mjs`), and the alert file structure and runbook anchors (`tools/check-helper-alerts.mjs`).
 
-Not verified: `promtool check rules` (not available here), the expressions against live data, the Postgres node store under scrape load, any real helper, the manager, or a canary. The `lease="attempt"` series has no producer until the helper dispatcher lands.
+Not verified: `promtool check rules` (not available here), the expressions against live data, the Postgres node store under scrape load, any real helper, the manager, or a canary. The `lease="attempt"` series is produced by the remote runner's renewal loop (P4.14); it has only been exercised against a fake helper and a loopback helper service, never a real node.

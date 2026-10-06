@@ -1,0 +1,97 @@
+{
+  "title": "Helper lost before the prompt is submitted",
+  "description": "Partitions the helper that holds an attempt after its STARTED event and before PROMPT_SUBMITTED. The primary stops getting renewals through, declares the helper lost once a whole 120 s lease passes without one, holds the job back and starts a new attempt (generation+1) once the old lease has lapsed. Expected: the job completes exactly once, the ledger shows two attempts (the first expired and unsubmitted), no provider turn is duplicated.",
+  "tags": [
+    "helper",
+    "fleet",
+    "lease",
+    "reassignment"
+  ],
+  "status": "definition_only",
+  "requires": [
+    "UBAG_HELPER_NODES",
+    "UBAG_HELPER_PLANE",
+    "UBAG_HELPER_DISPATCH",
+    "UBAG_EXECUTOR_ATTEMPTS",
+    "a placer or manager adaptor wired as the HelperPicker (P4.17)",
+    "two Helper Nodes (helper_a, helper_b) on a lab host that is not the shared VPS"
+  ],
+  "covered_by": [
+    "TestRemoteHelperLostBeforeSubmissionIsReassigned",
+    "TestRemoteLeaseRenewsEvery20sAndExpiresAt120s",
+    "TestRemoteRunnerHelperLostOverARealConnection"
+  ],
+  "configuration": {
+    "helper_a_container": {
+      "type": "env",
+      "key": "UBAG_CHAOS_HELPER_A_CONTAINER"
+    },
+    "helper_net": {
+      "type": "env",
+      "key": "UBAG_CHAOS_HELPER_NET"
+    }
+  },
+  "steady-states": {
+    "before": {
+      "title": "Gateway is ready before the fault",
+      "probes": [
+        {
+          "type": "probe",
+          "name": "gateway-ready",
+          "tolerance": 200,
+          "provider": {
+            "type": "http",
+            "url": "${gateway_url}/v1/ready",
+            "timeout": 5
+          }
+        }
+      ]
+    },
+    "after": {
+      "title": "Gateway is ready after the fault and recovery",
+      "probes": [
+        {
+          "type": "probe",
+          "name": "gateway-ready",
+          "tolerance": 200,
+          "provider": {
+            "type": "http",
+            "url": "${gateway_url}/v1/ready",
+            "timeout": 5
+          }
+        }
+      ]
+    }
+  },
+  "method": [
+    {
+      "type": "action",
+      "name": "partition-helper-a",
+      "provider": {
+        "type": "process",
+        "path": "docker",
+        "arguments": "network disconnect ${helper_net} ${helper_a_container}"
+      }
+    },
+    {
+      "type": "action",
+      "name": "wait-past-one-attempt-lease",
+      "provider": {
+        "type": "process",
+        "path": "sleep",
+        "arguments": "150"
+      }
+    }
+  ],
+  "rollbacks": [
+    {
+      "type": "action",
+      "name": "reconnect-helper-a",
+      "provider": {
+        "type": "process",
+        "path": "docker",
+        "arguments": "network connect ${helper_net} ${helper_a_container}"
+      }
+    }
+  ]
+}
