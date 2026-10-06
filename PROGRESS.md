@@ -1,10 +1,55 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-10-06 (**`ci` fully green; production deployed and healthy;
-every program flag now has its compose passthrough so all of them are settable,
-still all off by default; the load harness's offline self-tests now run in CI.
-The OET shared fleet manager does not exist, and the evidence half of the
-program is blocked on hardware, credentials and human logins.**)
+Last updated: 2026-10-07 (**Phase 1's "manager does not exist" blocker is
+resolved in code: the OET shared fleet manager now has a UBAG allocation
+endpoint, and UBAG can authenticate to it and bind helper profiles. The
+manager's image build runs in the OET repo's fleet workflow; enrollment of a
+real helper, certificates and live evidence are still external.**)
+
+## 2026-10-07 — The fleet loop closed in code (both repos), flag-inert as always
+
+Three pieces landed today, all inert until an operator sets env:
+
+**1. The manager side exists (OET repo, `platform/fleet`, commit `d9cf16610`).**
+The OET fleet manager — which the 2026-10-06 entry recorded as "does not exist
+as a running service" — is in fact a built subsystem of the OET repo (223
+files: enrollment, Ansible S1–S13, vault, placement, agent, owner console);
+what it lacked was any UBAG support. It now has `GET
+/internal/ubag/allocations`, serving UBAG's `allocation_list` v1 schema
+(strict-parse compatible, ETag/304), bearer-authenticated via a
+`fleet_ubag_token` secret, 503 while disabled. Per opted-in host the grant is
+**min(the UBAG ceiling table for its hardware, the hardware minus the OET
+policy budget in force)** — OET first, exactly as the plan's allocation rule
+requires. Honest limits, stated in that repo's README: `spki_sha256` is empty
+until the manager CA exists (decision D3), so a published grant does not yet
+make a helper dialable; `voice_capable` is always false;
+`max_browser_workloads` starts at 1. Its image build runs in the OET repo's
+`fleet.yml` (build-only; rollout is the opt-in `sync` dispatch, pull-only).
+
+**2. UBAG authenticates the poll (`f623698`).** `UBAG_FLEET_MANAGER_TOKEN`
+(empty default = no Authorization header, byte-identical behaviour) is
+validated at startup (single header-safe value, at most 4096 bytes) and sent
+as `Authorization: Bearer` on every allocation fetch. Compose passthrough and
+env.example added; FLAGS.md is at 31 flags.
+
+**3. The operator profile-bind route exists (`a126e75`).** The P4.16 shard's
+stated risk — no route could call `ProfileStore.Bind`/`Revoke`, so nothing
+could ever be placed — is closed: `GET/POST /v1/fleet/profiles` and
+`POST /v1/fleet/profiles/{profile_ref}/revoke` (OpenAPI-first, SDKs on both
+TypeScript and Go, `fleet:manage` + MFA-gated, `profile.bound` /
+`profile.revoked` audited fail-closed into the target tenant's chain,
+bind-time node check against registered non-revoked nodes).
+
+**What this unblocks and what stays external.** With the manager running and
+`Fleet__Ubag__Enabled` + `Fleet__Ubag__Hosts` set in its compose env, UBAG
+points at it with `UBAG_FLEET_MANAGER_URL` / `UBAG_FLEET_MANAGER_TOKEN`, an
+enrolled helper gets a grant, and the helper plane's code path becomes
+exercisable end to end *except* the mTLS trust plane (no manager CA yet: no
+SPKI pins, no helper certificates) and with no actual helper VPS. The
+remaining Phase 1 blockers are the ones the table below already lists, minus
+"the manager does not exist": manager CA + WireGuard + a real helper
+enrollment, and the operator steps in the OET repo's README ("UBAG project
+allocations").
 
 ## 2026-10-06 — Two pieces of the remaining work that were not blocked at all
 

@@ -1,6 +1,30 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-10-06
+Last updated: 2026-10-07
+
+## Fleet-manager state changed on 2026-10-07 (read this before touching Phase 1)
+
+The 2026-10-06 entry below says "the OET shared fleet manager does not exist
+as a running service". The first half of that is now wrong in an important
+way: the manager is a built subsystem of the OET repo
+(`platform/fleet`, ~223 files — enrollment, Ansible, vault, placement, agent,
+owner console), and on 2026-10-07 it gained the UBAG project integration:
+`GET /internal/ubag/allocations` (allocation_list v1, ETag/304, bearer secret
+`fleet_ubag_token`, 503 while `Fleet__Ubag__Enabled` is false), publishing
+per-host grants that are **min(the UBAG ceiling table, hardware − OET policy
+budget)** — OET first (OET repo commit `d9cf16610`; its `fleet.yml` build is
+the compile check, rollout is the opt-in `sync` dispatch, pull-only). UBAG's
+side landed the same day: `UBAG_FLEET_MANAGER_TOKEN` authenticates the poll
+(f623698) and the operator profile-bind routes exist (a126e75: `GET/POST
+/v1/fleet/profiles`, `POST /v1/fleet/profiles/{ref}/revoke`, fleet:manage +
+MFA, fail-closed audit, TS+Go SDKs). All UBAG-side flags default off/inert.
+
+Still true from the entry below: nothing is deployed on the manager side
+until its sync dispatch runs; there is no manager CA (SPKI empty ⇒ no helper
+can pass UBAG's mTLS dial yet, decision D3), no WireGuard for UBAG, no
+enrolled helper, no canary, no capacity number. Operator steps to light this
+up are in the OET repo's `platform/fleet/README.md` section "UBAG project
+allocations".
 
 ## Perf + shared-fleet program (feat/perf-fleet) — read before touching flags, the helper plane or voice
 
