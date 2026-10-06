@@ -61,7 +61,13 @@ func (c *ICEConfig) ttl() time.Duration {
 // turnCredentials mints the coturn REST credential pair for a session:
 // username "<expiry unix>:<session id>", credential base64(HMAC-SHA1).
 func (c *ICEConfig) turnCredentials(sessionID string, now time.Time) (username, credential string) {
-	username = fmt.Sprintf("%d:%s", now.Add(c.ttl()).Unix(), sessionID)
+	return c.turnCredentialsUntil(sessionID, now.Add(c.ttl()))
+}
+
+// turnCredentialsUntil mints the pair with an explicit expiry. Helper-hosted
+// voice uses it so the credential ends with the attempt, not the default TTL.
+func (c *ICEConfig) turnCredentialsUntil(label string, expires time.Time) (username, credential string) {
+	username = fmt.Sprintf("%d:%s", expires.Unix(), label)
 	mac := hmac.New(sha1.New, []byte(c.TURNSecret)) //nolint:gosec
 	mac.Write([]byte(username))
 	return username, base64.StdEncoding.EncodeToString(mac.Sum(nil))

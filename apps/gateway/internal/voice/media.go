@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -126,6 +127,22 @@ func RelayToken(secret []byte, sessionID string, exp int64) string {
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
+// maxBoundGeneration keeps a lease generation exactly representable as a JSON
+// number (and as a Python int on the relay side).
+const maxBoundGeneration = 1<<53 - 1
+
+// RelayTokenBound is the hello credential of a helper-hosted session: node and
+// lease generation are part of the signed message, so the token verifies only
+// for that node and generation:
+// hex(HMAC-SHA256(key, "voice-relay|<session>|<exp unix>|<node>|<generation>")).
+// The key is the primary-derived per-attempt relay key (DeriveAttemptKey),
+// never the global relay secret.
+func RelayTokenBound(key []byte, sessionID string, exp int64, nodeID string, generation uint64) string {
+	mac := hmac.New(sha256.New, key)
+	fmt.Fprintf(mac, "voice-relay|%s|%d|%s|%d", sessionID, exp, nodeID, generation)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 // RelayDialer connects to one browser/audio environment's relay process.
 type RelayDialer interface {
 	Dial(ctx context.Context, session Session) (RelayConn, error)
@@ -147,8 +164,13 @@ type RelayConn interface {
 // relay's host:port (injected; deployments differ here). Secret authenticates the session to the relay;
 // an empty secret fails closed.
 type TCPRelayDialer struct {
-	Address      func(session Session) (string, error)
-	Secret       []byte
+	Address func(session Session) (string, error)
+	Secret  []byte
+	// NodeID and Generation, when both set, send a BOUND hello (helper-hosted
+	// voice): Secret is then the per-attempt relay key and the token signs the
+	// node and lease generation. Unset keeps the primary-hosted hello.
+	NodeID       string
+	Generation   uint64
 	DialTimeout  time.Duration
 	ReadyTimeout time.Duration
 }
@@ -168,7 +190,9 @@ func (d *TCPRelayDialer) readyTimeout() time.Duration {
 }
 
 func (d *TCPRelayDialer) Dial(ctx context.Context, session Session) (RelayConn, error) {
-	if d.Address == nil || len(d.Secret) == 0 {
+	// A bound hello needs both node and generation, within the wire bounds.
+	if d.Address == nil || len(d.Secret) == 0 || (d.NodeID != "") != (d.Generation > 0) ||
+		d.Generation > maxBoundGeneration || len(d.NodeID) > 128 || strings.Contains(d.NodeID, "|") {
 		return nil, ErrRelayUnavailable
 	}
 	addr, err := d.Address(session)
@@ -182,10 +206,14 @@ func (d *TCPRelayDialer) Dial(ctx context.Context, session Session) (RelayConn, 
 	}
 	fc := &TCPFrameConn{conn: conn}
 	exp := time.Now().Add(relayHelloTTL).Unix()
-	if err := fc.Control(map[string]any{
-		"op": "hello", "session_id": session.ID, "exp": exp,
-		"token": RelayToken(d.Secret, session.ID, exp),
-	}); err != nil {
+	hello := map[string]any{"op": "hello", "session_id": session.ID, "exp": exp}
+	if d.NodeID != "" {
+		hello["node_id"], hello["generation"] = d.NodeID, d.Generation
+		hello["token"] = RelayTokenBound(d.Secret, session.ID, exp, d.NodeID, d.Generation)
+	} else {
+		hello["token"] = RelayToken(d.Secret, session.ID, exp)
+	}
+	if err := fc.Control(hello); err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("%w: %v", ErrRelayUnavailable, err)
 	}

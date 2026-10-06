@@ -22,8 +22,8 @@
 // (120 s TTL, 20 s renewal, generation fencing) is distinct from the gateway
 // Exec Lease (90 s TTL, 10 s heartbeat, no generation).
 //
-// Voice RPCs (OfferVoice/ControlVoice) are deliberately absent until P5.7 and
-// will be added as new RPCs/messages (additive).
+// Voice RPCs live in helper_voice.proto (HelperVoiceService, same package,
+// P5.7); HelperService deliberately carries none.
 
 package helperv1
 

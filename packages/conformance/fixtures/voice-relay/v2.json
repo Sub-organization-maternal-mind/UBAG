@@ -37,6 +37,14 @@
     { "secret": "relay-test-secret", "session_id": "voice_é-1", "exp": 1893456000, "token": "fd8e1c2b2745a2237f1294b2bb4867ff0dcfd1b3cdd00181be73fd070d027004" },
     { "secret": "other-secret", "session_id": "s1", "exp": 1700000000, "token": "a6496fe40dcbd7c4759260dbd1bab4468e6b2845738ab3756f507d50c0147274" }
   ],
+  "bound_token_note": "Helper-hosted voice (P5.7): optional node_id + generation are appended to the signed message, token = hex(HMAC-SHA256(secret, \"voice-relay|<session_id>|<exp>|<node_id>|<generation>\")). A bound token never equals the unbound token for the same session/exp, and changing node_id or generation changes it. The helper's secret is the primary-derived per-attempt relay key, never the global relay secret.",
+  "bound_token_vectors": [
+    { "secret": "relay-test-secret", "session_id": "s1", "exp": 1700000000, "node_id": "node-a", "generation": 3, "token": "96cce8d696288a5316917f52bab4e5fe2611ca79016831fa280dece4684ed212" },
+    { "secret": "relay-test-secret", "session_id": "s1", "exp": 1700000000, "node_id": "node-a", "generation": 4, "token": "5180c310f83ec649ec53b330d75420ef2e637137e4d26251164c63a88fe7ceb4" },
+    { "secret": "relay-test-secret", "session_id": "s1", "exp": 1700000000, "node_id": "node-b", "generation": 3, "token": "f6b468d800b6134370dc0be3daa3e32b9e17826f23d03c70d91b183fb55c0451" },
+    { "secret": "relay-test-secret", "session_id": "voice_é-1", "exp": 1893456000, "node_id": "helper-é", "generation": 9007199254740991, "token": "505250023b7126e3794dc030b109c8c64f339caa16342d015269ff55cf677906" },
+    { "secret": "other-secret", "session_id": "s1", "exp": 1700000000, "node_id": "node-a", "generation": 3, "token": "445fe5607afa766c7490adcab87f325d878077a7dd78cb4ef15f6e0831cde750" }
+  ],
   "hello_note": "Relay-side hello validation; the hello is the first frame. Case fields: hello (control JSON object; keys absent stay absent), exp_offset_s (sets hello.exp = now + offset), session_id_len (sets hello.session_id to that many 'a'), token_mode ('valid' sets the correct token for the final session_id/exp under the configured secret, 'wrong' a well-formed but incorrect one), raw_payload (control payload sent verbatim instead of hello), frame_type ('audio' sends the first frame as audio), secret_configured (default true). outcome is 'ok' or the error reason the relay answers before closing.",
   "hello_validation": [
     { "id": "valid", "hello": { "op": "hello", "session_id": "s1" }, "exp_offset_s": 60, "token_mode": "valid", "outcome": "ok" },
@@ -58,6 +66,14 @@
     { "id": "token_not_string", "hello": { "op": "hello", "session_id": "s1", "token": 5 }, "exp_offset_s": 60, "outcome": "bad_hello" },
     { "id": "exp_in_past", "hello": { "op": "hello", "session_id": "s1" }, "exp_offset_s": -10, "token_mode": "valid", "outcome": "expired" },
     { "id": "exp_too_far_ahead", "hello": { "op": "hello", "session_id": "s1" }, "exp_offset_s": 400, "token_mode": "valid", "outcome": "expired" },
+    { "id": "valid_bound", "hello": { "op": "hello", "session_id": "s1", "node_id": "node-a", "generation": 3 }, "exp_offset_s": 60, "token_mode": "valid", "outcome": "ok" },
+    { "id": "bound_node_without_generation", "hello": { "op": "hello", "session_id": "s1", "node_id": "node-a" }, "exp_offset_s": 60, "token_mode": "wrong", "outcome": "bad_hello" },
+    { "id": "bound_generation_without_node", "hello": { "op": "hello", "session_id": "s1", "generation": 3 }, "exp_offset_s": 60, "token_mode": "wrong", "outcome": "bad_hello" },
+    { "id": "bound_generation_zero", "hello": { "op": "hello", "session_id": "s1", "node_id": "node-a", "generation": 0 }, "exp_offset_s": 60, "token_mode": "wrong", "outcome": "bad_hello" },
+    { "id": "bound_generation_boolean", "hello": { "op": "hello", "session_id": "s1", "node_id": "node-a", "generation": true }, "exp_offset_s": 60, "token_mode": "wrong", "outcome": "bad_hello" },
+    { "id": "bound_node_id_has_separator", "hello": { "op": "hello", "session_id": "s1", "node_id": "a|b", "generation": 3 }, "exp_offset_s": 60, "token_mode": "wrong", "outcome": "bad_hello" },
+    { "id": "bound_token_unbound_signature", "hello": { "op": "hello", "session_id": "s1", "node_id": "node-a", "generation": 3 }, "exp_offset_s": 60, "token_mode": "unbound", "outcome": "unauthorized" },
+    { "id": "bound_token_other_node", "hello": { "op": "hello", "session_id": "s1", "node_id": "node-a", "generation": 3 }, "exp_offset_s": 60, "token_mode": "other_node", "outcome": "unauthorized" },
     { "id": "token_wrong", "hello": { "op": "hello", "session_id": "s1" }, "exp_offset_s": 60, "token_mode": "wrong", "outcome": "unauthorized" }
   ],
   "reply_reasons": {
@@ -68,6 +84,9 @@
   },
   "control_frames": [
     { "id": "hello", "json": { "op": "hello", "session_id": "s1", "exp": 1700000000, "token": "43e2f2445ad07779cdf6135f4756cbe2ea5802718f6b6b9c930bb67d53a10591" }, "valid": true },
+    { "id": "hello_bound", "json": { "op": "hello", "session_id": "s1", "exp": 1700000000, "token": "96cce8d696288a5316917f52bab4e5fe2611ca79016831fa280dece4684ed212", "node_id": "node-a", "generation": 3 }, "valid": true },
+    { "id": "hello_bound_generation_zero", "json": { "op": "hello", "session_id": "s1", "exp": 1700000000, "token": "96cce8d696288a5316917f52bab4e5fe2611ca79016831fa280dece4684ed212", "node_id": "node-a", "generation": 0 }, "valid": false },
+    { "id": "hello_bound_node_id_separator", "json": { "op": "hello", "session_id": "s1", "exp": 1700000000, "token": "96cce8d696288a5316917f52bab4e5fe2611ca79016831fa280dece4684ed212", "node_id": "a|b", "generation": 3 }, "valid": false },
     { "id": "ready", "json": { "op": "ready" }, "valid": true },
     { "id": "error_busy", "json": { "op": "error", "reason": "busy" }, "valid": true },
     { "id": "error_mic_closed", "json": { "op": "error", "reason": "mic_closed" }, "valid": true },

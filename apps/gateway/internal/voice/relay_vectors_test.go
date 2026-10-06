@@ -41,6 +41,14 @@ type relayVectors struct {
 		Exp       int64  `json:"exp"`
 		Token     string `json:"token"`
 	} `json:"token_vectors"`
+	BoundTokenVectors []struct {
+		Secret     string `json:"secret"`
+		SessionID  string `json:"session_id"`
+		Exp        int64  `json:"exp"`
+		NodeID     string `json:"node_id"`
+		Generation uint64 `json:"generation"`
+		Token      string `json:"token"`
+	} `json:"bound_token_vectors"`
 	ReplyReasons struct {
 		Handshake []string `json:"handshake"`
 		Session   []string `json:"session"`
@@ -75,10 +83,59 @@ func TestRelayVectorsConstants(t *testing.T) {
 	}
 }
 
-func TestRelayVectorsToken(t *testing.T) {
-	for _, tv := range loadRelayVectors(t).TokenVectors {
+// TestRelayTokenMatchesPythonRelay asserts the shared cross-language vectors:
+// the Python relay (test_relay_vectors.py) asserts the same fixture.
+func TestRelayTokenMatchesPythonRelay(t *testing.T) {
+	v := loadRelayVectors(t)
+	if len(v.TokenVectors) == 0 || len(v.BoundTokenVectors) == 0 {
+		t.Fatal("fixture lost its token vectors")
+	}
+	for _, tv := range v.TokenVectors {
 		if got := RelayToken([]byte(tv.Secret), tv.SessionID, tv.Exp); got != tv.Token {
 			t.Errorf("RelayToken(%q,%q,%d) = %s, want %s", tv.Secret, tv.SessionID, tv.Exp, got, tv.Token)
+		}
+	}
+	for _, tv := range v.BoundTokenVectors {
+		got := RelayTokenBound([]byte(tv.Secret), tv.SessionID, tv.Exp, tv.NodeID, tv.Generation)
+		if got != tv.Token {
+			t.Errorf("RelayTokenBound(%q,%q,%d,%q,%d) = %s, want %s", tv.Secret, tv.SessionID, tv.Exp, tv.NodeID, tv.Generation, got, tv.Token)
+		}
+		if got == RelayToken([]byte(tv.Secret), tv.SessionID, tv.Exp) {
+			t.Errorf("bound token for %q/%q equals the unbound token", tv.SessionID, tv.NodeID)
+		}
+	}
+}
+
+// The hello of a helper-hosted dial carries node and generation and a token
+// signed with the per-attempt key; a half-bound dialer never dials.
+func TestRelayTokenBoundDialHello(t *testing.T) {
+	key := []byte("per-attempt-relay-key")
+	got := make(chan map[string]any, 1)
+	addr := fakeHandshake(t, func(h map[string]any) { got <- h }, func(c net.Conn) {
+		_ = writeRelayFrame(c, relayTypeControl, []byte(`{"op":"ready"}`))
+		time.Sleep(100 * time.Millisecond)
+	})
+	d := relayDialer(addr, key)
+	d.NodeID, d.Generation = "node-a", 7
+	conn, err := d.Dial(t.Context(), Session{ID: "s1", InstanceRef: "browser-1"})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer conn.Close()
+	h := <-got
+	exp, _ := h["exp"].(float64)
+	if len(h) != 6 || h["node_id"] != "node-a" || h["generation"] != float64(7) ||
+		h["token"] != RelayTokenBound(key, "s1", int64(exp), "node-a", 7) {
+		t.Fatalf("bound hello = %v", h)
+	}
+	for _, half := range []*TCPRelayDialer{
+		{Address: d.Address, Secret: key, NodeID: "node-a"},
+		{Address: d.Address, Secret: key, Generation: 7},
+		{Address: d.Address, Secret: key, NodeID: "a|b", Generation: 7},
+		{Address: d.Address, Secret: key, NodeID: "node-a", Generation: maxBoundGeneration + 1},
+	} {
+		if _, err := half.Dial(t.Context(), Session{ID: "s1"}); !errors.Is(err, ErrRelayUnavailable) {
+			t.Fatalf("malformed binding %+v dialed: %v", half, err)
 		}
 	}
 }

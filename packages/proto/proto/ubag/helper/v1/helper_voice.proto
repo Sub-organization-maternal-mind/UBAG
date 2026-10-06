@@ -1,0 +1,209 @@
+syntax = "proto3";
+
+// ubag.helper.v1 voice plane (P5.7, decision D7): helper-hosted voice media.
+//
+// The browser, audio environment, relay and WebRTC endpoint are co-located on
+// the Helper Node, so audio never crosses the WireGuard link; the primary keeps
+// public signaling (POST /v1/voice/sessions/{id}/connect is unchanged) and
+// forwards the client's SDP offer here. This is an additive service in the same
+// package as HelperService (helper.proto): HelperService itself is unchanged.
+//
+// Trust model. Same direction and transport as HelperService (the primary
+// dials the helper over mTLS; the certificate URI SAN is the node identity and
+// any node_id in a message is only a cross-check). The helper holds NO global
+// secret: not the app secret, not the relay secret, not the TURN shared
+// secret. For each voice attempt the primary derives, from the VoiceFence
+// below, three independent per-attempt credentials and sends them in
+// VoiceCredentials:
+//   - relay_key        authenticates the helper-local relay hello
+//                      (HMAC key; the relay hello also binds node_id and
+//                      lease_generation);
+//   - media_key        verifies the client's control-data-channel credential
+//                      (the same "voice-media|..." credential the connect
+//                      response already carries, minted with this key);
+//   - ice_servers      STUN/TURN entries whose TURN username/credential are
+//                      minted by the primary (coturn REST scheme) and expire
+//                      no later than the attempt's expires_at.
+// A key never verifies another attempt, node or generation, and the three keys
+// are domain separated so a leaked relay_key cannot forge a media credential.
+//
+// Safe Mode (ADR-0002) applies: no provider credentials, cookies or login
+// material ever travel in these messages.
+//
+// gRPC status mapping for fenced voice RPCs:
+//   ABORTED             stale lease_generation or attempt_id mismatch
+//   NOT_FOUND           unknown session (also returned for another tenant's
+//                       session: the two cases are indistinguishable)
+//   PERMISSION_DENIED   node_id does not match the certificate identity
+//   DEADLINE_EXCEEDED   fence.expires_at has passed
+//   UNAVAILABLE         helper draining, relay busy or devices not ready
+package ubag.helper.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/ubag/ubag/packages/proto/gen/go/ubag/helper/v1;helperv1";
+
+// HelperVoiceService is served by a Helper Node alongside HelperService. It is
+// available only when UBAG_HELPER_VOICE is on (default off; it requires the
+// UBAG_HELPER_NODES < UBAG_HELPER_PLANE < UBAG_HELPER_DISPATCH ladder).
+service HelperVoiceService {
+  // OfferVoice starts the helper-hosted media session: the helper activates
+  // its local relay with the per-attempt relay_key, applies the client's SDP
+  // offer and returns the answer.
+  rpc OfferVoice(OfferVoiceRequest) returns (OfferVoiceResponse);
+
+  // ReconnectVoice re-establishes the client media leg of a live attempt with a
+  // fresh SDP offer (network change, ICE restart) without re-activating the
+  // provider voice UI. It requires the same fence as OfferVoice.
+  rpc ReconnectVoice(ReconnectVoiceRequest) returns (ReconnectVoiceResponse);
+
+  // ControlVoice applies one mute, unmute, interrupt or terminate command.
+  rpc ControlVoice(ControlVoiceRequest) returns (ControlVoiceResponse);
+
+  // RenewVoice extends the voice attempt's lease. The primary renews on the
+  // same cadence as the Attempt Lease; a helper that stops being renewed ends
+  // the media itself at expires_at.
+  rpc RenewVoice(RenewVoiceRequest) returns (RenewVoiceResponse);
+
+  // StreamVoiceEvents streams the attempt's voice events from after_sequence
+  // until the session ends or the caller cancels.
+  rpc StreamVoiceEvents(StreamVoiceEventsRequest) returns (stream StreamVoiceEventsResponse);
+}
+
+// VoiceFence identifies one leased voice attempt on one Helper Node and rides
+// on every voice RPC. A helper rejects any call whose lease_generation is older
+// than the one it holds, whose attempt_id differs, or whose expires_at has
+// passed. The per-attempt credentials are derived from exactly these fields.
+message VoiceFence {
+  string session_id = 1;
+  string tenant_id = 2;
+  // Format ^att_[A-Za-z0-9]+$ (same as HelperService Fence.attempt_id).
+  string attempt_id = 3;
+  string node_id = 4;
+  // Monotonically increasing per voice session; fences stale writers.
+  uint64 lease_generation = 5;
+  // Hard end of this attempt's credentials and lease unless renewed.
+  google.protobuf.Timestamp expires_at = 6;
+}
+
+message VoiceIceServer {
+  repeated string urls = 1;
+  // Primary-minted, time-limited TURN username/credential. Empty for STUN.
+  string username = 2;
+  string credential = 3;
+}
+
+// VoiceCredentials are minted by the primary for ONE attempt (see the trust
+// model above). Never logged, never persisted by the helper beyond the attempt.
+message VoiceCredentials {
+  // HMAC key for the helper-local relay hello (bound to node_id + generation).
+  bytes relay_key = 1;
+  // HMAC key that verifies the client's control-channel media credential.
+  bytes media_key = 2;
+  repeated VoiceIceServer ice_servers = 3;
+}
+
+message OfferVoiceRequest {
+  VoiceFence fence = 1;
+  VoiceCredentials credentials = 2;
+  string sdp_offer = 3;
+  // Opaque slot references chosen by the primary; never credentials.
+  string identity_ref = 4;
+  string instance_ref = 5;
+  string target = 6;
+  string trace_id = 7;
+}
+
+message OfferVoiceResponse {
+  string sdp_answer = 1;
+  // Whether the helper's relay accepted the bound hello and media is wired.
+  bool relay_ready = 2;
+}
+
+message ReconnectVoiceRequest {
+  VoiceFence fence = 1;
+  string sdp_offer = 2;
+}
+
+message ReconnectVoiceResponse {
+  string sdp_answer = 1;
+}
+
+enum VoiceControlOp {
+  VOICE_CONTROL_OP_UNSPECIFIED = 0;
+  VOICE_CONTROL_OP_MUTE = 1;
+  VOICE_CONTROL_OP_UNMUTE = 2;
+  // Stop the provider's current spoken output without ending the session.
+  VOICE_CONTROL_OP_INTERRUPT = 3;
+  // End the session: relay, media and the helper-held credentials.
+  VOICE_CONTROL_OP_TERMINATE = 4;
+}
+
+message ControlVoiceRequest {
+  VoiceFence fence = 1;
+  VoiceControlOp op = 2;
+  string reason = 3;
+}
+
+enum VoiceState {
+  VOICE_STATE_UNSPECIFIED = 0;
+  // Helper has no record (e.g. restarted); the primary must reconcile.
+  VOICE_STATE_UNKNOWN = 1;
+  VOICE_STATE_CONNECTING = 2;
+  VOICE_STATE_CONNECTED = 3;
+  VOICE_STATE_ENDED = 4;
+}
+
+message ControlVoiceResponse {
+  VoiceState state = 1;
+  bool muted = 2;
+}
+
+message RenewVoiceRequest {
+  VoiceFence fence = 1;
+  // Requested new expiry; the helper never extends past the primary's value.
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message RenewVoiceResponse {
+  uint64 lease_generation = 1;
+  google.protobuf.Timestamp expires_at = 2;
+  VoiceState state = 3;
+}
+
+enum VoiceEventType {
+  VOICE_EVENT_TYPE_UNSPECIFIED = 0;
+  VOICE_EVENT_TYPE_STARTED = 1;
+  VOICE_EVENT_TYPE_CONNECTED = 2;
+  VOICE_EVENT_TYPE_MUTED = 3;
+  VOICE_EVENT_TYPE_UNMUTED = 4;
+  VOICE_EVENT_TYPE_INTERRUPTED = 5;
+  VOICE_EVENT_TYPE_RECONNECTING = 6;
+  VOICE_EVENT_TYPE_DEVICES_LOST = 7;
+  VOICE_EVENT_TYPE_WARNING = 8;
+  // Terminal: the last event of a session.
+  VOICE_EVENT_TYPE_ENDED = 9;
+}
+
+message StreamVoiceEventsRequest {
+  VoiceFence fence = 1;
+  // Events with sequence > after_sequence are sent (0 = from the start).
+  uint64 after_sequence = 2;
+}
+
+// VoiceEvent key is attempt_id:sequence (sequence is per attempt, from 1).
+message VoiceEvent {
+  string attempt_id = 1;
+  uint64 sequence = 2;
+  uint64 lease_generation = 3;
+  VoiceEventType type = 4;
+  google.protobuf.Timestamp created_at = 5;
+  // Sanitized and bounded; never internal error text or credentials.
+  string data_json = 6;
+  // e.g. "terminated", "lease_expired", "devices_lost"; set on ENDED.
+  string end_reason = 7;
+}
+
+message StreamVoiceEventsResponse {
+  VoiceEvent event = 1;
+}

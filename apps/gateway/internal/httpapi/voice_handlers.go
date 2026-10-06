@@ -2,9 +2,7 @@ package httpapi
 
 import (
 	"context"
-	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -707,27 +705,14 @@ func (s *Server) decodeVoiceJSON(w http.ResponseWriter, r *http.Request, out any
 // a not-yet-expired time. The media itself is protected separately by the
 // authenticated signaling exchange and DTLS.
 func issueVoiceMediaCredential(appSecret string, session voice.Session, expires time.Time) string {
-	payload := fmt.Sprintf("voice-media|%s|%s|%s|%d", session.TenantID, session.AppID, session.ID, expires.Unix())
-	mac := hmac.New(sha256.New, []byte(appSecret))
-	mac.Write([]byte(payload))
-	return payload + "|" + hex.EncodeToString(mac.Sum(nil))
+	return voice.IssueMediaCredential([]byte(appSecret), session, expires)
 }
 
 // VerifyVoiceMediaCredential validates a credential against the session it
 // must belong to. A credential minted for another tenant, app or session, or
 // an expired or altered one, fails closed.
 func VerifyVoiceMediaCredential(appSecret string, session voice.Session, credential string, now time.Time) bool {
-	parts := strings.Split(credential, "|")
-	if len(parts) != 6 || parts[0] != "voice-media" ||
-		parts[1] != session.TenantID || parts[2] != session.AppID || parts[3] != session.ID {
-		return false
-	}
-	expiresUnix, err := strconv.ParseInt(parts[4], 10, 64)
-	if err != nil || now.Unix() > expiresUnix {
-		return false
-	}
-	expected := issueVoiceMediaCredential(appSecret, session, time.Unix(expiresUnix, 0))
-	return hmac.Equal([]byte(expected), []byte(credential))
+	return voice.VerifyMediaCredential([]byte(appSecret), session, credential, now)
 }
 
 // VoiceControlAuthorizer returns the hook the media hub uses to authorize a

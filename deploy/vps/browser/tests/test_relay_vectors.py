@@ -39,6 +39,15 @@ def test_token_vectors(rig, vec):
     assert rig.relay.relay_token(vec["secret"].encode("utf-8"), vec["session_id"], vec["exp"]) == vec["token"]
 
 
+@pytest.mark.parametrize("vec", VECTORS["bound_token_vectors"],
+                         ids=lambda v: f'{v["session_id"]}-{v["node_id"]}-{v["generation"]}-{v["secret"]}')
+def test_bound_token_vectors(rig, vec):
+    secret = vec["secret"].encode("utf-8")
+    got = rig.relay.relay_token(secret, vec["session_id"], vec["exp"], vec["node_id"], vec["generation"])
+    assert got == vec["token"]
+    assert got != rig.relay.relay_token(secret, vec["session_id"], vec["exp"])  # binding is signed
+
+
 @pytest.mark.parametrize("case", VECTORS["framing"], ids=lambda c: c["id"])
 def test_framing(rig, case):
     payload = bytes.fromhex(case["payload_hex"]) if "payload_hex" in case else bytes(case.get("payload_len", 0))
@@ -72,18 +81,23 @@ def build_hello_frame(case, secret):
     if "exp_offset_s" in case:
         hello["exp"] = int(time.time()) + case["exp_offset_s"]
     mode = case.get("token_mode")
+    bound = ("node_id", "generation") if "node_id" in hello and "generation" in hello else ()
     if mode == "valid":
+        hello["token"] = hmac_token(secret, hello["session_id"], hello["exp"], *(hello[k] for k in bound))
+    elif mode == "unbound":  # well-formed token that does not sign node/generation
         hello["token"] = hmac_token(secret, hello["session_id"], hello["exp"])
+    elif mode == "other_node":
+        hello["token"] = hmac_token(secret, hello["session_id"], hello["exp"], "other-node", hello["generation"])
     elif mode == "wrong":
         hello["token"] = "0" * 64
     return 2, json.dumps(hello).encode("utf-8")
 
 
-def hmac_token(secret, session_id, exp):
+def hmac_token(secret, session_id, exp, *bound):
     import hashlib
     import hmac
-    return hmac.new(secret.encode("utf-8"), f"voice-relay|{session_id}|{exp}".encode("utf-8"),
-                    hashlib.sha256).hexdigest()
+    msg = "|".join(["voice-relay", str(session_id), str(exp), *map(str, bound)])
+    return hmac.new(secret.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 @pytest.mark.parametrize("case", VECTORS["hello_validation"], ids=lambda c: c["id"])
@@ -129,3 +143,48 @@ def test_control_frames_encode_compact(rig):
     finally:
         a.close()
         b.close()
+
+
+def _hello(rig, secret, **hello):
+    """Run authenticate() on a hello built from kwargs (token signed unless given)."""
+    hello = {"op": "hello", "exp": int(time.time()) + 60, **hello}
+    bound = (hello["node_id"], hello["generation"]) if "node_id" in hello and "generation" in hello else ()
+    hello.setdefault("token", hmac_token(secret, hello["session_id"], hello["exp"], *bound))
+    payload = json.dumps(hello).encode("utf-8")
+    server, client = socket.socketpair()
+    try:
+        client.sendall((len(payload) + 1).to_bytes(4, "little") + bytes([2]) + payload)
+        return rig.relay.authenticate(server)
+    finally:
+        server.close()
+        client.close()
+
+
+def test_node_pinned_relay_requires_a_bound_hello_for_its_node(rig, monkeypatch):
+    """Helper deployment: the relay's secret is a per-attempt key and it is pinned to one node."""
+    monkeypatch.setenv("UBAG_VOICE_RELAY_SECRET", "attempt-key")
+    monkeypatch.setenv("UBAG_VOICE_RELAY_NODE_ID", "node-a")
+    assert _hello(rig, "attempt-key", session_id="s1", node_id="node-a", generation=2) == "s1"
+    for hello in (
+        {"session_id": "s1"},  # unbound hello
+        {"session_id": "s1", "node_id": "node-b", "generation": 2},  # another node, correctly signed
+    ):
+        with pytest.raises(rig.relay.HandshakeError) as exc:
+            _hello(rig, "attempt-key", **hello)
+        assert exc.value.reason == "unauthorized", hello
+
+
+def test_stale_lease_generation_is_refused(rig, monkeypatch):
+    monkeypatch.setenv("UBAG_VOICE_RELAY_SECRET", "attempt-key")
+    assert _hello(rig, "attempt-key", session_id="s1", node_id="node-a", generation=5) == "s1"
+    assert _hello(rig, "attempt-key", session_id="s1", node_id="node-a", generation=5) == "s1"  # reconnect
+    with pytest.raises(rig.relay.HandshakeError) as exc:
+        _hello(rig, "attempt-key", session_id="s1", node_id="node-a", generation=4)
+    assert exc.value.reason == "unauthorized"
+    assert _hello(rig, "attempt-key", session_id="s2", node_id="node-a", generation=1) == "s2"
+
+
+def test_unbound_hello_still_works_on_unpinned_relay(rig, monkeypatch):
+    monkeypatch.setenv("UBAG_VOICE_RELAY_SECRET", "s3")
+    monkeypatch.delenv("UBAG_VOICE_RELAY_NODE_ID", raising=False)
+    assert _hello(rig, "s3", session_id="plain") == "plain"

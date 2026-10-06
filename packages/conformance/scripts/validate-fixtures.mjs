@@ -212,6 +212,15 @@ for (const scenario of fixture.scenarios ?? []) {
     const want = createHmac("sha256", v.secret).update(`voice-relay|${v.session_id}|${v.exp}`).digest("hex");
     if (want !== v.token) errors.push(`voice-relay token vector ${v.session_id}/${v.exp} does not match HMAC-SHA256`);
   }
+  const unboundTokens = new Set((relay.token_vectors ?? []).map((v) => v.token));
+  for (const v of relay.bound_token_vectors ?? []) {
+    const want = createHmac("sha256", v.secret)
+      .update(`voice-relay|${v.session_id}|${v.exp}|${v.node_id}|${v.generation}`)
+      .digest("hex");
+    if (want !== v.token) errors.push(`voice-relay bound token vector ${v.session_id}/${v.node_id}/${v.generation} does not match HMAC-SHA256`);
+    if (unboundTokens.has(v.token)) errors.push(`voice-relay bound token vector ${v.session_id}/${v.node_id} equals an unbound token`);
+    if (!Number.isSafeInteger(v.generation) || v.generation < 1) errors.push(`voice-relay bound token vector ${v.node_id}: generation must be a safe integer >= 1`);
+  }
   const reasons = [...(relay.reply_reasons?.handshake ?? []), ...(relay.reply_reasons?.session ?? [])];
   const schemaReasons = schema.oneOf.find((s) => s.properties?.op?.const === "error").properties.reason.enum;
   if (JSON.stringify([...reasons].sort()) !== JSON.stringify([...schemaReasons].sort())) {
@@ -246,6 +255,10 @@ function schemaErrors(schema, value) {
     if (schema.minLength !== undefined && value.length < schema.minLength) out.push("minLength");
     if (schema.maxLength !== undefined && value.length > schema.maxLength) out.push("maxLength");
     if (schema.pattern && !new RegExp(schema.pattern).test(value)) out.push("pattern");
+  }
+  if (typeof value === "number") {
+    if (schema.minimum !== undefined && value < schema.minimum) out.push("minimum");
+    if (schema.maximum !== undefined && value > schema.maximum) out.push("maximum");
   }
   if (schema.type === "object") {
     for (const key of schema.required ?? []) if (!(key in value)) out.push(`required:${key}`);

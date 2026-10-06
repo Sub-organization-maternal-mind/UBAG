@@ -13,7 +13,9 @@
         "op": { "const": "hello" },
         "session_id": { "type": "string", "minLength": 1, "maxLength": 128 },
         "exp": { "type": "integer", "description": "Unix seconds; the relay refuses exp in the past or more than 300 s ahead." },
-        "token": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "hex(HMAC-SHA256(secret, \"voice-relay|<session_id>|<exp>\"))" }
+        "token": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "hex(HMAC-SHA256(secret, \"voice-relay|<session_id>|<exp>\")); when node_id and generation are present: hex(HMAC-SHA256(secret, \"voice-relay|<session_id>|<exp>|<node_id>|<generation>\")) so the credential only verifies for that node and lease generation." },
+        "node_id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[^|]+$", "description": "Optional (helper-hosted voice, P5.7): Helper Node the hello is bound to. Present together with generation or not at all (the relay answers bad_hello otherwise)." },
+        "generation": { "type": "integer", "minimum": 1, "maximum": 9007199254740991, "description": "Optional (helper-hosted voice, P5.7): lease generation the hello is bound to; the relay refuses a lower generation than the last accepted for the session." }
       }
     },
     {
