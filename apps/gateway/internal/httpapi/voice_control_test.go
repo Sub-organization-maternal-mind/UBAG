@@ -191,3 +191,80 @@ func TestVoiceOriginPolicy(t *testing.T) {
 		t.Fatalf("wildcard must never be honoured: %v", got)
 	}
 }
+
+// multiContextServer hosts several provider contexts on one environment so
+// control jobs must say which browser context to drive. Creation order (not
+// context id order) defines the index.
+func multiContextServer(t *testing.T, indexFlag bool, contexts ...topology.ProviderContext) (*Server, *voiceSimExecutor) {
+	t.Helper()
+	store := jobstore.NewMemoryStore()
+	sim := &voiceSimExecutor{recordingExecutor: &recordingExecutor{}, store: store, state: "activated"}
+	srv, _, _ := voiceTestServer(t, func(c *Config) {
+		c.Jobs, c.Executor, c.VoiceProviderActivation, c.VoiceContextIndex = store, sim, true, indexFlag
+		topo := topology.NewMemoryStore()
+		topo.AddInstance(topology.BrowserInstance{
+			InstanceID: "browser-1", TenantID: "tenant_edge", State: "ready", RemoteEndpoint: "http://172.28.0.10:9223"})
+		for _, pc := range contexts {
+			topo.AddContext(pc)
+		}
+		c.Topology = topo
+	})
+	return srv, sim
+}
+
+func ctxRow(id, identity string, created time.Time) topology.ProviderContext {
+	return topology.ProviderContext{ContextID: id, InstanceID: "browser-1", TenantID: "tenant_edge",
+		TargetID: "chatgpt_web", IdentityRef: identity, LoginState: "authenticated", CreatedAt: created}
+}
+
+func TestVoiceControlJobCarriesContextIndexForMultiContextPlacement(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	srv, sim := multiContextServer(t, true,
+		ctxRow("ctx-a", "acct-a", t0.Add(time.Second)), // sorts first by id, opened second
+		ctxRow("ctx-z", "acct-z", t0))
+	for identity, want := range map[string]int{"acct-z": 0, "acct-a": 1} {
+		sess := voice.Session{ID: "vs-" + identity, TenantID: "tenant_edge", Target: "chatgpt_web",
+			IdentityRef: identity, InstanceRef: "browser-1"}
+		if _, err := srv.runVoiceControl(context.Background(), sess, "activate", 5*time.Second); err != nil {
+			t.Fatalf("%s: %v", identity, err)
+		}
+		jobs := sim.jobs()
+		if got := jobs[len(jobs)-1].Input["context"]; got != want {
+			t.Fatalf("%s: context = %v, want %d", identity, got, want)
+		}
+	}
+}
+
+func TestVoiceControlJobContextIndexIsOptIn(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	both := []topology.ProviderContext{ctxRow("ctx-a", "acct-a", t0), ctxRow("ctx-z", "acct-z", t0.Add(time.Second))}
+	sess := voice.Session{ID: "vs-1", TenantID: "tenant_edge", Target: "chatgpt_web", IdentityRef: "acct-z", InstanceRef: "browser-1"}
+
+	srv, sim := multiContextServer(t, false, both...) // flag off: today's job shape
+	if _, err := srv.runVoiceControl(context.Background(), sess, "activate", 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := sim.jobs()[0].Input["context"]; has {
+		t.Fatalf("flag off must not add context: %+v", sim.jobs()[0].Input)
+	}
+
+	srv, sim = multiContextServer(t, true, both[1]) // single context: nothing to disambiguate
+	if _, err := srv.runVoiceControl(context.Background(), sess, "activate", 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := sim.jobs()[0].Input["context"]; has {
+		t.Fatalf("single context must not add context: %+v", sim.jobs()[0].Input)
+	}
+}
+
+func TestVoiceControlFailsClosedWhenContextCannotBePinned(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	srv, sim := multiContextServer(t, true, ctxRow("ctx-a", "acct-a", t0), ctxRow("ctx-z", "acct-z", t0.Add(time.Second)))
+	sess := voice.Session{ID: "vs-1", TenantID: "tenant_edge", Target: "chatgpt_web", IdentityRef: "acct-unknown", InstanceRef: "browser-1"}
+	if _, err := srv.runVoiceControl(context.Background(), sess, "activate", time.Second); err == nil {
+		t.Fatal("unregistered identity on a multi-context environment must fail closed")
+	}
+	if n := len(sim.jobs()); n != 0 {
+		t.Fatalf("no control job may be dispatched, got %d", n)
+	}
+}

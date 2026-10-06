@@ -51,6 +51,21 @@ CDP_GRACE_PROBES="${UBAG_BROWSER_CDP_GRACE_PROBES:-12}"
 # MediaHub dials. OFF by default; same opt-in semantics as the VPS profile.
 VOICE_AUDIO_ENABLED="${UBAG_VOICE_AUDIO_ENABLED:-0}"
 VOICE_RELAY_ADDR="${UBAG_VOICE_RELAY_ADDR:-0.0.0.0:9099}"
+# Per-environment relay port: UBAG_VOICE_RELAY_PORT_OFFSET (positive integer,
+# no leading zero) puts the relay on CDP proxy port + offset, matching the
+# gateway's UBAG_VOICE_AUDIO_RELAY_PORT_OFFSET, so two environments on one host
+# never share a relay port. An explicit UBAG_VOICE_RELAY_ADDR always wins.
+if [ -z "${UBAG_VOICE_RELAY_ADDR:-}" ] && [ -n "${UBAG_VOICE_RELAY_PORT_OFFSET:-}" ]; then
+  case "$UBAG_VOICE_RELAY_PORT_OFFSET" in
+    [!1-9]*|*[!0-9]*|??????*) echo "entrypoint: ignoring invalid UBAG_VOICE_RELAY_PORT_OFFSET" >&2 ;;
+    *)
+      if [ $((CDP_PROXY_PORT + UBAG_VOICE_RELAY_PORT_OFFSET)) -le 65535 ]; then
+        VOICE_RELAY_ADDR="0.0.0.0:$((CDP_PROXY_PORT + UBAG_VOICE_RELAY_PORT_OFFSET))"
+      else
+        echo "entrypoint: UBAG_VOICE_RELAY_PORT_OFFSET puts the relay port above 65535; ignoring" >&2
+      fi ;;
+  esac
+fi
 
 # A VNC password is mandatory — never expose an unauthenticated remote display.
 if [ -z "${UBAG_BROWSER_VNC_PASSWORD:-}" ]; then

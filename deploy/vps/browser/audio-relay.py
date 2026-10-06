@@ -98,6 +98,13 @@ Optional, all inert unless set:
                              stderr (/run/ubag/audio-relay.log) every 10 s
                              while a session is active and once when it ends.
                              No protocol change.
+  UBAG_VOICE_ENV_ID          per-environment namespace ([A-Za-z0-9_-]{1,32}):
+                             devices become ubag_virtual_mic_<id> /
+                             ubag_provider_sink_<id> and the default mic FIFO
+                             /tmp/ubag-voice-mic-<id>.pcm, so two environments
+                             on one host never share names. Invalid = refuse
+                             to start. The listen port is derived by
+                             entrypoint.sh (UBAG_VOICE_RELAY_PORT_OFFSET).
   UBAG_VOICE_MIC_PIPE        mic FIFO path (default /tmp/ubag-voice-mic.pcm)
   UBAG_VOICE_PAREC           parec executable (default parec)
   UBAG_VOICE_PACTL           pactl executable (default pactl)
@@ -112,6 +119,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import signal
 import socket
 import struct
@@ -131,13 +139,33 @@ CHANNELS = 1
 FRAME_MS = 20
 FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS // 1000  # 960 @48k
 
-MIC_SOURCE = "ubag_virtual_mic"      # what Chrome uses as its microphone
+_ENV_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
+
+
+def env_names(env_id):
+    """(mic source, speaker sink, default mic FIFO path) for one environment.
+
+    An empty/unset id keeps the historic fixed names. A set id namespaces all
+    three so two environments sharing a host (or a PulseAudio server / /tmp)
+    never collide on devices or the FIFO. An id that is not [A-Za-z0-9_-]{1,32}
+    raises: silently falling back to the shared names would defeat isolation.
+    """
+    env_id = (env_id or "").strip()
+    if not env_id:
+        return "ubag_virtual_mic", "ubag_provider_sink", "/tmp/ubag-voice-mic.pcm"
+    if not _ENV_ID_RE.fullmatch(env_id):
+        raise ValueError("UBAG_VOICE_ENV_ID must match [A-Za-z0-9_-]{1,32}")
+    return f"ubag_virtual_mic_{env_id}", f"ubag_provider_sink_{env_id}", f"/tmp/ubag-voice-mic-{env_id}.pcm"
+
+
+# MIC_SOURCE: what Chrome uses as its microphone; SPEAKER_SINK: what Chrome
+# plays provider audio into.
+MIC_SOURCE, SPEAKER_SINK, _DEFAULT_MIC_PIPE = env_names(os.environ.get("UBAG_VOICE_ENV_ID"))
 # Black-box seams: tests and non-standard images can point the relay at fakes.
 # Empty/unset keeps the current value, so production behaviour is unchanged.
-MIC_PIPE = os.environ.get("UBAG_VOICE_MIC_PIPE") or "/tmp/ubag-voice-mic.pcm"
+MIC_PIPE = os.environ.get("UBAG_VOICE_MIC_PIPE") or _DEFAULT_MIC_PIPE
 PACTL = os.environ.get("UBAG_VOICE_PACTL") or "pactl"
 PAREC = os.environ.get("UBAG_VOICE_PAREC") or "parec"
-SPEAKER_SINK = "ubag_provider_sink"  # what Chrome plays provider audio into
 SPEAKER_MONITOR = f"{SPEAKER_SINK}.monitor"
 
 HELLO_TIMEOUT_S = 5.0

@@ -108,6 +108,10 @@ services:
       # 1/true = stop media after 5 consecutive store errors (default off = fail open).
       UBAG_VOICE_RECONCILER_FAIL_CLOSED: ${UBAG_VOICE_RECONCILER_FAIL_CLOSED:-}
       UBAG_VOICE_AUDIO_RELAY_ADDR: ${UBAG_VOICE_AUDIO_RELAY_ADDR:-browser:9099}
+      # Control jobs carry the browser-context index on multi-context environments (empty/0 = off).
+      UBAG_VOICE_CONTEXT_INDEX: ${UBAG_VOICE_CONTEXT_INDEX:-}
+      # Per-environment relay port = registered CDP port + offset (empty/0 = fixed port).
+      UBAG_VOICE_AUDIO_RELAY_PORT_OFFSET: ${UBAG_VOICE_AUDIO_RELAY_PORT_OFFSET:-}
       UBAG_VOICE_MAX_SESSIONS_PER_TENANT: ${UBAG_VOICE_MAX_SESSIONS_PER_TENANT:-4}
       UBAG_VOICE_MAX_QUEUED_PER_TENANT: ${UBAG_VOICE_MAX_QUEUED_PER_TENANT:-32}
       UBAG_VOICE_SESSION_TTL_SECONDS: ${UBAG_VOICE_SESSION_TTL_SECONDS:-600}
@@ -301,7 +305,12 @@ services:
       # dials. Off by default — the production browser only gains audio when
       # the operator sets UBAG_VOICE_AUDIO_ENABLED=1.
       UBAG_VOICE_AUDIO_ENABLED: ${UBAG_VOICE_AUDIO_ENABLED:-0}
-      UBAG_VOICE_RELAY_ADDR: ${UBAG_VOICE_RELAY_ADDR:-0.0.0.0:9099}
+      # Empty = the entrypoint's 0.0.0.0:9099 (or CDP proxy port + offset when
+      # UBAG_VOICE_RELAY_PORT_OFFSET is set). UBAG_VOICE_ENV_ID namespaces the
+      # Pulse devices and mic FIFO per environment (empty = historic names).
+      UBAG_VOICE_RELAY_ADDR: ${UBAG_VOICE_RELAY_ADDR:-}
+      UBAG_VOICE_RELAY_PORT_OFFSET: ${UBAG_VOICE_RELAY_PORT_OFFSET:-}
+      UBAG_VOICE_ENV_ID: ${UBAG_VOICE_ENV_ID:-}
       UBAG_VOICE_RELAY_SECRET: ${UBAG_VOICE_RELAY_SECRET:-}
       # Opt-in relay measurement: a JSON stats line every 10 s in /run/ubag/audio-relay.log.
       UBAG_VOICE_RELAY_STATS: ${UBAG_VOICE_RELAY_STATS:-0}

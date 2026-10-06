@@ -284,6 +284,8 @@ func Run(ctx context.Context) error {
 		// "connected" once the provider is verified ready. Disable only for
 		// media-path development (UBAG_VOICE_PROVIDER_ACTIVATION=0).
 		VoiceProviderActivation: voiceStore != nil && getenv("UBAG_VOICE_PROVIDER_ACTIVATION", "1") != "0",
+		// Off (default) sends no context index, as before.
+		VoiceContextIndex: envBool("UBAG_VOICE_CONTEXT_INDEX"),
 
 		RateLimiter:       enterprise.rateLimiter,
 		RateLimitResolver: enterprise.rateResolver,
@@ -2013,6 +2015,11 @@ func voiceRelayResolver(topo topology.Store) func(voice.Session) (string, error)
 	}
 	port := strings.TrimSpace(getenv("UBAG_VOICE_AUDIO_RELAY_PORT", "9099"))
 	legacy := strings.TrimSpace(os.Getenv("UBAG_VOICE_AUDIO_RELAY_ADDR"))
+	// UBAG_VOICE_AUDIO_RELAY_PORT_OFFSET > 0 derives each environment's relay
+	// port as its registered CDP endpoint port + offset (the browser image
+	// applies the same offset to its CDP proxy port), so two environments on
+	// one host resolve to different relays. Unset/0 keeps the fixed port.
+	offset, _ := strconv.Atoi(strings.TrimSpace(os.Getenv("UBAG_VOICE_AUDIO_RELAY_PORT_OFFSET")))
 	return func(session voice.Session) (string, error) {
 		if addr := explicit[session.InstanceRef]; addr != "" {
 			return addr, nil
@@ -2026,9 +2033,19 @@ func voiceRelayResolver(topo topology.Store) func(voice.Session) (string, error)
 					if instance.InstanceID != session.InstanceRef || instance.RemoteEndpoint == "" {
 						continue
 					}
-					if u, err := url.Parse(instance.RemoteEndpoint); err == nil && u.Hostname() != "" {
-						return net.JoinHostPort(u.Hostname(), port), nil
+					u, err := url.Parse(instance.RemoteEndpoint)
+					if err != nil || u.Hostname() == "" {
+						continue
 					}
+					relayPort := port
+					if offset > 0 {
+						cdp, perr := strconv.Atoi(u.Port())
+						if perr != nil || cdp+offset > 65535 {
+							continue // cannot derive a per-environment port: fail closed below
+						}
+						relayPort = strconv.Itoa(cdp + offset)
+					}
+					return net.JoinHostPort(u.Hostname(), relayPort), nil
 				}
 			}
 		}

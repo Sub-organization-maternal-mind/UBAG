@@ -272,6 +272,10 @@ type Config struct {
 	// verified ready. Off keeps sessions at connecting (unit tests, media-only
 	// development).
 	VoiceProviderActivation bool
+	// VoiceContextIndex adds the session's browser-context index to control
+	// jobs when its environment hosts more than one provider context
+	// (UBAG_VOICE_CONTEXT_INDEX; default off = no index, as before).
+	VoiceContextIndex bool
 
 	// VoiceSessionTTL is the default lease window between renewals
 	// (30s..1h). Zero selects the 10-minute default.
@@ -325,6 +329,7 @@ type Server struct {
 	allowedOrigins   []string
 	voice            voice.Store
 	voiceActivation  bool
+	voiceContextIdx  bool
 	voiceLife        voiceLifecycle
 	voiceMedia       MediaNegotiator
 	voiceSessionTTL  time.Duration
@@ -644,6 +649,7 @@ func NewServer(config Config) *Server {
 		facadeMaxBody:      config.FacadeMaxBodyBytes,
 		voice:              config.VoiceStore,
 		voiceActivation:    config.VoiceProviderActivation,
+		voiceContextIdx:    config.VoiceContextIndex,
 		voiceMedia:         config.VoiceMedia,
 		voiceSessionTTL:    config.VoiceSessionTTL,
 
