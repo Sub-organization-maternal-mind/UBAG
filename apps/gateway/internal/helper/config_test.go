@@ -228,7 +228,7 @@ func TestOpenRefusesACertificateThatDoesNotNameTheNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Open(nil); err == nil || !strings.Contains(err.Error(), NodeURISAN("helper-1")) {
+	if _, err := st.Open(nil, nil); err == nil || !strings.Contains(err.Error(), NodeURISAN("helper-1")) {
 		t.Fatalf("a certificate for another node must refuse to start: %v", err)
 	}
 
@@ -237,7 +237,7 @@ func TestOpenRefusesACertificateThatDoesNotNameTheNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.Open(nil); err == nil || !strings.Contains(err.Error(), "adapter registry") {
+	if _, err := st.Open(nil, nil); err == nil || !strings.Contains(err.Error(), "adapter registry") {
 		t.Fatalf("a helper that cannot load its registry must refuse to start: %v", err)
 	}
 }
@@ -281,7 +281,7 @@ func TestOpenServesOverRealMTLSAndStopsCleanly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := st.Open(nil)
+	node, err := st.Open(nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

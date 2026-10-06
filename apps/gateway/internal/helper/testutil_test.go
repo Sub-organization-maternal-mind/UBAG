@@ -198,6 +198,7 @@ type rig struct {
 	node    *authtest.Leaf
 	primary *authtest.Leaf
 	client  helperv1.HelperServiceClient
+	voice   helperv1.HelperVoiceServiceClient // nil unless the config enables voice
 
 	rejMu   sync.Mutex
 	rejects []string
@@ -240,6 +241,7 @@ func newRig(t *testing.T, runner *fakeRunner, mut ...func(*Config)) *rig {
 	}
 	tlsCfg := r.auth.ServerTLSConfig(r.ca.Pool, func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return &r.node.TLS, nil })
 	r.grpcSrv = r.auth.NewGRPCServer(tlsCfg, r.srv)
+	r.srv.RegisterVoice(r.grpcSrv)
 	r.lis = bufconn.Listen(1 << 20)
 	go func() { _ = r.grpcSrv.Serve(r.lis) }()
 	t.Cleanup(func() {
@@ -248,7 +250,9 @@ func newRig(t *testing.T, runner *fakeRunner, mut ...func(*Config)) *rig {
 		_ = r.srv.Shutdown(ctx) // ends running attempts so their streams finish
 		r.grpcSrv.Stop()
 	})
-	r.client, _ = r.dial(r.primary)
+	var conn *grpc.ClientConn
+	r.client, conn = r.dial(r.primary)
+	r.voice = helperv1.NewHelperVoiceServiceClient(conn)
 	return r
 }
 
