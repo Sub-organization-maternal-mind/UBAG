@@ -163,6 +163,18 @@ type WorkerConsumer struct {
 	// before its lease goes back to the queue. Zero is 2s (the pool overload delay).
 	VoiceLaneRetryDelay time.Duration
 
+	// Remote, when set (UBAG_HELPER_DISPATCH, default off), offers each leased job
+	// to the helper plane before it runs locally: Place decides (a picker, after
+	// the static eligibility rules) and a placed job runs as an attempt on a
+	// Helper Node (remoterunner.go). Every other job, and every job when the
+	// picker has nothing, takes the unchanged local path. Nil is today's gateway.
+	Remote *RemoteWorkerRunner
+	// Cancels, when set, is the in-process cancel path for remote attempts: the
+	// cancel API hints it (NewCancelNotifier) and the supervisor of a remote run
+	// stops the helper at once instead of waiting for the store poll. Nil keeps
+	// the poll as the only path.
+	Cancels *CancelRegistry
+
 	inflight atomic.Int64
 }
 
@@ -485,13 +497,27 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		}
 		defer releaseExecLease()
 	}
+	// Helper placement (UBAG_HELPER_DISPATCH): lease-then-place, before the job is
+	// assigned. A nil placement is the local path below; an error holds the job
+	// back (it never started) and retries the lease after a delay.
+	placed, placeErr := c.Remote.Place(ctx, envelope)
+	if placeErr != nil {
+		releaseExecLease()
+		return c.retryAfterDelay(ctx, lease, placeErr)
+	}
+	defer placed.Release()
+	remote := placed != nil
 	// A browser job and a live voice session exclude each other on the browser
 	// (voicelane.go). Checked before the job is assigned: a held-back job has not
-	// started, so it stays queued and goes back to the queue after a delay.
-	laneHold, laneErr := c.enterBrowserLane(ctx, envelope)
-	if laneErr != nil {
-		releaseExecLease()
-		return c.retryAfterDelay(ctx, lease, laneErr)
+	// started, so it stays queued and goes back to the queue after a delay. A job
+	// placed on a helper drives the helper's browser, not this one.
+	var laneHold *topology.LaneHold
+	if !remote {
+		var laneErr error
+		if laneHold, laneErr = c.enterBrowserLane(ctx, envelope); laneErr != nil {
+			releaseExecLease()
+			return c.retryAfterDelay(ctx, lease, laneErr)
+		}
 	}
 	defer laneHold.Release()
 	assignedJob, found, err := c.Jobs.UpdateStatus(ctx, job.ID, jobstore.StatusAssigned)
@@ -511,15 +537,27 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	// holds the single terminal; the run then returns just that terminal, which
 	// the ingestion below applies exactly like the batch path's last event.
 	var ingest *streamIngest
-	if streaming {
+	if streaming && !remote {
 		ingest = &streamIngest{c: c, job: job, envelope: envelope}
 	}
 	workerStarted := time.Now()
-	events, err := c.runWorkerWithCancellation(ctx, lease, execToken, laneHold, envelope, ingest)
+	var events []jobstore.WorkerEvent
+	if remote {
+		// The helper's events are committed through the fenced ingest as they
+		// arrive; the run itself returns no events, only whether it reached an
+		// end the store holds (below).
+		_, err = c.superviseRun(ctx, lease, execToken, laneHold, envelope.JobID, true, func(runCtx context.Context) ([]jobstore.WorkerEvent, error) {
+			return nil, c.Remote.Run(runCtx, envelope, placed)
+		})
+	} else {
+		events, err = c.runWorkerWithCancellation(ctx, lease, execToken, laneHold, envelope, ingest)
+	}
 	workerDuration := time.Since(workerStarted)
-	if err != nil && ctx.Err() == nil && errors.Is(err, ErrPoolOverloaded) {
-		// Lease-then-place (ADR-0011): the job was leased but no worker slot could
-		// take it. It never ran, so it is neither failed nor completed.
+	var heldBack *HelperRetryError
+	if err != nil && ctx.Err() == nil && (errors.Is(err, ErrPoolOverloaded) || errors.As(err, &heldBack)) {
+		// Lease-then-place (ADR-0011): the job was leased but no worker slot (or
+		// no helper) could take it. It never ran, so it is neither failed nor
+		// completed.
 		releaseExecLease()
 		return c.retryAfterDelay(ctx, lease, err)
 	}
@@ -588,6 +626,9 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			return true, notifyErr
 		}
 		return true, lease.Fail(opCtx)
+	}
+	if remote {
+		return c.finishRemoteRun(ctx, lease, job, workerDuration)
 	}
 	ingestionStarted := time.Now()
 	eventCount := len(events)
@@ -1120,6 +1161,17 @@ func (c *WorkerConsumer) workerQueue() (WorkerQueue, error) {
 }
 
 func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease WorkerLease, execToken string, laneHold *topology.LaneHold, envelope DispatchEnvelope, ingest *streamIngest) ([]jobstore.WorkerEvent, error) {
+	return c.superviseRun(ctx, lease, execToken, laneHold, envelope.JobID, false, func(runCtx context.Context) ([]jobstore.WorkerEvent, error) {
+		return c.runWorker(runCtx, envelope, ingest)
+	})
+}
+
+// superviseRun runs one attempt (run) while a watcher keeps its leases alive and
+// stops it when the job ends under it. remote marks a run on a Helper Node: its
+// cancel does not poll the store at 250 ms. It listens for the in-process cancel
+// hint (Cancels) and keeps only the slow safety-net read for a cancel written by
+// another process.
+func (c *WorkerConsumer) superviseRun(ctx context.Context, lease WorkerLease, execToken string, laneHold *topology.LaneHold, jobID string, remote bool, run func(context.Context) ([]jobstore.WorkerEvent, error)) ([]jobstore.WorkerEvent, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -1132,10 +1184,17 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 		cancelPoll := 250 * time.Millisecond
 		var jobWake <-chan struct{}
 		if waker, ok := c.Jobs.(jobstore.JobWaker); ok {
-			if wake, unsubscribe, on := waker.SubscribeJobWake(envelope.JobID); on {
+			if wake, unsubscribe, on := waker.SubscribeJobWake(jobID); on {
 				defer unsubscribe()
 				jobWake, cancelPoll = wake, cancelWatchFallback
 			}
+		}
+		var cancelHint <-chan struct{}
+		if remote {
+			cancelPoll = max(cancelPoll, cancelWatchFallback)
+			var release func()
+			cancelHint, release = c.Cancels.Watch(jobID)
+			defer release()
 		}
 		ticker := time.NewTicker(cancelPoll)
 		defer ticker.Stop()
@@ -1179,12 +1238,19 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 					return
 				}
 			case <-jobWake:
-				if c.jobCanceled(runCtx, envelope.JobID) {
+				if c.jobCanceled(runCtx, jobID) {
+					cancel()
+					return
+				}
+			case <-cancelHint:
+				// The cancel API is running in this process: stop the helper as soon as
+				// the store shows the cancel (it is written just after the hint).
+				if c.jobCanceledWithin(runCtx, jobID, cancelHintWindow) {
 					cancel()
 					return
 				}
 			case <-ticker.C:
-				job, found, err := c.Jobs.Get(runCtx, envelope.JobID)
+				job, found, err := c.Jobs.Get(runCtx, jobID)
 				if err != nil || !found {
 					continue
 				}
@@ -1196,7 +1262,7 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 		}
 	}()
 
-	events, err := c.runWorker(runCtx, envelope, ingest)
+	events, err := run(runCtx)
 	cancel()
 	<-done
 	return events, err
@@ -1204,6 +1270,32 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 
 // cancelWatchFallback is the safety-net Get cadence while the event hub is on.
 const cancelWatchFallback = 2 * time.Second
+
+// cancelHintWindow bounds how long a cancel hint is verified against the store:
+// the cancel API calls CancelJob (the hint) and then writes the canceled status,
+// so the first look can come early. A hint the store never confirms (the cancel
+// failed) stops nothing.
+const cancelHintWindow = 3 * time.Second
+
+// jobCanceledWithin polls the store until the job is terminal or window passes.
+func (c *WorkerConsumer) jobCanceledWithin(ctx context.Context, jobID string, window time.Duration) bool {
+	expire := time.NewTimer(window)
+	defer expire.Stop()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if c.jobCanceled(ctx, jobID) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-expire.C:
+			return false
+		case <-tick.C:
+		}
+	}
+}
 
 const (
 	defaultOverloadRetryDelay = 2 * time.Second
@@ -1221,6 +1313,7 @@ func (c *WorkerConsumer) retryAfterDelay(ctx context.Context, lease WorkerLease,
 	delay, reason := defaultOverloadRetryDelay, "overloaded"
 	var overload *PoolOverloadError
 	var busy *LaneBusyError
+	var helperHold *HelperRetryError
 	switch {
 	case errors.As(cause, &overload):
 		reason = overload.Reason
@@ -1232,10 +1325,15 @@ func (c *WorkerConsumer) retryAfterDelay(ctx context.Context, lease WorkerLease,
 		if busy.RetryAfter > 0 {
 			delay = min(busy.RetryAfter, maxOverloadRetryDelay)
 		}
+	case errors.As(cause, &helperHold):
+		reason = helperHold.Reason
+		if helperHold.RetryAfter > 0 {
+			delay = min(helperHold.RetryAfter, maxOverloadRetryDelay)
+		}
 	}
 	level := slog.LevelWarn
-	if busy != nil && busy.Reason != laneStateUnavailable {
-		level = slog.LevelInfo // an expected wait behind a call, repeated every delay; not an alarm
+	if (busy != nil && busy.Reason != laneStateUnavailable) || helperHold != nil {
+		level = slog.LevelInfo // an expected wait (behind a call, or for a helper), repeated every delay; not an alarm
 	}
 	slog.Log(ctx, level, "worker placement refused; retrying the lease after a delay",
 		"job_id", lease.JobID(), "reason", reason, "delay", delay)
