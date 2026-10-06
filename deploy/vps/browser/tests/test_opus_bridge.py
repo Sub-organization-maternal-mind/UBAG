@@ -1,5 +1,9 @@
 """opus_bridge lifetime and validation tests (libopus replaced by FakeLib)."""
 
+import ctypes
+import struct
+import threading
+
 import pytest
 
 import opus_bridge
@@ -77,3 +81,66 @@ def test_encoder_rejects_wrong_pcm_length(lib):
     with OpusEncoder() as enc:
         with pytest.raises(OpusError):
             enc.encode(b"\x00" * 10, 960)
+
+
+# --- P7.6: per-codec buffer reuse must not change a single output byte ----
+
+def _expected_pcm(ms, fill):
+    return struct.pack("<h", fill) * (ms * 48)
+
+
+CORPUS = [(20, 7), (120, 9), (2, 1), (60, 5), (10, 3), (20, 0), (120, 255), (10, 4)]
+
+
+def test_decode_corpus_bytes_identical_with_reused_buffer(lib):
+    # long packet then short ones: a stale tail from the reused buffer would show
+    with OpusDecoder() as dec:
+        for ms, fill in CORPUS:
+            assert dec.decode(pkt(ms, fill=fill)) == _expected_pcm(ms, fill)
+
+
+def test_decoder_reuses_one_11520_byte_buffer(lib):
+    ptrs = []
+    real = lib.opus_decode
+
+    def spy(handle, packet, n, out, frame_size, fec):
+        ptrs.append(ctypes.addressof(out))
+        assert ctypes.sizeof(out) == opus_bridge.MAX_FRAME_SAMPLES * 2 == 11520
+        return real(handle, packet, n, out, frame_size, fec)
+
+    lib.opus_decode = spy
+    with OpusDecoder() as dec:
+        for ms, fill in CORPUS:
+            dec.decode(pkt(ms, fill=fill))
+    assert len(set(ptrs)) == 1 and len(ptrs) == len(CORPUS)
+
+
+def test_encoder_reuses_buffer_and_returns_exact_packet(lib):
+    ptrs = []
+    real = lib.opus_encode
+
+    def spy(handle, pcm, frame_size, out, max_bytes):
+        ptrs.append(ctypes.addressof(out))
+        assert max_bytes == 11520
+        return real(handle, pcm, frame_size, out, max_bytes)
+
+    lib.opus_encode = spy
+    with OpusEncoder() as enc:
+        outs = [enc.encode(b"\x00" * 1920, 960) for _ in range(5)]
+    assert outs == [b"OP"] * 5 and len(set(ptrs)) == 1
+
+
+def test_concurrent_decodes_never_see_each_others_buffer(lib):
+    errors = []
+    with OpusDecoder() as dec:
+        def worker(ms, fill):
+            for _ in range(200):
+                if dec.decode(pkt(ms, fill=fill)) != _expected_pcm(ms, fill):
+                    errors.append((ms, fill))
+
+        threads = [threading.Thread(target=worker, args=a) for a in ((120, 1), (10, 2), (60, 3), (2, 4))]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+    assert not errors
