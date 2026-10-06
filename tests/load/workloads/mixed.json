@@ -2,9 +2,9 @@
   "schema_version": 1,
   "name": "mixed",
   "kind": "mixed",
-  "description": "Proposed blend of text, attachment and audio-upload traffic. Weights are a roadmap proposal, not measured production shares; replace them once real traffic is observed.",
+  "description": "Proposed blend of text, attachment and audio-upload traffic. Weights are a roadmap proposal, not measured production shares; replace them once real traffic is observed. Targets the synthetic_chat local fixture (UBAG_SYNTHETIC_PROVIDER=1 plus tools/synthetic-provider/server.mjs) so jobs reach the warm-daemon path that the mock target bypasses; its audio class is an opaque attachment, not transcription.",
   "harness_support": "planned",
-  "provider_scenario": { "target": "mock", "command_type": "chat.prompt", "live_provider": false, "requires_live_media": false },
+  "provider_scenario": { "target": "synthetic_chat", "command_type": "chat.prompt", "live_provider": false, "requires_live_media": false },
   "mix": [
     { "kind": "text", "weight": 70, "payload_bytes": { "min": 64, "max": 2048 } },
     { "kind": "attachment", "weight": 20, "payload_bytes": { "min": 4096, "max": 524288 } },

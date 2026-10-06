@@ -1958,3 +1958,21 @@ func TestMinimalWorkerEnvForwardsSlotAndSyntheticFlagsNotOrchestrator(t *testing
 		t.Fatal("UBAG_ORCHESTRATOR_ENABLED must not be forwarded")
 	}
 }
+
+func TestMinimalWorkerEnvForwardsSyntheticProviderAndStageTimings(t *testing.T) {
+	keys := []string{"UBAG_SYNTHETIC_PROVIDER", "UBAG_SYNTHETIC_PROVIDER_URL", "UBAG_WORKER_STAGE_TIMINGS"}
+	for _, k := range keys {
+		t.Setenv(k, "x-"+k)
+	}
+	values := map[string]string{}
+	for _, item := range minimalWorkerEnv() {
+		if k, v, ok := strings.Cut(item, "="); ok {
+			values[k] = v
+		}
+	}
+	for _, k := range keys {
+		if values[k] != "x-"+k {
+			t.Fatalf("%s not forwarded: %#v", k, values)
+		}
+	}
+}

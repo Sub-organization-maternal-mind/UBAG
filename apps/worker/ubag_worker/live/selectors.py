@@ -1117,6 +1117,13 @@ PROVIDER_SELECTORS = {
 }
 
 
+# Local-fixture overlay (UBAG_SYNTHETIC_PROVIDER=1): adds `synthetic_chat` only when enabled and the
+# configured origin is loopback. Absent by default, and not in adapters/registry.json.
+from .synthetic import register_synthetic_provider  # noqa: E402
+
+register_synthetic_provider(PROVIDER_SELECTORS)
+
+
 def get_provider_selectors(provider_id: str) -> ProviderSelectors:
     try:
         return PROVIDER_SELECTORS[provider_id]
