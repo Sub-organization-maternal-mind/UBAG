@@ -86,6 +86,7 @@ Statuses below were taken from each shard's own Status line at the integration t
 | P5.8 | Voice lease generation, node id and terminating hold | merged |
 | P5.9 | Node-aware voice placement and node-lane admission | merged |
 | P5.10 | Helper-side voice endpoint: MediaHub, loopback relay, browser and audio co-located | merged |
+| P5.11 | Primary RemoteMediaNegotiator and control forwarding | merged (Postgres parity and live two-way audio not run) |
 | P6.1 | queue_reason and operator fleet read API: contract and SDK surface | merged |
 | P6.2 | Fleet read handlers and queue_reason population | merged |
 | P6.3 | Dashboard truthful queue depth and shared snapshot store | merged |
@@ -103,5 +104,4 @@ Statuses below were taken from each shard's own Status line at the integration t
 | P7.9 | Publish measured capacity and close the ledger | partial |
 | P8.1 | Flag graduation and rollout runbook | merged when its PR is merged |
 | P1.8 | Create-path pprof + DB pool sizing | no shard at this tip (not landed) |
-| P5.11 | Primary RemoteMediaNegotiator and control forwarding | no shard at this tip (not landed) |
 | P6.5 | Dashboard voice sessions and capabilities panel | no shard at this tip (not landed) |
