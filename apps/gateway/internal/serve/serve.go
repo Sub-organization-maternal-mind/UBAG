@@ -333,6 +333,17 @@ func Run(ctx context.Context) error {
 		}()
 	}
 
+	// Queued-job reconciler (opt-in): re-enqueues queued jobs whose spool entry
+	// was never written because the gateway crashed between Create and Enqueue.
+	if envBool("UBAG_QUEUE_RECONCILER_ENABLED") {
+		reconciler := newQueuedJobReconcilerFromEnv(jobs, rawDispatcher)
+		go func() {
+			if err := reconciler.Run(ctx); err != nil && err != context.Canceled {
+				slog.Error("queued-job reconciler stopped", "error", err)
+			}
+		}()
+	}
+
 	// Spool retention sweeper: done/failed/cancelled file-spool envelopes are
 	// never read again, so their growth is bounded here (env-configurable TTL
 	// + max-count; both disabled turns the sweeper into a no-op).
@@ -1508,6 +1519,19 @@ func newStaleJobReaperFromEnv(jobs jobstore.Store, concurrency *topology.Concurr
 		Notifier:    notifier,
 		MaxLifetime: time.Duration(maxLifetimeSecs) * time.Second,
 		Interval:    time.Duration(intervalSecs) * time.Second,
+	}
+}
+
+// newQueuedJobReconcilerFromEnv builds the create-then-enqueue crash reconciler.
+// UBAG_QUEUE_RECONCILER_INTERVAL_SECONDS is the sweep cadence (default 60s);
+// UBAG_QUEUE_RECONCILER_MIN_AGE_SECONDS is the grace after job creation before a
+// queued job without a queue entry is re-enqueued (default 120s).
+func newQueuedJobReconcilerFromEnv(jobs jobstore.Store, dispatcher executor.Dispatcher) *executor.QueuedJobReconciler {
+	return &executor.QueuedJobReconciler{
+		Jobs:       jobs,
+		Dispatcher: dispatcher,
+		MinAge:     time.Duration(positiveIntEnv("UBAG_QUEUE_RECONCILER_MIN_AGE_SECONDS")) * time.Second,
+		Interval:   time.Duration(positiveIntEnv("UBAG_QUEUE_RECONCILER_INTERVAL_SECONDS")) * time.Second,
 	}
 }
 

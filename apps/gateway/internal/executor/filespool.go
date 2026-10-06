@@ -799,6 +799,16 @@ func countJSONFiles(dir string) (int, time.Time, error) {
 	return count, oldest, nil
 }
 
+// HasJob reports whether the spool holds an envelope for the job in any state
+// (pending, leased or terminal). It lets the queued-job reconciler tell a job
+// whose enqueue never happened from one that is merely waiting its turn.
+func (d *FileSpoolDispatcher) HasJob(ctx context.Context, jobID string) (bool, error) {
+	if err := d.Ready(ctx); err != nil {
+		return false, err
+	}
+	return d.jobExistsInAnyState(jobID), nil
+}
+
 func (d *FileSpoolDispatcher) jobExistsInAnyState(jobID string) bool {
 	if _, ok := d.findJobPath(jobID, d.pendingDir()); ok {
 		return true
