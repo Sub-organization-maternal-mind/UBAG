@@ -176,7 +176,89 @@ unmeasured threshold as a FAIL. Use it with `--scenario all` and
 latency" below); omitting a scenario, the second tenant or the voice report fails
 the run instead of passing silently. Numbers measured on a laptop/Docker stack are
 NON-AUTHORITATIVE (there is no isolated lab host yet); never aim this at the shared
-VPS. 1/2/5/10/20-workload step runs are a separate slice (P7.2).
+VPS. The 1/2/5/10/20-workload closed-loop ladder, the 100-client / 1000-queued paused mode and the capacity report are
+`tests/load/ladder.mjs` (next section).
+
+### Workload ladder and capacity report (`tests/load/ladder.mjs`)
+
+`ladder.mjs` answers "how many concurrent workloads can this stack carry while every goal still holds". It reuses the
+acceptance harness (HTTP client, Retry-After backoff, polling, result/event/tenant verification) and adds the closed-loop
+ladder, a consumer-paused queue mode and the capacity report. It is **not** part of `pnpm check`; same safety guards as
+above (acknowledgement flag, loopback/private host or an explicit `UBAG_LOAD_ALLOWED_HOSTS`, never the shared VPS).
+
+```
+UBAG_LOAD_BASE_URL=http://127.0.0.1:8080 UBAG_LOAD_API_KEY=... UBAG_LOAD_API_KEY_B=... \
+  node tests/load/ladder.mjs --i-understand-this-is-load --workload mixed --step-seconds 120 \
+  --cgroup-containers gateway=<c>,browser=<c>,worker=<c> --host-class 2c4g --isolated-lab-host \
+  --voice-latency voice-latency.json --require-goals
+```
+
+**Ladder mode (default).** For each step N of the workload manifest's `ladder_steps` (1, 2, 5, 10, 20; override with
+`--steps`), N virtual clients run for `--step-seconds`. A client is closed-loop: pick a class from the manifest `mix`
+(deterministic per `--seed`), create the job, poll it to a terminal state, verify the result body, the event log and the
+tenant boundary (second key), sleep the manifest think time (`--think-scale` percent), repeat. At most one job per client
+is in flight. A step runs for at least `--step-seconds` and, up to 3x that, until `--min-samples` (20) text accepts and
+polls were timed, so a slow step still yields a p95 (fewer samples leave the latency goal unmeasured, never a lucky number).
+
+| Class | What is sent |
+| --- | --- |
+| `text` | JSON `POST /v1/jobs`, prompt padded to a size drawn from the class' `payload_bytes` |
+| `attachment` | native multipart job with one `text/plain` document (declared; size and sha256 verified from the artifact list). On the `mock` target, which declares no attachments policy, the artifact `PUT` path of `--with-upload` is used instead and a 4xx is tolerated |
+| `audio_upload` | native multipart job with the synthetic WAV profile closest to the drawn size (needs a target that accepts `audio/wav`; `synthetic_chat` does, `mock` does not and the step FAILS on `attachment_violations`) |
+| `voice_session` | not driven: live media needs a relay secret and a real browser (D7). Workload `voice` is refused |
+
+`mixed` targets `synthetic_chat` (P7.1) so jobs reach the warm-daemon path; `text` and `attachment` target `mock`.
+A live provider is refused unless `--target` names it **and** `--allow-live-provider` is passed (user-owned session; never
+at ladder load by default).
+
+**Goals per step.** The merged set is the integrity zeros of `thresholds.json`, the plan goals of `thresholds.goals.json` and
+the ladder-only keys of `thresholds.ladder.json`. Every goal is marked `passed`, `failed` or `not_measured`; `not_measured`
+fails only under `--require-goals`.
+
+| Goal | Limit | Measured as |
+| --- | --- | --- |
+| accept p95 | 200 ms | ok `POST /v1/jobs` of the text class (all creates if the mix has no text); attachment/audio accept is reported per class, ungated |
+| read p95 | 100 ms | ok `GET /v1/jobs/{id}` polls issued by the clients |
+| overload rate | 0 % (a harness choice, not a plan number) | 429/503 attempts over create attempts: a step that needed admission refusals did not sustain N |
+| memory headroom / OOM kills | >= 20 % / 0 | per-step cgroup sampler (`memory.peak` is lifetime-cumulative, so later steps inherit earlier peaks) |
+| voice relay p95 | 100 ms | `--voice-latency` bench row with the smallest session count >= N (a ceiling, labelled as bench, not live media); none above 20 |
+| integrity | 0 | lost acked jobs (404), unfinished, failed, result mismatches, cross-tenant leaks, duplicate committed results (duplicate result bodies + duplicate terminal events + one job id for two keys), false-successful truncation (`mock`/`synthetic_chat` echo check; `--truncation-probes N` also sends the fixture's deadline-cut scenario and requires a non-`completed` outcome), attachment violations |
+
+Without `UBAG_LOAD_API_KEY_B` the tenant probe count is 0 and `min_tenant_probe_requests` fails: isolation unverified is a FAIL.
+CPU headroom, throttle %, host pressure and the per-stage p50/p95 (`ubag_job_stage_duration_seconds` delta between the step's two
+scrapes; needs `UBAG_WORKER_STAGE_TIMINGS=1` and a target that reaches a worker) are reported, not gated.
+
+**Capacity.** "Highest N meeting every goal" is the longest passing prefix of the executed steps. The ladder stops at the first
+failing step (`--continue-after-fail` runs the rest; the capacity is still that prefix). Capacity is identity-bound (one active
+operation per provider identity, D6), so the figure is a ceiling for the tested identity set, not a fleet number. If any
+goal was not measured at that step the report says UNVERIFIED.
+
+**Host class and authority.** `--host-class 2c4g|4c8g` is checked against the *sum* of the sampled containers' CPU and memory
+limits (`--cgroup-containers`): 2c/4G is 1.5 CPU / 2.5 GiB, 4c/8G is 3 CPU / 5 GiB, within 5 %; an unlimited or unreadable
+container fails the check. A report is authoritative only with `--isolated-lab-host` (the operator's attestation that no other
+workload shares the box), a verified host class and cgroup files actually read; otherwise its first line says
+`NON-AUTHORITATIVE` and why. `meta.provenance.stack_env` lists the perf-fleet flags that were on (`UBAG_WORKER_DAEMON`,
+`UBAG_WORKER_POOL_*`, `UBAG_WORKER_STRICT_*`, `UBAG_WORKER_STREAM_*`, `UBAG_WORKER_STAGE_TIMINGS`, `UBAG_SYNTHETIC_PROVIDER`,
+`UBAG_WORKER_CONSUMER_ENABLED`, ...). Run the ladder with the flags off and on, and publish both.
+
+**Paused mode (`--mode paused`).** Start the stack with the worker consumer disabled (`UBAG_WORKER_CONSUMER_ENABLED=false`; it is
+embedded in the gateway, so there is no pause API). `--clients` (100) clients enqueue `--jobs` (1000) jobs; reads (job, events,
+list) are timed for `--hold-seconds` at `--read-rate`/s against the deep queue; every acked job is then swept once and must still
+exist and still be queued. Gated: accept p95 under the 100-client **burst** limit (`max_create_p95_ms`, 2000 ms), read p95 100 ms,
+`min_queued_jobs`, `min_queue_depth_observed` (`ubag_queue_depth_live` delta), zero `consumer_progressed`. With
+`--resume-wait-seconds N` the harness then prints a prompt, waits up to N s (quietly: a restart is expected) for the first job to
+leave the queue, and drains and verifies every acked job (lost, unfinished, result, events, tenant probe). Without it the
+execution-dependent goals are not measured (a FAIL under `--require-goals`). Use the Postgres store if you restart the gateway
+in between: with the in-memory store the jobs are gone and are reported as lost.
+
+**Exit code.** 0 when every step passed, 1 when a goal failed, 2 when refused or the harness failed. Output: `report.json` and
+`summary.md` under `tests/load/results/<timestamp>-ladder|paused/`. To publish, follow `docs/benchmarks/README.md` and fill in
+`docs/benchmarks/capacity-template.md`.
+
+What it cannot show: real-provider latency (the fixture is a local page), live voice media, N real browser sessions beyond what
+the stack runs, or anything about the shared VPS. The latency goals judge the API (accept, read): read `jobs/min` and
+completion p95 next to them, because with a single consumer the throughput flattens at a small N while accept p95 still
+passes, and then the executor, not the API, is the limit. Numbers from a laptop or Docker Desktop stack are NON-AUTHORITATIVE.
 
 ### Voice relay latency (`--voice-latency`)
 
@@ -287,8 +369,9 @@ parser logic is covered by `tests/test_bench_relay_rules.py`.
 pnpm test:load:offline
 ```
 
-Runs `tests/load/acceptance.test.mjs` and `tests/load/workloads.test.mjs` only
-(manifest schema check, synthetic fixtures): aggregation math, Retry-After
+Runs `tests/load/acceptance.test.mjs`, `tests/load/ladder.test.mjs`, `tests/load/workloads.test.mjs` and
+`tests/load/baseline-matrix.test.mjs` only (manifest schema check, synthetic fixtures, the workload ladder and its capacity
+rules): aggregation math, Retry-After
 backoff, host allowlist, thresholds, a smoke run of every scenario against
 an in-process fake gateway on `127.0.0.1`, and negative cases that must FAIL
 (wrong/truncated/duplicated result, duplicated terminal event, cross-tenant leak,

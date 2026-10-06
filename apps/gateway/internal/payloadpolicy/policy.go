@@ -108,8 +108,10 @@ func disallowedKeyReason(normalized string) (string, bool) {
 		return "", false
 	}
 	// token_index and token_count are worker event telemetry fields (streaming sequence
-	// number and usage count respectively), not credentials.
-	if normalized == "token_index" || normalized == "token_count" {
+	// number and usage count respectively), not credentials. first_token is the
+	// stage-timing key (data.timings_ms.first_token, UBAG_WORKER_STAGE_TIMINGS): without
+	// this exemption every job that reports stage timings fails when its terminal event is applied.
+	if normalized == "token_index" || normalized == "token_count" || normalized == "first_token" {
 		return "", false
 	}
 	if isSecretReferenceKey(normalized) {

@@ -33,8 +33,18 @@ source for a Docker stack. Neither is ever read for names outside the allowlist.
 ## Workload manifests
 
 `tests/load/workloads/{text,attachment,audio-upload,mixed,voice}.json`, validated by `tests/load/workloads.mjs` against `tests/load/workloads/workload.schema.json`
-(`pnpm test:load:offline`). `harness_support: implemented` means the harness generates that traffic today (`text`,
-`attachment`); `planned` manifests record the intended workload for the ladder runs (P7.2). The `mixed` weights are a
-roadmap proposal, not measured production shares. `voice` needs live media and can only be run supervised in a lab.
-`--workload <name>` validates the manifest and records it in the report; the traffic that actually runs is still
-chosen with `--scenario`.
+(`pnpm test:load:offline`). `harness_support: implemented` means a harness generates that traffic today (`text`,
+`attachment`, `audio-upload`, `mixed`: `tests/load/ladder.mjs` drives them as a closed-loop ladder); `planned` manifests record
+the intended workload (`voice` needs live media and can only be run supervised in a lab). The `mixed` weights are a
+roadmap proposal, not measured production shares. For `acceptance.mjs`, `--workload <name>` validates the manifest and
+records it in the report; the traffic that actually runs is still chosen with `--scenario`. For `ladder.mjs` the manifest
+drives the traffic (mix, sizes, think time, steps).
+
+## Publishing a ladder run
+
+A `tests/load/ladder.mjs` run (`report.json`, `summary.md`) is published the same way, under
+`docs/benchmarks/<YYYY-MM-DD>-ladder-<host-class>-<flags>/`, with a `NOTES.md` written from
+[`capacity-template.md`](capacity-template.md): header (NON-AUTHORITATIVE or the lab host), commit SHAs, host class and whether
+its limits were verified, the flags that were on, the ladder table, the highest N meeting every goal, every goal marked
+measured, failed or not measured, and the caveats. A run from a laptop or Docker Desktop stack is NON-AUTHORITATIVE and says so in
+its first line. Details: `docs/load-testing.md` ("Workload ladder and capacity report").

@@ -145,6 +145,22 @@ func TestValidateAllowsSecretReferenceIdentifiers(t *testing.T) {
 	}
 }
 
+// The worker's stage timings (data.timings_ms, closed key set) include first_token; it is a duration, not a credential.
+func TestValidateAllowsStageTimingKeys(t *testing.T) {
+	payload := map[string]any{
+		"timings_ms": map[string]any{"worker_start": 12.5, "provider_submit": 80.0, "first_token": 640.0, "provider_stream": 2100.0},
+	}
+	if err := Validate(payload); err != nil {
+		t.Fatalf("Validate returned %v, want nil", err)
+	}
+	// only the exact timing key is exempt: anything token-shaped around it is still refused
+	for _, key := range []string{"first_token_secret", "refresh_first_token", "token"} {
+		if err := Validate(map[string]any{"timings_ms": map[string]any{key: 1.0}}); err == nil {
+			t.Fatalf("Validate accepted key %q, want a violation", key)
+		}
+	}
+}
+
 func TestNormalizeKeyMatchesWorkerPolicyStyle(t *testing.T) {
 	tests := map[string]string{
 		"accessToken":    "access_token",
