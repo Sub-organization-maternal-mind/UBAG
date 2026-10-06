@@ -273,6 +273,14 @@ func Run(ctx context.Context) error {
 	if fleet != nil {
 		helperPicker = fleet.picker
 	}
+	// Helper-hosted voice (P5.9, UBAG_HELPER_VOICE): a call whose account lives on a
+	// node is placed on that node, taking one workload slot of the same placer the
+	// jobs use.
+	voiceNodes, err := newVoiceNodePlacer(fleet, voiceStore)
+	if err != nil {
+		return fmt.Errorf("invalid helper voice configuration: %w", err)
+	}
+	go runVoiceNodeRelease(ctx, voiceNodes, voiceStore)
 	helperRemote, err := newHelperRemoteFromEnv(jobs, helperNodes, hplane, enterprise.audit, helperPicker)
 	if err != nil {
 		return fmt.Errorf("invalid helper dispatch configuration: %w", err)
@@ -360,6 +368,8 @@ func Run(ctx context.Context) error {
 		// On by default whenever voice sessions are configured (UBAG_VOICE_LANE_EXCLUSION=0
 		// opts out): a voice admission skips a browser with a running job.
 		VoiceLaneExclusion: voiceLanes != nil,
+		// Nil (default, UBAG_HELPER_VOICE off) hosts every call on the primary, as before.
+		VoiceNodes: voiceNodes,
 
 		RateLimiter:       enterprise.rateLimiter,
 		RateLimitResolver: enterprise.rateResolver,

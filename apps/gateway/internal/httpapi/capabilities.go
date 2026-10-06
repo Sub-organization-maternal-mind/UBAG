@@ -251,9 +251,14 @@ func (s *Server) voiceCapabilityView(ctx context.Context, tenantID, target strin
 }
 
 // freeVoicePlacements counts this tenant's eligible (authenticated account,
-// hosting environment) pairs that no live session currently holds.
+// hosting environment) pairs that no live session currently holds. With
+// helper-hosted voice on, an account whose profile lives on a Helper Node counts
+// only while that node could take a call (read-only: nothing is reserved).
 func (s *Server) freeVoicePlacements(ctx context.Context, tenantID, target string) int {
-	placements, _ := s.voiceCandidates(ctx, tenantID, target, "") // a read: no admission, no lane registrations
+	placements, lanes := s.voiceCandidates(ctx, tenantID, target, "") // a read: no admission, no lane registrations
+	if s.voiceNodes != nil {
+		placements = s.voiceNodes.Available(ctx, tenantID, target, voiceNodeCandidates(placements, lanes))
+	}
 	if len(placements) == 0 {
 		return 0
 	}

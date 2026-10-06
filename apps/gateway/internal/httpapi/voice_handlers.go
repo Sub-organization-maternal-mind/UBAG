@@ -16,6 +16,7 @@ import (
 
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
 	voice "github.com/ubag/ubag/apps/gateway/internal/voice"
+	"github.com/ubag/ubag/apps/gateway/internal/voiceplace"
 )
 
 // Voice-session HTTP surface (multimodal/voice release):
@@ -198,11 +199,78 @@ func (s *Server) voiceCandidates(ctx context.Context, tenantID, target, preferre
 
 // voicePlacements is voiceCandidates for an admission (Reserve or Claim): pairs
 // whose browser has a running job are left out (voice and jobs exclude each other
-// on a browser, see admitVoiceLanes), and the returned release must be called once
-// the store call that uses the placements has returned.
-func (s *Server) voicePlacements(ctx context.Context, tenantID, target, preferred string) ([]voice.Placement, func()) {
+// on a browser, see admitVoiceLanes), and with helper-hosted voice on (VoiceNodes)
+// an account whose profile lives on a Helper Node is kept only when that node can
+// take the call (see voiceplace). The returned settle must be called exactly once,
+// right after the store call that uses the placements returns, with the session it
+// returned (the zero Session when it failed): it releases the browser-lane
+// registrations and every node reservation the session did not win, keeps the
+// winner's node slot for the session's life, and returns the Helper Node that
+// hosts the session ("" for a primary-hosted or queued one).
+func (s *Server) voicePlacements(ctx context.Context, tenantID, target, preferred string) ([]voice.Placement, func(voice.Session) string) {
 	candidates, lanes := s.voiceCandidates(ctx, tenantID, target, preferred)
-	return s.admitVoiceLanes(ctx, candidates, lanes)
+	kept, releaseLanes := s.admitVoiceLanes(ctx, candidates, lanes)
+	if s.voiceNodes == nil {
+		return kept, func(voice.Session) string { releaseLanes(); return "" }
+	}
+	admission := s.voiceNodes.Admit(ctx, tenantID, target, voiceNodeCandidates(kept, lanes))
+	return admission.Placements(), func(won voice.Session) string {
+		releaseLanes()
+		return admission.Settle(won)
+	}
+}
+
+// voiceNodeCandidates tells the node placer which candidates' environments carry a
+// CDP endpoint in the topology (the instances in lanes).
+func voiceNodeCandidates(placements []voice.Placement, lanes map[string]string) []voiceplace.Candidate {
+	out := make([]voiceplace.Candidate, len(placements))
+	for i, p := range placements {
+		out[i] = voiceplace.Candidate{Placement: p, CDPEndpoint: lanes[p.Instance] != ""}
+	}
+	return out
+}
+
+// bindVoiceNode hands the media lease of a freshly admitted session to the Helper
+// Node that holds its slot, so every later write and every control call is fenced
+// by (node, generation) (P5.8). A session that cannot be bound is ended: it would
+// hold an account and an environment for a node that cannot serve it.
+func (s *Server) bindVoiceNode(ctx context.Context, session voice.Session, nodeID string, mediaTTL time.Duration, now time.Time) (voice.Session, error) {
+	bound, err := s.voice.BindNode(ctx, session.TenantID, session.ID, nodeID, mediaTTL, now)
+	if err != nil {
+		slog.Error("binding a voice session to its helper node failed; ending it", "session_id", session.ID, "error", err)
+		_ = s.voice.Terminate(ctx, session.TenantID, session.ID, now, "node_bind_failed")
+		s.releaseVoiceNodeHolds(ctx)
+		return voice.Session{}, err
+	}
+	return bound, nil
+}
+
+// releaseVoiceNodeHolds frees the node slots of sessions that no longer reserve
+// their environment (a no-op without VoiceNodes). Every path that ends a session
+// calls it; the periodic release in serve covers the ones that cannot (a lease
+// sweep, a peer failure, a terminate served by another replica).
+func (s *Server) releaseVoiceNodeHolds(ctx context.Context) {
+	if s.voiceNodes == nil || s.voice == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	s.voiceNodes.ReleaseEnded(ctx, s.voice, time.Now().UTC())
+}
+
+// NodeMediaNegotiator is a MediaNegotiator that terminates the media of a session
+// bound to a Helper Node (session.NodeID) on that node (P5.11). The primary's own
+// media hub is not one: a node-bound session must never reach it, because the
+// hub resolves a relay for the session's environment on the primary and could
+// attach the call to a different account's browser.
+type NodeMediaNegotiator interface {
+	MediaNegotiator
+	HostsNodeSessions() bool
+}
+
+func hostsNodeSessions(m MediaNegotiator) bool {
+	n, ok := m.(NodeMediaNegotiator)
+	return ok && n.HostsNodeSessions()
 }
 
 // admitVoiceLanes keeps the placements whose browser has no running job and holds
@@ -363,7 +431,7 @@ func (s *Server) handleVoiceSessionCreate(w http.ResponseWriter, r *http.Request
 	// cannot overshoot them: with the active budget spent a session can only
 	// queue, and a spent queue budget is an explicit, retryable overload.
 	// A browser with a running job is not offered: the session queues instead.
-	placements, releaseLanes := s.voicePlacements(ctx, tenantID, target, req.IdentityRef)
+	placements, settle := s.voicePlacements(ctx, tenantID, target, req.IdentityRef)
 	reserved, err := s.voice.Reserve(ctx, voice.ReserveRequest{
 		SessionID:  newVoiceSessionID(now),
 		TenantID:   tenantID,
@@ -375,7 +443,12 @@ func (s *Server) handleVoiceSessionCreate(w http.ResponseWriter, r *http.Request
 		LeaseTTL:   ttl,
 		Now:        now,
 	})
-	releaseLanes()
+	if nodeID := settle(reserved); err == nil && nodeID != "" {
+		if reserved, err = s.bindVoiceNode(ctx, reserved, nodeID, ttl, now); err != nil {
+			s.voiceMediaUnavailable(w, r)
+			return
+		}
+	}
 	if errors.Is(err, voice.ErrQueueFull) {
 		s.voiceOverloaded(w, r, "UBAG-VOICE-QUEUE-FULL-004",
 			fmt.Sprintf("voice-session queue budget reached (%d)", s.voiceMaxQueuedPerTenant))
@@ -568,7 +641,7 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 		// Promote: claim the first free account+environment now that the
 		// caller is actually connecting. A conflict here is an honest
 		// overload answer: the session stays queued, nothing is held.
-		placements, releaseLanes := s.voicePlacements(ctx, tenantID, session.Target, "")
+		placements, settle := s.voicePlacements(ctx, tenantID, session.Target, "")
 		claimed, err := s.voice.Claim(ctx, voice.ClaimRequest{
 			TenantID:   tenantID,
 			SessionID:  sessionID,
@@ -577,7 +650,12 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 			LeaseTTL:   s.voiceLeaseTTL(),
 			Now:        now,
 		})
-		releaseLanes()
+		if nodeID := settle(claimed); err == nil && nodeID != "" {
+			if claimed, err = s.bindVoiceNode(ctx, claimed, nodeID, s.voiceLeaseTTL(), now); err != nil {
+				s.voiceMediaUnavailable(w, r)
+				return
+			}
+		}
 		if errors.Is(err, voice.ErrConflict) {
 			s.voiceError(w, r, http.StatusConflict, "UBAG-VOICE-SESSION-STATE-005",
 				"no provider account or browser environment is free; the session remains queued", true, ptrInt(int(time.Second.Milliseconds())))
@@ -596,8 +674,17 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 	}
 	if !session.LeaseExpires.IsZero() && session.LeaseExpires.Before(now) {
 		_ = s.voice.Terminate(ctx, tenantID, sessionID, now, "lease_expired")
+		s.releaseVoiceNodeHolds(ctx)
 		s.voiceError(w, r, http.StatusConflict, "UBAG-VOICE-SESSION-STATE-005",
 			"voice session lease has expired", true, nil)
+		return
+	}
+	if session.NodeID != "" && !hostsNodeSessions(s.voiceMedia) {
+		// The call is placed on a Helper Node; only a negotiator that terminates
+		// media there may serve it. The primary's hub would resolve a relay for the
+		// session's environment on the primary, which is some other account's browser.
+		slog.Warn("voice session is bound to a helper node but the media plane cannot host node sessions", "session_id", sessionID)
+		s.voiceMediaUnavailable(w, r)
 		return
 	}
 
@@ -606,8 +693,7 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 		// Diagnostics stay server-side: internal addresses and implementation
 		// detail never reach the client.
 		slog.Warn("voice media negotiation failed", "session_id", sessionID, "error", err)
-		s.voiceError(w, r, http.StatusServiceUnavailable, "UBAG-VOICE-MEDIA-UNAVAILABLE-007",
-			"media plane cannot accept this connection", true, ptrInt(1000))
+		s.voiceMediaUnavailable(w, r)
 		return
 	}
 	// A negotiated connection is a real appointment: refresh the lease so
@@ -642,6 +728,13 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 		MediaExpiresMS:  expires.UnixMilli(),
 		Kind:            "voice_session_connection",
 	})
+}
+
+// voiceMediaUnavailable is the one answer for every media-plane refusal: the
+// reason (an address, a node, an implementation detail) stays in the log.
+func (s *Server) voiceMediaUnavailable(w http.ResponseWriter, r *http.Request) {
+	s.voiceError(w, r, http.StatusServiceUnavailable, "UBAG-VOICE-MEDIA-UNAVAILABLE-007",
+		"media plane cannot accept this connection", true, ptrInt(1000))
 }
 
 // voiceLeaseTTL is the configured lease window applied at claim and on every
@@ -735,6 +828,7 @@ func (s *Server) handleVoiceSessionTerminate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.dropVoiceMedia(sessionID)
+	s.releaseVoiceNodeHolds(r.Context())
 	s.writeJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "status": "terminated", "kind": "voice_session"})
 }
 
