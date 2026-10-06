@@ -9,7 +9,7 @@ generated at runtime and gitignored.
 
 ```
 deploy/mtls/
-├── gen-certs.sh                       # generate dev CA + server + client certs (Linux/macOS)
+├── gen-certs.sh                       # generate dev CA + server + client certs, or --node Helper Node certs (Linux/macOS)
 ├── gen-certs.ps1                      # same, for Windows (needs openssl)
 ├── caddy/Caddyfile.mtls.example       # Caddy edge requiring client certs
 ├── nats/nats-mtls.conf                # NATS client + cluster mTLS config
@@ -48,6 +48,76 @@ Output (in `deploy/mtls/out/`, gitignored):
 
 > **DEV ONLY.** For production use a real PKI (cert-manager, Vault, or a managed
 > CA). Rotate and short-circuit lifetimes; never reuse the dev CA.
+
+## Helper Node certificates (dev) and the helper trust plane
+
+The helper trust plane (`UBAG_HELPER_PLANE`, default off; ADR-0010) is a
+**separate** mTLS gRPC listener on the gateway, not the Caddy edge and not the
+plaintext `UBAG_GRPC_ADDR` server. A Helper Node is identified only by the
+**URI SAN** of its client certificate, `spiffe://ubag/node/<node_id>`; the CN is
+ignored. The gateway pins the certificate's SPKI SHA-256 in the node registry
+(`current` and, during rotation, `next`) and re-checks the registry on every RPC
+and every stream message, so revocation or a pin change takes effect on the next
+message.
+
+Certificate profile the helper plane accepts (the fleet manager's production CA
+must issue exactly this; the production CA is **not** in this repo):
+
+- leaf certificate, not a CA, signed by the CA in `UBAG_HELPER_CA_FILE`
+- exactly one URI SAN, `spiffe://ubag/node/<node_id>` (`node_id` matches
+  `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+- extended key usage includes `clientAuth` (and `serverAuth`: the primary also
+  dials the helper)
+- validity of at most 72 hours (a 10 minute backdating slack is tolerated)
+
+Issue a dev node certificate (EC P-256, 3 days = 72h, the maximum):
+
+```bash
+# Linux / macOS
+deploy/mtls/gen-certs.sh --node helper-1          # [--node-days 1..3] [--out DIR]
+# Windows (openssl on PATH)
+deploy\mtls\gen-certs.ps1 -Node helper-1          # [-NodeDays 1..3] [-Out DIR]
+```
+
+It reuses (or creates) `ca.crt` / `ca.key` in the output directory and writes
+`node-<id>.crt`, `node-<id>.key` and `node-<id>.spki.sha256` (the pin, lowercase
+hex). It prints the URI SAN, expiry and pin.
+
+Gateway configuration (all four are required when `UBAG_HELPER_PLANE=true`, and
+`UBAG_HELPER_NODES=true` must be on too):
+
+| Variable | Meaning |
+| --- | --- |
+| `UBAG_HELPER_GRPC_ADDR` | listen address; bind it to the WireGuard interface |
+| `UBAG_HELPER_CA_FILE` | PEM trust anchors for node certificates (here `out/ca.crt`) |
+| `UBAG_HELPER_TLS_CERT_FILE` / `UBAG_HELPER_TLS_KEY_FILE` | the listener's own certificate; re-read when the files change |
+
+The listener's own certificate is a normal server certificate (for example the
+one `gen-certs.sh` already writes as `server.crt` / `server.key`).
+
+### Rotation runbook (overlap window)
+
+Rotate before the current certificate has less than a third of its life left
+(at 48h of a 72h certificate). A stream whose certificate expires is ended at
+its next message, so do not rely on expiry to retire a certificate.
+
+1. Issue the next certificate under the same CA with a label:
+   `gen-certs.sh --node helper-1 --label next` (`-Label next` on Windows).
+2. Register its pin as the node's **next** SPKI (`PutRegistry` with `SPKINext`).
+   From here both certificates are accepted: live streams on the old one keep
+   running and the helper may connect with the new one.
+3. Switch the helper to `node-helper-1.next.crt` / `.key` (new connections).
+4. When no stream still uses the old certificate, promote the next pin
+   (`PromoteSPKI`). The old certificate is rejected from then on, including on a
+   stream that is still open (its next message fails with `Unauthenticated`).
+
+Revoke a node with `RevokeNode` (sticky: a revoked node id is never re-admitted;
+issue a new node id instead). A live stream of a revoked node ends at its next
+message.
+
+Registry writes are made through the node store (`internal/nodes`); an operator
+route for them (`fleet:manage`) and the allocation poller that feeds pins from
+manager grants are later slices.
 
 ## Wire Caddy for mTLS (small profile)
 
