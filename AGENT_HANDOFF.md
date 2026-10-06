@@ -1,6 +1,21 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-09-28
+Last updated: 2026-10-06
+
+## Perf + shared-fleet program (feat/perf-fleet) — read before touching flags, the helper plane or voice
+
+Everything landed on the integration branch `feat/perf-fleet`, never on `main`, and nothing is deployed. Start here:
+`docs/perf-fleet/ctx/BINDING.md` (decisions and hard rules), `docs/perf-fleet/slices/README.md` (one shard per slice, with
+status), `docs/perf-fleet/FLAGS.md` (every flag, default, whether compose delivers it), `docs/perf-fleet/ROLLOUT.md` (how a
+flag graduates: live-DOM check, canary, rollback, ledger), `docs/perf-fleet/RUNBOOK.md` and `CANARY.md` (helper plane),
+`docs/benchmarks/capacity-report.md` (no capacity number exists). `pnpm check:flag-graduation` keeps the flag docs honest.
+
+Open items, in the order an owner would want them:
+1. Decide whether to merge `feat/perf-fleet` to `main`; the migrations (0022 to 0025) auto-apply on deploy, additive and inert.
+2. Run the human-supervised steps nobody could run: live-DOM probes per provider (`tools/provider-refresh/`), the voice activation probe (`docs/perf-fleet/voice-activation-probe.md`), and the helper canary (`CANARY.md`, blocked on the fleet manager, certificates, WireGuard and a profile-binding route).
+3. Get a lab host and run the ladder and baseline matrix; fill `docs/benchmarks/capacity-template.md`. Only then does a capacity number exist, and only then can the pool ceiling (`UBAG_WORKER_POOL_MAX`, placeholder 3) and the Rust relay gate (P7.5 to P7.8) be decided.
+4. Land or drop the slices that have no shard: P1.8, P5.11 (helper voice media negotiator), P6.5 (dashboard voice panel).
+5. Graduate flags one at a time per ROLLOUT.md; first add the compose passthrough lines for flags marked `none` in FLAGS.md.
 
 ## REMAINING WORK — architecture-audit closeout (read this first, 2026-09-28)
 

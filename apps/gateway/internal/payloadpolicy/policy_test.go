@@ -161,6 +161,23 @@ func TestValidateAllowsStageTimingKeys(t *testing.T) {
 	}
 }
 
+// The deadline-cut terminal (UBAG_WORKER_STRICT_STREAM_END) carries data.partial.token_events, an integer count.
+func TestValidateAllowsDeadlineCutPartialShape(t *testing.T) {
+	payload := map[string]any{
+		"stream_end_reason": "deadline",
+		"submitted":         true,
+		"partial":           map[string]any{"text": "partial", "token_events": 12},
+	}
+	if err := Validate(payload); err != nil {
+		t.Fatalf("Validate returned %v, want nil", err)
+	}
+	for _, key := range []string{"token_events_secret", "refresh_token_events", "token"} {
+		if err := Validate(map[string]any{"partial": map[string]any{key: 1}}); err == nil {
+			t.Fatalf("Validate accepted key %q, want a violation", key)
+		}
+	}
+}
+
 func TestNormalizeKeyMatchesWorkerPolicyStyle(t *testing.T) {
 	tests := map[string]string{
 		"accessToken":    "access_token",
