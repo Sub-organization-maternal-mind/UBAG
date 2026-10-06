@@ -106,6 +106,7 @@ type Pool struct {
 	slots   []*Slot
 	active  map[string]*Slot // identity key -> the slot running it (the gate)
 	waiters []*waiter        // FIFO; unplaced requests only
+	useSeq  uint64           // strictly increasing release counter: LRU order must not depend on clock resolution
 	closed  bool
 }
 
@@ -124,8 +125,8 @@ type Slot struct {
 	// is cold. A slot is pinned to at most one warm key: the worker evicts the page
 	// of any other key before it runs a job.
 	warmKey  string
-	spawned  bool // a daemon was started and has not been discarded since
-	lastUsed time.Time
+	spawned  bool   // a daemon was started and has not been discarded since
+	lastUsed uint64 // Pool.useSeq at the last release; a counter, not a clock (see releaseLocked)
 }
 
 // Run runs job on this slot's daemon with the run timeout starting now. It is
@@ -330,9 +331,11 @@ func (p *Pool) releaseLocked(slot *Slot, key string, outcome slotOutcome) {
 	slot.busy = false
 	switch outcome {
 	case slotWarm:
-		slot.warmKey, slot.spawned, slot.lastUsed = key, true, time.Now()
+		p.useSeq++
+		slot.warmKey, slot.spawned, slot.lastUsed = key, true, p.useSeq
 	case slotCold:
-		slot.warmKey, slot.spawned, slot.lastUsed = "", false, time.Now()
+		p.useSeq++
+		slot.warmKey, slot.spawned, slot.lastUsed = "", false, p.useSeq
 	}
 	p.inflight.Done()
 	p.dispatchLocked()
@@ -388,7 +391,7 @@ func (p *Pool) pickSlotLocked(key string) *Slot {
 			rank = 3
 		}
 		if best == nil || rank < bestRank ||
-			(rank == 4 && bestRank == 4 && s.lastUsed.Before(best.lastUsed)) {
+			(rank == 4 && bestRank == 4 && s.lastUsed < best.lastUsed) {
 			best, bestRank = s, rank
 		}
 	}
