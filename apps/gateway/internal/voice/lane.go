@@ -16,7 +16,9 @@ import (
 //
 // It fails closed: a holder whose lane cannot be worked out (its instance is not
 // in the topology, or has no endpoint) is treated as holding the lane, and an
-// error is returned as an error so the caller holds its work back.
+// error is returned as an error so the caller holds its work back. The one
+// exception is a session bound to a Helper Node (LeaseHolder.NodeID): its browser
+// is on the helper, so it holds no primary lane.
 type LaneProbe struct {
 	Store    Store
 	Topology topology.Store
@@ -39,6 +41,13 @@ func (p *LaneProbe) VoiceHoldsLane(ctx context.Context, lane string) (bool, erro
 	}
 	lanes := map[string]map[string]string{} // tenant -> instance -> lane
 	for _, holder := range holders {
+		if holder.NodeID != "" {
+			// A session hosted on a Helper Node reserves that node's audio
+			// environment, which has no endpoint in the primary's topology and is not
+			// one of the primary's browsers: it can never hold a primary lane, so it
+			// must not fall into the unknown-lane branch below (P5.9).
+			continue
+		}
 		byInstance, ok := lanes[holder.TenantID]
 		if !ok {
 			if byInstance, err = p.instanceLanes(ctx, holder.TenantID); err != nil {

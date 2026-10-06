@@ -70,6 +70,11 @@ type Node struct {
 	Endpoint string
 	// Limit is the concurrent browser workloads admitted (>= 1).
 	Limit int
+	// VoiceCapable is the grant's own flag: the manager opened a bounded public UDP
+	// range and a NAT address for this node's media (Allocation.Validate requires
+	// both with it). It says nothing about host health: being listed here at all is
+	// the health verdict (voice placement, P5.9, ADR-0017).
+	VoiceCapable bool
 }
 
 // PlacerConfig wires a Placer to its inputs. Allocations is normally
@@ -152,7 +157,7 @@ func (p *Placer) Nodes(ctx context.Context) ([]Node, error) {
 			return nil, err
 		}
 		if d := Admission(a, st, now); d.Eligible {
-			view = append(view, Node{ID: a.NodeID, Region: a.Region, Endpoint: a.Endpoint, Limit: d.Limit})
+			view = append(view, Node{ID: a.NodeID, Region: a.Region, Endpoint: a.Endpoint, Limit: d.Limit, VoiceCapable: a.VoiceCapable})
 		}
 	}
 	slices.SortFunc(view, func(x, y Node) int { return strings.Compare(x.ID, y.ID) })

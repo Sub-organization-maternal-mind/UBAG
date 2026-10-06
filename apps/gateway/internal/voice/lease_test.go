@@ -28,6 +28,7 @@ var leaseContract = []struct {
 	{"TerminatingHoldBlocksReuse", testTerminatingHoldBlocksReuse},
 	{"TerminatingHoldIsFenced", testTerminatingHoldIsFenced},
 	{"LeaseHoldersFollowLeases", testLeaseHoldersFollowLeases},
+	{"PlacementLeaseHoldersCarryTheNode", testPlacementLeaseHoldersCarryTheNode},
 }
 
 func TestVoiceLeaseContract(t *testing.T) {

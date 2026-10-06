@@ -158,3 +158,23 @@ func TestPlacementAndProbeCountersAreBounded(t *testing.T) {
 		t.Fatal("an unbounded value became a label")
 	}
 }
+
+func TestVoicePlacementCounterIsBounded(t *testing.T) {
+	RecordVoicePlacement("placed")
+	RecordVoicePlacement("node_unavailable")
+	RecordVoicePlacement("node-7 at 203.0.113.7") // anything outside the fixed set folds into other
+	out := render(t, nil, time.Now())
+	for _, want := range []string{
+		`ubag_helper_voice_placements_total{outcome="placed"} `,
+		`ubag_helper_voice_placements_total{outcome="node_unavailable"} `,
+		`ubag_helper_voice_placements_total{outcome="not_voice_capable"} `,
+		`ubag_helper_voice_placements_total{outcome="other"} `,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "203.0.113.7") || strings.Contains(out, "node-7") {
+		t.Fatal("a node or address became a label")
+	}
+}

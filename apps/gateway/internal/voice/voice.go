@@ -319,12 +319,15 @@ type Store interface {
 }
 
 // LeaseHolder is the part of a session that tells which browser environment it
-// still reserves.
+// still reserves. NodeID is the Helper Node that hosts the environment (empty for
+// a browser on the primary): such an environment is not one of the primary's
+// browsers, so it never holds a primary browser lane (LaneProbe).
 type LeaseHolder struct {
 	SessionID   string
 	TenantID    string
 	Target      string
 	InstanceRef string
+	NodeID      string
 }
 
 // SessionID generates a session identifier with the vault-prefixed, sortable
@@ -738,7 +741,7 @@ func (m *MemoryStore) ListLeaseHolders(_ context.Context, now time.Time) ([]Leas
 		if s.Status == StatusTerminated && !s.TerminatingUntil.After(now) {
 			continue // the hold elapsed; the refs just have not been cleaned yet
 		}
-		out = append(out, LeaseHolder{SessionID: s.ID, TenantID: s.TenantID, Target: s.Target, InstanceRef: s.InstanceRef})
+		out = append(out, LeaseHolder{SessionID: s.ID, TenantID: s.TenantID, Target: s.Target, InstanceRef: s.InstanceRef, NodeID: s.NodeID})
 	}
 	return out, nil
 }
