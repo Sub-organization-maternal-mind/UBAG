@@ -308,6 +308,16 @@ class PageDriver(ABC):
         """
         return True
 
+    def can_resume_in_place(self, selectors: ProviderSelectors, thread_ref: str) -> bool:
+        """True only when this warm page is live and already sitting on ``thread_ref``.
+
+        Gate for the UBAG_WARM_RESUME_FASTPATH daemon fast path, which skips the
+        new-chat gate for a conversation resume. Concrete (NOT abstract), and the
+        default ``False`` = "cannot prove it", so any driver without a real probe
+        keeps the full :meth:`prepare_for_next_job` gate. Never raises.
+        """
+        return False
+
     def prepare_for_next_job(self, selectors: ProviderSelectors) -> bool:
         """Make a REUSED page safe for the next job, or refuse.
 
@@ -533,6 +543,9 @@ class MockPageDriver(PageDriver):
     def current_thread_url(self, selectors: ProviderSelectors) -> str:
         return self.thread_url
 
+    def can_resume_in_place(self, selectors: ProviderSelectors, thread_ref: str) -> bool:
+        return bool(thread_ref) and not self.closed and self.thread_url == thread_ref
+
     def resume_thread(self, selectors: ProviderSelectors, thread_ref: str) -> bool:
         # Model a navigation: the page URL settles on the bound thread. Whether the
         # thread is confirmed loaded is scripted via ``resume_succeeds`` (the live
@@ -751,6 +764,23 @@ class PlaywrightPageDriver(PageDriver):
             self._fresh_chat = True
             return True
         except Exception:  # noqa: BLE001 - any doubt forces a cold page
+            return False
+
+    def can_resume_in_place(self, selectors: ProviderSelectors, thread_ref: str) -> bool:
+        """Fast-path gate: live page, exact URL match, and no periodic reload due.
+
+        Counts the job toward the periodic reload exactly like
+        :meth:`prepare_for_next_job`, so the memory-growth bound still holds when
+        the new-chat gate is skipped. Any doubt returns False (full gate).
+        """
+        try:
+            if not thread_ref or not self._page_is_live():
+                return False
+            self._jobs_on_page += 1
+            if self._reload_due():
+                return False
+            return self._page.url == thread_ref
+        except Exception:  # noqa: BLE001 - any doubt keeps the full gate
             return False
 
     def _reload_due(self) -> bool:
