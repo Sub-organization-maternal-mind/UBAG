@@ -441,7 +441,7 @@ func TestReconcileGateCollectsAFailureTheHelperRecorded(t *testing.T) {
 		t.Fatalf("lease = %+v, job = %s", lease, rf.job(job.ID).Status)
 	}
 	data := terminalData(t, mustEvents(t, rf.remoteFixture, job.ID))
-	if data["reconcile_required"] != true || data["stream_end_reason"] != "lease_expired" || data["error_code"] != "helper_lease_expired" {
+	if data["reconcile_required"] != true || data["stream_end_reason"] != "error" || data["stream_end_detail"] != "lease_expired" || data["error_code"] != "helper_lease_expired" {
 		t.Fatalf("terminal data = %#v", data)
 	}
 	rf.noRunAttempt()

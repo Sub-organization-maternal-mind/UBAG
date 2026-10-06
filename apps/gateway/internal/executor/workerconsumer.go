@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -551,7 +553,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	// Streaming therefore implies attempt-scoped ids.
 	streaming := c.streamsLive(envelope)
 	if attemptEventIDsEnabled() || streaming {
-		envelope.Attempt = &DispatchAttempt{ID: lease.LeaseID()}
+		envelope.Attempt = &DispatchAttempt{ID: attemptIDForLease(lease.LeaseID())}
 	}
 	if jobstore.TerminalStatus(job.Status) {
 		c.Holds.Clear(job.ID)
@@ -2307,4 +2309,13 @@ func workerEnvForTarget(target string) []string {
 		}
 	}
 	return env
+}
+
+// attemptIDForLease derives the schema-conformant attempt id (att_ + 32 hex,
+// job-event.schema.json data.attempt_id) from a queue lease id. The raw lease
+// ids (a nanosecond counter for the file spool, stream:consumer:n:n for NATS)
+// do not match the schema pattern. Stable per lease, distinct across leases.
+func attemptIDForLease(leaseID string) string {
+	sum := sha256.Sum256([]byte(leaseID))
+	return "att_" + hex.EncodeToString(sum[:])[:32]
 }
