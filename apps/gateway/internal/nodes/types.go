@@ -34,6 +34,10 @@ var (
 	spkiRe   = regexp.MustCompile(`^[a-f0-9]{64}$`)
 )
 
+// ValidNodeID reports whether id is a well-formed helper node id (the same rule
+// the allocation and the URI SAN use).
+func ValidNodeID(id string) bool { return nodeIDRe.MatchString(id) }
+
 // NodeURISAN is the URI SAN identity for a node id.
 func NodeURISAN(nodeID string) string { return URISANPrefix + nodeID }
 

@@ -32,6 +32,8 @@ CREATE TABLE IF NOT EXISTS gateway_conversations (
 	created_at TEXT NOT NULL,
 	last_used_at TEXT NOT NULL DEFAULT '',
 	last_job_id TEXT NOT NULL DEFAULT '',
+	node_id TEXT NOT NULL DEFAULT '',
+	profile_ref TEXT NOT NULL DEFAULT '',
 	PRIMARY KEY (tenant_id, app_id, target, conversation_key)
 )`
 
@@ -39,9 +41,13 @@ const sqliteCreateConversationsTenantIndex = `
 CREATE INDEX IF NOT EXISTS idx_gateway_conversations_tenant_used
 	ON gateway_conversations (tenant_id, last_used_at)`
 
+const sqliteCreateConversationsNodeIndex = `
+CREATE INDEX IF NOT EXISTS idx_gateway_conversations_node
+	ON gateway_conversations (node_id) WHERE node_id <> ''`
+
 const conversationColumns = `
 tenant_id, app_id, target, conversation_key, provider_thread_ref, state,
-created_at, last_used_at, last_job_id`
+created_at, last_used_at, last_job_id, node_id, profile_ref`
 
 func (s *SQLiteStore) Ready(ctx context.Context) error {
 	if s == nil || s.db == nil {
@@ -50,7 +56,25 @@ func (s *SQLiteStore) Ready(ctx context.Context) error {
 	if err := s.db.PingContext(ctx); err != nil {
 		return err
 	}
-	for _, stmt := range []string{sqliteCreateConversationsTable, sqliteCreateConversationsTenantIndex} {
+	if _, err := s.db.ExecContext(ctx, sqliteCreateConversationsTable); err != nil {
+		return err
+	}
+	// Databases created before the helper plane lack the affinity columns;
+	// add them in place (idempotent, the defaults keep existing rows local).
+	for _, column := range []string{"node_id", "profile_ref"} {
+		var present int
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT COUNT(1) FROM pragma_table_info('gateway_conversations') WHERE name = ?`, column).Scan(&present); err != nil {
+			return err
+		}
+		if present == 0 {
+			if _, err := s.db.ExecContext(ctx,
+				`ALTER TABLE gateway_conversations ADD COLUMN `+column+` TEXT NOT NULL DEFAULT ''`); err != nil {
+				return err
+			}
+		}
+	}
+	for _, stmt := range []string{sqliteCreateConversationsTenantIndex, sqliteCreateConversationsNodeIndex} {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
@@ -87,18 +111,22 @@ func (s *SQLiteStore) Bind(ctx context.Context, conv Conversation) (Conversation
 	if s == nil || s.db == nil {
 		return Conversation{}, fmt.Errorf("conversations: sqlite store is not configured")
 	}
-	prepareBind(&conv)
+	if err := prepareBind(&conv); err != nil {
+		return Conversation{}, err
+	}
 	if _, err := s.db.ExecContext(ctx, `
 INSERT INTO gateway_conversations (`+conversationColumns+`)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (tenant_id, app_id, target, conversation_key) DO UPDATE SET
 	provider_thread_ref = excluded.provider_thread_ref,
 	state = excluded.state,
 	last_used_at = excluded.last_used_at,
-	last_job_id = excluded.last_job_id`,
+	last_job_id = excluded.last_job_id,
+	node_id = excluded.node_id,
+	profile_ref = excluded.profile_ref`,
 		conv.TenantID, conv.AppID, conv.Target, conv.ConversationKey,
 		conv.ProviderThreadRef, conv.State, canonicalTime(conv.CreatedAt),
-		canonicalTime(conv.LastUsedAt), conv.LastJobID); err != nil {
+		canonicalTime(conv.LastUsedAt), conv.LastJobID, conv.NodeID, conv.ProfileRef); err != nil {
 		return Conversation{}, fmt.Errorf("conversations: bind: %w", err)
 	}
 	// Re-read so the returned row reflects the persisted state (including the
@@ -129,6 +157,24 @@ func (s *SQLiteStore) MarkBroken(ctx context.Context, key Key, at time.Time) (Co
 		return Conversation{}, false, err
 	}
 	return s.Resolve(ctx, key)
+}
+
+func (s *SQLiteStore) MarkNodeBroken(ctx context.Context, nodeID string) (int, error) {
+	if s == nil || s.db == nil {
+		return 0, fmt.Errorf("conversations: sqlite store is not configured")
+	}
+	nodeID = strings.TrimSpace(nodeID)
+	if nodeID == "" {
+		return 0, nil
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE gateway_conversations SET state = ? WHERE node_id = ? AND state = ?`,
+		StateBroken, nodeID, StateActive)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
 }
 
 func (s *SQLiteStore) Touch(ctx context.Context, key Key, jobID string, at time.Time) error {
@@ -200,7 +246,8 @@ func scanConversations(rows *sql.Rows) ([]Conversation, error) {
 		var conv Conversation
 		var createdAt, lastUsedAt string
 		if err := rows.Scan(&conv.TenantID, &conv.AppID, &conv.Target, &conv.ConversationKey,
-			&conv.ProviderThreadRef, &conv.State, &createdAt, &lastUsedAt, &conv.LastJobID); err != nil {
+			&conv.ProviderThreadRef, &conv.State, &createdAt, &lastUsedAt, &conv.LastJobID,
+			&conv.NodeID, &conv.ProfileRef); err != nil {
 			return nil, err
 		}
 		var err error
