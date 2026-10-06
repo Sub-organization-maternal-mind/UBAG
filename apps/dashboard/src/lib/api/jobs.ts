@@ -1,5 +1,5 @@
 import type { Job, JobsSummary } from './types';
-import { isFailedStatus } from './statuses';
+import { FAILED_STATES, isFailedStatus } from './statuses';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -62,6 +62,25 @@ export function parseJobsSummary(value: unknown): JobsSummary | null {
     queued_by_reason: counts(raw.queued_by_reason),
     oldest_queued_at: typeof raw.oldest_queued_at === 'string' ? raw.oldest_queued_at : null,
   };
+}
+
+/**
+ * Failed statuses worth a `filter[status]` read: those the summary reports as
+ * non-zero, or all of them when the summary is unavailable (older gateway).
+ */
+export function failedStatusesToFetch(summary: JobsSummary | null): string[] {
+  const all = [...FAILED_STATES];
+  return summary ? all.filter((s) => (summary.counts_by_status[s] ?? 0) > 0) : all;
+}
+
+/** Merge per-status pages into one newest-first list, deduped by id and capped. */
+export function mergeNewestFirst(pages: Job[][], limit: number): Job[] {
+  const seen = new Set<string>();
+  return pages
+    .flat()
+    .filter((j) => (seen.has(j.id) ? false : (seen.add(j.id), true)))
+    .sort((a, b) => b.created_at.localeCompare(a.created_at))
+    .slice(0, limit);
 }
 
 export function failedCount(summary: JobsSummary): number {

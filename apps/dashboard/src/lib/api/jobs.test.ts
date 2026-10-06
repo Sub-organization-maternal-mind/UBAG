@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { failedCount, normalizeJob, normalizeJobs, parseJobsSummary } from './jobs';
+import { failedCount, failedStatusesToFetch, mergeNewestFirst, normalizeJob, normalizeJobs, parseJobsSummary } from './jobs';
+import type { Job } from './types';
 
 describe('job response normalization', () => {
   it('normalizes the production list summary shape', () => {
@@ -61,6 +62,35 @@ describe('jobs summary parsing', () => {
   it('returns null for non-contract bodies so pages can fall back', () => {
     expect(parseJobsSummary(null)).toBeNull();
     expect(parseJobsSummary({ error: 'nope' })).toBeNull();
+  });
+});
+
+describe('failed-job reads', () => {
+  const summary = parseJobsSummary({
+    total: 300,
+    counts_by_status: { queued: 290, failed_terminal: 7, timed_out: 3, failed_retryable: 0 },
+  });
+
+  it('only fetches failed statuses the summary reports as non-empty', () => {
+    expect(failedStatusesToFetch(summary).sort()).toEqual(['failed_terminal', 'timed_out']);
+  });
+
+  it('fetches every failed status when there is no summary', () => {
+    const all = failedStatusesToFetch(null);
+    expect(all).toContain('failed_terminal');
+    expect(all).toContain('dead_letter');
+    expect(all).not.toContain('completed');
+    expect(all).not.toContain('queued');
+  });
+
+  it('merges per-status pages newest first, deduped and capped', () => {
+    const j = (id: string, created_at: string) => ({ id, created_at }) as Job;
+    const merged = mergeNewestFirst(
+      [[j('a', '2026-01-01'), j('c', '2026-01-03')], [j('b', '2026-01-02'), j('a', '2026-01-01')]],
+      3,
+    );
+    expect(merged.map((x) => x.id)).toEqual(['c', 'b', 'a']);
+    expect(mergeNewestFirst([[j('a', '1'), j('b', '2')]], 1).map((x) => x.id)).toEqual(['b']);
   });
 });
 

@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import { browser } from '$app/environment';
+import { snapshots } from './snapshot';
 
 export interface Settings {
   gatewayUrl: string;
@@ -51,6 +52,7 @@ function createSettingsStore() {
   return {
     subscribe,
     set(s: Settings) {
+      snapshots.clear(); // cached reads belong to the previous gateway/secret
       if (browser) {
         localStorage.setItem('ubag_gateway_url', s.gatewayUrl);
         localStorage.setItem('ubag_app_secret', s.appSecret);
