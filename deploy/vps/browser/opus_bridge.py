@@ -62,6 +62,13 @@ def _load_libopus() -> ctypes.CDLL:
     return lib
 
 
+def opus_version() -> str:
+    """libopus version string (e.g. "libopus 1.3.1"); golden tests record it."""
+    lib = _load_libopus()
+    lib.opus_get_version_string.restype = ctypes.c_char_p
+    return lib.opus_get_version_string().decode("ascii", "replace")
+
+
 class _Codec:
     """Shared handle lifetime: create-once, destroy-once, lock-serialized."""
 

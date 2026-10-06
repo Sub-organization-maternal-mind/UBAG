@@ -217,6 +217,21 @@ the clock granularity quantises sub-millisecond ages). This is the baseline any
 future relay rewrite decision needs; it is not a media-quality or end-to-end
 latency measurement.
 
+### Relay-side stats (`UBAG_VOICE_RELAY_STATS=1`)
+
+The browser-container audio relay (`deploy/vps/browser/audio-relay.py`) has an
+opt-in, off-by-default measurement mode with no protocol change. While a session
+is active it writes one `audio-relay: stats {json}` line to
+`/run/ubag/audio-relay.log` every 10 s, and a final one when the session ends.
+Fields: `mic_frames`, `mic_decode_errors`, `mic_fifo_dropped`,
+`mic_muted_discarded`, `speaker_frames`, `speaker_encode_errors`, `mic_fifo_bytes`
+(unread bytes in the mic FIFO, `null` when unknown), and for each direction
+`<dir>_samples`, `<dir>_p50_ms`, `<dir>_p95_ms`, `<dir>_max_ms` over the window.
+Only 1 frame in 10 is timed (at most 512 samples per window). `mic` times decode
+plus the FIFO write; `speaker` times Opus encode plus the gateway socket write.
+Neither includes time spent waiting for the next frame, so these complement, not
+replace, the gateway-side frame age above.
+
 ## Offline self-tests
 
 ```

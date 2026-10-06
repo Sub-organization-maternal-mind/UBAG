@@ -303,6 +303,8 @@ services:
       UBAG_VOICE_AUDIO_ENABLED: ${UBAG_VOICE_AUDIO_ENABLED:-0}
       UBAG_VOICE_RELAY_ADDR: ${UBAG_VOICE_RELAY_ADDR:-0.0.0.0:9099}
       UBAG_VOICE_RELAY_SECRET: ${UBAG_VOICE_RELAY_SECRET:-}
+      # Opt-in relay measurement: a JSON stats line every 10 s in /run/ubag/audio-relay.log.
+      UBAG_VOICE_RELAY_STATS: ${UBAG_VOICE_RELAY_STATS:-0}
     volumes:
       - browser_profile:/profiles
     healthcheck:

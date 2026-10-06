@@ -92,6 +92,15 @@ UBAG_VOICE_RELAY_SECRET (required; fail closed when empty),
 UBAG_VOICE_RELAY_IDLE_S (default 30),
 UBAG_VOICE_RELAY_NODE_ID (optional; helper deployments: require a bound hello
 for exactly this node).
+Optional, all inert unless set:
+  UBAG_VOICE_RELAY_STATS=1   sampled per-frame timings, mic FIFO depth, drops
+                             and error counters as one JSON summary line on
+                             stderr (/run/ubag/audio-relay.log) every 10 s
+                             while a session is active and once when it ends.
+                             No protocol change.
+  UBAG_VOICE_MIC_PIPE        mic FIFO path (default /tmp/ubag-voice-mic.pcm)
+  UBAG_VOICE_PAREC           parec executable (default parec)
+  UBAG_VOICE_PACTL           pactl executable (default pactl)
 Dependencies: pulseaudio (pacat/pactl), libopus0 (via opus_bridge ctypes),
 installed by the browser image.
 """
@@ -123,7 +132,11 @@ FRAME_MS = 20
 FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS // 1000  # 960 @48k
 
 MIC_SOURCE = "ubag_virtual_mic"      # what Chrome uses as its microphone
-MIC_PIPE = "/tmp/ubag-voice-mic.pcm"
+# Black-box seams: tests and non-standard images can point the relay at fakes.
+# Empty/unset keeps the current value, so production behaviour is unchanged.
+MIC_PIPE = os.environ.get("UBAG_VOICE_MIC_PIPE") or "/tmp/ubag-voice-mic.pcm"
+PACTL = os.environ.get("UBAG_VOICE_PACTL") or "pactl"
+PAREC = os.environ.get("UBAG_VOICE_PAREC") or "parec"
 SPEAKER_SINK = "ubag_provider_sink"  # what Chrome plays provider audio into
 SPEAKER_MONITOR = f"{SPEAKER_SINK}.monitor"
 
@@ -304,7 +317,7 @@ def wait_for_pulse(timeout_s: float = 15.0) -> bool:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         try:
-            result = subprocess.run(["pactl", "info"], capture_output=True, timeout=3)
+            result = subprocess.run([PACTL, "info"], capture_output=True, timeout=3)
             if result.returncode == 0:
                 return True
         except (OSError, subprocess.SubprocessError):
@@ -316,7 +329,7 @@ def wait_for_pulse(timeout_s: float = 15.0) -> bool:
 def pactl_names(kind: str) -> set:
     """Device names from `pactl list short sources|sinks` (exact names, not a
     substring match: `x.monitor` must not satisfy a check for `x`)."""
-    out = subprocess.run(["pactl", "list", "short", kind],
+    out = subprocess.run([PACTL, "list", "short", kind],
                          capture_output=True, text=True, timeout=5).stdout
     return {parts[1] for parts in (line.split() for line in out.splitlines()) if len(parts) > 1}
 
@@ -348,7 +361,7 @@ def ensure_audio_devices() -> None:
         print(f"audio-relay: pactl unavailable ({exc}); audio devices not configured", file=sys.stderr)
         return
     if SPEAKER_SINK not in sinks:
-        run_checked("pactl", "load-module", "module-null-sink",
+        run_checked(PACTL, "load-module", "module-null-sink",
                     f"sink_name={SPEAKER_SINK}",
                     "sink_properties=device.description=UBAG_Provider_Voice")
     if MIC_SOURCE not in sources:
@@ -366,7 +379,7 @@ def ensure_audio_devices() -> None:
         loaded = False
         for attempt in range(3):
             result = subprocess.run(
-                ["pactl", "load-module", "module-pipe-source",
+                [PACTL, "load-module", "module-pipe-source",
                  f"source_name={MIC_SOURCE}", f"file={MIC_PIPE}",
                  "format=s16le", f"rate={SAMPLE_RATE}", f"channels={CHANNELS}"],
                 capture_output=True, text=True, timeout=5)
@@ -379,8 +392,8 @@ def ensure_audio_devices() -> None:
         if not loaded:
             print("audio-relay: virtual microphone NOT available; sessions will "
                   "have no mic direction", file=sys.stderr)
-    run_checked("pactl", "set-default-source", MIC_SOURCE)
-    run_checked("pactl", "set-default-sink", SPEAKER_SINK)
+    run_checked(PACTL, "set-default-source", MIC_SOURCE)
+    run_checked(PACTL, "set-default-sink", SPEAKER_SINK)
 
 
 _devices_ready = threading.Event()
@@ -445,10 +458,95 @@ def open_mic_fifo(timeout_s: float = 2.0) -> int:
 
 def spawn_monitor() -> subprocess.Popen:
     return subprocess.Popen(
-        ["parec", "--raw", "--format=s16le", f"--rate={SAMPLE_RATE}",
+        [PAREC, "--raw", "--format=s16le", f"--rate={SAMPLE_RATE}",
          f"--channels={CHANNELS}", f"--device={SPEAKER_MONITOR}",
          "--latency-msec=20", "--stream-name=ubag-voice-provider"],
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+
+# --- opt-in measurement (UBAG_VOICE_RELAY_STATS=1) -----------------------
+
+STATS_INTERVAL_S = 10.0
+STATS_SAMPLE_EVERY = 10   # time 1 frame in N: two perf_counter calls per sample
+STATS_MAX_SAMPLES = 512   # bounded per direction per window
+
+
+def stats_enabled() -> bool:
+    return os.environ.get("UBAG_VOICE_RELAY_STATS", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _fifo_depth(fd: int | None) -> int | None:
+    """Unread bytes queued in the mic FIFO (Linux FIONREAD); None if unknown."""
+    if fd is None:
+        return None
+    try:
+        import fcntl
+        import termios
+        buf = bytearray(4)
+        fcntl.ioctl(fd, termios.FIONREAD, buf)
+        return int.from_bytes(buf, sys.byteorder)
+    except (ImportError, OSError, ValueError):
+        return None
+
+
+def _pctl_ms(values: list, q: float) -> float:
+    ordered = sorted(values)
+    return round(ordered[min(len(ordered) - 1, int(q * len(ordered)))] * 1000, 3)
+
+
+class RelayStats:
+    """Per-session counters plus sampled timings. Each pump thread is the only
+    writer of its own direction's counters; the supervising thread reads them.
+    Only 1 frame in STATS_SAMPLE_EVERY is timed (two perf_counter() calls);
+    every other frame costs one int increment.
+
+    mic     = decode + FIFO write (frame already read from the gateway)
+    speaker = Opus encode + gateway socket write (PCM already read from parec)
+    """
+
+    def __init__(self, session_id: str, clock=time.monotonic):
+        self.session_id = session_id
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._next_emit = clock() + STATS_INTERVAL_S
+        self.counters = {
+            "mic_frames": 0, "mic_decode_errors": 0, "mic_fifo_dropped": 0,
+            "mic_muted_discarded": 0, "speaker_frames": 0, "speaker_encode_errors": 0,
+        }
+        self._samples = {"mic": [], "speaker": []}
+
+    def tick(self, name: str) -> bool:
+        """Count one frame under ``name``; True when this frame is to be timed."""
+        self.counters[name] += 1
+        return self.counters[name] % STATS_SAMPLE_EVERY == 0
+
+    def observe(self, direction: str, seconds: float) -> None:
+        with self._lock:
+            samples = self._samples[direction]
+            if len(samples) < STATS_MAX_SAMPLES:
+                samples.append(seconds)
+
+    def summary(self, mic_fd: int | None = None) -> dict:
+        with self._lock:
+            window, self._samples = self._samples, {"mic": [], "speaker": []}
+        out = {"event": "relay_stats", "session_id": self.session_id,
+               "interval_s": STATS_INTERVAL_S, "sample_every": STATS_SAMPLE_EVERY,
+               "mic_fifo_bytes": _fifo_depth(mic_fd), **self.counters}
+        for direction, values in window.items():
+            out[f"{direction}_samples"] = len(values)
+            if values:
+                out[f"{direction}_p50_ms"] = _pctl_ms(values, 0.50)
+                out[f"{direction}_p95_ms"] = _pctl_ms(values, 0.95)
+                out[f"{direction}_max_ms"] = round(max(values) * 1000, 3)
+        return out
+
+    def maybe_emit(self, mic_fd: int | None = None, force: bool = False) -> None:
+        now = self._clock()
+        if not force and now < self._next_emit:
+            return
+        self._next_emit = now + STATS_INTERVAL_S
+        print("audio-relay: stats " + json.dumps(self.summary(mic_fd), separators=(",", ":")),
+              file=sys.stderr, flush=True)
 
 
 class Session:
@@ -465,6 +563,7 @@ class Session:
         self.decoder = None
         self.encoder = None
         self.mic_fd: int | None = None
+        self.stats = RelayStats(session_id) if stats_enabled() else None
         self.procs: list = []
         self.threads: list = []
         self._write_lock = threading.Lock()
@@ -501,6 +600,8 @@ class Session:
         while not self.stop.wait(0.5):
             if not _devices_ready.is_set():
                 self.fail("devices_lost")
+            if self.stats:
+                self.stats.maybe_emit(self.mic_fd)
 
     # -- helpers ----
     def _send(self, fn) -> None:
@@ -539,24 +640,35 @@ class Session:
         this same thread, so mute takes effect strictly in frame order.
         """
         bad = dropped = 0
+        stats = self.stats
         try:
             while not self.stop.is_set():
                 ftype, payload = read_frame(self.conn)
                 if ftype == TYPE_CONTROL:
                     self._handle_control(payload)
                     continue
+                timed = stats.tick("mic_frames") if stats else False
+                started = time.perf_counter() if timed else 0.0
                 try:
                     pcm = self.decoder.decode(payload)  # also keeps decoder state while muted
                 except OpusError as exc:
+                    if stats:
+                        stats.counters["mic_decode_errors"] += 1
                     bad += 1
                     if bad == 1 or bad % 100 == 0:
                         print(f"audio-relay: mic frame decode failed ({bad}): {exc}", file=sys.stderr)
                     continue
                 if self.muted or not pcm:
+                    if stats and self.muted:
+                        stats.counters["mic_muted_discarded"] += 1
                     continue
                 try:
                     os.write(self.mic_fd, pcm)
+                    if timed:
+                        stats.observe("mic", time.perf_counter() - started)
                 except BlockingIOError:
+                    if stats:
+                        stats.counters["mic_fifo_dropped"] += 1
                     dropped += 1  # reader slow: drop, never block the pump
                     if dropped == 1 or dropped % 100 == 0:
                         print(f"audio-relay: mic FIFO full, dropped {dropped} frames", file=sys.stderr)
@@ -575,6 +687,7 @@ class Session:
         """Sink-monitor PCM → 20 ms Opus frames → gateway."""
         pcm_bytes = FRAME_SAMPLES * CHANNELS * 2  # s16le mono
         monitor = self.procs[0]
+        stats = self.stats
         try:
             while not self.stop.is_set():
                 chunk = monitor.stdout.read(pcm_bytes)
@@ -584,11 +697,17 @@ class Session:
                     return
                 if len(chunk) < pcm_bytes:
                     chunk = chunk + b"\x00" * (pcm_bytes - len(chunk))
+                timed = stats.tick("speaker_frames") if stats else False
+                started = time.perf_counter() if timed else 0.0
                 try:
                     frame = self.encoder.encode(chunk, FRAME_SAMPLES)
                 except OpusError:
+                    if stats:
+                        stats.counters["speaker_encode_errors"] += 1
                     continue
                 self._send(lambda: write_frame(self.conn, TYPE_AUDIO, frame))
+                if timed:
+                    stats.observe("speaker", time.perf_counter() - started)
         except Exception as exc:  # a media thread crash must be visible
             if not self.stop.is_set():
                 print(f"audio-relay: speaker pump ended: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -603,6 +722,8 @@ class Session:
                 return
             self._closed = True
         self.stop.set()
+        if self.stats:  # final summary while the FIFO fd is still open
+            self.stats.maybe_emit(self.mic_fd, force=True)
         for fn in (lambda: self.conn.shutdown(socket.SHUT_RDWR), self.conn.close):
             try:  # shutdown wakes recv/sendall on Linux; close does on Windows
                 fn()
