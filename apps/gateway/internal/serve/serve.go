@@ -30,6 +30,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/conversations"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
 	"github.com/ubag/ubag/apps/gateway/internal/grpcapi"
+	"github.com/ubag/ubag/apps/gateway/internal/helperauth"
 	"github.com/ubag/ubag/apps/gateway/internal/httpapi"
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
 	"github.com/ubag/ubag/apps/gateway/internal/jitadmin"
@@ -496,6 +497,15 @@ func Run(ctx context.Context) error {
 
 	helperErr := make(chan error, 1)
 	if hplane != nil {
+		// Auth rejections are aggregated into one node.auth_rejected record
+		// per (reason, node) per minute on the reserved _fleet audit chain.
+		agg := audit.NewRejectAggregator(&audit.Fleet{Store: enterprise.audit}, 256)
+		prev := hplane.auth.OnReject
+		hplane.auth.OnReject = func(r helperauth.Reason, nodeID string) {
+			prev(r, nodeID)
+			agg.Observe(string(r), nodeID)
+		}
+		go agg.Run(ctx, time.Minute, func(err error) { slog.Warn("fleet audit flush failed", "error", err) })
 		helperListener, err := net.Listen("tcp", hplane.addr)
 		if err != nil {
 			return fmt.Errorf("failed to listen on helper plane address %q: %w", hplane.addr, err)
