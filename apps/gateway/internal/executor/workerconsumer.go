@@ -1930,6 +1930,11 @@ var workerEnvAllowed = map[string]struct{}{
 	"UBAG_WORKER_STRICT_STREAM_END": {},
 	"UBAG_WORKER_STRICT_SUBMIT":     {},
 	"UBAG_MOCK_SYNTHETIC":           {},
+	// Synthetic chat fixture (tools/synthetic-provider): a boolean and a loopback URL the
+	// worker validates itself. UBAG_WORKER_STAGE_TIMINGS is the stage-attribution flag (P0.9b).
+	"UBAG_SYNTHETIC_PROVIDER":     {},
+	"UBAG_SYNTHETIC_PROVIDER_URL": {},
+	"UBAG_WORKER_STAGE_TIMINGS":   {},
 }
 
 func minimalWorkerEnv() []string { return filteredWorkerEnv(nil) }

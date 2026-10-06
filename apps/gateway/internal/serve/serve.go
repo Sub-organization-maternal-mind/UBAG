@@ -1510,6 +1510,27 @@ var warmDaemonTargets = map[string]struct{}{
 	"duckai_web":     {},
 }
 
+// syntheticChatTarget is the local fixture target (tools/synthetic-provider). It only exists when
+// UBAG_SYNTHETIC_PROVIDER is truthy, so a deployment that never sets the flag routes it nowhere new.
+const syntheticChatTarget = "synthetic_chat"
+
+func syntheticProviderEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_SYNTHETIC_PROVIDER"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// isWarmDaemonTarget reports whether jobs for target run on the warm-browser daemon.
+func isWarmDaemonTarget(target string) bool {
+	target = strings.TrimSpace(target)
+	if _, ok := warmDaemonTargets[target]; ok {
+		return true
+	}
+	return target == syntheticChatTarget && syntheticProviderEnabled()
+}
+
 // targetWorkerRunner keeps non-live adapters on the normal per-job worker even
 // when warm browser reuse is enabled. The Python daemon intentionally supports
 // only targets in PROVIDER_SELECTORS; routing mock/generic jobs into it would
@@ -1525,7 +1546,7 @@ func (r *targetWorkerRunner) RunWorker(
 ) ([]jobstore.WorkerEvent, error) {
 	// Voice control jobs drive the browser through their own CDP client and
 	// must never run on the warm daemon's shared Playwright thread.
-	if _, ok := warmDaemonTargets[strings.TrimSpace(envelope.Job.Target)]; ok && !jobcore.IsReservedCommandType(envelope.Job.CommandType) {
+	if isWarmDaemonTarget(envelope.Job.Target) && !jobcore.IsReservedCommandType(envelope.Job.CommandType) {
 		return r.daemon.RunWorker(ctx, envelope)
 	}
 	return r.fallback.RunWorker(ctx, envelope)

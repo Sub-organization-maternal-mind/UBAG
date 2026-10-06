@@ -153,3 +153,49 @@ func TestBuildWorkerRunnerRefusesTheDaemonWithoutItsOwnScript(t *testing.T) {
 		t.Fatal("expected startup to refuse a daemon with no daemon script")
 	}
 }
+
+// synthetic_chat is the local fixture target (tools/synthetic-provider): it joins the warm
+// daemon only while UBAG_SYNTHETIC_PROVIDER is truthy, and voice command types still bypass it.
+func TestSyntheticChatRoutesToTheWarmDaemonOnlyWhenEnabled(t *testing.T) {
+	route := func(target, commandType string) string {
+		routed := ""
+		runner := &targetWorkerRunner{
+			daemon: executor.WorkerRunFunc(func(context.Context, executor.DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+				routed = "daemon"
+				return nil, nil
+			}),
+			fallback: executor.WorkerRunFunc(func(context.Context, executor.DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+				routed = "fallback"
+				return nil, nil
+			}),
+		}
+		if _, err := runner.RunWorker(context.Background(), executor.DispatchEnvelope{
+			Job: executor.DispatchJob{Target: target, CommandType: commandType},
+		}); err != nil {
+			t.Fatalf("route %q: %v", target, err)
+		}
+		return routed
+	}
+
+	for _, value := range []string{"", "0", "false", "no", "maybe"} {
+		t.Setenv("UBAG_SYNTHETIC_PROVIDER", value)
+		if got := route("synthetic_chat", "chat.prompt"); got != "fallback" {
+			t.Fatalf("UBAG_SYNTHETIC_PROVIDER=%q: synthetic_chat routed to %s, want fallback", value, got)
+		}
+	}
+	for _, value := range []string{"1", "true", "YES", " on "} {
+		t.Setenv("UBAG_SYNTHETIC_PROVIDER", value)
+		if got := route(" synthetic_chat ", "chat.prompt"); got != "daemon" {
+			t.Fatalf("UBAG_SYNTHETIC_PROVIDER=%q: synthetic_chat routed to %s, want daemon", value, got)
+		}
+		if got := route("mock", "chat.prompt"); got != "fallback" {
+			t.Fatalf("enabling the fixture must not move mock off the per-job worker, got %s", got)
+		}
+		if got := route("gemini_web", "chat.prompt"); got != "daemon" {
+			t.Fatalf("real live targets must stay on the daemon, got %s", got)
+		}
+		if got := route("synthetic_chat", "voice.activate"); got != "fallback" {
+			t.Fatalf("voice commands must bypass the daemon, got %s", got)
+		}
+	}
+}
