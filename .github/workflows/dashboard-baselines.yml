@@ -44,7 +44,7 @@ jobs:
       - name: Build dashboard
         run: pnpm --filter @ubag/dashboard build
       - name: Cache Playwright browsers
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('apps/dashboard/package.json', 'pnpm-lock.yaml') }}
