@@ -118,6 +118,9 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("invalid store configuration: %w", err)
 	}
 	defer closeStores()
+	if err := configureExecutorAttempts(jobs, storeKind); err != nil {
+		return fmt.Errorf("invalid store configuration: %w", err)
+	}
 
 	// Advisory: the small+ profiles promise persistent jobs (§4.5). An ephemeral
 	// in-memory store silently drops jobs on restart, so flag the mismatch.
@@ -721,6 +724,25 @@ func configureEventNotify(store interface{ EnableEventNotify(time.Duration) }) e
 	}
 	store.EnableEventNotify(fallback)
 	slog.Info("job event wake hub enabled", "mode", mode, "fallback_ms", fallback.Milliseconds())
+	return nil
+}
+
+// configureExecutorAttempts applies UBAG_EXECUTOR_ATTEMPTS (default off): the
+// attempt ledger that fences stale writers by lease generation (ADR-0007). Off
+// is inert. On, the job store must implement jobstore.AttemptStore (memory,
+// postgres); SQLite does not, so startup fails closed rather than silently
+// running helper-dispatched work without a fence.
+func configureExecutorAttempts(store jobstore.Store, storeKind string) error {
+	if !envBool("UBAG_EXECUTOR_ATTEMPTS") {
+		return nil
+	}
+	if _, ok := store.(jobstore.AttemptStore); !ok {
+		return fmt.Errorf("UBAG_EXECUTOR_ATTEMPTS requires UBAG_GATEWAY_STORE=postgres (or memory for tests); the %s store has no attempt ledger", storeKind)
+	}
+	if pg, ok := store.(interface{ EnableAttempts() }); ok {
+		pg.EnableAttempts()
+	}
+	slog.Info("executor attempt ledger enabled", "store", storeKind)
 	return nil
 }
 

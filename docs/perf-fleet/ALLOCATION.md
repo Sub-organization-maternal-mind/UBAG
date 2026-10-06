@@ -19,7 +19,7 @@ origin/main postgres highest: 0021 (0019-0021 live: voice sessions, voice instan
 
 | Postgres | SQLite | Purpose (dependency order) |
 |---|---|---|
-| 0022_gateway_job_attempts | 0014_gateway_job_attempts | attempts |
+| 0022_gateway_job_attempts (landed, P4.2) | n/a (sqlite fails closed with UBAG_EXECUTOR_ATTEMPTS on; 0014 stays unused) | attempts; the only attempts table, the node store references it |
 | 0023_helper_nodes (landed, P4.4) | n/a (SQLite edge profile refuses helper mode; 0015 stays unused) | nodes + registry |
 | 0024_helper_profiles | 0016_helper_profiles | profiles |
 | 0025_voice_lease_generation | n/a | voice lease generation |
@@ -30,6 +30,7 @@ origin/main postgres highest: 0021 (0019-0021 live: voice sessions, voice instan
 - Helper proto: `packages/proto/proto/ubag/helper/v1`.
 - Routes: `/v1/fleet/*` guarded by scope `fleet:read`; internal node routes under `internal/nodes`.
 - Flag ladder: `UBAG_HELPER_NODES` < `UBAG_HELPER_PLANE` < `UBAG_HELPER_DISPATCH` < `UBAG_HELPER_VOICE` (each requires the previous).
+- Attempt ledger flag: `UBAG_EXECUTOR_ATTEMPTS` (default off; on requires the postgres or memory store, sqlite refuses to start).
 - Streaming flag pair: `UBAG_WORKER_STREAM_EVENTS` (Python emits) + `UBAG_WORKER_STREAM_INGEST` (Go ingests). Other flags: see BINDING.md section 3 rule 5.
 
 ## Phase map

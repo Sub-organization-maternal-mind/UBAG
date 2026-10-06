@@ -46,7 +46,8 @@ type DispatchEnvelope struct {
 	Client       map[string]any        `json:"client,omitempty"`
 	// Attempt identifies this local delivery attempt. Set by the consumer only
 	// when UBAG_WORKER_ATTEMPT_EVENT_IDS is on; absent => legacy event ids.
-	// lease_generation / expires_at join in P4.2.
+	// The lease generation / expiry fence is not carried here: it rides the
+	// helper Fence (ubag.helper.v1) and the attempt ledger (jobs.AttemptStore).
 	Attempt   *DispatchAttempt `json:"attempt,omitempty"`
 	CreatedAt time.Time        `json:"created_at"`
 }

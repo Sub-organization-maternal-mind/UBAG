@@ -25,6 +25,7 @@ type MemoryStore struct {
 	jobs           map[string]Job
 	events         map[string][]Event
 	order          []string
+	attempts       map[string][]Attempt // attempt ledger, ascending generation (see attempts.go)
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -34,6 +35,7 @@ func NewMemoryStore() *MemoryStore {
 		eventKey: make(map[string]map[string]struct{}),
 		jobs:     make(map[string]Job),
 		events:   make(map[string][]Event),
+		attempts: make(map[string][]Attempt),
 	}
 	store.cond = sync.NewCond(&store.mu)
 	return store
@@ -359,23 +361,8 @@ func (m *MemoryStore) UpdateStatus(_ context.Context, id string, status Status) 
 }
 
 func (m *MemoryStore) ApplyWorkerEvent(_ context.Context, event WorkerEvent) (Job, bool, error) {
-	if event.JobID == "" {
-		return Job{}, false, fmt.Errorf("worker event job_id is required")
-	}
-	if event.Type == "" {
-		return Job{}, false, fmt.Errorf("worker event type is required")
-	}
-	if !knownWorkerEventType(event.Type) {
-		return Job{}, false, fmt.Errorf("worker event type %q is not supported", event.Type)
-	}
-	if event.APIVersion == "" {
-		return Job{}, false, fmt.Errorf("worker event api_version is required")
-	}
-	if event.TraceID == "" {
-		return Job{}, false, fmt.Errorf("worker event trace_id is required")
-	}
-	if workerEventKey(event) == "" {
-		return Job{}, false, fmt.Errorf("worker event must include event_id or positive sequence")
+	if err := checkWorkerEvent(event); err != nil {
+		return Job{}, false, err
 	}
 
 	m.mu.Lock()
@@ -385,11 +372,53 @@ func (m *MemoryStore) ApplyWorkerEvent(_ context.Context, event WorkerEvent) (Jo
 	if !ok {
 		return Job{}, false, nil
 	}
+	job, err := m.applyWorkerEventLocked(job, event)
+	return job, true, err
+}
+
+// checkWorkerEvent is the store-independent shape check every worker event
+// must pass before it touches a job (shared by ApplyWorkerEvent and
+// CommitEvents on every store).
+func checkWorkerEvent(event WorkerEvent) error {
+	if event.JobID == "" {
+		return fmt.Errorf("worker event job_id is required")
+	}
+	if event.Type == "" {
+		return fmt.Errorf("worker event type is required")
+	}
+	if !knownWorkerEventType(event.Type) {
+		return fmt.Errorf("worker event type %q is not supported", event.Type)
+	}
+	if event.APIVersion == "" {
+		return fmt.Errorf("worker event api_version is required")
+	}
+	if event.TraceID == "" {
+		return fmt.Errorf("worker event trace_id is required")
+	}
+	if workerEventKey(event) == "" {
+		return fmt.Errorf("worker event must include event_id or positive sequence")
+	}
+	return nil
+}
+
+// checkWorkerEventAgainstJob rejects an event whose api_version or trace_id
+// does not belong to the job it targets.
+func checkWorkerEventAgainstJob(job Job, event WorkerEvent) error {
 	if event.APIVersion != job.APIVersion {
-		return job, true, fmt.Errorf("worker event api_version %q does not match job api_version %q", event.APIVersion, job.APIVersion)
+		return fmt.Errorf("worker event api_version %q does not match job api_version %q", event.APIVersion, job.APIVersion)
 	}
 	if job.TraceID != "" && event.TraceID != job.TraceID {
-		return job, true, fmt.Errorf("worker event trace_id %q does not match job trace_id %q", event.TraceID, job.TraceID)
+		return fmt.Errorf("worker event trace_id %q does not match job trace_id %q", event.TraceID, job.TraceID)
+	}
+	return nil
+}
+
+// applyWorkerEventLocked applies one pre-checked event to job (m.mu held) and
+// returns the job as of the call: unchanged on a validation error, a duplicate
+// event or a terminal job.
+func (m *MemoryStore) applyWorkerEventLocked(job Job, event WorkerEvent) (Job, error) {
+	if err := checkWorkerEventAgainstJob(job, event); err != nil {
+		return job, err
 	}
 
 	eventKey := workerEventKey(event)
@@ -400,17 +429,17 @@ func (m *MemoryStore) ApplyWorkerEvent(_ context.Context, event WorkerEvent) (Jo
 			m.eventKey[job.ID] = keys
 		}
 		if _, seen := keys[eventKey]; seen {
-			return job, true, nil
+			return job, nil
 		}
 		keys[eventKey] = struct{}{}
 	}
 
 	if TerminalStatus(job.Status) {
-		return job, true, nil
+		return job, nil
 	}
 
 	if err := validateWorkerEventData(event.Type, event.Data); err != nil {
-		return job, true, err
+		return job, err
 	}
 	data, _ := sanitizeWorkerData(event.Type, event.Data).(map[string]any)
 	if data == nil {
@@ -437,7 +466,7 @@ func (m *MemoryStore) ApplyWorkerEvent(_ context.Context, event WorkerEvent) (Jo
 	m.jobs[job.ID] = job
 	m.appendEventLocked(job, event.Type, data)
 
-	return job, true, nil
+	return job, nil
 }
 
 func (m *MemoryStore) Ready(context.Context) error {

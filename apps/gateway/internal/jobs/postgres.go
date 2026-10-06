@@ -17,6 +17,7 @@ type PostgresStore struct {
 	waitInterval time.Duration
 	wake         *eventHub     // nil = legacy fixed-interval poll (UBAG_EVENT_NOTIFY=off)
 	wakeFallback time.Duration // fallback poll cadence while wake != nil
+	attempts     bool          // UBAG_EXECUTOR_ATTEMPTS: Ready also requires gateway_job_attempts
 }
 
 func NewPostgresStore(db *sql.DB) *PostgresStore {
@@ -417,24 +418,8 @@ func (p *PostgresStore) ApplyWorkerEvent(ctx context.Context, event WorkerEvent)
 	if p == nil || p.db == nil {
 		return Job{}, false, fmt.Errorf("postgres job store is not configured")
 	}
-	if event.JobID == "" {
-		return Job{}, false, fmt.Errorf("worker event job_id is required")
-	}
-	if event.Type == "" {
-		return Job{}, false, fmt.Errorf("worker event type is required")
-	}
-	if !knownWorkerEventType(event.Type) {
-		return Job{}, false, fmt.Errorf("worker event type %q is not supported", event.Type)
-	}
-	if event.APIVersion == "" {
-		return Job{}, false, fmt.Errorf("worker event api_version is required")
-	}
-	if event.TraceID == "" {
-		return Job{}, false, fmt.Errorf("worker event trace_id is required")
-	}
-	eventKey := workerEventKey(event)
-	if eventKey == "" {
-		return Job{}, false, fmt.Errorf("worker event must include event_id or positive sequence")
+	if err := checkWorkerEvent(event); err != nil {
+		return Job{}, false, err
 	}
 
 	tx, err := p.db.BeginTx(ctx, nil)
@@ -447,37 +432,51 @@ func (p *PostgresStore) ApplyWorkerEvent(ctx context.Context, event WorkerEvent)
 	if err != nil || !found {
 		return Job{}, found, err
 	}
-	if event.APIVersion != job.APIVersion {
-		return job, true, fmt.Errorf("worker event api_version %q does not match job api_version %q", event.APIVersion, job.APIVersion)
+	job, _, changed, err := p.applyWorkerEventTx(ctx, tx, job, sequence, event)
+	if err != nil {
+		if job.ID == "" {
+			return Job{}, false, err
+		}
+		return job, true, err
 	}
-	if job.TraceID != "" && event.TraceID != job.TraceID {
-		return job, true, fmt.Errorf("worker event trace_id %q does not match job trace_id %q", event.TraceID, job.TraceID)
+	if err := tx.Commit(); err != nil {
+		return Job{}, false, err
+	}
+	if changed {
+		p.wake.notify(job.ID)
+	}
+	return job, true, nil
+}
+
+// applyWorkerEventTx applies one pre-checked event to the locked job row inside
+// tx (no commit). It returns the job and event sequence as of the call, and
+// whether the job changed (false for a duplicate event or a terminal job; the
+// dedupe key is still recorded). On a validation error it returns the
+// unchanged job; on a database error it returns the zero Job. Shared by
+// ApplyWorkerEvent and CommitEvents so both apply events identically.
+func (p *PostgresStore) applyWorkerEventTx(ctx context.Context, tx *sql.Tx, job Job, sequence int, event WorkerEvent) (Job, int, bool, error) {
+	if err := checkWorkerEventAgainstJob(job, event); err != nil {
+		return job, sequence, false, err
 	}
 
 	var insertedKey string
-	err = tx.QueryRowContext(ctx, `
+	err := tx.QueryRowContext(ctx, `
 INSERT INTO gateway_job_worker_event_keys (job_id, event_key, created_at)
 VALUES ($1, $2, $3)
 ON CONFLICT DO NOTHING
-RETURNING event_key`, job.ID, eventKey, p.now().UTC()).Scan(&insertedKey)
+RETURNING event_key`, job.ID, workerEventKey(event), p.now().UTC()).Scan(&insertedKey)
 	if errors.Is(err, sql.ErrNoRows) {
-		if err := tx.Commit(); err != nil {
-			return Job{}, false, err
-		}
-		return job, true, nil
+		return job, sequence, false, nil
 	}
 	if err != nil {
-		return Job{}, false, err
+		return Job{}, sequence, false, err
 	}
 	if TerminalStatus(job.Status) {
-		if err := tx.Commit(); err != nil {
-			return Job{}, false, err
-		}
-		return job, true, nil
+		return job, sequence, false, nil
 	}
 
 	if err := validateWorkerEventData(event.Type, event.Data); err != nil {
-		return job, true, err
+		return job, sequence, false, err
 	}
 	data, _ := sanitizeWorkerData(event.Type, event.Data).(map[string]any)
 	if data == nil {
@@ -505,19 +504,15 @@ RETURNING event_key`, job.ID, eventKey, p.now().UTC()).Scan(&insertedKey)
 
 	resultJSON, err := marshalNullableJSON(job.Result)
 	if err != nil {
-		return Job{}, false, err
+		return Job{}, sequence, false, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE gateway_jobs SET status = $1, result_json = $2, event_sequence = $3, updated_at = $4 WHERE id = $5`, string(job.Status), resultJSON, sequence, job.UpdatedAt, job.ID); err != nil {
-		return Job{}, false, err
+		return Job{}, sequence, false, err
 	}
 	if err := insertEvent(ctx, tx, job, sequence, event.Type, data, p.now().UTC()); err != nil {
-		return Job{}, false, err
+		return Job{}, sequence, false, err
 	}
-	if err := tx.Commit(); err != nil {
-		return Job{}, false, err
-	}
-	p.wake.notify(job.ID)
-	return job, true, nil
+	return job, sequence, true, nil
 }
 
 func (p *PostgresStore) Ready(ctx context.Context) error {
@@ -527,12 +522,16 @@ func (p *PostgresStore) Ready(ctx context.Context) error {
 	if err := p.db.PingContext(ctx); err != nil {
 		return err
 	}
-	for _, objectName := range []string{
+	required := []string{
 		"gateway_job_id_seq",
 		"gateway_jobs",
 		"gateway_job_events",
 		"gateway_job_worker_event_keys",
-	} {
+	}
+	if p.attempts {
+		required = append(required, "gateway_job_attempts")
+	}
+	for _, objectName := range required {
 		if err := storekit.RequirePostgresObject(ctx, p.db, objectName); err != nil {
 			return err
 		}
