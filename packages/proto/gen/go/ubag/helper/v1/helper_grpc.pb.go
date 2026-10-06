@@ -72,6 +72,14 @@ type HelperServiceClient interface {
 	// event. PROMPT_SUBMITTED is the submission boundary: once the primary has
 	// seen it, a failure is post-submit and must never be blindly resubmitted
 	// (it ends `failed` with submitted=true and reconcile_required, per D4).
+	//
+	// The attempt's life is tied to its lease, not to this stream: a broken stream
+	// does not stop the attempt. Calling RunAttempt again with the same attempt_id,
+	// lease_generation and input_fingerprint re-attaches: the helper replays the
+	// attempt's events from sequence 1 (the primary dedupes by event key), then
+	// continues live, and reads the fence's lease_expires_at like RenewAttempt. It
+	// never starts a second run. An attempt whose lease is not renewed is killed
+	// by the helper itself and ends `failed` (stream_end_reason "lease_expired").
 	RunAttempt(ctx context.Context, in *RunAttemptRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[RunAttemptResponse], error)
 	// RenewAttempt extends the Attempt Lease (primary renews every 20 s).
 	RenewAttempt(ctx context.Context, in *RenewAttemptRequest, opts ...grpc.CallOption) (*RenewAttemptResponse, error)
@@ -209,6 +217,14 @@ type HelperServiceServer interface {
 	// event. PROMPT_SUBMITTED is the submission boundary: once the primary has
 	// seen it, a failure is post-submit and must never be blindly resubmitted
 	// (it ends `failed` with submitted=true and reconcile_required, per D4).
+	//
+	// The attempt's life is tied to its lease, not to this stream: a broken stream
+	// does not stop the attempt. Calling RunAttempt again with the same attempt_id,
+	// lease_generation and input_fingerprint re-attaches: the helper replays the
+	// attempt's events from sequence 1 (the primary dedupes by event key), then
+	// continues live, and reads the fence's lease_expires_at like RenewAttempt. It
+	// never starts a second run. An attempt whose lease is not renewed is killed
+	// by the helper itself and ends `failed` (stream_end_reason "lease_expired").
 	RunAttempt(*RunAttemptRequest, grpc.ServerStreamingServer[RunAttemptResponse]) error
 	// RenewAttempt extends the Attempt Lease (primary renews every 20 s).
 	RenewAttempt(context.Context, *RenewAttemptRequest) (*RenewAttemptResponse, error)

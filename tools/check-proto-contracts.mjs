@@ -39,7 +39,9 @@ const specs = {
       'bool submitted',
       'bool reconcile_required',
       'bool partial',
-      'string staging_path_prefix'
+      'string staging_path_prefix',
+      // P4.11: the helper reports its adapter registry digest (handshake + capacity).
+      'string registry_digest'
     ],
     // message -> required "type name" field declarations
     requiredFields: {

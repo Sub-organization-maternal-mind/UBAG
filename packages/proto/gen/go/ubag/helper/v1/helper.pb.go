@@ -450,10 +450,14 @@ type HandshakeResponse struct {
 	// Cross-check only; the certificate URI SAN is authoritative.
 	NodeId string `protobuf:"bytes,4,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	// Optional capabilities, e.g. "streaming_events". Unknown values are ignored.
-	Features      []string               `protobuf:"bytes,5,rep,name=features,proto3" json:"features,omitempty"`
-	ServerTime    *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=server_time,json=serverTime,proto3" json:"server_time,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Features   []string               `protobuf:"bytes,5,rep,name=features,proto3" json:"features,omitempty"`
+	ServerTime *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=server_time,json=serverTime,proto3" json:"server_time,omitempty"`
+	// Canonical SHA-256 (lowercase hex) of the adapter registry and the manifests
+	// it lists, as loaded on this node. The primary compares it with its own
+	// digest; a mismatch (or an empty value) makes the node ineligible.
+	RegistryDigest string `protobuf:"bytes,7,opt,name=registry_digest,json=registryDigest,proto3" json:"registry_digest,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *HandshakeResponse) Reset() {
@@ -526,6 +530,13 @@ func (x *HandshakeResponse) GetServerTime() *timestamppb.Timestamp {
 		return x.ServerTime
 	}
 	return nil
+}
+
+func (x *HandshakeResponse) GetRegistryDigest() string {
+	if x != nil {
+		return x.RegistryDigest
+	}
+	return ""
 }
 
 type ReportCapacityRequest struct {
@@ -657,8 +668,11 @@ type ReportCapacityResponse struct {
 	Draining         bool                   `protobuf:"varint,10,opt,name=draining,proto3" json:"draining,omitempty"`
 	WorkloadVersion  string                 `protobuf:"bytes,11,opt,name=workload_version,json=workloadVersion,proto3" json:"workload_version,omitempty"`
 	Slots            []*IdentitySlot        `protobuf:"bytes,12,rep,name=slots,proto3" json:"slots,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Same value as HandshakeResponse.registry_digest, repeated on every heartbeat
+	// so a registry change on a running node is noticed without a new handshake.
+	RegistryDigest string `protobuf:"bytes,13,opt,name=registry_digest,json=registryDigest,proto3" json:"registry_digest,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ReportCapacityResponse) Reset() {
@@ -773,6 +787,13 @@ func (x *ReportCapacityResponse) GetSlots() []*IdentitySlot {
 		return x.Slots
 	}
 	return nil
+}
+
+func (x *ReportCapacityResponse) GetRegistryDigest() string {
+	if x != nil {
+		return x.RegistryDigest
+	}
+	return ""
 }
 
 // Asset is a content-addressed input. sha256 is lowercase hex.
@@ -1802,7 +1823,7 @@ const file_ubag_helper_v1_helper_proto_rawDesc = "" +
 	"\x10HandshakeRequest\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\tR\x0fprotocolVersion\x128\n" +
 	"\x18primary_workload_version\x18\x02 \x01(\tR\x16primaryWorkloadVersion\x12\x17\n" +
-	"\anode_id\x18\x03 \x01(\tR\x06nodeId\"\x82\x02\n" +
+	"\anode_id\x18\x03 \x01(\tR\x06nodeId\"\xab\x02\n" +
 	"\x11HandshakeResponse\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\tR\x0fprotocolVersion\x12%\n" +
 	"\x0ehelper_version\x18\x02 \x01(\tR\rhelperVersion\x12)\n" +
@@ -1810,14 +1831,15 @@ const file_ubag_helper_v1_helper_proto_rawDesc = "" +
 	"\anode_id\x18\x04 \x01(\tR\x06nodeId\x12\x1a\n" +
 	"\bfeatures\x18\x05 \x03(\tR\bfeatures\x12;\n" +
 	"\vserver_time\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"serverTime\"0\n" +
+	"serverTime\x12'\n" +
+	"\x0fregistry_digest\x18\a \x01(\tR\x0eregistryDigest\"0\n" +
 	"\x15ReportCapacityRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\"\xb2\x01\n" +
 	"\fIdentitySlot\x12\x1a\n" +
 	"\bprovider\x18\x01 \x01(\tR\bprovider\x12!\n" +
 	"\fidentity_ref\x18\x02 \x01(\tR\videntityRef\x127\n" +
 	"\x05state\x18\x03 \x01(\x0e2!.ubag.helper.v1.IdentitySlotStateR\x05state\x12*\n" +
-	"\x11active_attempt_id\x18\x04 \x01(\tR\x0factiveAttemptId\"\x8a\x04\n" +
+	"\x11active_attempt_id\x18\x04 \x01(\tR\x0factiveAttemptId\"\xb3\x04\n" +
 	"\x16ReportCapacityResponse\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12;\n" +
 	"\vobserved_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
@@ -1832,7 +1854,8 @@ const file_ubag_helper_v1_helper_proto_rawDesc = "" +
 	"\bdraining\x18\n" +
 	" \x01(\bR\bdraining\x12)\n" +
 	"\x10workload_version\x18\v \x01(\tR\x0fworkloadVersion\x122\n" +
-	"\x05slots\x18\f \x03(\v2\x1c.ubag.helper.v1.IdentitySlotR\x05slots\"q\n" +
+	"\x05slots\x18\f \x03(\v2\x1c.ubag.helper.v1.IdentitySlotR\x05slots\x12'\n" +
+	"\x0fregistry_digest\x18\r \x01(\tR\x0eregistryDigest\"q\n" +
 	"\x05Asset\x12\x16\n" +
 	"\x06sha256\x18\x01 \x01(\tR\x06sha256\x12\x1d\n" +
 	"\n" +
