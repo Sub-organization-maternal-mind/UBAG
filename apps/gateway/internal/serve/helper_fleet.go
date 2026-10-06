@@ -60,6 +60,9 @@ func newHelperFleetFromEnv(ctx context.Context, store nodes.Store, poller *nodes
 	if !envBool("UBAG_HELPER_DISPATCH") || store == nil {
 		return nil, nil
 	}
+	if strings.EqualFold(strings.TrimSpace(getenv("UBAG_EXECUTOR_MODE", "")), "nats") {
+		slog.Warn("UBAG_HELPER_DISPATCH with UBAG_EXECUTOR_MODE=nats: every held placement consumes one delivery, so raise UBAG_NATS_WORKER_MAX_DELIVER (default 5) or held jobs are dropped from the stream")
+	}
 	var profiles helperauth.ProfileStore
 	switch storeKind {
 	case "memory", "":

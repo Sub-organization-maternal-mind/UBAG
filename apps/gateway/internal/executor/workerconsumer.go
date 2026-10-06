@@ -128,7 +128,9 @@ type WorkerConsumer struct {
 	// cannot see. Zero keeps the fixed PollInterval.
 	IdlePollMax time.Duration
 	// PoolSize is the number of parallel lease-process workers in Run.
-	// 0/negative means 1 (legacy serial behavior). Clamped to 32 in workerCount.
+	// 0/negative means 1 (legacy serial behavior). Clamped to 32 in workerCount
+	// (HelperCapacity adds helper workers on top, and is how local concurrency
+	// stays at this size when it does).
 	// Each worker loops RunOnce independently; FileSpool rename-CAS and NATS
 	// fetch+ack are safe for concurrent LeaseNext. ProcessWorkerRunner is
 	// stateless (one subprocess per job) so mock/per-job jobs truly overlap;

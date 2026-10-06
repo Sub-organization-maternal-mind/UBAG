@@ -220,7 +220,7 @@ func Write(ctx context.Context, w io.Writer, src NodeSource, now time.Time) {
 		if serr != nil {
 			st = nodes.HelperState{NodeID: a.NodeID} // no heartbeat yet or unreadable: fail closed
 		}
-		d := nodes.Evaluate(a.Grant(), st.LastHeartbeat, now, st.Pressure(), st.RampedLimit)
+		d := nodes.Admission(a, st, now) // the verdict placement uses: Evaluate plus the ceiling table
 		reason := "eligible"
 		if !d.Eligible {
 			reason = d.Reason
