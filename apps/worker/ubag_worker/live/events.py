@@ -109,16 +109,24 @@ def worker_event(
     sequence: int,
     event_type: str,
     data: Mapping[str, Any],
+    attempt_id: str = "",
 ) -> JsonObject:
+    # attempt_id (envelope attempt.id, flag-gated by the gateway) scopes the id so
+    # a retry attempt's events do not collide with a prior attempt's. Empty =>
+    # legacy id, byte-identical to before.
+    seed = "%s:%s:%s" % (job_id, attempt_id, sequence) if attempt_id else "%s:%s" % (job_id, sequence)
+    body = dict(data)
+    if attempt_id:
+        body["attempt_id"] = attempt_id
     return {
         "api_version": api_version,
-        "event_id": "evt_" + digest("%s:%s" % (job_id, sequence))[:16],
+        "event_id": "evt_" + digest(seed)[:16],
         "job_id": job_id,
         "trace_id": trace_id,
         "type": event_type,
         "sequence": sequence,
         "created_at": timestamp(sequence),
-        "data": dict(data),
+        "data": body,
     }
 
 
