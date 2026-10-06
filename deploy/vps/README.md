@@ -184,3 +184,8 @@ API + operator dashboard + live, manually authenticated browser adapters
 (`UBAG_EXECUTOR_MODE=file`, `UBAG_WORKER_CONSUMER_ENABLED=true`, and
 `run_live_worker.py`; `target=mock` still routes to the mock adapter). Artifacts
 land on persistent local disk (`UBAG_ARTIFACT_STORE=localfs`).
+
+## Event wake hub
+
+`UBAG_EVENT_NOTIFY` is `off` by default, so the gateway polls job events every 50 ms. `local` (single gateway only) uses an in-process wake hub with a `UBAG_EVENT_FALLBACK_MS` safety poll. Roll back by setting it to `off` and restarting. LISTEN/NOTIFY is not built and would not work through a transaction-mode pooler. See `apps/docs/src/content/docs/operations/deployment.md`.
+

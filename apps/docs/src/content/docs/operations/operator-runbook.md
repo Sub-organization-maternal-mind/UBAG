@@ -100,6 +100,26 @@ If reproduction requires user or provider-session data, use approved masked or t
 - Escalate to the accountable owner.
 - Do not delete or rewrite audit records.
 
+## Waiting Jobs
+
+A `queued` job carries a coarse `queue_reason` (see [Job Lifecycle](/contracts/job-lifecycle)). Read it on the Jobs page or in `GET /v1/jobs/summary` (`queued_by_reason`). Operators with `fleet:read` also see fine reasons as counts in `GET /v1/fleet/summary` (`held_by_reason`).
+
+| Reason | First check |
+|--------|-------------|
+| `waiting_for_worker` | Worker concurrency (`UBAG_WORKER_CONCURRENCY`, `UBAG_WORKER_POOL_SIZE`) against queue depth. |
+| `waiting_for_identity` | One operation runs per provider identity; look for a live voice session or a long job on the same session. Scale by identities, not CPU. |
+| `waiting_for_capacity` | Fleet grant and slots on Quotas / Browser Sessions. If the manager is unreachable, no new grants or increases apply. |
+| `waiting_for_node` | The bound helper node's state and last heartbeat on Browser Sessions. |
+| `retry_backoff` | Normal; the delay expires on its own. |
+| `temporarily_unavailable` | Gateway logs; the gateway retries by itself. |
+
+Provider logins stay out-of-band human logins; never automate them.
+
+## Event wake rollback
+
+`UBAG_EVENT_NOTIFY=local` enables the in-process wake hub (with a `UBAG_EVENT_FALLBACK_MS` safety poll, default 2000). To roll back, set `UBAG_EVENT_NOTIFY=off` (the default) and restart the gateway: event waiters return to the 50 ms poll. Nothing is stored, so rollback needs no data change.
+
+
 ## Handoff Notes
 
 Each handoff should include:
