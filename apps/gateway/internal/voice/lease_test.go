@@ -24,6 +24,7 @@ var leaseContract = []struct {
 	run  func(*testing.T, Store)
 }{
 	{"StaleGenerationCommitRejected", testLeaseStaleGenerationRejected},
+	{"StaleGenerationMuteRejected", testLeaseStaleMuteRejected},
 	{"MediaLeaseRenewVersusSweep", testMediaLeaseRenewVersusSweep},
 	{"TerminatingHoldBlocksReuse", testTerminatingHoldBlocksReuse},
 	{"TerminatingHoldIsFenced", testTerminatingHoldIsFenced},
@@ -163,6 +164,60 @@ func testLeaseStaleGenerationRejected(t *testing.T, st Store) {
 	}
 	if err := st.CommitTransition(ctx, "tenant_a", "f1", current, StatusConnected, StatusConnected, later, ""); !errors.Is(err, ErrConflict) {
 		t.Errorf("commit after terminate = %v, want ErrConflict", err)
+	}
+}
+
+// The mute flag a node reports is a fenced write like any other: a replaced node,
+// an older or forged generation, another tenant and a terminated session all leave
+// the flag alone (P5.11).
+func testLeaseStaleMuteRejected(t *testing.T, st Store) {
+	ctx := t.Context()
+	reserveAt(t, st, "m1", "tenant_a", leaseNow, time.Hour, Placement{"acct-1", "browser-1"})
+	if _, err := st.BindNode(ctx, "tenant_a", "m1", "node-a", time.Minute, leaseNow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.BindNode(ctx, "tenant_a", "m1", "node-b", time.Minute, leaseNow); err != nil {
+		t.Fatal(err)
+	}
+	later := leaseNow.Add(time.Second)
+	for _, c := range []struct {
+		name  string
+		fence LeaseFence
+		want  error
+	}{
+		{"replaced node", LeaseFence{"node-a", 2}, ErrNodeMismatch},
+		{"older generation", LeaseFence{"node-b", 1}, ErrStaleGeneration},
+		{"forged future generation", LeaseFence{"node-b", 3}, ErrStaleGeneration},
+		{"no fence", LeaseFence{}, ErrBadBinding},
+	} {
+		if err := st.CommitMuted(ctx, "tenant_a", "m1", c.fence, true, later); !errors.Is(err, c.want) {
+			t.Errorf("%s: CommitMuted = %v, want %v", c.name, err, c.want)
+		}
+	}
+	if got := mustGet(t, st, "tenant_a", "m1"); got.Muted {
+		t.Fatalf("a rejected write muted the session: %+v", got)
+	}
+	current := LeaseFence{"node-b", 2}
+	if err := st.CommitMuted(ctx, "tenant_a", "m1", current, true, later); err != nil {
+		t.Fatalf("current holder: %v", err)
+	}
+	if got := mustGet(t, st, "tenant_a", "m1"); !got.Muted {
+		t.Fatalf("the holder's mute was not recorded: %+v", got)
+	}
+	if err := st.CommitMuted(ctx, "tenant_b", "m1", current, false, later); !errors.Is(err, ErrNotFound) {
+		t.Errorf("cross-tenant CommitMuted = %v, want ErrNotFound (the same answer as an unknown session)", err)
+	}
+	if err := st.CommitMuted(ctx, "tenant_a", "nope", current, false, later); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown session CommitMuted = %v, want ErrNotFound", err)
+	}
+	if got := mustGet(t, st, "tenant_a", "m1"); !got.Muted {
+		t.Fatalf("a rejected write changed the flag: %+v", got)
+	}
+	if err := st.Terminate(ctx, "tenant_a", "m1", later, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CommitMuted(ctx, "tenant_a", "m1", current, false, later); !errors.Is(err, ErrConflict) {
+		t.Errorf("CommitMuted after terminate = %v, want ErrConflict", err)
 	}
 }
 

@@ -467,6 +467,29 @@ WHERE session_id = $1 AND tenant_id = $2 AND status <> 'terminated'`,
 	return requirePostgresChange(res)
 }
 
+func (s *PostgresStore) CommitMuted(ctx context.Context, tenantID, sessionID string, fence LeaseFence, muted bool, now time.Time) error {
+	if !fence.valid() {
+		return ErrBadBinding
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE gateway_voice_sessions SET muted = $5, updated_at = $6
+WHERE session_id = $1 AND tenant_id = $2 AND node_id = $3 AND lease_generation = $4 AND status <> 'terminated'`,
+		sessionID, tenantID, fence.NodeID, int64(fence.Generation), muted, now)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n > 0 {
+		return nil
+	}
+	current, found, err := s.Get(ctx, tenantID, sessionID)
+	if err != nil {
+		return err
+	}
+	return fenceMiss(current, found, fence)
+}
+
 func (s *PostgresStore) Terminate(ctx context.Context, tenantID, sessionID string, now time.Time, reason string) error {
 	_, err := s.db.ExecContext(ctx, `
 UPDATE gateway_voice_sessions

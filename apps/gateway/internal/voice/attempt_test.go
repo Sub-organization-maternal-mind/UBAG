@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -322,5 +323,46 @@ func TestGuardIsOffByDefaultAndRefusesEndedSessions(t *testing.T) {
 	bad.NodeID = ""
 	if _, err := g.Authorize(ctx, bad); !errors.Is(err, ErrBadBinding) {
 		t.Fatalf("malformed fence = %v", err)
+	}
+}
+
+// The calls that end a call (terminate, the deactivation ack) must still reach the
+// node after the session reads terminated, and are fenced exactly like the rest.
+func TestGuardAuthorizeEndingAcceptsATerminatedSessionButNeverAStaleFence(t *testing.T) {
+	ctx := context.Background()
+	g, session, b := guardFixture(t)
+	if err := g.Store.Terminate(ctx, session.TenantID, session.ID, time.Now().UTC(), "done"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := g.AuthorizeEnding(ctx, b); err != nil || got.ID != session.ID {
+		t.Fatalf("a terminated session with the current fence: %v, %v", got.ID, err)
+	}
+	stale := b
+	stale.LeaseGeneration = 2
+	if _, err := g.AuthorizeEnding(ctx, stale); !errors.Is(err, ErrStaleGeneration) {
+		t.Fatalf("stale fence on a terminated session = %v, want ErrStaleGeneration", err)
+	}
+	foreign := b
+	foreign.TenantID = "tenant-b"
+	if _, err := g.AuthorizeEnding(ctx, foreign); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-tenant = %v, want ErrNotFound", err)
+	}
+	off := g
+	off.Enabled = false
+	if _, err := off.AuthorizeEnding(ctx, b); !errors.Is(err, ErrHelperVoiceDisabled) {
+		t.Fatalf("disabled guard = %v", err)
+	}
+}
+
+// The attempt id is a pure function of the lease, in the shape the node's fence
+// requires, and a new generation is a new attempt.
+func TestAttemptIDForIsStableShapedAndPerGeneration(t *testing.T) {
+	shape := regexp.MustCompile(`^att_[A-Za-z0-9]{1,124}$`)
+	a := AttemptIDFor("voice_1700000000_ab12cd34ef56", 3)
+	if !shape.MatchString(a) || a != AttemptIDFor("voice_1700000000_ab12cd34ef56", 3) {
+		t.Fatalf("attempt id %q is unstable or malformed", a)
+	}
+	if a == AttemptIDFor("voice_1700000000_ab12cd34ef56", 4) || a == AttemptIDFor("voice_1700000000_ab12cd34ef57", 3) {
+		t.Fatal("the attempt id must change with the generation and with the session")
 	}
 }

@@ -196,6 +196,17 @@ func VerifyMediaCredential(key []byte, session Session, credential string, now t
 	return hmac.Equal([]byte(expected), []byte(credential))
 }
 
+// AttemptIDFor names the voice attempt a session's media runs as on its Helper
+// Node: "att_" plus 32 hex characters of SHA-256 over the session id and the lease
+// generation (the shape the node's fence requires, ^att_[A-Za-z0-9]+$). It is a
+// pure function of the session record, so every replica, and a restarted primary,
+// derives the same attempt for the same lease and no attempt ledger row is needed;
+// a new generation (a new BindNode) is a new attempt.
+func AttemptIDFor(sessionID string, generation uint64) string {
+	sum := sha256.Sum256(fmt.Appendf(nil, "ubag-voice-attempt-id|v1|%s|%d", sessionID, generation))
+	return "att_" + hex.EncodeToString(sum[:16])
+}
+
 // HelperVoiceEnabled reports whether helper-hosted voice is on. It needs the
 // whole flag ladder (UBAG_HELPER_NODES < UBAG_HELPER_PLANE < UBAG_HELPER_DISPATCH
 // < UBAG_HELPER_VOICE); anything else, including unset, is off.
@@ -233,6 +244,18 @@ type HelperVoiceGuard struct {
 
 // Authorize returns the session when the fence is current.
 func (g HelperVoiceGuard) Authorize(ctx context.Context, b AttemptBinding) (Session, error) {
+	return g.authorize(ctx, b, false)
+}
+
+// AuthorizeEnding is Authorize for the calls that end a call: the session may
+// already read terminated (a terminating hold keeps its leases while the node
+// deactivates the provider), and the fence must still be the lease the primary
+// holds, so a replaced node's call is never touched.
+func (g HelperVoiceGuard) AuthorizeEnding(ctx context.Context, b AttemptBinding) (Session, error) {
+	return g.authorize(ctx, b, true)
+}
+
+func (g HelperVoiceGuard) authorize(ctx context.Context, b AttemptBinding, ended bool) (Session, error) {
 	if !g.Enabled {
 		return Session{}, ErrHelperVoiceDisabled
 	}
@@ -243,7 +266,7 @@ func (g HelperVoiceGuard) Authorize(ctx context.Context, b AttemptBinding) (Sess
 	if err != nil {
 		return Session{}, err
 	}
-	if !ok || !session.Status.Active() {
+	if !ok || !(session.Status.Active() || ended && session.Status == StatusTerminated) {
 		return Session{}, ErrNotFound
 	}
 	lease, ok := HelperVoiceLease{}, false

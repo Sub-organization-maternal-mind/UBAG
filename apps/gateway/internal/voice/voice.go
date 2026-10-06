@@ -290,6 +290,12 @@ type Store interface {
 	// holder's commit is rejected before it can change the session.
 	CommitTransition(ctx context.Context, tenantID, sessionID string, fence LeaseFence, from, to Status, now time.Time, lastError string) error
 
+	// CommitMuted is SetMuted fenced by the node-bound lease: the mute flag a
+	// Helper Node reports for the call it hosts, so a replaced node cannot write
+	// it. A terminated session is ErrConflict; a miss is classified like
+	// CommitTransition.
+	CommitMuted(ctx context.Context, tenantID, sessionID string, fence LeaseFence, muted bool, now time.Time) error
+
 	// RenewLease extends a live session's lease expiry.
 	RenewLease(ctx context.Context, tenantID, sessionID string, until time.Time, now time.Time) error
 
@@ -568,6 +574,27 @@ func (m *MemoryStore) SetMuted(_ context.Context, tenantID, sessionID string, mu
 	s, ok := m.sessions[sessionID]
 	if !ok || s.TenantID != tenantID {
 		return ErrNotFound
+	}
+	if s.Status == StatusTerminated {
+		return ErrConflict
+	}
+	s.Muted = muted
+	s.UpdatedAt = now
+	return nil
+}
+
+func (m *MemoryStore) CommitMuted(_ context.Context, tenantID, sessionID string, fence LeaseFence, muted bool, now time.Time) error {
+	if !fence.valid() {
+		return ErrBadBinding
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[sessionID]
+	if !ok || s.TenantID != tenantID {
+		return ErrNotFound
+	}
+	if err := s.checkFence(fence); err != nil {
+		return err
 	}
 	if s.Status == StatusTerminated {
 		return ErrConflict
