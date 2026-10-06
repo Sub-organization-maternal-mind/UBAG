@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "kind": "ubag-helper-workload",
+  "name": "ubag-helper",
+  "image": {
+    "repository": "ghcr.io/sub-organization-maternal-mind/ubag-helper",
+    "tag": "{{image_tag}}",
+    "platforms": ["linux/amd64"]
+  },
+  "parameters": [
+    { "name": "image_tag", "description": "Immutable image tag, sha-<40 hex commit>.", "pattern": "^sha-[0-9a-f]{40}$" },
+    { "name": "wireguard_address", "description": "This node's WireGuard interface IP. The only address the helper listens on.", "pattern": "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$" },
+    { "name": "node_id", "description": "Manager-assigned node id; must equal the node certificate's URI SAN node identity.", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" },
+    { "name": "primary_uri_san", "description": "URI SAN the UBAG primary's client certificate must present.", "pattern": "^spiffe://ubag/primary/[A-Za-z0-9._-]+$" },
+    { "name": "workload_version", "description": "Worker image/code version reported in the handshake.", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$" },
+    { "name": "tls_dir", "description": "Host directory holding ca.pem, node.crt and node.key issued by the manager CA (certificates live at most 72h; the helper re-reads node.crt when it changes).", "pattern": "^/[A-Za-z0-9._/-]+$" }
+  ],
+  "security": {
+    "user": "10001:10001",
+    "read_only_root_filesystem": true,
+    "no_new_privileges": true,
+    "privileged": false,
+    "cap_drop": ["ALL"]
+  },
+  "network": {
+    "mode": "host",
+    "listen": [
+      { "name": "grpc", "protocol": "tcp", "address": "{{wireguard_address}}", "port": 7443 }
+    ]
+  },
+  "env": [
+    { "name": "UBAG_HELPER_LISTEN", "value": "{{wireguard_address}}:7443" },
+    { "name": "UBAG_HELPER_NODE_ID", "value": "{{node_id}}" },
+    { "name": "UBAG_HELPER_CA_FILE", "value": "/etc/ubag-helper/tls/ca.pem" },
+    { "name": "UBAG_HELPER_TLS_CERT_FILE", "value": "/etc/ubag-helper/tls/node.crt" },
+    { "name": "UBAG_HELPER_TLS_KEY_FILE", "value": "/etc/ubag-helper/tls/node.key" },
+    { "name": "UBAG_HELPER_PRIMARY_URI_SAN", "value": "{{primary_uri_san}}" },
+    { "name": "UBAG_HELPER_WORKLOAD_VERSION", "value": "{{workload_version}}" },
+    { "name": "UBAG_HELPER_MAX_ATTEMPTS", "value": "1" }
+  ],
+  "mounts": [
+    { "name": "tls", "type": "bind", "source": "{{tls_dir}}", "target": "/etc/ubag-helper/tls", "read_only": true },
+    { "name": "profiles", "type": "volume", "source": "ubag-helper-profiles", "target": "/var/lib/ubag-helper/profiles", "read_only": false },
+    { "name": "home", "type": "tmpfs", "target": "/var/lib/ubag-helper/home", "read_only": false },
+    { "name": "tmp", "type": "tmpfs", "target": "/tmp", "read_only": false }
+  ],
+  "resources": {
+    "requests": { "cpu_millis": 1500, "memory_bytes": 2684354560, "shm_bytes": 1073741824 }
+  }
+}
