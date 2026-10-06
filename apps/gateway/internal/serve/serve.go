@@ -1553,16 +1553,41 @@ type targetWorkerRunner struct {
 	fallback executor.WorkerRunner
 }
 
+// routesToDaemon reports whether the job runs on the warm daemon. Voice control
+// jobs drive the browser through their own CDP client and must never run on the
+// warm daemon's shared Playwright thread.
+func routesToDaemon(envelope executor.DispatchEnvelope) bool {
+	return isWarmDaemonTarget(envelope.Job.Target) && !jobcore.IsReservedCommandType(envelope.Job.CommandType)
+}
+
 func (r *targetWorkerRunner) RunWorker(
 	ctx context.Context,
 	envelope executor.DispatchEnvelope,
 ) ([]jobstore.WorkerEvent, error) {
-	// Voice control jobs drive the browser through their own CDP client and
-	// must never run on the warm daemon's shared Playwright thread.
-	if isWarmDaemonTarget(envelope.Job.Target) && !jobcore.IsReservedCommandType(envelope.Job.CommandType) {
+	if routesToDaemon(envelope) {
 		return r.daemon.RunWorker(ctx, envelope)
 	}
 	return r.fallback.RunWorker(ctx, envelope)
+}
+
+// StreamsJob implements the consumer's stream selector: only warm-daemon jobs
+// stream (UBAG_WORKER_STREAM_INGEST). Per-job worker targets stay on the batch
+// path, which already validates the whole run before applying any of it.
+func (r *targetWorkerRunner) StreamsJob(envelope executor.DispatchEnvelope) bool {
+	_, ok := r.daemon.(executor.StreamingWorkerRunner)
+	return ok && routesToDaemon(envelope)
+}
+
+// StreamWorker implements executor.StreamingWorkerRunner.
+func (r *targetWorkerRunner) StreamWorker(
+	ctx context.Context,
+	envelope executor.DispatchEnvelope,
+	sink executor.EventSink,
+) error {
+	if streamer, ok := r.daemon.(executor.StreamingWorkerRunner); ok && routesToDaemon(envelope) {
+		return streamer.StreamWorker(ctx, envelope, sink)
+	}
+	return executor.BatchStreamAdapter{Runner: r.fallback}.StreamWorker(ctx, envelope, sink)
 }
 
 // Close terminates the wrapped runners so gateway shutdown does not leak the
