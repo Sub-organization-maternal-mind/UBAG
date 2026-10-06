@@ -41,6 +41,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/compliance"
 	"github.com/ubag/ubag/apps/gateway/internal/conversations"
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
+	"github.com/ubag/ubag/apps/gateway/internal/helpermetrics"
 	"github.com/ubag/ubag/apps/gateway/internal/idempotency"
 	"github.com/ubag/ubag/apps/gateway/internal/jitadmin"
 	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
@@ -299,6 +300,10 @@ type Config struct {
 	// /v1/metrics renders. Optional: nil renders zero-valued series.
 	VoiceMetrics *voice.MediaCounters
 
+	// HelperNodes feeds the per-node helper-plane gauges on /v1/metrics
+	// (UBAG_HELPER_NODES). Optional: nil emits only the process-wide counters.
+	HelperNodes helpermetrics.NodeSource
+
 	// Plugins is the optional WASM plugin host. When nil, no plugin hooks run.
 	Plugins *plugins.Host
 
@@ -345,6 +350,7 @@ type Server struct {
 	voiceMaxSessionsPerTenant int
 	voiceMaxQueuedPerTenant   int
 	voiceMetrics              *voice.MediaCounters
+	helperNodes               helpermetrics.NodeSource
 	jobs                      jobstore.Store
 	idempotency               idempotency.Service
 	executor                  executor.Dispatcher
@@ -665,6 +671,7 @@ func NewServer(config Config) *Server {
 		voiceMaxSessionsPerTenant: config.VoiceMaxSessionsPerTenant,
 		voiceMaxQueuedPerTenant:   config.VoiceMaxQueuedPerTenant,
 		voiceMetrics:              config.VoiceMetrics,
+		helperNodes:               config.HelperNodes,
 		patStore:                  config.PAT,
 		patDefaultTTL:             config.PATDefaultTTL,
 		appJWTPublicKey:           config.AppJWTPublicKey,
@@ -1250,6 +1257,7 @@ func (s *Server) writeMetricsBody(ctx context.Context, w io.Writer) error {
 	// the live queue. LiveDepth counts queued+assigned only.
 	_, _ = fmt.Fprintf(w, "ubag_queue_depth_live{queue=\"%s\"} %d\n", promLabel(queueStats.QueueName), queueStats.LiveDepth)
 	_, _ = fmt.Fprintf(w, "ubag_queue_depth_total{queue=\"%s\"} %d\n", promLabel(queueStats.QueueName), queueStats.TotalDepth)
+	helpermetrics.Write(ctx, w, s.helperNodes, time.Now())
 	writeRuntimeMetrics(w)
 	return nil
 }

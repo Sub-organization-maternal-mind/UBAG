@@ -104,7 +104,7 @@ jobs:
       # Gates the provider-refresh skill depends on — previously invoked by
       # nothing in CI (the audit found both unwired).
       - name: Provider selector + alert-metric gates
-        run: pnpm check:provider-selectors && pnpm check:alert-metrics
+        run: pnpm check:provider-selectors && pnpm check:alert-metrics && pnpm check:helper-alerts
       - name: Multi-region validator
         run: node tools/check-multiregion.mjs
 

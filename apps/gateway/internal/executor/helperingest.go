@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ubag/ubag/apps/gateway/internal/audit"
+	"github.com/ubag/ubag/apps/gateway/internal/helpermetrics"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	helperv1 "github.com/ubag/ubag/packages/proto/gen/go/ubag/helper/v1"
 )
@@ -647,6 +648,12 @@ func (g *HelperIngest) fenced(ctx context.Context, cause error, reason string) e
 // (action, reason) per session, so a misbehaving helper cannot flood the
 // tamper-evident chain. Audit failure never masks the rejection.
 func (g *HelperIngest) deny(ctx context.Context, action, reason string) {
+	// Metrics count every rejection (bounded labels); audit below is deduped.
+	if action == helperAuditFenced {
+		helpermetrics.RecordFencedReject(reason)
+	} else {
+		helpermetrics.RecordPolicyViolation(reason)
+	}
 	key := action + "/" + reason
 	if _, seen := g.audited[key]; seen {
 		return

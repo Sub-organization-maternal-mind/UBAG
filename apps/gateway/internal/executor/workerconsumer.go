@@ -23,6 +23,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/artifacts"
 	"github.com/ubag/ubag/apps/gateway/internal/attachments"
 	"github.com/ubag/ubag/apps/gateway/internal/conversations"
+	"github.com/ubag/ubag/apps/gateway/internal/helpermetrics"
 	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 	"github.com/ubag/ubag/apps/gateway/internal/plugins"
@@ -167,6 +168,14 @@ type LeaseHeartbeater interface {
 // ErrLeaseLost is returned by a renewal when the queue lease no longer belongs
 // to the holder (expired and reclaimed).
 var ErrLeaseLost = errors.New("queue lease lost")
+
+// renewReason maps a failed renewal to the bounded metric reason.
+func renewReason(lost bool) string {
+	if lost {
+		return helpermetrics.ReasonLost
+	}
+	return helpermetrics.ReasonError
+}
 
 const (
 	execLeaseTTL             = 90 * time.Second
@@ -1080,17 +1089,25 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 				// Keep the queue message and the execution lease alive for as
 				// long as the job runs.
 				if beater != nil {
-					if err := beater.Heartbeat(runCtx); errors.Is(err, ErrLeaseLost) {
-						cancel()
-						return
+					if err := beater.Heartbeat(runCtx); err != nil && runCtx.Err() == nil {
+						lost := errors.Is(err, ErrLeaseLost)
+						helpermetrics.RecordLeaseRenewFailure(helpermetrics.LeaseQueue, renewReason(lost))
+						if lost {
+							cancel()
+							return
+						}
 					}
 				}
 				if execToken != "" {
-					if err := c.ExecLeases.RenewToken(runCtx, execToken, execLeaseTTL, time.Now().UTC()); errors.Is(err, topology.ErrTokenLost) {
-						// We no longer own the job: stop rather than race a
-						// second worker onto the same provider submission.
-						cancel()
-						return
+					if err := c.ExecLeases.RenewToken(runCtx, execToken, execLeaseTTL, time.Now().UTC()); err != nil && runCtx.Err() == nil {
+						lost := errors.Is(err, topology.ErrTokenLost)
+						helpermetrics.RecordLeaseRenewFailure(helpermetrics.LeaseExec, renewReason(lost))
+						if lost {
+							// We no longer own the job: stop rather than race a
+							// second worker onto the same provider submission.
+							cancel()
+							return
+						}
 					}
 				}
 			case <-jobWake:
