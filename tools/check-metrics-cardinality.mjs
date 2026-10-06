@@ -57,6 +57,7 @@ const CONTRACT_METRIC_NAMES = new Set([
   'ubag_idempotency_replays_total',
   'ubag_sse_connections_current',
   'ubag_artifact_captures_total',
+  'ubag_voice_relay_frame_age_seconds',
 ]);
 
 // High-cardinality value patterns (e.g. UUIDs, hex IDs).

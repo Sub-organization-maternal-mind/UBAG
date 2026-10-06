@@ -185,7 +185,7 @@ const NUM = { // flag: [cfgKey, default, min, max]
   'events-subscribers': ['eventsSubscribers', 20, 1, 500], 'events-timeout-ms': ['eventsTimeoutMs', 30_000, 100, 600_000],
   'events-idle-seconds': ['eventsIdleSeconds', 0, 0, 3600], 'events-calibrate-ms': ['eventsCalibrateMs', 2500, 0, 30_000],
 };
-const STR = { target: 'target', 'command-type': 'commandType', 'docker-stats-container': 'dockerContainer', 'cgroup-containers': 'cgroupContainers', 'out-dir': 'outDir', thresholds: 'thresholds', goals: 'goals', 'audio-profile': 'audioProfile', 'pg-stat-container': 'pgContainer', 'pg-user': 'pgUser', 'pg-db': 'pgDb', workload: 'workload' };
+const STR = { target: 'target', 'command-type': 'commandType', 'docker-stats-container': 'dockerContainer', 'cgroup-containers': 'cgroupContainers', 'out-dir': 'outDir', thresholds: 'thresholds', goals: 'goals', 'audio-profile': 'audioProfile', 'pg-stat-container': 'pgContainer', 'pg-user': 'pgUser', 'pg-db': 'pgDb', workload: 'workload', 'voice-latency': 'voiceLatency' };
 const FLAGS = new Set([ACK_FLAG, 'with-upload', 'require-goals']);
 
 export function parseArgs(argv, env = process.env) {
@@ -371,6 +371,32 @@ export function evaluateThresholds(summary, thresholds, { strict = false } = {})
     results.push({ name, limit, actual, ok: m[1] === 'max' ? actual <= limit : actual >= limit });
   }
   return { passed: results.every((r) => r.ok), results };
+}
+
+// ----------------------------------------------------- voice relay latency
+
+/**
+ * Fold the Go in-process relay bench report (`UBAG_VOICE_LATENCY_REPORT`, schema
+ * ubag-voice-latency/v1; see docs/load-testing.md "Voice relay latency") into
+ * summary keys. Throws on anything malformed so a bad file is a loud
+ * scenario_error and the goal stays unmeasured (FAIL under --require-goals).
+ * voice_relay_p95_ms is the WORST p95 over every session count and direction.
+ */
+export function voiceLatencySummary(report) {
+  if (report?.schema !== 'ubag-voice-latency/v1') throw new Error('voice-latency: schema must be ubag-voice-latency/v1');
+  if (!Array.isArray(report.rows) || !report.rows.length) throw new Error('voice-latency: rows must be a non-empty array');
+  const seen = new Set();
+  let worst = 0; let maxSessions = 0;
+  for (const row of report.rows) {
+    if (row?.direction !== 'mic' && row?.direction !== 'speaker') throw new Error(`voice-latency: bad direction ${JSON.stringify(row?.direction)}`);
+    if (!Number.isInteger(row.sessions) || row.sessions < 1) throw new Error('voice-latency: row.sessions must be a positive integer');
+    if (!Number.isInteger(row.samples) || row.samples < 1) throw new Error(`voice-latency: ${row.direction}/${row.sessions} has no samples`);
+    if (![row.p50_ms, row.p95_ms, row.p99_ms].every((v) => Number.isFinite(v) && v >= 0)) throw new Error(`voice-latency: ${row.direction}/${row.sessions} has a non-numeric percentile`);
+    seen.add(row.direction);
+    worst = Math.max(worst, row.p95_ms); maxSessions = Math.max(maxSessions, row.sessions);
+  }
+  if (!seen.has('mic') || !seen.has('speaker')) throw new Error('voice-latency: both mic and speaker directions are required');
+  return { voice_relay_p95_ms: r2(worst), voice_relay_max_sessions: maxSessions };
 }
 
 // ------------------------------------------------------------------- metrics
@@ -1081,6 +1107,15 @@ export async function run(cfg, deps = {}, env = process.env) {
     } catch (e) {
       ctx.rec.violation('scenario_errors', `${name}: ${e.message}`);
       report.scenarios[name] = { duration_ms: r2(now() - t0), error: e.message };
+    }
+  }
+  if (cfg.voiceLatency) {
+    try {
+      const voice = JSON.parse(readFileSync(cfg.voiceLatency, 'utf8'));
+      Object.assign(extra, voiceLatencySummary(voice));
+      report.voice_latency = { non_authoritative: voice.non_authoritative !== false, note: voice.note ?? null, window_seconds: voice.window_seconds ?? null, rows: voice.rows };
+    } catch (e) {
+      ctx.rec.violation('scenario_errors', `voice-latency: ${e.message}`);
     }
   }
   clearInterval(sampler);

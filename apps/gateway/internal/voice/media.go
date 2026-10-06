@@ -88,6 +88,30 @@ type MediaMetrics interface {
 	AddSessionsEnded(reason string)
 }
 
+// Frame-age directions (ubag_voice_relay_frame_age_seconds{direction}).
+const (
+	// DirectionMic ages a client mic frame from the gateway's RTP read until
+	// relay.Send returned for it (includes mic-queue wait).
+	DirectionMic = "mic"
+	// DirectionSpeaker ages a provider frame from relay.Recv returning until
+	// the speaker track's WriteSample returned for it.
+	DirectionSpeaker = "speaker"
+)
+
+// FrameAgeObserver is optionally implemented by a MediaMetrics sink to
+// receive per-frame relay ages. Kept separate so existing MediaMetrics
+// implementations keep compiling.
+type FrameAgeObserver interface {
+	ObserveFrameAge(direction string, age time.Duration)
+}
+
+// observeAge reports one frame age when the sink supports it.
+func (h *MediaHub) observeAge(direction string, since time.Time) {
+	if o, ok := h.Metrics.(FrameAgeObserver); ok {
+		o.ObserveFrameAge(direction, time.Since(since))
+	}
+}
+
 type noopMediaMetrics struct{}
 
 func (noopMediaMetrics) AddFramesDropped(string, int64) {}
@@ -386,7 +410,7 @@ func (h *MediaHub) HandleOffer(ctx context.Context, session Session, sdpOffer st
 		session: session,
 		relay:   relay,
 		pc:      pc,
-		mic:     make(chan []byte, micBufferDepth),
+		mic:     make(chan micFrame, micBufferDepth),
 		done:    make(chan struct{}),
 		track:   speakerTrack,
 	}
@@ -426,8 +450,9 @@ func (h *MediaHub) HandleOffer(ctx context.Context, session Session, sdpOffer st
 				hub.metrics().AddFramesDropped("mic_muted", 1)
 				continue
 			}
+			frame := micFrame{payload: pkt.Payload, at: time.Now()}
 			select {
-			case ms.mic <- pkt.Payload:
+			case ms.mic <- frame:
 			default:
 				// Buffer full: drop the OLDEST frame (freshest audio is most
 				// valuable for live voice) and count it.
@@ -437,7 +462,7 @@ func (h *MediaHub) HandleOffer(ctx context.Context, session Session, sdpOffer st
 				default:
 				}
 				select {
-				case ms.mic <- pkt.Payload:
+				case ms.mic <- frame:
 				default:
 					hub.metrics().AddFramesDropped("mic", 1)
 				}
@@ -631,13 +656,19 @@ func (h *MediaHub) closeSession(ms *mediaSession, reason string, notify bool) {
 	})
 }
 
+// micFrame carries the enqueue stamp so the pump can report frame age.
+type micFrame struct {
+	payload []byte
+	at      time.Time
+}
+
 type mediaSession struct {
 	id        string
 	session   Session
 	relay     RelayConn
 	pc        *webrtc.PeerConnection
 	track     *webrtc.TrackLocalStaticSample
-	mic       chan []byte
+	mic       chan micFrame
 	done      chan struct{}
 	closeOnce sync.Once
 	muted     atomic.Bool
@@ -678,10 +709,11 @@ func (ms *mediaSession) pumpMicToRelay(h *MediaHub) {
 				h.metrics().AddFramesDropped("mic_muted", 1)
 				continue
 			}
-			if err := ms.relay.Send(frame); err != nil {
+			if err := ms.relay.Send(frame.payload); err != nil {
 				h.closeSession(ms, "relay_send_failed", true)
 				return
 			}
+			h.observeAge(DirectionMic, frame.at)
 		}
 	}
 }
@@ -703,6 +735,7 @@ func (ms *mediaSession) pumpRelayToSpeaker(h *MediaHub) {
 		default:
 		}
 		frame, err := ms.relay.Recv(readCtx)
+		recvAt := time.Now()
 		if err != nil {
 			select {
 			case <-ms.done:
@@ -717,9 +750,12 @@ func (ms *mediaSession) pumpRelayToSpeaker(h *MediaHub) {
 			case <-ms.done:
 				return
 			default:
+				// The frame is lost and the session ends: count the drop.
+				h.metrics().AddFramesDropped(DirectionSpeaker, 1)
 				h.closeSession(ms, "track_write_failed", true)
 				return
 			}
 		}
+		h.observeAge(DirectionSpeaker, recvAt)
 	}
 }

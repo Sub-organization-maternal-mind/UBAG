@@ -3,14 +3,14 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, existsSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
   ACK_FLAG, checkTarget, clockBounds, evaluateThresholds, histogramQuantile, main, metricsDelta, parseArgs, parsePgStatements,
-  parseProm, parseRetryAfterMs, percentile, pgDelta, retryDelayMs, run, renderMarkdown, splitSse, summarize,
+  parseProm, parseRetryAfterMs, percentile, pgDelta, retryDelayMs, run, renderMarkdown, splitSse, summarize, voiceLatencySummary,
 } from './acceptance.mjs';
 import { containerLimits, gatewayInfoFrom, parseEnvText, pickEnv } from './lib/provenance.mjs';
 import { workloadSha256 } from './workloads.mjs';
@@ -237,6 +237,16 @@ async function startFake(opts = {}) {
 const FAST = ['--poll-interval-ms', '10', '--settle-ms', '0', '--metrics-interval-ms', '10', '--max-body-bytes', '4096', '--recovery-ms', '2000'];
 const cfgFor = (fake, extra, env = {}) => parseArgs([`--${ACK_FLAG}`, ...FAST, ...extra], { ...fake.env, ...env });
 const outDir = () => mkdtempSync(join(tmpdir(), 'ubag-load-'));
+// Shape written by the Go bench (UBAG_VOICE_LATENCY_REPORT); values are fixtures, not measurements.
+const voiceRows = (p95Speaker = 0.6) => [1, 5, 10, 20].flatMap((sessions) => [
+  { sessions, direction: 'mic', samples: 100 * sessions, p50_ms: 0.1, p95_ms: 0.3, p99_ms: 0.5 },
+  { sessions, direction: 'speaker', samples: 100 * sessions, p50_ms: 0.2, p95_ms: p95Speaker, p99_ms: 0.9 },
+]);
+const voiceReportFile = (rows = voiceRows(), schema = 'ubag-voice-latency/v1') => {
+  const file = join(outDir(), 'voice-latency.json');
+  writeFileSync(file, JSON.stringify({ schema, non_authoritative: true, rows }));
+  return file;
+};
 
 // --------------------------------------------------------------- pure logic
 
@@ -677,18 +687,43 @@ describe('acceptance integrity gates fail closed', () => {
 
   it('steady-state measures its own create and read p95; a full --require-goals run passes against a healthy fake', async () => {
     const fake = await startFake({ facadeLimit: 3 });
-    const report = await run(cfgFor(fake, ['--scenario', 'all', '--require-goals', '--jobs', '12', '--rate', '5000', '--clients', '8', '--iterations', '2', '--dup-keys', '2', '--dup-concurrency', '5', '--cancel-races', '3', '--burst', '15', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2', '--steady-seconds', '1', '--steady-rate', '5', '--steady-read-rate', '20', '--steady-seed-jobs', '2', '--cgroup-containers', 'gateway=g,browser=b,worker=w', '--docker-interval-ms', '20', '--events-subscribers', '3']), { dockerExec: async () => v2Fixture({ current: 300 * MB }) });
+    const report = await run(cfgFor(fake, ['--scenario', 'all', '--require-goals', '--jobs', '12', '--rate', '5000', '--clients', '8', '--iterations', '2', '--dup-keys', '2', '--dup-concurrency', '5', '--cancel-races', '3', '--burst', '15', '--burst-body-bytes', '1024', '--inflight-burst', '0', '--recovery-requests', '2', '--steady-seconds', '1', '--steady-rate', '5', '--steady-read-rate', '20', '--steady-seed-jobs', '2', '--cgroup-containers', 'gateway=g,browser=b,worker=w', '--docker-interval-ms', '20', '--events-subscribers', '3', '--voice-latency', voiceReportFile()]), { dockerExec: async () => v2Fixture({ current: 300 * MB }) });
     assert.equal(report.summary.memory_headroom_pct, 70); assert.equal(report.summary.oom_kills, 0);
     assert.ok(Number.isFinite(report.summary.steady_create_p95_ms));
     assert.ok(Number.isFinite(report.summary.steady_read_p95_ms));
     assert.ok(report.ops['steady-state/read'].ok.count >= 15);
     assert.equal(report.thresholds.passed, true, JSON.stringify(report.thresholds.results.filter((r) => !r.ok)));
+    assert.equal(report.summary.voice_relay_p95_ms, 0.6);
+    assert.equal(report.summary.voice_relay_max_sessions, 20);
+  });
+
+  it('--require-goals fails closed without a voice latency report, and fails on a slow or malformed one', async () => {
+    const fake = await startFake();
+    const missing = await run(cfgFor(fake, [...QUICK, '--require-goals']));
+    assert.ok(missing.thresholds.results.some((r) => r.name === 'max_voice_relay_p95_ms' && !r.ok && /not measured/.test(r.note)));
+    const slow = await run(cfgFor(fake, [...QUICK, '--require-goals', '--voice-latency', voiceReportFile(voiceRows(100.5))]));
+    assert.equal(slow.summary.voice_relay_p95_ms, 100.5);
+    assert.ok(failed(slow).includes('max_voice_relay_p95_ms'));
+    const bad = await run(cfgFor(fake, [...QUICK, '--require-goals', '--voice-latency', voiceReportFile(voiceRows(), 'nope')]));
+    assert.equal(bad.summary.voice_relay_p95_ms, undefined);
+    assert.ok(bad.violations.some((v) => /voice-latency: schema/.test(v.detail)));
+    assert.ok(failed(bad).includes('max_voice_relay_p95_ms'));
+  });
+
+  it('voiceLatencySummary validates the bench report shape', () => {
+    assert.deepEqual(voiceLatencySummary({ schema: 'ubag-voice-latency/v1', rows: voiceRows(12.34) }), { voice_relay_p95_ms: 12.34, voice_relay_max_sessions: 20 });
+    const ok = voiceRows();
+    assert.throws(() => voiceLatencySummary({ schema: 'ubag-voice-latency/v1', rows: ok.filter((r) => r.direction === 'mic') }), /both mic and speaker/);
+    assert.throws(() => voiceLatencySummary({ schema: 'ubag-voice-latency/v1', rows: [{ ...ok[0], samples: 0 }, ok[1]] }), /no samples/);
+    assert.throws(() => voiceLatencySummary({ schema: 'ubag-voice-latency/v1', rows: [{ ...ok[0], p95_ms: 'x' }, ok[1]] }), /non-numeric/);
+    assert.throws(() => voiceLatencySummary({ schema: 'ubag-voice-latency/v1', rows: [] }), /non-empty/);
   });
 
   it('ships the plan goals in thresholds.goals.json and keeps 2000 ms as the separate burst limit', () => {
     const g = JSON.parse(readFileSync(join(here, 'thresholds.goals.json'), 'utf8'));
     assert.equal(g.max_steady_create_p95_ms, 200);
     assert.equal(g.max_steady_read_p95_ms, 100);
+    assert.equal(g.max_voice_relay_p95_ms, 100);
     assert.equal(g.min_memory_headroom_pct, 20);
     assert.equal(g.max_oom_kills, 0);
     const t = JSON.parse(readFileSync(join(here, 'thresholds.json'), 'utf8'));

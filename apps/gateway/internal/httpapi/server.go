@@ -1141,6 +1141,7 @@ func (s *Server) writeMetricsBody(ctx context.Context, w io.Writer) error {
 		_, _ = fmt.Fprint(w, "ubag_voice_sessions_ended_total{reason=\"lease_expired\"} 0\n")
 		_, _ = fmt.Fprint(w, "ubag_voice_sessions_ended_total{reason=\"peer_connection_failed\"} 0\n")
 	}
+	writeVoiceFrameAge(w, s.voiceMetrics)
 	if s.voice != nil {
 		active, queued, err := s.voice.GlobalSessionCounts(ctx)
 		if err == nil {
@@ -4198,6 +4199,27 @@ func cloneMetricCounters(source map[string]uint64) map[string]uint64 {
 		result[key] = value
 	}
 	return result
+}
+
+// writeVoiceFrameAge renders ubag_voice_relay_frame_age_seconds for both
+// directions; a nil sink renders zeroed series so the family always exists.
+func writeVoiceFrameAge(w io.Writer, counters *voice.MediaCounters) {
+	_, _ = fmt.Fprint(w, "# TYPE ubag_voice_relay_frame_age_seconds histogram\n")
+	snaps := []voice.FrameAgeSnapshot{{Direction: voice.DirectionMic}, {Direction: voice.DirectionSpeaker}}
+	if counters != nil {
+		snaps = counters.SnapshotFrameAge()
+	}
+	for _, snap := range snaps {
+		labels := fmt.Sprintf(`direction="%s"`, promLabel(snap.Direction))
+		var cumulative uint64
+		for i, bound := range voice.FrameAgeBuckets {
+			cumulative += snap.Buckets[i]
+			_, _ = fmt.Fprintf(w, "ubag_voice_relay_frame_age_seconds_bucket{%s,le=\"%s\"} %d\n", labels, strconv.FormatFloat(bound, 'g', -1, 64), cumulative)
+		}
+		_, _ = fmt.Fprintf(w, "ubag_voice_relay_frame_age_seconds_bucket{%s,le=\"+Inf\"} %d\n", labels, snap.Count)
+		_, _ = fmt.Fprintf(w, "ubag_voice_relay_frame_age_seconds_sum{%s} %.6f\n", labels, snap.Sum)
+		_, _ = fmt.Fprintf(w, "ubag_voice_relay_frame_age_seconds_count{%s} %d\n", labels, snap.Count)
+	}
 }
 
 func writeDurationHistogram(

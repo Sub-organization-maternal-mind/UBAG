@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // MediaCounters is the shared, concurrency-safe metrics sink for the media
@@ -17,6 +18,27 @@ type MediaCounters struct {
 	framesDropped     map[string]*atomic.Int64
 	sessionsEnded     map[string]*atomic.Int64
 	sessionsConnected atomic.Int64
+	frameAge          map[string]*frameAgeHist // guarded by mu
+}
+
+// FrameAgeBuckets are the ubag_voice_relay_frame_age_seconds upper bounds in
+// seconds: 5ms doubling to 1.28s, tuned around the 20ms Opus frame and the
+// 100ms relay p95 goal.
+var FrameAgeBuckets = [...]float64{0.005, 0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28}
+
+type frameAgeHist struct {
+	buckets [len(FrameAgeBuckets)]uint64 // non-cumulative; the +Inf remainder is count-sum(buckets)
+	count   uint64
+	sum     float64
+}
+
+// FrameAgeSnapshot is one direction's histogram. Buckets are NON-cumulative
+// and index-aligned with FrameAgeBuckets.
+type FrameAgeSnapshot struct {
+	Direction string
+	Buckets   [len(FrameAgeBuckets)]uint64
+	Count     uint64
+	Sum       float64
 }
 
 // NewMediaCounters builds an empty counter set.
@@ -24,6 +46,7 @@ func NewMediaCounters() *MediaCounters {
 	return &MediaCounters{
 		framesDropped: map[string]*atomic.Int64{},
 		sessionsEnded: map[string]*atomic.Int64{},
+		frameAge:      map[string]*frameAgeHist{},
 	}
 }
 
@@ -41,6 +64,49 @@ func (m *MediaCounters) counterFor(bucket map[string]*atomic.Int64, key string) 
 // AddFramesDropped implements MediaMetrics.
 func (m *MediaCounters) AddFramesDropped(direction string, n int64) {
 	m.counterFor(m.framesDropped, strings.ToLower(strings.TrimSpace(direction))).Add(n)
+}
+
+// ObserveFrameAge implements FrameAgeObserver. The direction label stays a
+// closed set (mic|speaker) so the series cannot grow.
+func (m *MediaCounters) ObserveFrameAge(direction string, age time.Duration) {
+	if direction != DirectionMic && direction != DirectionSpeaker {
+		return
+	}
+	seconds := age.Seconds()
+	if seconds < 0 {
+		seconds = 0
+	}
+	m.mu.Lock()
+	h := m.frameAge[direction]
+	if h == nil {
+		h = &frameAgeHist{}
+		m.frameAge[direction] = h
+	}
+	h.count++
+	h.sum += seconds
+	for i, bound := range FrameAgeBuckets {
+		if seconds <= bound {
+			h.buckets[i]++
+			break
+		}
+	}
+	m.mu.Unlock()
+}
+
+// SnapshotFrameAge returns both directions (zero-valued until observed so the
+// Prometheus series always exists), in mic, speaker order.
+func (m *MediaCounters) SnapshotFrameAge() []FrameAgeSnapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]FrameAgeSnapshot, 0, 2)
+	for _, direction := range []string{DirectionMic, DirectionSpeaker} {
+		snap := FrameAgeSnapshot{Direction: direction}
+		if h := m.frameAge[direction]; h != nil {
+			snap.Buckets, snap.Count, snap.Sum = h.buckets, h.count, h.sum
+		}
+		out = append(out, snap)
+	}
+	return out
 }
 
 // AddSessionsConnected implements MediaMetrics.

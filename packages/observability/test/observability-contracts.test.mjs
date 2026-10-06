@@ -70,6 +70,13 @@ test("stage timing metric contract matches the job-event timings_ms key set", as
   assert.deepEqual(Object.keys(timings.properties), [...JOB_STAGES]);
 });
 
+test("voice relay frame-age metric is a gateway histogram with only the fixed direction label", () => {
+  const age = getMetricByName("ubag_voice_relay_frame_age_seconds");
+  assert.equal(age.type, "histogram");
+  assert.equal(age.owner, "gateway");
+  assert.deepEqual(age.labels, ["direction"]);
+});
+
 test("event registry and event payload validation enforce stable shape", () => {
   assert.deepEqual(validateEventRegistry(), []);
   assert.ok(OBSERVABILITY_EVENT_NAMES.includes("operations.probe.run.success"));

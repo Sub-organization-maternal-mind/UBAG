@@ -32,7 +32,7 @@ type fakeRelay struct {
 	active   bool
 }
 
-func startFakeRelay(t *testing.T) (*fakeRelay, string) {
+func startFakeRelay(t testing.TB) (*fakeRelay, string) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -303,7 +303,7 @@ func TestTCPRelayDialerUnreachable(t *testing.T) {
 
 // waitGathered blocks until the peer connection finishes ICE gathering (the
 // local description then embeds every candidate).
-func waitGathered(t *testing.T, pc *webrtc.PeerConnection) {
+func waitGathered(t testing.TB, pc *webrtc.PeerConnection) {
 	t.Helper()
 	gathered := make(chan struct{})
 	pc.OnICEGatheringStateChange(func(state webrtc.ICEGatheringState) {
