@@ -19,12 +19,29 @@ side landed the same day: `UBAG_FLEET_MANAGER_TOKEN` authenticates the poll
 /v1/fleet/profiles`, `POST /v1/fleet/profiles/{ref}/revoke`, fleet:manage +
 MFA, fail-closed audit, TS+Go SDKs). All UBAG-side flags default off/inert.
 
-Still true from the entry below: nothing is deployed on the manager side
-until its sync dispatch runs; there is no manager CA (SPKI empty ⇒ no helper
-can pass UBAG's mTLS dial yet, decision D3), no WireGuard for UBAG, no
-enrolled helper, no canary, no capacity number. Operator steps to light this
-up are in the OET repo's `platform/fleet/README.md` section "UBAG project
-allocations".
+LIVE as of 2026-10-07 evening: the manager image with the endpoint is rolled
+out on the primary (its digest is the one fleet run 37531175412 built), the
+endpoint answers `200` with an empty `allocation_list` for the bearer token
+and `401` otherwise, and the production gateway polls it every 30 s over the
+`oet_fleet_net` bridge with zero poll failures (env: `UBAG_HELPER_NODES=true`
++ `UBAG_FLEET_MANAGER_URL` + `UBAG_FLEET_MANAGER_TOKEN` in
+`deploy/vps/env.local`; the bridge attachment is declarative in
+`docker-compose.vps.yml`). The empty list is correct: no helper is enrolled,
+and the manager's Hosts is `*`, so an enrolled helper is granted with no
+further config. Two transients: the manager's owner settings were written to
+`.env.production` (durable) and hand-added to the generated `fleet.env` — the
+OET-repo commit that passes them through the sync allowlist (`6f9e7449a`
+there) was awaiting a ship window at session end, and until it ships+syncs a
+manual rollout would regenerate `fleet.env` without them; re-add
+`FLEET_UBAG_ENABLED=true` / `FLEET_UBAG_HOSTS=*` /
+`FLEET_UBAG_TOKEN_FILE=<secrets>/fleet_ubag_token` to fleet.env or ship that
+commit first.
+
+Still true from the entry below: there is no manager CA (SPKI empty ⇒ no
+helper can pass UBAG's mTLS dial yet, decision D3), no WireGuard for UBAG, no
+enrolled helper, no canary, no capacity number. Voice config is LIVE on prod
+(postgres store + relay secret, `job_000000001058` smoke completed); the
+two-way human demo is still the open acceptance.
 
 ## Perf + shared-fleet program (feat/perf-fleet) — read before touching flags, the helper plane or voice
 
