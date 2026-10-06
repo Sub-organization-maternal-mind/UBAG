@@ -10,13 +10,22 @@ status), `docs/perf-fleet/FLAGS.md` (every flag, default, whether compose delive
 flag graduates: live-DOM check, canary, rollback, ledger), `docs/perf-fleet/RUNBOOK.md` and `CANARY.md` (helper plane),
 `docs/benchmarks/capacity-report.md` (no capacity number exists). `pnpm check:flag-graduation` keeps the flag docs honest.
 
+**Superseded 2026-10-06:** the program was fast-forwarded into `main` and deployed to production on operator instruction,
+together with the `UBAG_EVENT_NOTIFY` / `UBAG_EVENT_FALLBACK_MS` compose passthrough. Every program flag still defaults
+to **off**, so nothing is *enabled* in production — only present. **Rollback = redeploy `sha-a8880d3`.** The program did
+**not** canary before the merge (`CANARY.md` still records it as external-blocked) and the OET shared fleet manager it
+depends on **does not exist as a running service**: on 185.252.233.186 `/opt/platform` is a single-box shared
+backing-services stack (Postgres/Redis/MinIO/Soketi + `provision-project.sh`), there is no Ansible, no fleet container
+or systemd unit, `wg0`'s peers last handshook 4–5 days ago, and the `oet-dev` host (68.183.32.122) refuses TCP/22.
+Phase 1 is blocked on building it; the `UBAG_HELPER_*` flags still have no composition line.
+
 Open items, in the order an owner would want them:
-1. Decide whether to merge `feat/perf-fleet` to `main`; the migrations (0022 to 0025) auto-apply on deploy, additive and inert.
+1. ~~Decide whether to merge `feat/perf-fleet` to `main`~~ — decided and done on 2026-10-06 (migrations 0022 to 0025 auto-applied on deploy, additive and inert). Verify the box now pins the new `UBAG_BUILD_COMMIT`, the containers are healthy and `/v1/ready` reports it; roll back by redeploying `sha-a8880d3`.
 2. Run the human-supervised steps nobody could run: live-DOM probes per provider (`tools/provider-refresh/`), the voice activation probe (`docs/perf-fleet/voice-activation-probe.md`), and the helper canary (`CANARY.md`, blocked on the fleet manager, certificates, WireGuard and a profile-binding route).
 3. Get a lab host and run the ladder and baseline matrix; fill `docs/benchmarks/capacity-template.md`. Only then does a capacity number exist, and only then can the pool ceiling (`UBAG_WORKER_POOL_MAX`, placeholder 3) and the Rust relay gate (P7.5 to P7.8) be decided.
 4. P1.8 (create-path pprof and DB pool sizing) is partial (shard `docs/perf-fleet/slices/P1.8.md`, #192): benches and analysis merged; the open work is running them on the lab host (item 3). P5.11 (helper voice media negotiator, #184) and P6.5 (dashboard voice panel, #185) are merged.
    DCO before the PR to `main`: `dco.yml` now skips merge commits, but three non-merge commits on `feat/perf-fleet` carry no `Signed-off-by` (038951f, 2ee4147, 643baed). Rewriting the integration history is not safe, so open the PR to `main` from one signed squash of the integration on a fresh branch (or sign those three in a rebased linear history); otherwise the dco job fails.
-5. Graduate flags one at a time per ROLLOUT.md; first add the compose passthrough lines for flags marked `none` in FLAGS.md.
+5. Graduate flags one at a time per ROLLOUT.md. `UBAG_EVENT_NOTIFY` / `UBAG_EVENT_FALLBACK_MS` now have their compose passthrough (2026-10-06) and are settable for the first time — the flag still defaults to `off`, and its A/B against the 50 ms poll has not been run. The remaining `Compose: none` rows in FLAGS.md (SSE caps, attempt event ids, filespool, remote-endpoint redaction, executor attempts, all `UBAG_HELPER_*`) each still need their own reviewed compose line before they can be set.
 
 ## REMAINING WORK — architecture-audit closeout (read this first, 2026-09-28)
 

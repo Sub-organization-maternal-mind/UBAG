@@ -197,6 +197,15 @@ services:
       # (0 = one write per event) and the per-attempt byte budget.
       UBAG_WORKER_STREAM_FLUSH_MS: ${UBAG_WORKER_STREAM_FLUSH_MS:-}
       UBAG_WORKER_STREAM_MAX_BYTES: ${UBAG_WORKER_STREAM_MAX_BYTES:-}
+      # Event wake hub (gateway). Empty = off, which keeps the legacy 50 ms SQL
+      # event poll exactly as it behaves today. `local` replaces it with an
+      # in-process per-job wake hub that only wakes readers this process would
+      # have polled anyway, so it is single replica only; `postgres`
+      # (LISTEN/NOTIFY) is reserved, not built, and warns. The fallback poll
+      # applies only while the hub is on. Roll back by clearing
+      # UBAG_EVENT_NOTIFY and recreating the gateway; nothing is stored.
+      UBAG_EVENT_NOTIFY: ${UBAG_EVENT_NOTIFY:-}
+      UBAG_EVENT_FALLBACK_MS: ${UBAG_EVENT_FALLBACK_MS:-}
       # Live provider jobs (page loads, streamed responses) need more headroom
       # than mock jobs; matches the verified local live-runtime setting.
       # Covers auth readiness (57 s), manual login (300 s), three bounded

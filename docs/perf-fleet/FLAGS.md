@@ -16,7 +16,7 @@ Column meanings.
 | `UBAG_WORKER_STREAM_EVENTS` | worker | off | empty | managed | `apps/worker/ubag_worker/live/daemon_protocol.py` |
 | `UBAG_WORKER_STREAM_INGEST` | gateway | off | empty | managed | `apps/gateway/internal/executor/streamrunner.go` |
 | `UBAG_WORKER_ATTEMPT_EVENT_IDS` | gateway | off | none | managed | `apps/gateway/internal/executor/workerconsumer.go` |
-| `UBAG_EVENT_NOTIFY` | gateway | off | none | managed | `apps/gateway/internal/serve/serve.go` |
+| `UBAG_EVENT_NOTIFY` | gateway | off | empty | managed | `apps/gateway/internal/serve/serve.go` |
 | `UBAG_WORKER_POOL_SIZE` | gateway | 1 | 1 | managed | `apps/gateway/internal/serve/serve.go` |
 | `UBAG_SSE_CLOSE_ON_TERMINAL` | gateway | off | none | managed | `apps/gateway/internal/httpapi/server.go` |
 | `UBAG_FILESPOOL_HONOR_NOT_BEFORE` | gateway | off | none | managed | `apps/gateway/internal/serve/serve.go` |
@@ -36,7 +36,7 @@ Column meanings.
 | `UBAG_WORKER_POOL_WAIT_MS` | gateway | 30000 | empty | knob | `apps/gateway/internal/serve/serve.go` |
 | `UBAG_WORKER_STREAM_FLUSH_MS` | gateway | 50 | empty | knob | `apps/gateway/internal/executor/streamingest.go` |
 | `UBAG_WORKER_STREAM_MAX_BYTES` | gateway | 8388608 | empty | knob | `apps/gateway/internal/executor/streamingest.go` |
-| `UBAG_EVENT_FALLBACK_MS` | gateway | 2000 | none | knob | `apps/gateway/internal/serve/serve.go` |
+| `UBAG_EVENT_FALLBACK_MS` | gateway | 2000 | empty | knob | `apps/gateway/internal/serve/serve.go` |
 | `UBAG_SSE_MAX_STREAMS` | gateway | 0 | none | knob | `apps/gateway/internal/httpapi/server.go` |
 | `UBAG_HELPER_RECONCILE_WINDOW_SECONDS` | gateway | 600 | none | knob | `apps/gateway/internal/serve/helper_dispatch.go` |
 | `UBAG_FLEET_POLL_SECONDS` | gateway | 30 | none | knob | `apps/gateway/internal/nodes/allocation_source.go` |

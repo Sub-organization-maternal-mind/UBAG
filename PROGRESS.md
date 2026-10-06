@@ -1,8 +1,67 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-10-03 (CI green-up on feat/ci-green — the `ci` workflow
-has been red on every main push since the 09-27 closeout; see the section
-below and AGENT_HANDOFF.md "REMAINING WORK" for the live list.)
+Last updated: 2026-10-06 (event-wake compose passthrough; Phase 0 baseline
+recorded; the perf + shared-fleet program merged to `main` and deployed as one
+changeset, every program flag still off by default. The OET shared fleet
+manager does not exist as a running service — see the entry below.)
+
+## 2026-10-06 — Event-wake passthrough, Phase 0 baseline, program merged and deployed
+
+**1. `UBAG_EVENT_NOTIFY` was unreachable on the VPS (fixed).**
+`docker-compose.vps.yml` passes an explicit `environment:` list and has no
+`env_file`, so a flag missing from that list cannot be set from
+`deploy/vps/env.local` at all. `UBAG_EVENT_NOTIFY` and its
+`UBAG_EVENT_FALLBACK_MS` knob were both absent, which made the P5 event wake
+hub — documented as settable in `deploy/vps/README.md`,
+`apps/docs/.../deployment.md` and `operator-runbook.md` — a silent no-op in
+production. Both are now passed with empty defaults, and the two
+`docs/perf-fleet/FLAGS.md` `Compose` cells moved `none` to `empty`. **Inert by
+default:** the container reads exactly today's behaviour (the legacy 50 ms SQL
+event poll) until an operator sets `UBAG_EVENT_NOTIFY=local` and recreates the
+gateway. Rolling the flag back means clearing it, which needs no data change.
+
+Checks run (targeted): `node tools/flag-graduation-check.mjs` -> ok (30 flags,
+20 managed checklists); `node --test tools/flag-graduation-check.test.mjs` ->
+5/5; three negative controls each fail as designed (doc/compose disagreement,
+a graduation hidden in a compose default, a deleted compose line);
+`node tools/run-small-deployment-check.mjs` -> passed **with the compose render
+skipped** (no Docker on the workstation, stated rather than assumed);
+`tools/check-helper-deploy.mjs` and `tools/check-fleet-canary.mjs` pass; the
+compose file parses with 78 gateway environment keys (was 76).
+
+**2. Phase 0 baseline, measured (read-only).** Production ran
+`ubag-gateway:sha-a8880d3` (`UBAG_BUILD_COMMIT` in `deploy/vps/env.local`) —
+`main` one docs commit behind — while `feat/perf-fleet` carried **325
+undeployed commits** with CI green on `8697f1b`. Nothing from the perf +
+shared-fleet program had ever run in production: P3 streaming ingest, the P4
+warm pool, the P5 event wake hub, the helper/fleet plane, remote voice media
+and the capacity ladder were all merged-but-inert. On operator instruction
+(2026-10-06) that whole program was fast-forwarded into `main` and deployed as
+a single changeset. Because every program flag defaults to off, what changed in
+production is that those code paths are now present, not enabled.
+**Rollback for the deploy: redeploy `sha-a8880d3`.**
+
+**3. The OET shared fleet manager does not exist as a running service.** This
+resolves the plan's "its implementation and deployed availability must be
+verified" caveat negatively. On `185.252.233.186`: `/opt/platform` is a
+**single-box shared backing-services stack** (Postgres, Redis, MinIO, Soketi,
+`provision-project.sh`; UBAG enrolled as `projects/ubag.env`), **not** a
+multi-VPS fleet controller. There is no Ansible, no fleet container and no
+fleet systemd unit. `wg0` exists with three peers whose last handshakes were
+4–5 days old, and the `oet-dev` host in `~/.ssh/config` (68.183.32.122)
+refused TCP/22. OET itself runs on that box as healthy `oet-*` containers.
+**Phase 1 is therefore blocked on building the manager** — the reference
+document is not evidence of availability, and the helper/fleet code deployed
+above stays inert (`UBAG_HELPER_*` and `UBAG_FLEET_MANAGER_URL` are unset and
+have no composition line).
+
+**Explicitly not verified.** No canary was run (`docs/perf-fleet/CANARY.md`
+records it as external-blocked); the P7.9 capacity report is labelled
+NON-AUTHORITATIVE and quotes no capacity; there is no real-provider evidence
+for the streaming or voice paths; the P7.8 Rust gate remains unevaluated with
+no Rust written. Container-backed suites (Postgres/NATS/MinIO) and the load
+harness were not run from the workstation — no Docker — so CI is the evidence,
+not a local full-suite pass.
 
 ## 2026-10-06 — Perf + shared-fleet program (branch feat/perf-fleet, slice P8.1 consolidation)
 
