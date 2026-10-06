@@ -11,16 +11,28 @@ flag graduates: live-DOM check, canary, rollback, ledger), `docs/perf-fleet/RUNB
 `docs/benchmarks/capacity-report.md` (no capacity number exists). `pnpm check:flag-graduation` keeps the flag docs honest.
 
 **Superseded 2026-10-06:** the program was fast-forwarded into `main` and deployed to production on operator instruction,
-together with the `UBAG_EVENT_NOTIFY` / `UBAG_EVENT_FALLBACK_MS` compose passthrough. Every program flag still defaults
-to **off**, so nothing is *enabled* in production — only present. **Rollback = redeploy `sha-a8880d3`.** The program did
-**not** canary before the merge (`CANARY.md` still records it as external-blocked) and the OET shared fleet manager it
-depends on **does not exist as a running service**: on 185.252.233.186 `/opt/platform` is a single-box shared
-backing-services stack (Postgres/Redis/MinIO/Soketi + `provision-project.sh`), there is no Ansible, no fleet container
-or systemd unit, `wg0`'s peers last handshook 4–5 days ago, and the `oet-dev` host (68.183.32.122) refuses TCP/22.
-Phase 1 is blocked on building it; the `UBAG_HELPER_*` flags still have no composition line.
+together with the `UBAG_EVENT_NOTIFY` / `UBAG_EVENT_FALLBACK_MS` compose passthrough. Production now runs `sha-aab1432…`
+with `ci` fully green; the last two CI reds (the npm audit baseline and the helperclient lost-helper scenario) are fixed
+and recorded in PROGRESS.md. Every program flag still defaults to **off**, so nothing is *enabled* in production — only
+present. **Rollback = redeploy `sha-a8880d3`.** The program did **not** canary before the merge (`CANARY.md` still records
+it as external-blocked) and the OET shared fleet manager it depends on **does not exist as a running service**: on
+185.252.233.186 `/opt/platform` is a single-box shared backing-services stack (Postgres/Redis/MinIO/Soketi +
+`provision-project.sh`), there is no Ansible, no fleet container or systemd unit, `wg0`'s peers last handshook 4–5 days
+ago, and the `oet-dev` host (68.183.32.122) refuses TCP/22. Phase 1 is blocked on building it; the `UBAG_HELPER_*` flags
+still have no composition line.
+
+**Everything still blocked is blocked by hardware, a credential, a lab host or a human at a browser — not by missing
+code.** The full list with the exact reason and the exact command for each is the table in PROGRESS.md's
+2026-10-06 entry ("What is blocked, and the exact reason"). Short version: the fleet manager must be built; a helper
+must be enrolled; live voice needs `UBAG_VOICE_RELAY_SECRET` and a `UBAG_VOICE_STORE` that matches the gateway store;
+the Rust gate needs real libopus on Linux with a real call's container CPU; capacity needs an isolated lab host (never
+the shared VPS, which serves live traffic); and provider evidence needs a human login.
+
+**Trap:** `stash@{0}` (`codex-pre-sync-2026-07-23-local-and-gemini36`) is a stale multi-file stash from another tool.
+A blind `git stash pop` lands 26 files of unrelated conflicts. It is intact — do not delete it.
 
 Open items, in the order an owner would want them:
-1. ~~Decide whether to merge `feat/perf-fleet` to `main`~~ — decided and done on 2026-10-06 (migrations 0022 to 0025 auto-applied on deploy, additive and inert). Verify the box now pins the new `UBAG_BUILD_COMMIT`, the containers are healthy and `/v1/ready` reports it; roll back by redeploying `sha-a8880d3`.
+1. ~~Decide whether to merge `feat/perf-fleet` to `main`~~ — decided and done on 2026-10-06 (migrations 0022 to 0025 auto-applied on deploy, additive and inert). Verified on the box: prod pins the new `UBAG_BUILD_COMMIT`, containers healthy, `/v1/ready` ready. Rollback by redeploying `sha-a8880d3`.
 2. Run the human-supervised steps nobody could run: live-DOM probes per provider (`tools/provider-refresh/`), the voice activation probe (`docs/perf-fleet/voice-activation-probe.md`), and the helper canary (`CANARY.md`, blocked on the fleet manager, certificates, WireGuard and a profile-binding route).
 3. Get a lab host and run the ladder and baseline matrix; fill `docs/benchmarks/capacity-template.md`. Only then does a capacity number exist, and only then can the pool ceiling (`UBAG_WORKER_POOL_MAX`, placeholder 3) and the Rust relay gate (P7.5 to P7.8) be decided.
 4. P1.8 (create-path pprof and DB pool sizing) is partial (shard `docs/perf-fleet/slices/P1.8.md`, #192): benches and analysis merged; the open work is running them on the lab host (item 3). P5.11 (helper voice media negotiator, #184) and P6.5 (dashboard voice panel, #185) are merged.

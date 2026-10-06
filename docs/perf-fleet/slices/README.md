@@ -4,6 +4,8 @@ One file per roadmap slice (docs/perf-fleet/slices/<ID>.md): status, files, flag
 
 Statuses below were taken from each shard's own Status line at the integration tip when P8.1 was written (not re-verified against a live system). "merged" means the slice's PR is in feat/perf-fleet, not that anything is deployed or that its flag is on.
 
+**Update 2026-10-06:** the whole program was fast-forwarded into `main` and deployed to production (prod `sha-0b51f0e…`, then `sha-aab1432…`), so "merged" now also means present in production. It still does **not** mean enabled: every program flag remains off by default, and no slice marked `partial` or `blocked` has gained evidence. Nothing in this program has run against a real provider, a real helper or a measured capacity run — the rows that say `partial`/`blocked` are still exactly that.
+
 | Slice | Title | Status |
 |---|---|---|
 | P0.1 | Read-only probe rewrite and parity shard | merged |

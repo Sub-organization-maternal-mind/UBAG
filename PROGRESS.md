@@ -1,10 +1,67 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-10-06 (two CI reds on the merged program diagnosed and
-fixed; event-wake compose passthrough; Phase 0 baseline recorded; the perf +
-shared-fleet program merged to `main` and deployed as one changeset, every
-program flag still off by default. The OET shared fleet manager does not exist
-as a running service — see the entries below.)
+Last updated: 2026-10-06 (**`ci` fully green on `aab1432`; production on
+`sha-aab1432…` and healthy; the program's evidence half is still unstarted and
+the blocking reason for each item is listed below.** The OET shared fleet
+manager does not exist as a running service.)
+
+## 2026-10-06 — Third CI red fixed; `ci` green; and what is physically blocked
+
+**`ci` is now fully green on `aab1432`** (Operator, Lint & contracts,
+Supply-chain, Gateway (Go), Integration tests, Sidecar, Node/SDK/dashboard/docs,
+Worker — all success) and `Gateway Image` deployed it: prod pins
+`sha-aab1432c…`, gateway/browser/nginx healthy, `/v1/ready` reports `ready` with
+all checks true.
+
+**`TestIsolationLostHelperNeverProducesAStaleCommit` — the lost-helper scenario
+now scales its waits with its workload count.** It failed at `de6a480` in the
+`10_workloads` case (`isolation_test.go:673: the attempts did not all reach the
+helper`, 30.26s) after passing at `8697f1b`. The CI log for the failing run is
+the actual evidence, one second before the failure:
+`WARN helper ingest rejected action=attempt.fenced_rejected
+reason=attempt_expired` — the dispatches were losing their 1.5s lease before the
+helper ever started them. Ten concurrent attempts cannot acquire, ship and start
+inside 1.5s on a runner that is already oversubscribed (`go test ./...` runs
+several package binaries at once, each with its own GOMAXPROCS, on 2 cores); the
+sibling scenario in the same file already used 4s. The lease now scales
+(1500ms + 250ms per workload, renew held at TTL/6) and the scenario's waits share
+one budget that scales the same way (90s + 15s per workload) — context, the
+"reached the helper" precondition (one shared deadline, not n independent 30s
+ones) and the Run-did-not-return wait. The assertions are untouched: no stale
+commit from a lost helper, a submitted prompt is never replayed, a pre-submission
+attempt is held for reassignment.
+
+**Honest verification limit:** I could not reproduce the CI failure locally. The
+pre-fix 1.5s value also passes here (`GOMAXPROCS=2 -race`, 4.6s). So this
+targets the mechanism the CI log showed, not a failure reproduced on this
+machine; the Linux runner remains the only environment that reproduces it, and
+CI is what verified the fix. Verified locally regardless: `gofmt`/`go vet` clean,
+`go test -race ./internal/helperclient/` ok (51.980s) and ok under `GOMAXPROCS=2`
+(72.819s).
+
+**Housekeeping worth knowing (a real trap, cost me one recovery):** this
+repository still holds `stash@{0}: On main: codex-pre-sync-2026-07-23-local-and-gemini36`,
+a stale multi-file stash from another tool. `git stash pop` with no stash of your
+own pops *that* one and lands 26 files of unrelated conflicts. Use
+`git stash push -- <pathspec>` and check that `git stash list` actually grew
+before popping, or `git stash pop stash@{N}` explicitly. It is still intact and
+was not modified.
+
+### What is blocked, and the exact reason (nothing here is "not done yet" by choice)
+
+| Item | Why it cannot proceed from here |
+|---|---|
+| Phase 1 — shared fleet integration | **The OET shared fleet manager does not exist.** No code to integrate against, and building a second infrastructure controller is explicitly out of UBAG's scope (BINDING). Needs the manager built, enrolled helper VPSs, SSH/credential onboarding |
+| Phase 2 — remote text/attachments | No helper exists to run on. P4.20 canary: "no canary has run" |
+| Phase 3 — remote voice | No helper, and production cannot run live voice today: `UBAG_VOICE_RELAY_SECRET is not set` and `UBAG_VOICE_STORE` is memory while the gateway store is postgres (both logged at boot). Needs a real call for evidence |
+| Phase 4 exit gate (P1.8) | Create-path benches are env-gated on a real Postgres DSN; `benchutil.CheckDSN` refuses non-loopback/private hosts, and there is no Docker here. Exit gate: "needs the lab host" |
+| Phase 5 — Rust gate | `tests/load/voice-relay-gate.json` sets `require_authoritative: true`. The P7.5 profile needs real libopus + a Linux isolated container + `--container-cpu-pct` "which only a real call can give"; a `--fake-codec` run returns `invalid` by design. Verdict is `UNEVALUATED`, so per the roadmap P7.6–P7.8 stay open. Exact command is recorded in `docs/perf-fleet/slices/P7.5.md` |
+| Phase 6 — capacity and acceptance | The report is deliberately labelled NON-AUTHORITATIVE; the 1/2/5/10/20 ladder needs an isolated lab host and a 60-minute steady-state run. Publishing a number from the shared VPS would be a false claim — that box serves live traffic |
+| All real-provider evidence | Logins are human-only, forever (provider-refresh skill). No account is signed in, and `tools/provider-refresh/` requires a human at the browser |
+| Rollback | Documented (redeploy `sha-a8880d3`) but never exercised |
+
+Nothing in this list is blocked by missing code. Every item needs hardware, a
+credential, a lab host or a human at a browser.
 
 ## 2026-10-06 — The two `ci` reds the merge inherited, and their fixes
 
