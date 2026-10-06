@@ -560,18 +560,12 @@
         </thead>
         <tbody class="divide-y divide-rule">
           {#each filtered as job (job.id)}
+            <!-- Row click is a mouse convenience only: the Details button below is the keyboard/AT control.
+                 A role=button row would nest it inside another interactive control (axe nested-interactive). -->
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
             <tr
               class="cursor-pointer transition-colors hover:bg-paper-soft/70"
               onclick={() => openDrawer(job)}
-              tabindex="0"
-              role="button"
-              aria-label="View job {job.id}"
-              onkeydown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  openDrawer(job);
-                }
-              }}
             >
               <td class="td font-mono text-xs text-ink-mute">{job.id.slice(0, 8)}…</td>
               <td class="td max-w-[10rem] truncate text-ink" title={job.target}>{job.target}</td>
