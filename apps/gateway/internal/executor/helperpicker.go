@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/attachments"
+	"github.com/ubag/ubag/apps/gateway/internal/conversations"
 	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	"github.com/ubag/ubag/apps/gateway/internal/nodes"
 )
@@ -62,6 +63,11 @@ type HelperPickRequest struct {
 	Target      string
 	CommandType string
 	TraceID     string
+	// Conversation is the job's stored conversation binding, when it has one. Place
+	// never sets it today: helperEligible keeps every conversation job on this
+	// gateway until the helper contract can carry a conversation block. The placer
+	// honours it already (resume only on the bound node and profile).
+	Conversation *conversations.Conversation
 }
 
 // HelperPicker chooses where a leased job runs. Implementations must be safe for
@@ -91,7 +97,8 @@ type HelperPlacement struct {
 }
 
 // NoHelperPicker places nothing: every job runs on this gateway. It is what
-// UBAG_HELPER_DISPATCH uses until a real picker is wired (P4.17).
+// UBAG_HELPER_DISPATCH used before the placer existed; serve now wires the
+// FleetPicker (helperplacer.go), and this stays for tests.
 type NoHelperPicker struct{}
 
 func (NoHelperPicker) Pick(context.Context, HelperPickRequest) (HelperPlacement, error) {
