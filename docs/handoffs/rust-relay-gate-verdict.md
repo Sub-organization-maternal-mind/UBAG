@@ -52,6 +52,7 @@ and B; the operator attests that, and a vendored build that changes encoder byte
    `stop` closes the experiment (close P7.8 and keep P7.9); `inconclusive` means rule B still needs the live-call container figure; only `prototype` lets P7.8 start.
 3. Candidate (P7.8, only after a `prototype` verdict): a relay that honours the harness seams (`UBAG_VOICE_RELAY_SECRET`, `UBAG_VOICE_RELAY_ADDR`,
    `UBAG_VOICE_MIC_PIPE`, `UBAG_VOICE_PAREC`, `UBAG_VOICE_PACTL`, `UBAG_VOICE_RELAY_IDLE_S`) and links the same libopus.
+   The P7.8 start checklist (crate, both browser images, selector, CI, rollback drill) is in `docs/perf-fleet/slices/P7.8.md`.
 4. A/B on the lab helper (Linux, node >= 20, python3, libopus0; no PulseAudio, no browser, no provider):
    `node tools/voice-relay-bench/run.mjs --a "python3 deploy/vps/browser/audio-relay.py --addr {addr}" --label-a python --b "<candidate> --addr {addr}" --label-b rust --lab-host --host-class "<helper>" --pairs 5 --duration 30 --out ab.json [--mixed-probe "<cmd>"]`
    The mixed probe prints `{container_cpu_pct, job_p95_ms, host_headroom_pct}` for the window of each run (for example the P7.2 ladder `mixed` workload plus `docker stats`).
