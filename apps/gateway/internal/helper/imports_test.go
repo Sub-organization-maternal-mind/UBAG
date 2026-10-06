@@ -2,6 +2,7 @@ package helper
 
 import (
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,7 +18,8 @@ import (
 // the MinIO client, pgx, the NATS client and the alerts/plugins/topology/jobs
 // stack) against 114 for the whole helper binary, which is why the runner is
 // an interface here and the real one is extracted into its own package later
-// (P4.12) instead of importing the executor. This test is the tripwire.
+// (P4.12, internal/helper/runner over internal/workerdaemon) instead of importing
+// the executor. This test is the tripwire.
 func TestServiceCoreAndBinaryImportOnlyGRPCAndTheProto(t *testing.T) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
@@ -28,9 +30,20 @@ func TestServiceCoreAndBinaryImportOnlyGRPCAndTheProto(t *testing.T) {
 		"google.golang.org/grpc", "google.golang.org/protobuf", "google.golang.org/genproto",
 		"golang.org/x/",
 	}
-	for _, target := range []struct{ pkg, self string }{
-		{".", "github.com/ubag/ubag/apps/gateway/internal/helper"},
-		{"../../cmd/ubag-helper", "github.com/ubag/ubag/apps/gateway/cmd/ubag-helper"},
+	// The binary adds exactly the worker pool (P4.12): the runner, the stdlib-only
+	// pool it runs and the attachment manifest parser. The service core stays at the
+	// gRPC-and-proto bar and never imports them.
+	binaryExtra := []string{
+		"github.com/ubag/ubag/apps/gateway/internal/helper/runner",
+		"github.com/ubag/ubag/apps/gateway/internal/workerdaemon",
+		"github.com/ubag/ubag/apps/gateway/internal/attachments",
+	}
+	for _, target := range []struct {
+		pkg, self string
+		extra     []string
+	}{
+		{".", "github.com/ubag/ubag/apps/gateway/internal/helper", nil},
+		{"../../cmd/ubag-helper", "github.com/ubag/ubag/apps/gateway/cmd/ubag-helper", binaryExtra},
 	} {
 		out, err := exec.Command(goBin, "list", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}}{{end}}", target.pkg).Output()
 		if err != nil {
@@ -41,7 +54,7 @@ func TestServiceCoreAndBinaryImportOnlyGRPCAndTheProto(t *testing.T) {
 			if dep == target.self || dep == "github.com/ubag/ubag/apps/gateway/internal/helper" {
 				continue
 			}
-			for _, ok := range allowed {
+			for _, ok := range append(slices.Clone(allowed), target.extra...) {
 				if strings.HasPrefix(dep, ok) {
 					continue deps
 				}

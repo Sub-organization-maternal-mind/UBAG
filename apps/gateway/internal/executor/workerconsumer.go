@@ -1533,58 +1533,10 @@ func linkArtifactLocally(ctx context.Context, store artifacts.ArtifactStore, job
 }
 
 func materializedAttachmentFilename(att attachments.Attachment, contentType string) string {
-	candidate := strings.TrimSpace(att.Filename)
-	if candidate == "" || candidate == "." || candidate == ".." ||
-		filepath.Base(candidate) != candidate || strings.ContainsAny(candidate, `/\`) {
-		candidate = att.Key
-	}
-	if filepath.Ext(candidate) == "" {
-		candidate += extForContentType(contentType)
-	}
-	return candidate
+	return attachments.MaterializedFilename(att, contentType)
 }
 
-// extForContentType maps a stored artifact content type to a file extension when
-// the artifact key carried none. Provider file pickers sniff the upload by
-// extension/MIME, so a sensible extension matters. Unknown types get "".
-func extForContentType(contentType string) string {
-	switch strings.ToLower(strings.TrimSpace(contentType)) {
-	case "application/pdf":
-		return ".pdf"
-	case "text/plain":
-		return ".txt"
-	case "text/markdown":
-		return ".md"
-	case "text/csv":
-		return ".csv"
-	case "application/json":
-		return ".json"
-	case "image/png":
-		return ".png"
-	case "image/jpeg":
-		return ".jpg"
-	case "image/gif":
-		return ".gif"
-	case "image/webp":
-		return ".webp"
-	case "audio/webm":
-		return ".webm"
-	case "audio/wav", "audio/x-wav":
-		return ".wav"
-	case "audio/mpeg":
-		return ".mp3"
-	case "audio/mp4":
-		return ".m4a"
-	case "audio/ogg":
-		return ".ogg"
-	case "video/mp4":
-		return ".mp4"
-	case "video/webm":
-		return ".webm"
-	default:
-		return ""
-	}
-}
+func extForContentType(contentType string) string { return attachments.ExtForContentType(contentType) }
 
 func (r ProcessWorkerRunner) RunWorker(ctx context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
 	if envelope.Job.Target == "antigravity_cli" && !antigravity.OAuthEnabled() {

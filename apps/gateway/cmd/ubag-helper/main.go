@@ -9,9 +9,10 @@
 // its node id, or when it is told to listen on a wildcard address. Configuration
 // is the UBAG_HELPER_* variables documented in internal/helper (config.go).
 //
-// Until P4.12 plugs the warm-daemon worker pool in as the Runner, the service
-// answers Handshake, ReportCapacity, InspectAttempt and Drain, and refuses
-// every RunAttempt as Unavailable.
+// Attempts run on a bounded pool of warm worker processes (internal/helper/runner
+// over internal/workerdaemon, the P3.6 pool): UBAG_HELPER_MAX_ATTEMPTS slots,
+// starting at one, one active operation per provider identity. The binary links
+// gRPC, the proto and those two packages only, never internal/executor.
 package main
 
 import (
@@ -24,6 +25,7 @@ import (
 	"syscall"
 
 	"github.com/ubag/ubag/apps/gateway/internal/helper"
+	"github.com/ubag/ubag/apps/gateway/internal/helper/runner"
 )
 
 func main() {
@@ -39,7 +41,24 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	node, err := st.Open(nil) // ponytail: no runner until P4.12; attempts are refused Unavailable
+	if st.WorkerScript == "" {
+		return fmt.Errorf("%s is required: the path of the worker daemon script", helper.EnvWorkerScript)
+	}
+	if fi, err := os.Stat(st.WorkerScript); err != nil || !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s: %q is not a readable file", helper.EnvWorkerScript, st.WorkerScript)
+	}
+	// ponytail: no AssetSource yet. The RunAttempt contract carries no attempt token
+	// for the P4.10 staging client, so an attempt that declares attachments ends
+	// failed (helper_assets_unavailable) instead of running without them; the dial
+	// slice supplies the source.
+	rn, err := runner.New(runner.Config{
+		Python: st.WorkerPython, Script: st.WorkerScript, Slots: st.MaxAttempts, ProfileRoot: st.ProfileRoot,
+	})
+	if err != nil {
+		return err
+	}
+	defer rn.Close()
+	node, err := st.Open(rn)
 	if err != nil {
 		return err
 	}
