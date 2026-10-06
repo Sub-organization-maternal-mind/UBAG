@@ -338,6 +338,7 @@ export class Recorder {
       unrecovered: c('unrecovered'), scenario_errors: c('scenario_errors'),
       warning_jobs: c('warning_jobs'), result_mismatches: c('result_mismatches'), results_verified: c('results_verified'),
       terminal_event_violations: c('terminal_event_violations'), events_verified: c('events_verified'),
+      truncated_results: c('truncated_results'), duplicate_results: c('duplicate_results'), duplicate_terminal_events: c('duplicate_terminal_events'),
       cross_tenant_leaks: c('cross_tenant_leaks'), tenant_probe_unexpected: c('tenant_probe_unexpected'), tenant_probe_requests: c('tenant_probe_requests'),
       facade_image_failures: c('facade_image_failures'),
       audio_upload_violations: c('audio_upload_violations'), audio_artifacts_verified: c('audio_artifacts_verified'),
@@ -514,20 +515,20 @@ export function makeRequest(cfg, fetchImpl = fetch) {
 
 // ------------------------------------------------------------- scenario core
 
-function idemKey(ctx, tag, i) {
+export function idemKey(ctx, tag, i) {
   const key = `lt-${ctx.runId}-${tag}-${i}`;
   if (key.length < 16 || key.length > 128) throw new Error(`bad idempotency key length: ${key}`);
   return key;
 }
 
-const jobPayload = (cfg, key, prompt) => ({
+export const jobPayload = (cfg, key, prompt) => ({
   api_version: API_VERSION, idempotency_key: key,
   client: { app_id: 'ubag-load-acceptance', app_version: '1.0.0', sdk: { name: 'ubag-load', version: '1.0.0' } },
   job: { target: cfg.target, command_type: cfg.commandType, input: { prompt } },
 });
 
 /** Run `fn` retrying on retryStatuses, backing off per Retry-After, up to cfg.maxRetries. */
-async function callWithRetry(ctx, op, fn, { retryStatuses = [429, 503], observeOpts } = {}) {
+export async function callWithRetry(ctx, op, fn, { retryStatuses = [429, 503], observeOpts } = {}) {
   const { cfg, rec } = ctx;
   for (let attempt = 0; ; attempt += 1) {
     const res = await fn();
@@ -544,7 +545,7 @@ async function callWithRetry(ctx, op, fn, { retryStatuses = [429, 503], observeO
 
 // The idempotency key doubles as the job's nonce: it is appended to the prompt (identical across
 // duplicate requests for one key, unique per job) so the result body can be checked against it.
-async function createJob(ctx, key, { prompt = 'load job', retryStatuses, op = 'create' } = {}) {
+export async function createJob(ctx, key, { prompt = 'load job', retryStatuses, op = 'create' } = {}) {
   const t0 = now();
   const fullPrompt = `${prompt} [${key}]`;
   const body = JSON.stringify(jobPayload(ctx.cfg, key, fullPrompt));
@@ -555,7 +556,7 @@ async function createJob(ctx, key, { prompt = 'load job', retryStatuses, op = 'c
 }
 
 /** Poll many jobs with bounded concurrency until terminal / lost / deadline. */
-async function pollMany(ctx, jobs, deadlineAt) {
+export async function pollMany(ctx, jobs, deadlineAt) {
   const { cfg, rec } = ctx;
   const states = jobs.map((j) => ({ ...j, next: 0, status: null, firstRunAt: null, terminalAt: null, lost: false }));
   let pending = states;
@@ -580,7 +581,7 @@ async function pollMany(ctx, jobs, deadlineAt) {
   return states;
 }
 
-async function settleJobs(ctx, jobs, { count = true, verify = true } = {}) {
+export async function settleJobs(ctx, jobs, { count = true, verify = true } = {}) {
   const states = await pollMany(ctx, jobs, now() + ctx.cfg.deadlineMs);
   const out = { completed: 0, warned: 0, failed: 0, lost: 0, unfinished: 0, byStatus: {} };
   for (const s of states) {
@@ -605,7 +606,8 @@ async function verifyJob(ctx, s) {
   const { rec, cfg } = ctx;
   const res = await ctx.request('GET', `/v1/jobs/${encodeURIComponent(s.jobId)}`);
   rec.observe('result_fetch', res);
-  const bad = (why) => rec.violation('result_mismatches', `${s.jobId}: ${why}`);
+  // `kind` additionally counts the failure class the capacity ladder reports (truncated_results, duplicate_results).
+  const bad = (why, kind) => { rec.violation('result_mismatches', `${s.jobId}: ${why}`); if (kind) rec.count(kind); };
   if (res.status !== 200) bad(`result fetch returned HTTP ${res.status || res.error}`);
   else if (res.json?.job_id !== s.jobId) bad(`result carries job_id ${res.json?.job_id}`);
   else if (!SUCCESS.has(res.json?.status)) bad(`status changed to ${res.json?.status} after it was observed terminal`);
@@ -615,9 +617,15 @@ async function verifyJob(ctx, s) {
     if (typeof text !== 'string' || !text.trim()) bad('empty result text');
     else if (cfg.target === 'mock') { // the mock adapter echoes "...(<job_id>): <prompt>"; the nonce ends the prompt
       if (!text.includes(s.jobId)) bad('result text does not name this job (wrong result)');
-      else if (!text.endsWith(s.prompt)) bad('result text does not end with the submitted prompt (truncated or wrong result)');
-      else if (countOf(text, s.key) !== 1) bad(`nonce appears ${countOf(text, s.key)} times in the result (duplicated result)`);
+      else if (!text.endsWith(s.prompt)) bad('result text does not end with the submitted prompt (truncated or wrong result)', 'truncated_results');
+      else if (countOf(text, s.key) !== 1) bad(`nonce appears ${countOf(text, s.key)} times in the result (duplicated result)`, 'duplicate_results');
       else rec.count('results_verified');
+    } else if (cfg.target === 'synthetic_chat') { // the P7.1 fixture answers 'Synthetic answer: <first 200 chars of the prompt>'; DOM extraction may collapse whitespace
+      const norm = (x) => x.replace(/\s+/g, ' ').trim();
+      const want = `Synthetic answer: ${norm(s.prompt.slice(0, 200))}`; const got = norm(text);
+      if (got.startsWith(want)) rec.count('results_verified');
+      else if (want.startsWith(got)) bad('result text is a proper prefix of the fixture echo (truncated result)', 'truncated_results');
+      else bad('result text is not the fixture echo of this prompt (wrong result)');
     } else rec.count('results_verified');
   }
   await verifyEvents(ctx, s);
@@ -640,7 +648,7 @@ async function verifyEvents(ctx, s) {
   const seqs = events.map((e) => e?.sequence).filter(Number.isFinite);
   if (new Set(seqs).size !== seqs.length) return bad('duplicate event sequence numbers');
   const terminal = events.filter((e) => TERMINAL_EVENTS.has(String(e?.type ?? '').replace(/^job\./, '')));
-  if (terminal.length !== 1) return bad(`${terminal.length} terminal events (expected exactly 1)`);
+  if (terminal.length !== 1) { if (terminal.length > 1) rec.count('duplicate_terminal_events'); return bad(`${terminal.length} terminal events (expected exactly 1)`); }
   rec.count('events_verified');
 }
 

@@ -408,7 +408,30 @@ describe('acceptance integrity gates fail closed', () => {
     const fake = await startFake({ dupTerminal: true });
     const report = await run(cfgFor(fake, QUICK));
     assert.equal(report.summary.terminal_event_violations, 6);
+    assert.equal(report.summary.duplicate_terminal_events, 6);
     assert.ok(failed(report).includes('max_terminal_event_violations'));
+  });
+
+  it('result failures are also counted by class (P7.2 ladder integrity counters)', async () => {
+    const counts = async (resultBug) => (await run(cfgFor(await startFake({ resultBug }), QUICK))).summary;
+    const truncated = await counts('truncated'); const duplicated = await counts('duplicated'); const wrong = await counts('wrong');
+    assert.deepEqual([truncated.truncated_results, truncated.duplicate_results], [6, 0]);
+    assert.deepEqual([duplicated.truncated_results, duplicated.duplicate_results], [0, 6]);
+    assert.deepEqual([wrong.truncated_results, wrong.duplicate_results], [0, 0]);
+    assert.equal(wrong.result_mismatches, 6);
+  });
+
+  it('the synthetic_chat target gets an echo-integrity check (clean, truncated and wrong results)', async () => {
+    const SYN = ['--target', 'synthetic_chat', ...QUICK];
+    const clean = await run(cfgFor(await startFake(), SYN));
+    assert.equal(clean.summary.results_verified, 6);
+    assert.equal(clean.thresholds.passed, true, JSON.stringify(failed(clean)));
+    const truncated = await run(cfgFor(await startFake({ resultBug: 'truncated' }), SYN));
+    assert.equal(truncated.summary.truncated_results, 6);
+    assert.ok(failed(truncated).includes('max_result_mismatches'));
+    const wrong = await run(cfgFor(await startFake({ resultBug: 'wrong' }), SYN));
+    assert.equal(wrong.summary.result_mismatches, 6);
+    assert.equal(wrong.summary.truncated_results, 0);
   });
 
   it('a cross-tenant read is a FAIL', async () => {
@@ -679,6 +702,11 @@ describe('run provenance', () => {
     });
     assert.deepEqual(got, { UBAG_ADMISSION_MAX_UPLOAD_MEMORY_BYTES: '268435456', UBAG_EXECUTOR_MODE: '[withheld: unexpected value shape]', UBAG_GATEWAY_STORE: 'postgres', UBAG_WORKER_CONCURRENCY: '1', UBAG_WORKER_DAEMON: 'true' });
     assert.deepEqual(parseEnvText('A=1\nB=x=y\r\nnoequals\n'), { A: '1', B: 'x=y' });
+  });
+
+  it('pickEnv records the perf-fleet flags so a published number says which were on', () => {
+    const flags = { UBAG_WORKER_POOL_SIZE: '2', UBAG_WORKER_STAGE_TIMINGS: '1', UBAG_WORKER_STRICT_STREAM_END: 'true', UBAG_WORKER_STRICT_SUBMIT: 'false', UBAG_SYNTHETIC_PROVIDER: '1', UBAG_WORKER_CONSUMER_ENABLED: 'false' };
+    assert.deepEqual(pickEnv({ ...flags, UBAG_SYNTHETIC_PROVIDER_URL: 'http://127.0.0.1:4799/', UBAG_VOICE_RELAY_SECRET: 's' }), flags);
   });
 
   it('gatewayInfoFrom and containerLimits read what the harness already scraped', () => {

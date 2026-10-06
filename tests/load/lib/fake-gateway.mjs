@@ -50,8 +50,8 @@ function splitMultipart(buf, boundary) {
 }
 
 export async function startFake(opts = {}) {
-  const o = { maxBody: 4096, rejectFirstCreates: 0, facadeLimit: Infinity, maxInflight: Infinity, omitRetryAfter: false, dupBug: false, facadeNoBodyMs: false, resultBug: null, dupTerminal: false, leak: false, facadeBad: false, finalStatus: 'completed', slowGetMs: 5, clockSkewMs: 0, sseDelayMs: 15, sseMode: null, ...opts };
-  const st = { uploads: [], requests: 0, jobs: new Map(), byKey: new Map(), seq: 0, inflight: 0, facadeInflight: 0, creates: 0, completed: 0, rejections: { inflight_requests: 0, upload_memory: 0 }, uploadBytes: 0, sseOpens: 0, sseOpen: 0 };
+  const o = { maxBody: 4096, rejectFirstCreates: 0, facadeLimit: Infinity, maxInflight: Infinity, omitRetryAfter: false, dupBug: false, facadeNoBodyMs: false, resultBug: null, dupTerminal: false, leak: false, facadeBad: false, finalStatus: 'completed', slowGetMs: 5, clockSkewMs: 0, sseDelayMs: 15, sseMode: null, paused: false, slowCreateMs: 0, maxActiveJobs: Infinity, acceptAttachments: false, perfMetrics: false, stageSeconds: 0.1, truncatedStatus: null, ...opts };
+  const st = { paused: o.paused, uploads: [], requests: 0, jobs: new Map(), byKey: new Map(), seq: 0, inflight: 0, facadeInflight: 0, creates: 0, completed: 0, rejections: { inflight_requests: 0, upload_memory: 0 }, uploadBytes: 0, sseOpens: 0, sseOpen: 0 };
   const skewedDate = () => new Date(Date.now() + o.clockSkewMs).toUTCString(); // second-resolution, like a real Date header
   const json = (res, status, body, headers = {}) => { res.writeHead(status, { 'Content-Type': 'application/json', Date: skewedDate(), ...headers }); res.end(JSON.stringify(body)); };
   const overload = (res, reason, facade = false) => {
@@ -61,6 +61,24 @@ export async function startFake(opts = {}) {
     if (!(facade && o.facadeNoBodyMs)) error.retry_after_ms = 15;
     json(res, 503, { error }, headers);
   };
+  const FAMILY = 'synthetic_chat';
+  // Stage histograms (ubag_job_stage_duration_seconds) plus the queue-depth gauge, only with perfMetrics. Every observation is stageSeconds long.
+  const perfMetricLines = () => {
+    const le = [0.05, 0.25, 1].map((b) => [b, o.stageSeconds <= b ? st.completed : 0]);
+    const lines = ['ubag_queue_depth{queue="default"} ' + [...st.jobs.values()].filter((j) => j.status === 'queued').length];
+    for (const stage of ['browser_prep', 'provider_submit', 'first_token']) {
+      const l = `stage="${stage}",adapter_family="${FAMILY}"`;
+      for (const [b, n] of le) lines.push(`ubag_job_stage_duration_seconds_bucket{${l},le="${b}"} ${n}`);
+      lines.push(`ubag_job_stage_duration_seconds_bucket{${l},le="+Inf"} ${st.completed}`, `ubag_job_stage_duration_seconds_sum{${l}} ${st.completed * o.stageSeconds}`, `ubag_job_stage_duration_seconds_count{${l}} ${st.completed}`);
+    }
+    // an untouched default series must be ignored by readers
+    lines.push('ubag_job_stage_duration_seconds_bucket{stage="extraction",adapter_family="mock",le="+Inf"} 0', 'ubag_job_stage_duration_seconds_sum{stage="extraction",adapter_family="mock"} 0', 'ubag_job_stage_duration_seconds_count{stage="extraction",adapter_family="mock"} 0');
+    return lines;
+  };
+  // A synthetic 'truncated' directive models a deadline-cut stream: truncatedStatus 'completed' is the false-success hazard.
+  const finalFor = (prompt) => (/^\[\[synthetic scenario=truncated/.test(prompt ?? '') ? (o.truncatedStatus ?? o.finalStatus) : o.finalStatus);
+  const activeJobs = () => [...st.jobs.values()].filter((j) => j.status !== 'cancelled' && j.status !== (j.final ?? o.finalStatus)).length;
+  const concurrencyCap = (res) => json(res, 429, { error: { code: 'UBAG-CONCURRENCY-001', retryable: true, retry_after_ms: 15 } }, { 'Retry-After': '0' });
   const readBody = (req, cb) => { const chunks = []; let size = 0; req.on('data', (c) => { size += c.length; if (size <= o.maxBody + 1) chunks.push(c); }); req.on('end', () => cb(Buffer.concat(chunks).toString('utf8'), size)); };
   const server = createServer((req, res) => {
     st.requests += 1;
@@ -91,6 +109,7 @@ export async function startFake(opts = {}) {
         `ubag_sse_connections_current ${st.sseOpen}`,
         `ubag_worker_job_duration_seconds_bucket{adapter="mock",le="1"} ${st.completed}`, `ubag_worker_job_duration_seconds_bucket{adapter="mock",le="+Inf"} ${st.completed}`,
         `ubag_worker_job_duration_seconds_sum{adapter="mock"} ${st.completed * 0.5}`, `ubag_worker_job_duration_seconds_count{adapter="mock"} ${st.completed}`,
+        ...(o.perfMetrics ? perfMetricLines() : []),
         'ubag_admission_tokens_active{kind="tenant"} 1', 'ubag_db_pool_connections{state="open"} 2', 'ubag_voice_sessions_connected_total 0', 'ubag_unrelated_total 9', '',
       ].join('\n'));
     }
@@ -104,14 +123,15 @@ export async function startFake(opts = {}) {
         if (!/^[\w.:-]{16,128}$/.test(idem ?? '')) return json(res, 400, { error: { code: 'UBAG-VALIDATION-IDEMPOTENCY-KEY-001' } });
         const parts = splitMultipart(Buffer.concat(chunks), /boundary=(.+)$/.exec(req.headers['content-type'])[1]);
         const envelope = JSON.parse(parts.find((p) => p.name === 'job')?.data.toString('utf8') ?? '{}');
-        if (!o.acceptAudio) return json(res, 400, { error: { code: 'UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001' } });
+        if (!(o.acceptAudio || o.acceptAttachments)) return json(res, 400, { error: { code: 'UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001' } });
         const files = parts.filter((p) => p.name !== 'job');
         const declared = envelope.job?.input?.attachments ?? [];
         if (declared.length !== files.length || declared.some((d) => !files.some((f) => f.name === d.key && f.contentType === d.content_type))) return json(res, 400, { error: { code: 'UBAG-VALIDATION-MULTIPART-PART-MISSING-001' } });
+        if (activeJobs() >= o.maxActiveJobs) return concurrencyCap(res);
         const id = `job_${++st.seq}`; st.creates += 1; st.uploads.push(...files.map((f) => f.data.length));
         const artifacts = files.map((f) => ({ job_id: id, key: f.name, content_type: f.contentType, size_bytes: f.data.length - (o.artifactBug === 'short' ? 1 : 0), checksum: o.artifactBug === 'checksum' ? 'f'.repeat(64) : createHash('sha256').update(f.data).digest('hex') }));
-        st.jobs.set(id, { status: 'queued', polls: 0, target: envelope.job?.target, prompt: envelope.job?.input?.prompt, tenant, artifacts }); st.byKey.set(idem, id);
-        return json(res, 202, { job_id: id, status: 'queued', idempotent_replay: false });
+        st.jobs.set(id, { status: 'queued', polls: 0, target: envelope.job?.target, prompt: envelope.job?.input?.prompt, tenant, artifacts, final: finalFor(envelope.job?.input?.prompt) }); st.byKey.set(idem, id);
+        return setTimeout(() => json(res, 202, { job_id: id, status: 'queued', idempotent_replay: false }), o.slowCreateMs);
       });
     }
     if (path === '/v1/jobs' && req.method === 'POST') {
@@ -125,10 +145,11 @@ export async function startFake(opts = {}) {
           st.rejectedCreates += 1;
           return json(res, 429, { error: { code: 'UBAG-RATE-APP-001', retryable: true, retry_after_ms: 15 } }, { 'Retry-After': '2' });
         }
+        if (activeJobs() >= o.maxActiveJobs && !st.byKey.has(key)) return concurrencyCap(res);
         if (!o.dupBug && st.byKey.has(key)) return json(res, 200, { job_id: st.byKey.get(key), status: st.jobs.get(st.byKey.get(key)).status, idempotent_replay: true });
         const id = `job_${++st.seq}`; st.creates += 1;
-        st.jobs.set(id, { status: 'queued', polls: 0, target: body.job?.target, prompt: body.job?.input?.prompt, tenant }); st.byKey.set(key, id);
-        json(res, 202, { job_id: id, status: 'queued', idempotent_replay: false });
+        st.jobs.set(id, { status: 'queued', polls: 0, target: body.job?.target, prompt: body.job?.input?.prompt, tenant, final: finalFor(body.job?.input?.prompt) }); st.byKey.set(key, id);
+        setTimeout(() => json(res, 202, { job_id: id, status: 'queued', idempotent_replay: false }), o.slowCreateMs);
       });
     }
     if (path === '/v1/jobs' && req.method === 'GET') {
@@ -142,8 +163,9 @@ export async function startFake(opts = {}) {
       req.resume();
       const job = visible(m[1]);
       if (!job) return json(res, 404, { error: { code: 'UBAG-JOB-NOT-FOUND-001' } });
-      const types = ['queued', 'running', 'token', ...(job.status === 'cancelled' ? ['cancelled'] : job.polls >= 3 ? [o.finalStatus] : [])];
-      if (o.dupTerminal && job.polls >= 3) types.push(o.finalStatus);
+      const fin = job.final ?? o.finalStatus;
+      const types = st.paused ? ['queued'] : ['queued', 'running', 'token', ...(job.status === 'cancelled' ? ['cancelled'] : job.polls >= 3 ? [fin] : [])];
+      if (o.dupTerminal && job.polls >= 3 && !st.paused) types.push(fin);
       return json(res, 200, { job_id: m[1], events: types.map((type, i) => ({ job_id: m[1], type, sequence: i + 1 })), next_cursor: null });
     }
     const sse = /^\/v1\/sse\/jobs\/([^/]+)$/.exec(path);
@@ -175,13 +197,15 @@ export async function startFake(opts = {}) {
       return setTimeout(() => {
         const job = visible(m[1]);
         if (!job) return json(res, 404, { error: { code: 'UBAG-JOB-NOT-FOUND-001' } });
+        if (st.paused && job.status !== 'cancelled') return json(res, 200, { job_id: m[1], status: 'queued' }); // consumer paused: nothing leaves the queue
         job.polls += 1;
-        if (job.status !== 'cancelled') job.status = job.polls === 1 ? 'queued' : job.polls === 2 ? 'running' : o.finalStatus;
+        if (job.status !== 'cancelled') job.status = job.polls === 1 ? 'queued' : job.polls === 2 ? 'running' : (job.final ?? o.finalStatus);
         if (job.status === 'completed' && !job.counted) { job.counted = true; st.completed += 1; }
         const body = { job_id: m[1], status: job.status };
         if (job.status === 'completed' || job.status === 'completed_with_warnings') {
-          const full = `Mock response for chat.prompt on mock (${m[1]}): ${job.prompt}`;
-          const text = o.resultBug === 'wrong' ? `Mock response for chat.prompt on mock (job_other): ${job.prompt}`
+          const synthetic = job.target === 'synthetic_chat'; // P7.1 fixture echo: first 200 chars of the prompt, plus an attachment count
+          const full = synthetic ? `Synthetic answer: ${job.prompt.slice(0, 200)}${job.artifacts?.length ? ` [attachments: ${job.artifacts.length}]` : ''}` : `Mock response for chat.prompt on mock (${m[1]}): ${job.prompt}`;
+          const text = o.resultBug === 'wrong' ? (synthetic ? 'Synthetic answer: some other job' : `Mock response for chat.prompt on mock (job_other): ${job.prompt}`)
             : o.resultBug === 'truncated' ? full.slice(0, full.length - 8)
               : o.resultBug === 'duplicated' ? `${full} ${job.prompt}` : full;
           body.result = { output: { text } };
