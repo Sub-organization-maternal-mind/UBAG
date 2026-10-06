@@ -55,8 +55,43 @@ const specs = {
     },
     // Every mutating RPC request must carry the Fence.
     fencedRequests: ['RunAttemptRequest', 'RenewAttemptRequest', 'CancelAttemptRequest', 'StageManifestRequest'],
-    // Voice RPCs land in P5.7; until then they must not exist.
+    // Voice RPCs live in helper_voice.proto (P5.7); HelperService carries none.
     forbiddenRpcPattern: /Voice/
+  },
+  // ubag.helper.v1 voice plane (P5.7): additive service, same package.
+  'ubag/helper/v1/helper_voice.proto': {
+    rpcs: ['OfferVoice', 'ReconnectVoice', 'ControlVoice', 'RenewVoice', 'StreamVoiceEvents'],
+    messages: ['VoiceFence', 'VoiceCredentials', 'OfferVoiceRequest', 'OfferVoiceResponse', 'VoiceEvent'],
+    parityFields: [
+      'VOICE_CONTROL_OP_MUTE',
+      'VOICE_CONTROL_OP_INTERRUPT',
+      'VOICE_CONTROL_OP_TERMINATE',
+      'bytes relay_key',
+      'bytes media_key',
+      'uint64 after_sequence'
+    ],
+    requiredFields: {
+      VoiceFence: [
+        'string session_id',
+        'string tenant_id',
+        'string attempt_id',
+        'string node_id',
+        'uint64 lease_generation',
+        'google.protobuf.Timestamp expires_at'
+      ]
+    },
+    // Every voice RPC request must carry the VoiceFence.
+    fenceType: 'VoiceFence',
+    fencedRequests: [
+      'OfferVoiceRequest',
+      'ReconnectVoiceRequest',
+      'ControlVoiceRequest',
+      'RenewVoiceRequest',
+      'StreamVoiceEventsRequest'
+    ],
+    // The helper must never be handed a global secret: no field may be named
+    // like one (per-attempt derived keys only).
+    forbiddenFieldPattern: /(app_secret|relay_secret|turn_secret|shared_secret|turn_shared_secret)/
   }
 };
 
@@ -141,12 +176,21 @@ for (const [file, spec] of Object.entries(specs)) {
   for (const message of spec.fencedRequests ?? []) {
     const body = messageBody(code, message);
     if (body === null) failures.push(`${file}: missing ${message} message`);
-    else if (!/\bFence\s+fence\s*=\s*\d+/.test(body)) failures.push(`${file}: ${message} must carry "Fence fence"`);
+    else {
+      const fenceType = spec.fenceType ?? 'Fence';
+      if (!new RegExp(`\\b${fenceType}\\s+fence\\s*=\\s*\\d+`).test(body)) {
+        failures.push(`${file}: ${message} must carry "${fenceType} fence"`);
+      }
+    }
   }
   if (spec.forbiddenRpcPattern) {
     for (const match of code.matchAll(/rpc\s+([A-Za-z0-9_]+)\s*\(/g)) {
       if (spec.forbiddenRpcPattern.test(match[1])) failures.push(`${file}: RPC ${match[1]} is not allowed yet`);
     }
+  }
+  if (spec.forbiddenFieldPattern) {
+    const hit = code.match(spec.forbiddenFieldPattern);
+    if (hit) failures.push(`${file}: field "${hit[0]}" would hand the helper a global secret`);
   }
   checkNumbers(file, code);
 
