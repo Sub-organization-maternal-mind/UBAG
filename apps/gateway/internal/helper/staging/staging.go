@@ -1,11 +1,14 @@
-// Package helper holds Helper Node side code (perf-fleet). staging.go is the
-// asset staging client (P4.10): it fetches an attempt's declared attachments
-// from the primary's helperapi.Assets endpoint over mTLS, verifies size and
-// SHA-256 as the bytes stream, and exposes them as a READ-ONLY
-// artifacts.ArtifactStore so executor.ProcessWorkerRunner.MaterializeAttachments
-// (and its ubag-attach- temp prefix the worker path guard requires) is reused
-// unchanged.
-package helper
+// Package staging is the Helper Node asset staging client (P4.10): it fetches
+// an attempt's declared attachments from the primary's helperapi.Assets endpoint
+// over mTLS, verifies size and SHA-256 as the bytes stream, and exposes them as a
+// READ-ONLY artifacts.ArtifactStore so
+// executor.ProcessWorkerRunner.MaterializeAttachments (and its ubag-attach-
+// temp prefix the worker path guard requires) is reused unchanged.
+//
+// It lives apart from package helper (the service core, P4.11) on purpose: it
+// links the artifact store, the helper API and the jobs package (object-store and
+// Postgres drivers), which the ubag-helper binary's core must not import.
+package staging
 
 import (
 	"context"
