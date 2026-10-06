@@ -86,6 +86,7 @@ func newRig(t *testing.T, opt rigOptions) *rig {
 	}
 	tlsCfg := auth.ServerTLSConfig(r.ca.Pool, func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return &r.node.TLS, nil })
 	r.grpcSrv = auth.NewGRPCServer(tlsCfg, r.srv)
+	r.srv.RegisterVoice(r.grpcSrv) // a no-op unless the test's config enables voice
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
