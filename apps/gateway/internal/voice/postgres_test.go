@@ -27,7 +27,7 @@ func postgresVoiceStore(t *testing.T) (*PostgresStore, *sql.DB) {
 	t.Cleanup(func() { _ = db.Close() })
 	store := NewPostgresStore(db)
 	if err := store.Ready(t.Context()); err != nil {
-		t.Fatalf("voice schema (apply migrations 0019 and 0020): %v", err)
+		t.Fatalf("voice schema (apply migrations 0019, 0020 and 0025): %v", err)
 	}
 	if _, err := db.ExecContext(t.Context(), "DELETE FROM gateway_voice_sessions"); err != nil {
 		t.Fatal(err)
@@ -124,6 +124,99 @@ func TestVoicePostgresConcurrentAdmissionHonorsBudgetAndExclusivity(t *testing.T
 	if err := db.QueryRowContext(t.Context(), `SELECT COUNT(DISTINCT instance_ref) FROM gateway_voice_sessions
 WHERE tenant_id = 'tenant_race' AND status IN ('connecting','connected') AND instance_ref <> ''`).Scan(&distinct); err != nil || distinct != maxActive {
 		t.Fatalf("distinct leased environments = %d err=%v, want %d (no double lease)", distinct, err, maxActive)
+	}
+}
+
+// P5.8: the shared lease contract (generation fencing, media lease versus
+// sweep, terminating hold) on the real schema; needs migration 0025. Each entry
+// starts from a cleared table.
+func TestVoicePostgresLeaseContract(t *testing.T) {
+	for _, c := range leaseContract {
+		t.Run(c.name, func(t *testing.T) {
+			store, _ := postgresVoiceStore(t)
+			c.run(t, store)
+		})
+	}
+}
+
+// Sweep and a media-lease renew racing on a lapsed node lease: the renew never
+// revives it and the session always ends terminated for the media reason.
+func TestVoicePostgresMediaLeaseSweepRenewRace(t *testing.T) {
+	store, _ := postgresVoiceStore(t)
+	for i := 0; i < 20; i++ {
+		id := fmt.Sprintf("media-%d", i)
+		r := reserveRequest(id)
+		r.TenantID = "tenant_media"
+		r.Placements = []Placement{{fmt.Sprintf("acct-m%d", i), fmt.Sprintf("browser-m%d", i)}}
+		r.LeaseTTL, r.Now = time.Hour, leaseNow
+		if _, err := store.Reserve(t.Context(), r); err != nil {
+			t.Fatal(err)
+		}
+		bound, err := store.BindNode(t.Context(), "tenant_media", id, "node-a", time.Second, leaseNow)
+		if err != nil {
+			t.Fatal(err)
+		}
+		later := leaseNow.Add(2 * time.Second) // the media lease has lapsed by then
+		var wg sync.WaitGroup
+		wg.Add(2)
+		var renewErr error
+		go func() { defer wg.Done(); _, _ = store.SweepExpired(t.Context(), later) }()
+		go func() {
+			defer wg.Done()
+			renewErr = store.RenewMediaLease(t.Context(), "tenant_media", id, LeaseFence{bound.NodeID, bound.LeaseGeneration}, later.Add(time.Minute), later)
+		}()
+		wg.Wait()
+		if renewErr == nil {
+			t.Fatalf("%s: a lapsed media lease was renewed", id)
+		}
+		if _, err := store.SweepExpired(t.Context(), later); err != nil { // the racing sweep may have skipped the locked row
+			t.Fatal(err)
+		}
+		got, _, err := store.Get(t.Context(), "tenant_media", id)
+		if err != nil || got.Status != StatusTerminated || got.LastError != "media_lease_expired" {
+			t.Fatalf("%s: %+v err=%v", id, got, err)
+		}
+	}
+}
+
+// A terminating hold is counted by every replica's admission, across tenants,
+// until it is acked; afterwards exactly one racing tenant wins the environment.
+func TestVoicePostgresHoldBlocksConcurrentAdmission(t *testing.T) {
+	store, db := postgresVoiceStore(t)
+	held := reserveRequest("held")
+	held.Placements, held.Now = []Placement{{"acct-held", "browser-held"}}, leaseNow
+	if s, err := store.Reserve(t.Context(), held); err != nil || s.Status != StatusConnecting {
+		t.Fatalf("held = %+v err=%v", s, err)
+	}
+	if err := store.BeginTerminate(t.Context(), "tenant_a", "held", leaseNow, "x", TerminatingHoldMax); err != nil {
+		t.Fatal(err)
+	}
+	race := func(round string) int32 {
+		var won atomic.Int32
+		var wg sync.WaitGroup
+		for i := 0; i < 12; i++ {
+			wg.Add(1)
+			go func(n int) {
+				defer wg.Done()
+				r := reserveRequest(fmt.Sprintf("%s-%d", round, n))
+				r.TenantID = fmt.Sprintf("tenant_%s_%d", round, n) // distinct tenants: no shared advisory lock
+				r.Placements, r.Now = []Placement{{fmt.Sprintf("acct-%s-%d", round, n), "browser-held"}}, leaseNow.Add(time.Second)
+				if got, err := NewPostgresStore(db).Reserve(t.Context(), r); err == nil && got.Status == StatusConnecting {
+					won.Add(1)
+				}
+			}(i)
+		}
+		wg.Wait()
+		return won.Load()
+	}
+	if n := race("during"); n != 0 {
+		t.Fatalf("%d tenants took an environment that was held", n)
+	}
+	if err := store.ReleaseHold(t.Context(), "tenant_a", "held", LeaseFence{}, leaseNow.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if n := race("after"); n != 1 {
+		t.Fatalf("%d tenants won the released environment, want exactly 1", n)
 	}
 }
 

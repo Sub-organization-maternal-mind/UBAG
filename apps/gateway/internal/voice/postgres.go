@@ -16,7 +16,9 @@ import (
 // exist and fails closed otherwise (the store never runs DDL at runtime).
 // Exclusivity rides the same partial UNIQUE indexes the migration declares,
 // so every replica sharing the database enforces one live session per
-// provider account and per browser/audio environment.
+// provider account and per browser/audio environment. A terminating hold
+// (0025) keeps a terminated row's refs reserved, so the admission checks below
+// count it explicitly: it is outside the live-status indexes.
 type PostgresStore struct {
 	db *sql.DB
 }
@@ -44,24 +46,51 @@ func (s *PostgresStore) Ready(ctx context.Context) error {
 			return fmt.Errorf("voice: postgres schema object %q is missing; apply migrations/postgres/0019_voice_sessions.sql and 0020_voice_instance_global.sql", object)
 		}
 	}
+	var leaseColumns int
+	if err := s.db.QueryRowContext(ctx, `
+SELECT COUNT(1) FROM pg_attribute
+WHERE attrelid = 'gateway_voice_sessions'::regclass AND NOT attisdropped
+  AND attname IN ('node_id', 'lease_generation', 'media_lease_expires_at', 'terminating_until')`).Scan(&leaseColumns); err != nil {
+		return err
+	}
+	if leaseColumns != 4 {
+		return fmt.Errorf("voice: postgres lease columns are missing; apply migrations/postgres/0025_voice_lease_generation.sql")
+	}
 	return nil
 }
 
+// postgresVoiceColumns are the columns an INSERT writes (the lease columns keep
+// their defaults); postgresVoiceSelect adds the internal lease state.
 const postgresVoiceColumns = `session_id, tenant_id, app_id, target, mode, job_id,
 status, muted, identity_ref, instance_ref, last_error, created_at, updated_at,
 lease_expires_at, terminated_at`
 
+const postgresVoiceSelect = postgresVoiceColumns + `,
+node_id, lease_generation, media_lease_expires_at, terminating_until`
+
+// postgresLiveOrHeld is the predicate for a row that holds its account and
+// environment at the instant bound to nowParam: a live session, or a terminated
+// one still inside its termination hold.
+func postgresLiveOrHeld(alias, nowParam string) string {
+	return fmt.Sprintf("(%[1]sstatus IN ('connecting','connected') OR (%[1]sterminating_until IS NOT NULL AND %[1]sterminating_until > %[2]s))", alias, nowParam)
+}
+
 func scanPostgresVoiceSession(row interface{ Scan(...any) error }) (Session, error) {
 	var s Session
 	var muted bool
+	var generation int64
+	var mediaLease, hold sql.NullTime
 	if err := row.Scan(&s.ID, &s.TenantID, &s.AppID, &s.Target, &s.Mode, &s.JobID,
 		&s.Status, &muted, &s.IdentityRef, &s.InstanceRef, &s.LastError,
-		&s.CreatedAt, &s.UpdatedAt, &s.LeaseExpires, &s.TerminatedAt); err != nil {
+		&s.CreatedAt, &s.UpdatedAt, &s.LeaseExpires, &s.TerminatedAt,
+		&s.NodeID, &generation, &mediaLease, &hold); err != nil {
 		return Session{}, err
 	}
 	s.Muted = muted
 	s.Status = Status(s.Status)
-	return s, nil
+	s.LeaseGeneration = uint64(generation)
+	s.MediaLeaseExpires, s.TerminatingUntil = mediaLease.Time, hold.Time
+	return visible(s), nil
 }
 
 func isUniqueViolation(err error) bool {
@@ -118,9 +147,9 @@ func (s *PostgresStore) Reserve(ctx context.Context, req ReserveRequest) (Sessio
 				var taken int
 				if err := tx.QueryRowContext(ctx, `
 SELECT COUNT(1) FROM gateway_voice_sessions
-WHERE status IN ('connecting','connected')
+WHERE `+postgresLiveOrHeld("", "$5")+`
   AND ((tenant_id = $1 AND target = $2 AND identity_ref = $3) OR instance_ref = $4)`,
-					req.TenantID, req.Target, p.Identity, p.Instance).Scan(&taken); err != nil {
+					req.TenantID, req.Target, p.Identity, p.Instance, now).Scan(&taken); err != nil {
 					return Session{}, err
 				}
 				if taken == 0 {
@@ -213,7 +242,7 @@ SET status = 'connecting', identity_ref = $3, instance_ref = $4, lease_expires_a
 WHERE session_id = $1 AND tenant_id = $2 AND status = 'queued'
   AND NOT EXISTS (
     SELECT 1 FROM gateway_voice_sessions other
-    WHERE other.status IN ('connecting','connected')
+    WHERE `+postgresLiveOrHeld("other.", "$6")+`
       AND other.session_id <> gateway_voice_sessions.session_id
       AND ((other.tenant_id = gateway_voice_sessions.tenant_id
             AND other.target = gateway_voice_sessions.target AND other.identity_ref = $3)
@@ -231,7 +260,7 @@ WHERE session_id = $1 AND tenant_id = $2 AND status = 'queued'
 		} else if n == 0 {
 			continue
 		}
-		row := tx.QueryRowContext(ctx, `SELECT `+postgresVoiceColumns+` FROM gateway_voice_sessions WHERE session_id = $1`, req.SessionID)
+		row := tx.QueryRowContext(ctx, `SELECT `+postgresVoiceSelect+` FROM gateway_voice_sessions WHERE session_id = $1`, req.SessionID)
 		sess, err := scanPostgresVoiceSession(row)
 		if err != nil {
 			return Session{}, err
@@ -246,7 +275,7 @@ WHERE session_id = $1 AND tenant_id = $2 AND status = 'queued'
 
 func (s *PostgresStore) Get(ctx context.Context, tenantID, sessionID string) (Session, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT `+postgresVoiceColumns+` FROM gateway_voice_sessions
+SELECT `+postgresVoiceSelect+` FROM gateway_voice_sessions
 WHERE session_id = $1 AND tenant_id = $2`, sessionID, tenantID)
 	session, err := scanPostgresVoiceSession(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -259,7 +288,7 @@ WHERE session_id = $1 AND tenant_id = $2`, sessionID, tenantID)
 }
 
 func (s *PostgresStore) List(ctx context.Context, tenantID, target string, limit int) ([]Session, error) {
-	query := `SELECT ` + postgresVoiceColumns + ` FROM gateway_voice_sessions WHERE tenant_id = $1`
+	query := `SELECT ` + postgresVoiceSelect + ` FROM gateway_voice_sessions WHERE tenant_id = $1`
 	args := []any{tenantID}
 	if target != "" {
 		query += " AND target = $2"
@@ -291,18 +320,140 @@ func (s *PostgresStore) List(ctx context.Context, tenantID, target string, limit
 }
 
 func (s *PostgresStore) Transition(ctx context.Context, tenantID, sessionID string, from, to Status, now time.Time, lastError string) error {
-	res, err := s.db.ExecContext(ctx, `
-UPDATE gateway_voice_sessions
-SET status = $3, updated_at = $4, last_error = $5,
-    identity_ref = CASE WHEN $3 = 'terminated' THEN '' ELSE identity_ref END,
-    instance_ref = CASE WHEN $3 = 'terminated' THEN '' ELSE instance_ref END,
-    terminated_at = CASE WHEN $3 = 'terminated' THEN $4 ELSE terminated_at END
-WHERE session_id = $1 AND tenant_id = $2 AND status = $6`,
+	res, err := s.db.ExecContext(ctx, postgresTransitionSQL+` AND status = $6`,
 		sessionID, tenantID, string(to), now, lastError, string(from))
 	if err != nil {
 		return err
 	}
 	return requirePostgresChange(res)
+}
+
+const postgresTransitionSQL = `
+UPDATE gateway_voice_sessions
+SET status = $3, updated_at = $4, last_error = $5,
+    identity_ref = CASE WHEN $3 = 'terminated' THEN '' ELSE identity_ref END,
+    instance_ref = CASE WHEN $3 = 'terminated' THEN '' ELSE instance_ref END,
+    terminated_at = CASE WHEN $3 = 'terminated' THEN $4 ELSE terminated_at END
+WHERE session_id = $1 AND tenant_id = $2`
+
+// CommitTransition is Transition fenced by (node, generation): the single
+// UPDATE only matches the current holder, so a stale commit changes nothing.
+func (s *PostgresStore) CommitTransition(ctx context.Context, tenantID, sessionID string, fence LeaseFence, from, to Status, now time.Time, lastError string) error {
+	if !fence.valid() {
+		return ErrBadBinding
+	}
+	res, err := s.db.ExecContext(ctx, postgresTransitionSQL+` AND status = $6 AND node_id = $7 AND lease_generation = $8`,
+		sessionID, tenantID, string(to), now, lastError, string(from), fence.NodeID, int64(fence.Generation))
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n > 0 {
+		return nil
+	}
+	current, found, err := s.Get(ctx, tenantID, sessionID)
+	if err != nil {
+		return err
+	}
+	return fenceMiss(current, found, fence)
+}
+
+func (s *PostgresStore) BeginTerminate(ctx context.Context, tenantID, sessionID string, now time.Time, reason string, hold time.Duration) error {
+	if hold <= 0 {
+		return s.Terminate(ctx, tenantID, sessionID, now, reason)
+	}
+	hold = min(hold, TerminatingHoldMax)
+	// The refs stay: the row leaves the live-status indexes but the admission
+	// checks count it until terminating_until (or ReleaseHold).
+	res, err := s.db.ExecContext(ctx, `
+UPDATE gateway_voice_sessions
+SET status = 'terminated', updated_at = $3, terminated_at = $3, last_error = $4, terminating_until = $5
+WHERE session_id = $1 AND tenant_id = $2 AND status IN ('connecting','connected')`,
+		sessionID, tenantID, now, reason, now.Add(hold))
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n > 0 {
+		return nil
+	}
+	return s.Terminate(ctx, tenantID, sessionID, now, reason) // queued: nothing to hold
+}
+
+func (s *PostgresStore) ReleaseHold(ctx context.Context, tenantID, sessionID string, fence LeaseFence, now time.Time) error {
+	res, err := s.db.ExecContext(ctx, `
+UPDATE gateway_voice_sessions
+SET identity_ref = '', instance_ref = '', terminating_until = NULL, updated_at = $5
+WHERE session_id = $1 AND tenant_id = $2 AND status = 'terminated' AND terminating_until IS NOT NULL
+  AND node_id = $3 AND lease_generation = $4`,
+		sessionID, tenantID, fence.NodeID, int64(fence.Generation), now)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n > 0 {
+		return nil
+	}
+	current, found, err := s.Get(ctx, tenantID, sessionID)
+	if err != nil {
+		return err
+	}
+	return holdMiss(current, found, fence)
+}
+
+func (s *PostgresStore) BindNode(ctx context.Context, tenantID, sessionID, nodeID string, mediaTTL time.Duration, now time.Time) (Session, error) {
+	if !validNodeID(nodeID) || mediaTTL <= 0 {
+		return Session{}, ErrBadBinding
+	}
+	row := s.db.QueryRowContext(ctx, `
+UPDATE gateway_voice_sessions
+SET node_id = $3, lease_generation = lease_generation + 1, media_lease_expires_at = $4, updated_at = $5
+WHERE session_id = $1 AND tenant_id = $2 AND status IN ('connecting','connected')
+  AND lease_expires_at > $5 AND lease_generation < $6
+RETURNING `+postgresVoiceSelect,
+		sessionID, tenantID, nodeID, now.Add(mediaTTL), now, int64(maxBoundGeneration))
+	bound, err := scanPostgresVoiceSession(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		current, found, getErr := s.Get(ctx, tenantID, sessionID)
+		if getErr != nil {
+			return Session{}, getErr
+		}
+		switch {
+		case !found:
+			return Session{}, ErrNotFound
+		case current.LeaseGeneration >= maxBoundGeneration:
+			return Session{}, ErrBadBinding
+		}
+		return Session{}, ErrConflict // not live, or its lease lapsed
+	}
+	return bound, err
+}
+
+func (s *PostgresStore) RenewMediaLease(ctx context.Context, tenantID, sessionID string, fence LeaseFence, until time.Time, now time.Time) error {
+	if !fence.valid() {
+		return ErrBadBinding
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE gateway_voice_sessions SET media_lease_expires_at = $5, updated_at = $6
+WHERE session_id = $1 AND tenant_id = $2 AND node_id = $3 AND lease_generation = $4
+  AND status IN ('connecting','connected') AND media_lease_expires_at > $6`,
+		sessionID, tenantID, fence.NodeID, int64(fence.Generation), until, now)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n > 0 {
+		return nil
+	}
+	current, found, err := s.Get(ctx, tenantID, sessionID)
+	if err != nil {
+		return err
+	}
+	return fenceMiss(current, found, fence)
 }
 
 func (s *PostgresStore) SetMuted(ctx context.Context, tenantID, sessionID string, muted bool, now time.Time) error {
@@ -340,13 +491,18 @@ WHERE session_id = $1 AND tenant_id = $2 AND status IN ('connecting','connected'
 
 func (s *PostgresStore) SweepExpired(ctx context.Context, now time.Time) ([]string, error) {
 	ids := []string{}
+	// A node-bound session also lapses when its media lease does (a dead node
+	// cannot renew); the client lease reason wins when both lapsed.
 	rows, err := s.db.QueryContext(ctx, `
 UPDATE gateway_voice_sessions
-SET status = 'terminated', updated_at = $1, terminated_at = $1, last_error = 'lease_expired',
+SET status = 'terminated', updated_at = $1, terminated_at = $1,
+    last_error = CASE WHEN lease_expires_at <= $1 THEN 'lease_expired' ELSE 'media_lease_expired' END,
     identity_ref = '', instance_ref = ''
 WHERE session_id IN (
     SELECT session_id FROM gateway_voice_sessions
-    WHERE status IN ('connecting','connected') AND lease_expires_at <= $1
+    WHERE status IN ('connecting','connected')
+      AND (lease_expires_at <= $1
+           OR (node_id <> '' AND (media_lease_expires_at IS NULL OR media_lease_expires_at <= $1)))
     FOR UPDATE SKIP LOCKED
 )
 RETURNING session_id`, now)
@@ -361,7 +517,15 @@ RETURNING session_id`, now)
 		}
 		ids = append(ids, id)
 	}
-	return ids, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Free the refs of terminations whose hold elapsed (admission already
+	// ignores them; this just keeps the rows clean).
+	_, err = s.db.ExecContext(ctx, `
+UPDATE gateway_voice_sessions SET identity_ref = '', instance_ref = '', terminating_until = NULL
+WHERE status = 'terminated' AND terminating_until IS NOT NULL AND terminating_until <= $1`, now)
+	return ids, err
 }
 
 func (s *PostgresStore) GlobalSessionCounts(ctx context.Context) (int, int, error) {

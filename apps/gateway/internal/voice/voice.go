@@ -79,6 +79,91 @@ type Session struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 	LeaseExpires time.Time `json:"lease_expires_at,omitempty"`
 	TerminatedAt time.Time `json:"terminated_at,omitempty"`
+
+	// Internal lease state (P5.8). json:"-" keeps it out of every response: a
+	// Helper Node id, the lease generation and the teardown hold are never
+	// client-visible (TestSessionJSONCarriesNoInternalLeaseState).
+	//
+	// NodeID and LeaseGeneration identify the Helper Node that currently hosts
+	// the session's media (empty and 0 for primary-hosted sessions); the
+	// generation grows on every BindNode, so a previous holder's writes fail.
+	// MediaLeaseExpires is the node's own lease, renewed by that node alone.
+	// TerminatingUntil is set while a terminated session still holds its
+	// account and environment so provider teardown can finish (BeginTerminate).
+	NodeID            string    `json:"-"`
+	LeaseGeneration   uint64    `json:"-"`
+	MediaLeaseExpires time.Time `json:"-"`
+	TerminatingUntil  time.Time `json:"-"`
+}
+
+// holdsLease reports whether the status owns the account and environment leases.
+func (s Status) holdsLease() bool { return s == StatusConnecting || s == StatusConnected }
+
+// TerminatingHoldMax bounds the terminating hold (the provider-deactivation
+// timeout): a terminated session never pins its account or environment longer.
+const TerminatingHoldMax = 45 * time.Second
+
+// LeaseFence names the holder of a node-bound media lease: the Helper Node and
+// the generation BindNode handed it. The zero fence names a primary-hosted
+// session (no node, generation 0).
+type LeaseFence struct {
+	NodeID     string
+	Generation uint64
+}
+
+func (f LeaseFence) valid() bool {
+	return validNodeID(f.NodeID) && f.Generation > 0 && f.Generation <= maxBoundGeneration
+}
+
+func validNodeID(id string) bool {
+	return id != "" && len(id) <= 128 && !strings.Contains(id, "|")
+}
+
+// checkFence reports why f is not the fence of s (nil when it is).
+func (s Session) checkFence(f LeaseFence) error {
+	switch {
+	case s.NodeID != f.NodeID:
+		return ErrNodeMismatch
+	case s.LeaseGeneration != f.Generation:
+		return ErrStaleGeneration
+	}
+	return nil
+}
+
+// fenceMiss explains why a fenced write matched no row.
+func fenceMiss(s Session, found bool, f LeaseFence) error {
+	if !found {
+		return ErrNotFound
+	}
+	if err := s.checkFence(f); err != nil {
+		return err
+	}
+	return ErrConflict
+}
+
+// holdMiss explains why ReleaseHold matched no row: a live session's leases are
+// never released here (ErrConflict); an already released or never held
+// termination is an idempotent ack (nil).
+func holdMiss(s Session, found bool, f LeaseFence) error {
+	if !found {
+		return ErrNotFound
+	}
+	if err := s.checkFence(f); err != nil {
+		return err
+	}
+	if s.Status != StatusTerminated {
+		return ErrConflict
+	}
+	return nil
+}
+
+// visible is the externally reported record: a terminated session reports no
+// leases even while its termination hold keeps them reserved.
+func visible(s Session) Session {
+	if s.Status == StatusTerminated {
+		s.IdentityRef, s.InstanceRef = "", ""
+	}
+	return s
 }
 
 // ReserveRequest is one admission attempt.
@@ -175,12 +260,44 @@ type Store interface {
 	// releases its leases.
 	Terminate(ctx context.Context, tenantID, sessionID string, now time.Time, reason string) error
 
+	// BeginTerminate terminates like Terminate (the session reads as
+	// terminated at once) but keeps the account and environment leases held
+	// until ReleaseHold acks provider teardown or hold (clamped to
+	// TerminatingHoldMax) passes, so no successor can claim them while the
+	// provider voice session is still being deactivated. A queued or already
+	// terminated session holds nothing; hold <= 0 is Terminate. Idempotent.
+	BeginTerminate(ctx context.Context, tenantID, sessionID string, now time.Time, reason string, hold time.Duration) error
+
+	// ReleaseHold acks provider teardown: it frees the leases a BeginTerminate
+	// kept. The fence must be the session's (the zero fence for primary-hosted
+	// sessions), so a replaced node cannot release the hold. Idempotent; a live
+	// session is ErrConflict.
+	ReleaseHold(ctx context.Context, tenantID, sessionID string, fence LeaseFence, now time.Time) error
+
+	// BindNode hands a live session's media lease to a Helper Node: it records
+	// the node, grows the lease generation (the previous holder's fence stops
+	// matching) and opens a media lease of mediaTTL. It returns the updated
+	// session so the caller learns the generation. ErrConflict when the session
+	// is not live or its lease lapsed.
+	BindNode(ctx context.Context, tenantID, sessionID, nodeID string, mediaTTL time.Duration, now time.Time) (Session, error)
+
+	// RenewMediaLease extends the node-bound media lease. It fails with
+	// ErrNodeMismatch / ErrStaleGeneration for a stale holder and with
+	// ErrConflict once the media lease lapsed (only the sweeper ends it).
+	RenewMediaLease(ctx context.Context, tenantID, sessionID string, fence LeaseFence, until time.Time, now time.Time) error
+
+	// CommitTransition is Transition fenced by the node-bound lease: a stale
+	// holder's commit is rejected before it can change the session.
+	CommitTransition(ctx context.Context, tenantID, sessionID string, fence LeaseFence, from, to Status, now time.Time, lastError string) error
+
 	// RenewLease extends a live session's lease expiry.
 	RenewLease(ctx context.Context, tenantID, sessionID string, until time.Time, now time.Time) error
 
 	// SweepExpired terminates every session (any tenant) whose lease lapsed
-	// and whose status is active, marking lastError. Returns the swept IDs.
-	// It must be safe to run from any replica (idempotent, CAS-guarded).
+	// (or whose node-bound media lease lapsed) and whose status is active,
+	// marking lastError. Returns the swept IDs. It also frees terminating holds
+	// that passed their deadline (not reported). It must be safe to run from any
+	// replica (idempotent, CAS-guarded).
 	SweepExpired(ctx context.Context, now time.Time) ([]string, error)
 
 	// TenantCounts returns the tenant's live-mode (leased, queued) session
@@ -237,7 +354,7 @@ func (m *MemoryStore) Reserve(ctx context.Context, req ReserveRequest) (Session,
 	if mode == ModeLive {
 		leased, queued := m.counts(req.TenantID)
 		if req.MaxActive <= 0 || leased < req.MaxActive {
-			active := m.activeIndex()
+			active := m.activeIndex(now)
 			for _, p := range req.Placements {
 				p, ok := p.clean()
 				if !ok || !placementFree(active, req.TenantID, req.Target, p) {
@@ -290,7 +407,7 @@ func (m *MemoryStore) Claim(ctx context.Context, req ClaimRequest) (Session, err
 	if leased, _ := m.counts(req.TenantID); req.MaxActive > 0 && leased >= req.MaxActive {
 		return Session{}, ErrConflict
 	}
-	active := m.activeIndex()
+	active := m.activeIndex(now)
 	for _, p := range req.Placements {
 		p, ok := p.clean()
 		if !ok || !placementFree(active, req.TenantID, s.Target, p) {
@@ -341,10 +458,12 @@ func instanceKey(instance string) string {
 	return "instance\x00" + instance
 }
 
-func (m *MemoryStore) activeIndex() map[string]struct{} {
+// activeIndex lists the leases that are taken at now: live sessions' and
+// terminated sessions' unexpired termination holds.
+func (m *MemoryStore) activeIndex(now time.Time) map[string]struct{} {
 	active := map[string]struct{}{}
 	for _, s := range m.sessions {
-		if s.Status == StatusTerminated {
+		if s.Status == StatusTerminated && !s.TerminatingUntil.After(now) {
 			continue
 		}
 		if s.IdentityRef != "" {
@@ -364,7 +483,7 @@ func (m *MemoryStore) Get(_ context.Context, tenantID, sessionID string) (Sessio
 	if !ok || s.TenantID != tenantID {
 		return Session{}, false, nil
 	}
-	return *s, true, nil
+	return visible(*s), true, nil
 }
 
 func (m *MemoryStore) List(_ context.Context, tenantID, target string, limit int) ([]Session, error) {
@@ -378,7 +497,7 @@ func (m *MemoryStore) List(_ context.Context, tenantID, target string, limit int
 		if target != "" && s.Target != target {
 			continue
 		}
-		out = append(out, *s)
+		out = append(out, visible(*s))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	if limit > 0 && len(out) > limit {
@@ -388,11 +507,27 @@ func (m *MemoryStore) List(_ context.Context, tenantID, target string, limit int
 }
 
 func (m *MemoryStore) Transition(_ context.Context, tenantID, sessionID string, from, to Status, now time.Time, lastError string) error {
+	return m.transition(tenantID, sessionID, nil, from, to, now, lastError)
+}
+
+func (m *MemoryStore) CommitTransition(_ context.Context, tenantID, sessionID string, fence LeaseFence, from, to Status, now time.Time, lastError string) error {
+	if !fence.valid() {
+		return ErrBadBinding
+	}
+	return m.transition(tenantID, sessionID, &fence, from, to, now, lastError)
+}
+
+func (m *MemoryStore) transition(tenantID, sessionID string, fence *LeaseFence, from, to Status, now time.Time, lastError string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.sessions[sessionID]
 	if !ok || s.TenantID != tenantID {
 		return ErrNotFound
+	}
+	if fence != nil {
+		if err := s.checkFence(*fence); err != nil {
+			return err
+		}
 	}
 	if s.Status != from {
 		return ErrConflict
@@ -442,6 +577,93 @@ func (m *MemoryStore) Terminate(_ context.Context, tenantID, sessionID string, n
 	return nil
 }
 
+func (m *MemoryStore) BeginTerminate(ctx context.Context, tenantID, sessionID string, now time.Time, reason string, hold time.Duration) error {
+	if hold <= 0 {
+		return m.Terminate(ctx, tenantID, sessionID, now, reason)
+	}
+	hold = min(hold, TerminatingHoldMax)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[sessionID]
+	if !ok || s.TenantID != tenantID {
+		return ErrNotFound
+	}
+	if s.Status == StatusTerminated {
+		return nil // idempotent; an existing hold is kept
+	}
+	held := s.Status.holdsLease()
+	s.Status = StatusTerminated
+	s.TerminatedAt = now
+	s.UpdatedAt = now
+	s.LastError = reason
+	if held {
+		s.TerminatingUntil = now.Add(hold) // the leases stay reserved until then
+	} else {
+		s.IdentityRef = ""
+		s.InstanceRef = ""
+	}
+	return nil
+}
+
+func (m *MemoryStore) ReleaseHold(_ context.Context, tenantID, sessionID string, fence LeaseFence, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[sessionID]
+	if !ok || s.TenantID != tenantID {
+		return ErrNotFound
+	}
+	if s.Status != StatusTerminated || s.checkFence(fence) != nil {
+		return holdMiss(*s, true, fence)
+	}
+	s.IdentityRef, s.InstanceRef, s.TerminatingUntil = "", "", time.Time{}
+	s.UpdatedAt = now
+	return nil
+}
+
+func (m *MemoryStore) BindNode(_ context.Context, tenantID, sessionID, nodeID string, mediaTTL time.Duration, now time.Time) (Session, error) {
+	if !validNodeID(nodeID) || mediaTTL <= 0 {
+		return Session{}, ErrBadBinding
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[sessionID]
+	if !ok || s.TenantID != tenantID {
+		return Session{}, ErrNotFound
+	}
+	if !s.Status.holdsLease() || !s.LeaseExpires.After(now) {
+		return Session{}, ErrConflict
+	}
+	if s.LeaseGeneration >= maxBoundGeneration {
+		return Session{}, ErrBadBinding
+	}
+	s.NodeID = nodeID
+	s.LeaseGeneration++
+	s.MediaLeaseExpires = now.Add(mediaTTL)
+	s.UpdatedAt = now
+	return *s, nil
+}
+
+func (m *MemoryStore) RenewMediaLease(_ context.Context, tenantID, sessionID string, fence LeaseFence, until time.Time, now time.Time) error {
+	if !fence.valid() {
+		return ErrBadBinding
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[sessionID]
+	if !ok || s.TenantID != tenantID {
+		return ErrNotFound
+	}
+	if err := s.checkFence(fence); err != nil {
+		return err
+	}
+	if !s.Status.holdsLease() || !s.MediaLeaseExpires.After(now) {
+		return ErrConflict
+	}
+	s.MediaLeaseExpires = until
+	s.UpdatedAt = now
+	return nil
+}
+
 func (m *MemoryStore) RenewLease(_ context.Context, tenantID, sessionID string, until time.Time, now time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -463,18 +685,25 @@ func (m *MemoryStore) SweepExpired(_ context.Context, now time.Time) ([]string, 
 	var swept []string
 	for _, s := range m.sessions {
 		if s.Status == StatusTerminated {
+			if !s.TerminatingUntil.IsZero() && !s.TerminatingUntil.After(now) {
+				s.IdentityRef, s.InstanceRef, s.TerminatingUntil = "", "", time.Time{} // hold elapsed
+			}
 			continue
 		}
 		if s.Status == StatusQueued {
 			continue // queued sessions hold no lease and cannot expire
 		}
+		reason := "lease_expired"
 		if !s.LeaseExpires.IsZero() && s.LeaseExpires.After(now) {
-			continue
+			if s.NodeID == "" || s.MediaLeaseExpires.After(now) {
+				continue
+			}
+			reason = "media_lease_expired" // the hosting node stopped renewing
 		}
 		s.Status = StatusTerminated
 		s.TerminatedAt = now
 		s.UpdatedAt = now
-		s.LastError = "lease_expired"
+		s.LastError = reason
 		s.IdentityRef = ""
 		s.InstanceRef = ""
 		swept = append(swept, s.ID)

@@ -42,8 +42,22 @@ CREATE TABLE IF NOT EXISTS gateway_voice_sessions (
 	created_at       TEXT NOT NULL,
 	updated_at       TEXT NOT NULL,
 	lease_expires_at TEXT NOT NULL DEFAULT '',
-	terminated_at    TEXT NOT NULL DEFAULT ''
+	terminated_at    TEXT NOT NULL DEFAULT '',
+	node_id          TEXT NOT NULL DEFAULT '',
+	lease_generation INTEGER NOT NULL DEFAULT 0,
+	media_lease_expires_at TEXT NOT NULL DEFAULT '',
+	terminating_until TEXT NOT NULL DEFAULT ''
 )`
+
+// sqliteLeaseColumns are the 0025 columns (see the Postgres migration for their
+// meaning). A database created before them gets them added by Ready, since
+// SQLite has no ADD COLUMN IF NOT EXISTS.
+var sqliteLeaseColumns = []struct{ name, ddl string }{
+	{"node_id", "node_id TEXT NOT NULL DEFAULT ''"},
+	{"lease_generation", "lease_generation INTEGER NOT NULL DEFAULT 0"},
+	{"media_lease_expires_at", "media_lease_expires_at TEXT NOT NULL DEFAULT ''"},
+	{"terminating_until", "terminating_until TEXT NOT NULL DEFAULT ''"},
+}
 
 // Exclusive provider-account lease: at most one live session per
 // (tenant, target, identity_ref). Queued rows carry no identity and are
@@ -85,25 +99,65 @@ func (s *SQLiteStore) Ready(ctx context.Context) error {
 			return err
 		}
 	}
+	have := map[string]bool{}
+	rows, err := s.db.QueryContext(ctx, `SELECT name FROM pragma_table_info('gateway_voice_sessions')`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		have[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_ = rows.Close()
+	for _, col := range sqliteLeaseColumns {
+		if have[col.name] {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, "ALTER TABLE gateway_voice_sessions ADD COLUMN "+col.ddl); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
+// sqliteVoiceColumns are the columns an INSERT writes (the lease columns keep
+// their defaults); sqliteVoiceSelect adds the internal lease state.
 const sqliteVoiceColumns = `session_id, tenant_id, app_id, target, mode, job_id,
 status, muted, identity_ref, instance_ref, last_error, created_at, updated_at,
 lease_expires_at, terminated_at`
 
+const sqliteVoiceSelect = sqliteVoiceColumns + `,
+node_id, lease_generation, media_lease_expires_at, terminating_until`
+
+// sqliteLiveOrHeld is the predicate for a row that holds its account and
+// environment at the instant bound to the one `?` it contains: a live session,
+// or a terminated one still inside its termination hold.
+func sqliteLiveOrHeld(alias string) string {
+	return "(" + alias + "status IN ('connecting','connected') OR (" + alias + "terminating_until <> '' AND " + alias + "terminating_until > ?))"
+}
+
 func scanSQLiteVoiceSession(row interface{ Scan(...any) error }) (Session, error) {
 	var s Session
 	var muted int
+	var generation int64
 	var createdAt, updatedAt string
-	var leaseExpires, terminatedAt string
+	var leaseExpires, terminatedAt, mediaLease, hold string
 	if err := row.Scan(&s.ID, &s.TenantID, &s.AppID, &s.Target, &s.Mode, &s.JobID,
 		&s.Status, &muted, &s.IdentityRef, &s.InstanceRef, &s.LastError,
-		&createdAt, &updatedAt, &leaseExpires, &terminatedAt); err != nil {
+		&createdAt, &updatedAt, &leaseExpires, &terminatedAt,
+		&s.NodeID, &generation, &mediaLease, &hold); err != nil {
 		return Session{}, err
 	}
 	s.Muted = muted != 0
 	s.Status = Status(s.Status)
+	s.LeaseGeneration = uint64(generation)
 	_ = s.CreatedAt.UnmarshalText([]byte(createdAt))
 	_ = s.UpdatedAt.UnmarshalText([]byte(updatedAt))
 	if leaseExpires != "" {
@@ -112,7 +166,13 @@ func scanSQLiteVoiceSession(row interface{ Scan(...any) error }) (Session, error
 	if terminatedAt != "" {
 		_ = s.TerminatedAt.UnmarshalText([]byte(terminatedAt))
 	}
-	return s, nil
+	if mediaLease != "" {
+		_ = s.MediaLeaseExpires.UnmarshalText([]byte(mediaLease))
+	}
+	if hold != "" {
+		_ = s.TerminatingUntil.UnmarshalText([]byte(hold))
+	}
+	return visible(s), nil
 }
 
 func formatSQLiteTime(t time.Time) string {
@@ -172,9 +232,9 @@ func (s *SQLiteStore) Reserve(ctx context.Context, req ReserveRequest) (Session,
 				var taken int
 				if err := tx.QueryRowContext(ctx, `
 SELECT COUNT(1) FROM gateway_voice_sessions
-WHERE status IN ('connecting','connected')
+WHERE `+sqliteLiveOrHeld("")+`
   AND ((tenant_id = ? AND target = ? AND identity_ref = ?) OR instance_ref = ?)`,
-					req.TenantID, req.Target, p.Identity, p.Instance).Scan(&taken); err != nil {
+					formatSQLiteTime(now), req.TenantID, req.Target, p.Identity, p.Instance).Scan(&taken); err != nil {
 					return Session{}, err
 				}
 				if taken == 0 {
@@ -251,14 +311,15 @@ WHERE session_id = ? AND tenant_id = ? AND status = 'queued'
     WHERE c.tenant_id = ? AND c.mode <> 'utterance' AND c.status IN ('connecting','connected')) < ?)
   AND NOT EXISTS (
     SELECT 1 FROM gateway_voice_sessions other
-    WHERE other.status IN ('connecting','connected')
+    WHERE `+sqliteLiveOrHeld("other.")+`
       AND other.session_id <> gateway_voice_sessions.session_id
       AND ((other.tenant_id = gateway_voice_sessions.tenant_id
             AND other.target = gateway_voice_sessions.target AND other.identity_ref = ?)
            OR other.instance_ref = ?)
   )`,
 			p.Identity, p.Instance, formatSQLiteTime(now.Add(req.LeaseTTL)), formatSQLiteTime(now),
-			req.SessionID, req.TenantID, req.MaxActive, req.TenantID, req.MaxActive, p.Identity, p.Instance)
+			req.SessionID, req.TenantID, req.MaxActive, req.TenantID, req.MaxActive,
+			formatSQLiteTime(now), p.Identity, p.Instance)
 		if err != nil {
 			if strings.Contains(strings.ToLower(err.Error()), "unique") || strings.Contains(strings.ToLower(err.Error()), "constraint") {
 				continue // lease lost to a concurrent replica; try next pair
@@ -278,7 +339,7 @@ WHERE session_id = ? AND tenant_id = ? AND status = 'queued'
 
 func (s *SQLiteStore) Get(ctx context.Context, tenantID, sessionID string) (Session, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
-SELECT `+sqliteVoiceColumns+` FROM gateway_voice_sessions
+SELECT `+sqliteVoiceSelect+` FROM gateway_voice_sessions
 WHERE session_id = ? AND tenant_id = ?`, sessionID, tenantID)
 	session, err := scanSQLiteVoiceSession(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -291,7 +352,7 @@ WHERE session_id = ? AND tenant_id = ?`, sessionID, tenantID)
 }
 
 func (s *SQLiteStore) List(ctx context.Context, tenantID, target string, limit int) ([]Session, error) {
-	query := `SELECT ` + sqliteVoiceColumns + ` FROM gateway_voice_sessions WHERE tenant_id = ?`
+	query := `SELECT ` + sqliteVoiceSelect + ` FROM gateway_voice_sessions WHERE tenant_id = ?`
 	args := []any{tenantID}
 	if target != "" {
 		query += " AND target = ?"
@@ -323,13 +384,7 @@ func scanSQLiteVoiceSessions(rows *sql.Rows) ([]Session, error) {
 }
 
 func (s *SQLiteStore) Transition(ctx context.Context, tenantID, sessionID string, from, to Status, now time.Time, lastError string) error {
-	res, err := s.db.ExecContext(ctx, `
-UPDATE gateway_voice_sessions
-SET status = ?, updated_at = ?, last_error = ?,
-    identity_ref = CASE WHEN ? = 'terminated' THEN '' ELSE identity_ref END,
-    instance_ref = CASE WHEN ? = 'terminated' THEN '' ELSE instance_ref END,
-    terminated_at = CASE WHEN ? = 'terminated' THEN ? ELSE terminated_at END
-WHERE session_id = ? AND tenant_id = ? AND status = ?`,
+	res, err := s.db.ExecContext(ctx, sqliteTransitionSQL+` AND status = ?`,
 		string(to), formatSQLiteTime(now), lastError,
 		string(to), string(to), string(to), formatSQLiteTime(now),
 		sessionID, tenantID, string(from),
@@ -338,6 +393,139 @@ WHERE session_id = ? AND tenant_id = ? AND status = ?`,
 		return err
 	}
 	return requireSQLiteChange(res)
+}
+
+const sqliteTransitionSQL = `
+UPDATE gateway_voice_sessions
+SET status = ?, updated_at = ?, last_error = ?,
+    identity_ref = CASE WHEN ? = 'terminated' THEN '' ELSE identity_ref END,
+    instance_ref = CASE WHEN ? = 'terminated' THEN '' ELSE instance_ref END,
+    terminated_at = CASE WHEN ? = 'terminated' THEN ? ELSE terminated_at END
+WHERE session_id = ? AND tenant_id = ?`
+
+// CommitTransition is Transition fenced by (node, generation): the single
+// UPDATE only matches the current holder, so a stale commit changes nothing.
+func (s *SQLiteStore) CommitTransition(ctx context.Context, tenantID, sessionID string, fence LeaseFence, from, to Status, now time.Time, lastError string) error {
+	if !fence.valid() {
+		return ErrBadBinding
+	}
+	res, err := s.db.ExecContext(ctx, sqliteTransitionSQL+` AND status = ? AND node_id = ? AND lease_generation = ?`,
+		string(to), formatSQLiteTime(now), lastError,
+		string(to), string(to), string(to), formatSQLiteTime(now),
+		sessionID, tenantID, string(from), fence.NodeID, int64(fence.Generation),
+	)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n > 0 {
+		return nil
+	}
+	current, found, err := s.Get(ctx, tenantID, sessionID)
+	if err != nil {
+		return err
+	}
+	return fenceMiss(current, found, fence)
+}
+
+func (s *SQLiteStore) BeginTerminate(ctx context.Context, tenantID, sessionID string, now time.Time, reason string, hold time.Duration) error {
+	if hold <= 0 {
+		return s.Terminate(ctx, tenantID, sessionID, now, reason)
+	}
+	hold = min(hold, TerminatingHoldMax)
+	// The refs stay: the row leaves the live-status indexes but the admission
+	// checks count it until terminating_until (or ReleaseHold).
+	res, err := s.db.ExecContext(ctx, `
+UPDATE gateway_voice_sessions
+SET status = 'terminated', updated_at = ?, terminated_at = ?, last_error = ?, terminating_until = ?
+WHERE session_id = ? AND tenant_id = ? AND status IN ('connecting','connected')`,
+		formatSQLiteTime(now), formatSQLiteTime(now), reason, formatSQLiteTime(now.Add(hold)), sessionID, tenantID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n > 0 {
+		return nil
+	}
+	return s.Terminate(ctx, tenantID, sessionID, now, reason) // queued: nothing to hold
+}
+
+func (s *SQLiteStore) ReleaseHold(ctx context.Context, tenantID, sessionID string, fence LeaseFence, now time.Time) error {
+	res, err := s.db.ExecContext(ctx, `
+UPDATE gateway_voice_sessions
+SET identity_ref = '', instance_ref = '', terminating_until = '', updated_at = ?
+WHERE session_id = ? AND tenant_id = ? AND status = 'terminated' AND terminating_until <> ''
+  AND node_id = ? AND lease_generation = ?`,
+		formatSQLiteTime(now), sessionID, tenantID, fence.NodeID, int64(fence.Generation))
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n > 0 {
+		return nil
+	}
+	current, found, err := s.Get(ctx, tenantID, sessionID)
+	if err != nil {
+		return err
+	}
+	return holdMiss(current, found, fence)
+}
+
+func (s *SQLiteStore) BindNode(ctx context.Context, tenantID, sessionID, nodeID string, mediaTTL time.Duration, now time.Time) (Session, error) {
+	if !validNodeID(nodeID) || mediaTTL <= 0 {
+		return Session{}, ErrBadBinding
+	}
+	row := s.db.QueryRowContext(ctx, `
+UPDATE gateway_voice_sessions
+SET node_id = ?, lease_generation = lease_generation + 1, media_lease_expires_at = ?, updated_at = ?
+WHERE session_id = ? AND tenant_id = ? AND status IN ('connecting','connected')
+  AND lease_expires_at > ? AND lease_generation < ?
+RETURNING `+sqliteVoiceSelect,
+		nodeID, formatSQLiteTime(now.Add(mediaTTL)), formatSQLiteTime(now),
+		sessionID, tenantID, formatSQLiteTime(now), int64(maxBoundGeneration))
+	bound, err := scanSQLiteVoiceSession(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		current, found, getErr := s.Get(ctx, tenantID, sessionID)
+		if getErr != nil {
+			return Session{}, getErr
+		}
+		switch {
+		case !found:
+			return Session{}, ErrNotFound
+		case current.LeaseGeneration >= maxBoundGeneration:
+			return Session{}, ErrBadBinding
+		}
+		return Session{}, ErrConflict // not live, or its lease lapsed
+	}
+	return bound, err
+}
+
+func (s *SQLiteStore) RenewMediaLease(ctx context.Context, tenantID, sessionID string, fence LeaseFence, until time.Time, now time.Time) error {
+	if !fence.valid() {
+		return ErrBadBinding
+	}
+	res, err := s.db.ExecContext(ctx, `
+UPDATE gateway_voice_sessions SET media_lease_expires_at = ?, updated_at = ?
+WHERE session_id = ? AND tenant_id = ? AND node_id = ? AND lease_generation = ?
+  AND status IN ('connecting','connected') AND media_lease_expires_at > ?`,
+		formatSQLiteTime(until), formatSQLiteTime(now), sessionID, tenantID,
+		fence.NodeID, int64(fence.Generation), formatSQLiteTime(now))
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n > 0 {
+		return nil
+	}
+	current, found, err := s.Get(ctx, tenantID, sessionID)
+	if err != nil {
+		return err
+	}
+	return fenceMiss(current, found, fence)
 }
 
 func (s *SQLiteStore) SetMuted(ctx context.Context, tenantID, sessionID string, muted bool, now time.Time) error {
@@ -378,27 +566,41 @@ WHERE session_id = ? AND tenant_id = ? AND status IN ('connecting','connected')
 
 func (s *SQLiteStore) SweepExpired(ctx context.Context, now time.Time) ([]string, error) {
 	// One atomic statement: expiry and status are rechecked as the row is
-	// terminated, so a concurrent renewal can never be swept.
+	// terminated, so a concurrent renewal can never be swept. A node-bound
+	// session also lapses when its media lease does (a dead node cannot renew);
+	// the client lease reason wins when both lapsed.
+	t := formatSQLiteTime(now)
 	rows, err := s.db.QueryContext(ctx, `
 UPDATE gateway_voice_sessions
-SET status = 'terminated', updated_at = ?, terminated_at = ?, last_error = 'lease_expired',
+SET status = 'terminated', updated_at = ?, terminated_at = ?,
+    last_error = CASE WHEN lease_expires_at <> '' AND lease_expires_at <= ? THEN 'lease_expired' ELSE 'media_lease_expired' END,
     identity_ref = '', instance_ref = ''
 WHERE status IN ('connecting','connected')
-  AND lease_expires_at <> '' AND lease_expires_at <= ?
-RETURNING session_id`, formatSQLiteTime(now), formatSQLiteTime(now), formatSQLiteTime(now))
+  AND ((lease_expires_at <> '' AND lease_expires_at <= ?) OR (node_id <> '' AND media_lease_expires_at <= ?))
+RETURNING session_id`, t, t, t, t, t)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	ids := []string{}
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
 			return nil, err
 		}
 		ids = append(ids, id)
 	}
-	return ids, rows.Err()
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	_ = rows.Close() // release the connection before the next statement (MaxOpenConns may be 1)
+	// Free the refs of terminations whose hold elapsed (admission already
+	// ignores them; this just keeps the rows clean).
+	_, err = s.db.ExecContext(ctx, `
+UPDATE gateway_voice_sessions SET identity_ref = '', instance_ref = '', terminating_until = ''
+WHERE status = 'terminated' AND terminating_until <> '' AND terminating_until <= ?`, t)
+	return ids, err
 }
 
 func (s *SQLiteStore) GlobalSessionCounts(ctx context.Context) (int, int, error) {

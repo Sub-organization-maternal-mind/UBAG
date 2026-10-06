@@ -290,6 +290,25 @@ func truncateReason(reason string) string {
 	return reason
 }
 
+// terminateVoiceSession ends a session record. With the terminating hold on
+// (UBAG_HELPER_VOICE) and provider voice requested on this replica, the account
+// and environment stay reserved until the deactivate job acks (VoiceMediaEnded)
+// or voice.TerminatingHoldMax passes, so a successor cannot activate on a
+// provider UI that is still being torn down. Otherwise leases free at once, as
+// before. The caller drops the media path AFTER this returns, which is what
+// fires VoiceMediaEnded, so the hold always exists before its ack.
+func (s *Server) terminateVoiceSession(ctx context.Context, tenantID, sessionID string, now time.Time, reason string) error {
+	if s.voiceHold {
+		s.voiceLife.mu.Lock()
+		requested := s.voiceLife.get(sessionID, false) != nil
+		s.voiceLife.mu.Unlock()
+		if requested {
+			return s.voice.BeginTerminate(ctx, tenantID, sessionID, now, reason, voice.TerminatingHoldMax)
+		}
+	}
+	return s.voice.Terminate(ctx, tenantID, sessionID, now, reason)
+}
+
 // failVoiceSession ends a session whose provider voice could not be started:
 // terminate the record (freeing its leases) and drop the media path.
 func (s *Server) failVoiceSession(sess voice.Session, reason string) {
@@ -300,7 +319,7 @@ func (s *Server) failVoiceSession(sess voice.Session, reason string) {
 	s.voiceLife.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := s.voice.Terminate(ctx, sess.TenantID, sess.ID, time.Now().UTC(), reason); err != nil {
+	if err := s.terminateVoiceSession(ctx, sess.TenantID, sess.ID, time.Now().UTC(), reason); err != nil {
 		slog.Error("terminating voice session after activation failure failed", "session_id", sess.ID, "error", err)
 	}
 	s.dropVoiceMedia(sess.ID)
@@ -359,7 +378,17 @@ func (s *Server) VoiceMediaEnded(sess voice.Session, reason string) {
 		ctx, cancel := context.WithTimeout(context.Background(), voiceDeactivateTimeout+10*time.Second)
 		defer cancel()
 		if _, err := s.runVoiceControl(ctx, sess, "deactivate", voiceDeactivateTimeout); err != nil {
+			// No ack: a terminating hold (if any) runs out by itself at its cap.
 			slog.Warn("provider voice deactivation failed", "session_id", sess.ID, "reason", reason, "error", err)
+			return
+		}
+		if s.voiceHold {
+			// The provider confirmed deactivation: free the leases the terminate
+			// kept. A session that was never held reads as an idempotent ack.
+			if err := s.voice.ReleaseHold(ctx, sess.TenantID, sess.ID, voice.LeaseFence{}, time.Now().UTC()); err != nil &&
+				!errors.Is(err, voice.ErrNotFound) && !errors.Is(err, voice.ErrConflict) {
+				slog.Warn("releasing the voice terminating hold failed", "session_id", sess.ID, "error", err)
+			}
 		}
 	}()
 }
