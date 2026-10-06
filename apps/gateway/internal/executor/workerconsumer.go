@@ -465,31 +465,48 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		}
 		c.observeWorkerRun(job.Target, outcome, workerDuration)
 		slog.Error("worker execution error", "job_id", envelope.JobID, "error", err)
-		if ctx.Err() != nil {
+		// Post-submit failure (UBAG_WORKER_STRICT_SUBMIT): the provider may hold
+		// the turn, so never lease.Retry (shutdown and lease loss included).
+		// Terminal writes use a context that survives a cancelled parent.
+		ambiguous := errors.Is(err, ErrAmbiguous)
+		opCtx := ctx
+		if ambiguous {
+			var opCancel context.CancelFunc
+			opCtx, opCancel = detachedOpContext(ctx)
+			defer opCancel()
+		}
+		if ctx.Err() != nil && !ambiguous {
 			_ = lease.Retry(ctx)
 			return true, err
 		}
 		if errors.Is(err, context.Canceled) {
 			finalJob, found, finalErr := c.Jobs.Get(context.Background(), job.ID)
-			if finalErr != nil {
-				_ = lease.Retry(ctx)
-				return true, finalErr
-			}
-			if found && finalJob.Status == jobstore.StatusCanceled {
+			if finalErr == nil && found && finalJob.Status == jobstore.StatusCanceled {
 				c.observeTerminalJob(finalJob)
-				return true, lease.Cancel(ctx)
+				return true, lease.Cancel(opCtx)
 			}
-			_ = lease.Retry(ctx)
-			return true, err
+			if !ambiguous {
+				_ = lease.Retry(ctx)
+				if finalErr != nil {
+					return true, finalErr
+				}
+				return true, err
+			}
 		}
-		if applyErr := c.applyFailure(ctx, lease, envelope, err); applyErr != nil {
-			_ = lease.Retry(ctx)
+		if applyErr := c.applyFailure(opCtx, lease, envelope, err); applyErr != nil {
+			if ambiguous {
+				// No replay even when the failure cannot be recorded; the
+				// stale-job reaper settles the job. (Ledger-backed in P3.8.)
+				_ = lease.Fail(opCtx)
+			} else {
+				_ = lease.Retry(ctx)
+			}
 			return true, applyErr
 		}
-		if notifyErr := c.notifyCurrentTerminalJob(ctx, lease); notifyErr != nil {
+		if notifyErr := c.notifyCurrentTerminalJob(opCtx, lease); notifyErr != nil {
 			return true, notifyErr
 		}
-		return true, lease.Fail(ctx)
+		return true, lease.Fail(opCtx)
 	}
 	ingestionStarted := time.Now()
 	if len(events) == 0 {
@@ -513,7 +530,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		if err != nil {
 			c.observeWorkerRun(job.Target, "failure", workerDuration)
 			c.observeIngestion(job.Target, "failure", "invalid_event", index+1, time.Since(ingestionStarted))
-			if applyErr := c.applyFailure(ctx, lease, envelope, err); applyErr != nil {
+			if applyErr := c.applyFailure(ctx, lease, envelope, ambiguousIfSubmitted(err, events)); applyErr != nil {
 				_ = lease.Retry(ctx)
 				return true, applyErr
 			}
@@ -538,7 +555,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			ctx,
 			lease,
 			envelope,
-			fmt.Errorf("worker emitted %d terminal events; expected exactly one", terminalEvents),
+			ambiguousIfSubmitted(fmt.Errorf("worker emitted %d terminal events; expected exactly one", terminalEvents), events),
 		); applyErr != nil {
 			_ = lease.Retry(ctx)
 			return true, applyErr
@@ -584,7 +601,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			c.observeWorkerRun(job.Target, "failure", workerDuration)
 			c.observeIngestion(job.Target, "failure", "store", index+1, time.Since(ingestionStarted))
 			slog.Error("ApplyWorkerEvent failed", "job_id", normalized.JobID, "event_type", normalized.Type, "error", err)
-			if applyErr := c.applyFailure(ctx, lease, envelope, err); applyErr != nil {
+			if applyErr := c.applyFailure(ctx, lease, envelope, ambiguousIfSubmitted(err, events)); applyErr != nil {
 				_ = lease.Retry(ctx)
 				return true, applyErr
 			}
@@ -635,7 +652,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 
 	c.observeWorkerRun(job.Target, "failure", workerDuration)
 	c.observeIngestion(job.Target, "failure", "missing_terminal", len(events), time.Since(ingestionStarted))
-	if applyErr := c.applyFailure(ctx, lease, envelope, fmt.Errorf("worker did not reach a terminal status")); applyErr != nil {
+	if applyErr := c.applyFailure(ctx, lease, envelope, ambiguousIfSubmitted(fmt.Errorf("worker did not reach a terminal status"), events)); applyErr != nil {
 		_ = lease.Retry(ctx)
 		return true, applyErr
 	}
@@ -1082,11 +1099,27 @@ func (c *WorkerConsumer) applyFailure(ctx context.Context, lease WorkerLease, en
 		"error_class": "worker_execution",
 		"message":     sanitizeWorkerError(cause),
 	}
+	eventType := "failed"
+	if errors.Is(cause, ErrAmbiguous) {
+		// Same terminal shape the worker emits for a post-submit failure
+		// (engine.py, UBAG_WORKER_STRICT_SUBMIT): never retryable, reconcile.
+		eventType = "failed_terminal"
+		data = map[string]any{
+			"status":             string(jobstore.StatusFailedTerminal),
+			"retryable":          false,
+			"error_class":        "worker_execution",
+			"message":            "worker failed after prompt submission; reconcile required",
+			"reason":             "post_submit_failure",
+			"submitted":          true,
+			"reconcile_required": true,
+			"stream_end_reason":  "error",
+		}
+	}
 	event := jobstore.WorkerEvent{
 		EventID:    failureEventID(lease, envelope),
 		JobID:      lease.JobID(),
 		APIVersion: envelope.APIVersion,
-		Type:       "failed",
+		Type:       eventType,
 		TraceID:    envelope.TraceID,
 		Data:       data,
 		CreatedAt:  time.Now().UTC(),
@@ -1419,6 +1452,8 @@ func (r ProcessWorkerRunner) RunWorker(ctx context.Context, envelope DispatchEnv
 		command.Stdin = bytes.NewReader(payload)
 		stdout := &limitedBuffer{max: maxWorkerOutputBytes}
 		stderr := &limitedBuffer{max: maxWorkerStderrBytes}
+		// Failures are typed from the prompt_submitted marker already printed.
+		fail := func(err error) error { return classifySubmission(err, jsonlHasPromptSubmitted(stdout.Bytes())) }
 		command.Stdout = stdout
 		command.Stderr = stderr
 		command.Env = workerEnvForTarget(envelope.Job.Target)
@@ -1427,18 +1462,22 @@ func (r ProcessWorkerRunner) RunWorker(ctx context.Context, envelope DispatchEnv
 		}
 		if err := command.Run(); err != nil {
 			if runCtx.Err() == context.DeadlineExceeded {
-				return nil, fmt.Errorf("worker process timed out after %s", maxRuntime)
+				return nil, fail(fmt.Errorf("worker process timed out after %s", maxRuntime))
 			}
 			if runCtx.Err() == context.Canceled {
-				return nil, context.Canceled
+				return nil, fail(context.Canceled)
 			}
 			slog.Error("worker process failed", "stderr", stderr.buf.String(), "stdout_bytes", stdout.buf.Len(), "error", err)
-			return nil, fmt.Errorf("worker process failed")
+			return nil, fail(fmt.Errorf("worker process failed"))
 		}
 		if stdout.truncated {
-			return nil, fmt.Errorf("worker stdout exceeded %d bytes", maxWorkerOutputBytes)
+			return nil, fail(fmt.Errorf("worker stdout exceeded %d bytes", maxWorkerOutputBytes))
 		}
-		return parseWorkerJSONL(stdout.Bytes())
+		events, err := parseWorkerJSONL(stdout.Bytes())
+		if err != nil {
+			return nil, fail(err)
+		}
+		return events, nil
 	}
 	if envelope.Job.Target != "antigravity_cli" {
 		return run("")
