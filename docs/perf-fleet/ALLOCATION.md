@@ -14,7 +14,8 @@ Highest on origin/main: 0005. Four planned ADRs each originally claimed 0006.
 | 0009 | helper-grant-shrink-drain-ramp-telemetry (landed, P4.15) | P4.15 |
 | 0010 | helper-trust-plane (landed, P4.5) | P4.5 |
 | 0011 | lease-then-place-with-delayed-retry (landed, P3.6) | P3.6 |
-| 0012+ | free: take next free | later |
+| 0012 | voice-excludes-browser-jobs-on-a-shared-browser (landed, P5.5) | P5.5 |
+| 0013+ | free: take next free | later |
 
 ## Migrations
 

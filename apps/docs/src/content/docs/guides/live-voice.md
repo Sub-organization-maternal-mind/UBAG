@@ -59,6 +59,12 @@ provider-side failure signal and open a new session.
 - An account and an environment each serve one live session at a time (exclusive
   leases). The lease window is `ttl_seconds` (default 600 s,
   `UBAG_VOICE_SESSION_TTL_SECONDS`) and must be renewed.
+- A live session also owns its browser: ordinary text and file jobs that drive
+  the same shared browser wait (they are held back in the queue, not failed) until
+  the session ends, and a session cannot take a browser while a job is running on
+  it (it queues, or `connect` answers `409`). Dedicate a browser to voice if text
+  jobs must keep flowing during calls. `UBAG_VOICE_LANE_EXCLUSION=0` switches this
+  off.
 - Request bodies are bounded (SDP up to 128 KiB, others far smaller; larger is
   `413`). `renew` of an expired or terminated session is `409`.
 

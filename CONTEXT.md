@@ -194,3 +194,7 @@ _Avoid_: worker pool (the consumer's `PoolSize` goroutines are a different thing
 **Slot**:
 One worker daemon process of a Daemon Pool, started with `UBAG_WORKER_SLOT_ID`; it runs one job at a time and holds at most one warm page key. A failed or cancelled job kills only its own slot.
 _Avoid_: Helper Node (a Helper Node is a remote machine; slots live on the primary)
+
+**Browser Lane**:
+The physical browser a CDP endpoint reaches, named tenant-free by its host and port (`topology.BrowserLaneKey`). A live voice session owns its lane exclusively; browser-driving jobs share it with each other but never with a live session, and the reverse (ADR-0012). The session's own lease in the voice store is its hold; jobs and voice admissions register transiently in the `ConcurrencyRegistry`.
+_Avoid_: identity (a job names no account), instance (a topology row; several can reach one browser)
