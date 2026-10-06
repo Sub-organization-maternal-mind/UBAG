@@ -277,6 +277,13 @@ type Config struct {
 	// (UBAG_VOICE_CONTEXT_INDEX; default off = no index, as before).
 	VoiceContextIndex bool
 
+	// VoiceTerminatingHold keeps a terminated session's account and browser
+	// environment reserved until provider voice is deactivated (or 45 s), so no
+	// successor can activate on a provider UI still being torn down. It needs
+	// VoiceProviderActivation and is wired from UBAG_HELPER_VOICE (the whole
+	// flag ladder); off is the previous immediate release.
+	VoiceTerminatingHold bool
+
 	// VoiceSessionTTL is the default lease window between renewals
 	// (30s..1h). Zero selects the 10-minute default.
 	VoiceSessionTTL time.Duration
@@ -330,6 +337,7 @@ type Server struct {
 	voice            voice.Store
 	voiceActivation  bool
 	voiceContextIdx  bool
+	voiceHold        bool // terminating hold on (needs voiceActivation)
 	voiceLife        voiceLifecycle
 	voiceMedia       MediaNegotiator
 	voiceSessionTTL  time.Duration
@@ -650,6 +658,7 @@ func NewServer(config Config) *Server {
 		voice:              config.VoiceStore,
 		voiceActivation:    config.VoiceProviderActivation,
 		voiceContextIdx:    config.VoiceContextIndex,
+		voiceHold:          config.VoiceProviderActivation && config.VoiceTerminatingHold,
 		voiceMedia:         config.VoiceMedia,
 		voiceSessionTTL:    config.VoiceSessionTTL,
 

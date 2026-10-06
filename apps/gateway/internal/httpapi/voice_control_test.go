@@ -24,6 +24,9 @@ type voiceSimExecutor struct {
 	store jobstore.Store
 	gate  chan struct{} // activation waits for this to close; nil = immediate
 	state string        // the worker's activation state
+	// deactivateGate holds the deactivation job until closed (nil = immediate),
+	// so a test can observe the terminating hold while teardown is in flight.
+	deactivateGate chan struct{}
 
 	mu   sync.Mutex
 	sent []jobstore.Job
@@ -39,6 +42,9 @@ func (e *voiceSimExecutor) EnqueueJob(ctx context.Context, job jobstore.Job) (ex
 			<-e.gate
 		}
 		if job.CommandType == "voice.deactivate" {
+			if e.deactivateGate != nil {
+				<-e.deactivateGate
+			}
 			state = "deactivated"
 		}
 		evType := "completed"
@@ -61,7 +67,7 @@ func (e *voiceSimExecutor) jobs() []jobstore.Job {
 	return append([]jobstore.Job(nil), e.sent...)
 }
 
-func activationServer(t *testing.T, state string, gate chan struct{}) (*Server, http.Handler, *voiceSimExecutor) {
+func activationServer(t *testing.T, state string, gate chan struct{}, mutate ...func(*Config)) (*Server, http.Handler, *voiceSimExecutor) {
 	t.Helper()
 	store := jobstore.NewMemoryStore()
 	sim := &voiceSimExecutor{recordingExecutor: &recordingExecutor{}, store: store, gate: gate, state: state}
@@ -71,6 +77,9 @@ func activationServer(t *testing.T, state string, gate chan struct{}) (*Server, 
 		addVoiceEnvironment(c, "1")
 		c.Topology.(*topology.MemoryStore).AddInstance(topology.BrowserInstance{
 			InstanceID: "browser-1", TenantID: "tenant_edge", State: "ready", RemoteEndpoint: "http://172.28.0.10:9223"})
+		for _, fn := range mutate {
+			fn(c)
+		}
 	})
 	return srv, h, sim
 }
@@ -149,6 +158,97 @@ func TestVoiceMediaEndDeactivatesProvider(t *testing.T) {
 	eventually(t, "deactivation job", func() bool {
 		jobs := sim.jobs()
 		return len(jobs) == 2 && jobs[1].CommandType == "voice.deactivate"
+	})
+}
+
+func terminateVoice(t *testing.T, h http.Handler, id string) {
+	t.Helper()
+	if rec := doJSON(h, http.MethodPost, "/v1/voice/sessions/"+id+"/terminate", `{}`, authHeaders("")); rec.Code != http.StatusOK {
+		t.Fatalf("terminate = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// With the terminating hold on, an explicit terminate reads as terminated at
+// once but the account and environment stay reserved until the provider's
+// deactivation is acked; only then does a successor get them. (P5.8, the
+// lease-released-before-deactivate race.)
+func TestVoiceTerminatingHoldKeepsLeasesUntilDeactivateAck(t *testing.T) {
+	store := voice.NewMemoryStore()
+	release := make(chan struct{})
+	srv, h, sim := activationServer(t, "activated", nil, func(c *Config) {
+		c.VoiceStore, c.VoiceTerminatingHold = store, true
+	})
+	sim.deactivateGate = release
+	_, sess := createVoice(t, h, voiceBody("chatgpt_web"))
+	connectVoice(t, h, sess.ID)
+	eventually(t, "activation job", func() bool { return len(sim.jobs()) == 1 })
+
+	terminateVoice(t, h, sess.ID)
+	if got := getVoice(t, h, sess.ID); got.Status != voice.StatusTerminated || got.IdentityRef != "" || got.InstanceRef != "" {
+		t.Fatalf("terminated session = %+v, want terminated with no leases reported", got)
+	}
+	held, _, _ := store.Get(t.Context(), "tenant_edge", sess.ID)
+	if held.TerminatingUntil.IsZero() {
+		t.Fatal("terminate did not start the hold")
+	}
+	if code, next := createVoice(t, h, voiceBody("chatgpt_web")); code != http.StatusAccepted || next.Status != voice.StatusQueued {
+		t.Fatalf("a successor took the leases during teardown: %d %s", code, next.Status)
+	}
+
+	srv.VoiceMediaEnded(sess, "session_terminated") // the media hub's end-of-media hook
+	eventually(t, "deactivation job", func() bool { return len(sim.jobs()) == 2 })
+	if code, next := createVoice(t, h, voiceBody("chatgpt_web")); code != http.StatusAccepted || next.Status != voice.StatusQueued {
+		t.Fatalf("a successor took the leases before the deactivate ack: %d %s", code, next.Status)
+	}
+
+	close(release) // the worker acks deactivation
+	eventually(t, "hold release", func() bool {
+		got, _, _ := store.Get(t.Context(), "tenant_edge", sess.ID)
+		return got.TerminatingUntil.IsZero()
+	})
+	if code, next := createVoice(t, h, voiceBody("chatgpt_web")); code != http.StatusCreated || next.Status != voice.StatusConnecting {
+		t.Fatalf("successor after the ack = %d %s, want connecting", code, next.Status)
+	}
+}
+
+// A node-bound, terminating session still serializes without any internal
+// lease state: the node id never reaches a client.
+func TestVoiceSessionResponsesHideInternalLeaseState(t *testing.T) {
+	store := voice.NewMemoryStore()
+	_, h, _ := voiceTestServer(t, func(c *Config) { c.VoiceStore = store })
+	_, sess := createVoice(t, h, voiceBody("chatgpt_web"))
+	if _, err := store.BindNode(t.Context(), "tenant_edge", sess.ID, "node-secret-7", time.Minute, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/v1/voice/sessions/" + sess.ID, "/v1/voice/sessions"} {
+		body := doJSON(h, http.MethodGet, path, "", authHeaders("")).Body.String()
+		for _, leak := range []string{"node-secret-7", "node_id", "lease_generation", "media_lease", "terminating"} {
+			if strings.Contains(body, leak) {
+				t.Errorf("GET %s leaks %q: %s", path, leak, body)
+			}
+		}
+	}
+}
+
+// Without the flag, or when provider voice was never requested for the
+// session, terminate frees the leases at once exactly as before.
+func TestVoiceTerminateWithoutHoldReleasesImmediately(t *testing.T) {
+	t.Run("flag off", func(t *testing.T) {
+		_, h, _ := activationServer(t, "activated", nil)
+		_, sess := createVoice(t, h, voiceBody("chatgpt_web"))
+		connectVoice(t, h, sess.ID)
+		terminateVoice(t, h, sess.ID)
+		if code, next := createVoice(t, h, voiceBody("chatgpt_web")); code != http.StatusCreated || next.Status != voice.StatusConnecting {
+			t.Fatalf("successor = %d %s, want connecting", code, next.Status)
+		}
+	})
+	t.Run("flag on but voice never activated", func(t *testing.T) {
+		_, h, _ := activationServer(t, "activated", nil, func(c *Config) { c.VoiceTerminatingHold = true })
+		_, sess := createVoice(t, h, voiceBody("chatgpt_web")) // never connected: nothing to deactivate
+		terminateVoice(t, h, sess.ID)
+		if code, next := createVoice(t, h, voiceBody("chatgpt_web")); code != http.StatusCreated || next.Status != voice.StatusConnecting {
+			t.Fatalf("successor = %d %s, want connecting", code, next.Status)
+		}
 	})
 }
 

@@ -297,6 +297,8 @@ func Run(ctx context.Context) error {
 		VoiceProviderActivation: voiceStore != nil && getenv("UBAG_VOICE_PROVIDER_ACTIVATION", "1") != "0",
 		// Off (default) sends no context index, as before.
 		VoiceContextIndex: envBool("UBAG_VOICE_CONTEXT_INDEX"),
+		// Off (default) frees a terminated session's leases at once, as before.
+		VoiceTerminatingHold: voiceStore != nil && voice.HelperVoiceEnabled(os.Getenv),
 
 		RateLimiter:       enterprise.rateLimiter,
 		RateLimitResolver: enterprise.rateResolver,

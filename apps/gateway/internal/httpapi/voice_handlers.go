@@ -668,7 +668,9 @@ func (s *Server) handleVoiceSessionTerminate(w http.ResponseWriter, r *http.Requ
 	tenantID, _ := requestScope(r)
 	// Termination is idempotent in the store, and the media path drops
 	// immediately — cleanup never waits for ICE to notice the session died.
-	if err := s.voice.Terminate(r.Context(), tenantID, sessionID, time.Now().UTC(), "terminated_by_client"); s.mapVoiceStoreError(w, r, err) {
+	// With the terminating hold on, the leases outlive the record until the
+	// provider confirms deactivation (see terminateVoiceSession).
+	if err := s.terminateVoiceSession(r.Context(), tenantID, sessionID, time.Now().UTC(), "terminated_by_client"); s.mapVoiceStoreError(w, r, err) {
 		return
 	}
 	s.dropVoiceMedia(sessionID)
