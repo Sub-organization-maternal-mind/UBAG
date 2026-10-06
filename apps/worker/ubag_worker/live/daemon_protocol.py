@@ -23,6 +23,11 @@ A v1 line gets the exact v1 bytes: the daemon never emits an unsolicited line.
 
 Events are forwarded untouched. This layer decides where the page comes from,
 never what was captured from it.
+
+With UBAG_WORKER_STREAM_EVENTS the engine yields events as they happen and each
+line is flushed immediately, so tokens arrive before the final read. The terminal
+event is then NOT the end of the stream (conversation.thread_bound and
+concurrency.cap_changed follow it): JOB_END is the only end-of-stream marker.
 """
 from __future__ import annotations
 
@@ -32,11 +37,14 @@ import sys
 import threading
 from typing import Any, Callable, Mapping, Optional, TextIO
 
+from .envelope import env_flag
+
 JOB_END = "__ubag_job_end__"
 CONTROL = "__ubag_control__"
 PROTO_V2 = 2
 # Capabilities this daemon implements, answered to an explicit v2 hello.
 FEATURES = ["attempt", "outcome_signal", "strict_stream_end", "strict_submit"]
+STREAM_EVENTS_FEATURE = "stream_events"  # advertised only while UBAG_WORKER_STREAM_EVENTS is on
 
 # Exit code used when a job blows its deadline; mirrors today's semantics, where
 # the Go side kills a worker that overruns its max runtime.
@@ -231,6 +239,8 @@ def _control_reply(kind: str, request: Optional[Mapping[str, Any]] = None, daemo
         reply["slot_id"] = int(slot)
     if kind == "hello":
         reply["features"] = list(FEATURES)
+        if env_flag("UBAG_WORKER_STREAM_EVENTS", False):
+            reply["features"].insert(1, STREAM_EVENTS_FEATURE)
         return reply
     reply["state"] = "idle"
     payload = request.get("payload") if request is not None else None
