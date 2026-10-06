@@ -38,6 +38,22 @@ func TestMetricStageAndWebhookDeliveryHistograms(t *testing.T) {
 	}
 }
 
+func TestMetricVoiceFrameAgeHistogramAlwaysPresent(t *testing.T) {
+	server := NewServer(Config{Version: "test", AppSecret: "dev-secret"})
+	body := doJSON(server.Handler(), http.MethodGet, "/v1/metrics", "", nil).Body.String()
+	for _, expected := range []string{
+		`# TYPE ubag_voice_relay_frame_age_seconds histogram`,
+		`ubag_voice_relay_frame_age_seconds_bucket{direction="mic",le="0.005"} 0`,
+		`ubag_voice_relay_frame_age_seconds_bucket{direction="speaker",le="1.28"} 0`,
+		`ubag_voice_relay_frame_age_seconds_bucket{direction="speaker",le="+Inf"} 0`,
+		`ubag_voice_relay_frame_age_seconds_count{direction="mic"} 0`,
+	} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("metrics missing %q", expected)
+		}
+	}
+}
+
 func TestMetricRouteLatencyCarriesMethodClass(t *testing.T) {
 	server := NewServer(Config{Version: "test", AppSecret: "dev-secret"})
 	handler := server.Handler()

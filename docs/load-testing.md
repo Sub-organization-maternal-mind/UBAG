@@ -172,10 +172,50 @@ p95 <= 200 ms, steady-state read p95 <= 100 ms (the dedicated GET mix of the
 `steady-state` scenario), plus minimum verified results/events/tenant probes.
 Pass `--require-goals` to merge it over `thresholds.json` **and** treat every
 unmeasured threshold as a FAIL. Use it with `--scenario all` and
-`UBAG_LOAD_API_KEY_B` set; omitting a scenario or the second tenant fails the
-run instead of passing silently. Numbers measured on a laptop/Docker stack are
+`UBAG_LOAD_API_KEY_B` set and `--voice-latency <report>` (see "Voice relay
+latency" below); omitting a scenario, the second tenant or the voice report fails
+the run instead of passing silently. Numbers measured on a laptop/Docker stack are
 NON-AUTHORITATIVE (there is no isolated lab host yet); never aim this at the shared
 VPS. 1/2/5/10/20-workload step runs are a separate slice (P7.2).
+
+### Voice relay latency (`--voice-latency`)
+
+The gateway-side voice relay path has two measurement points. Both are taken
+inside the gateway process on its own monotonic clock, so they bound gateway
+queueing and scheduling only: not the client network, TURN, WebRTC jitter
+buffers, or the browser audio stack.
+
+| Direction | Start stamp | End stamp |
+| --- | --- | --- |
+| `mic` | the gateway reads the client's RTP packet (`track.ReadRTP` returns; the frame is enqueued on the bounded mic channel) | `relay.Send` returned for that frame (includes mic-queue wait and the relay socket write) |
+| `speaker` | `relay.Recv` returned the provider frame | `track.WriteSample` returned for that frame |
+
+Production exposes the same quantity as the histogram
+`ubag_voice_relay_frame_age_seconds{direction="mic|speaker"}` (buckets 5 ms to
+1.28 s). Speaker frames lost to a failed `WriteSample` are now counted in
+`ubag_voice_media_frames_dropped_total{direction="speaker"}` (the series used to be
+declared but never incremented).
+
+Offline bench (no network, no VPS): a real `MediaHub` plus a pion client over
+loopback against the in-test `fakeRelay` echo, client mic paced at the 20 ms
+Opus frame duration, sessions ramped 1/5/10/20 with one `fakeRelay` each:
+
+```
+cd apps/gateway
+UBAG_VOICE_LATENCY_REPORT=voice-latency.json go test ./internal/voice -run NONE -bench RelayLatency -benchtime 1x
+```
+
+`UBAG_VOICE_LATENCY_SECONDS` (default 3) sets the per-size measurement window.
+The bench reports exact p50/p95/p99 per direction as bench metrics and, when
+`UBAG_VOICE_LATENCY_REPORT` is set, writes a `ubag-voice-latency/v1` JSON report.
+Feed it to the harness with `--voice-latency voice-latency.json`: the run records
+`voice_relay_p95_ms` (the worst p95 over all sizes and both directions) and the
+goal `max_voice_relay_p95_ms` (100, in `thresholds.goals.json`) applies. Under
+`--require-goals` a missing or malformed report leaves the goal unmeasured, which
+FAILs. Numbers from this bench are NON-AUTHORITATIVE (laptop loopback; on Windows
+the clock granularity quantises sub-millisecond ages). This is the baseline any
+future relay rewrite decision needs; it is not a media-quality or end-to-end
+latency measurement.
 
 ## Offline self-tests
 
