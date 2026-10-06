@@ -9,8 +9,8 @@ below and AGENT_HANDOFF.md "REMAINING WORK" for the live list.)
 Status: built on the integration branch `feat/perf-fleet` (about 92 slice PRs, one shard each in
 `docs/perf-fleet/slices/`, index in `docs/perf-fleet/slices/README.md`). **Nothing was deployed and no production flag was
 changed by the program** (decisions D1/D2 in `docs/perf-fleet/ctx/BINDING.md`). Every new behaviour is behind an env flag that is
-inert by default, except two safety gates that are already on and have kill-switches (`UBAG_ADMISSION_SHARED`,
-`UBAG_VOICE_LANE_EXCLUSION`). The flag inventory is `docs/perf-fleet/FLAGS.md`; the per-flag graduation, canary, rollback and
+inert by default, except one safety gate that is already on and has a kill-switch (`UBAG_ADMISSION_SHARED`;
+`UBAG_VOICE_LANE_EXCLUSION` is opt-in and off by default, not live). The flag inventory is `docs/perf-fleet/FLAGS.md`; the per-flag graduation, canary, rollback and
 ledger procedure is `docs/perf-fleet/ROLLOUT.md`; both are machine-checked against the code, compose file and
 `deploy/vps/env.example` by `pnpm check:flag-graduation` (`tools/flag-graduation-check.mjs`).
 
@@ -26,7 +26,7 @@ additive and apply automatically on deploy; they are inert while their flags are
 What is NOT done or NOT measured (do not quote a number that does not exist):
 - **No capacity number.** No isolated lab host exists (D5); `docs/benchmarks/capacity-report.md` marks every goal not measured and is non-authoritative. No baseline matrix, ladder or 60-minute steady-state run was made.
 - **No helper canary has run** (P4.20 is external-blocked: no manager allocation API, no real helper, certificates or WireGuard, no operator route to bind a profile to a node, manager auth undefined). `docs/perf-fleet/CANARY.md` is the drill; its evidence section is empty.
-- **Voice**: live media is unavailable in production (relay secret unset, memory store). The human voice activation probe and two-way demo (P5.4) were not run, so `ready_controls` stay empty. P5.11 (primary RemoteMediaNegotiator) and P6.5 (dashboard voice panel) have no shard on this branch, so helper voice can be placed but not connected.
+- **Voice**: live media is unavailable in production (relay secret unset, memory store). The human voice activation probe and two-way demo (P5.4) were not run, so `ready_controls` stay empty. P5.11 (primary RemoteMediaNegotiator, ADR-0018) and P6.5 (dashboard voice panel) are merged with shards, so helper voice can be placed and connected in code, but no two-way call was run on a real helper.
 - **Rust relay (P7.8) not started**; the A/B gate verdict (P7.5 to P7.7) is unevaluated because it needs real libopus on a Linux lab host.
 - P1.8 (create-path pprof and DB pool sizing) has no shard on this branch. P6.6 (warm-resume fast path) is built and merged off, not live-verified. P0.4 legacy-tool CI validation run was not performed.
 - `docker-compose.vps.yml` passes only some of the flags to the gateway container; flags whose Compose column in `FLAGS.md` is `none` have no effect from `env.local` until a reviewed compose line is added (ROLLOUT.md section 1).

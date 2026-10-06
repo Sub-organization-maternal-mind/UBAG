@@ -290,7 +290,7 @@ type Config struct {
 	// a running browser job (the job consumer holds jobs back while a live
 	// session holds the browser: executor.WorkerConsumer.VoiceLanes). It reads
 	// the browser-lane registrations in Concurrency, so it does nothing without
-	// one. Wired from UBAG_VOICE_LANE_EXCLUSION (default on when voice is on).
+	// one. Wired from UBAG_VOICE_LANE_EXCLUSION (opt-in, default off).
 	VoiceLaneExclusion bool
 
 	// VoiceNodes places a voice call whose account lives on a Helper Node onto that

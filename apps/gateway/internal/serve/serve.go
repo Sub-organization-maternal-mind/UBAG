@@ -404,8 +404,8 @@ func Run(ctx context.Context) error {
 		VoiceContextIndex: envBool("UBAG_VOICE_CONTEXT_INDEX"),
 		// Off (default) frees a terminated session's leases at once, as before.
 		VoiceTerminatingHold: voiceStore != nil && voice.HelperVoiceEnabled(os.Getenv),
-		// On by default whenever voice sessions are configured (UBAG_VOICE_LANE_EXCLUSION=0
-		// opts out): a voice admission skips a browser with a running job.
+		// Off by default (UBAG_VOICE_LANE_EXCLUSION=true opts in): a voice admission
+		// then skips a browser with a running job.
 		VoiceLaneExclusion: voiceLanes != nil,
 		// Nil (default, UBAG_HELPER_VOICE off) hosts every call on the primary, as before.
 		VoiceNodes: voiceNodes,

@@ -13,10 +13,11 @@ import (
 // the jobs that drive the same browser (P5.5; topology/lane.go, executor/voicelane.go).
 // It returns the probe the job consumer consults (nil = off).
 //
-// UBAG_VOICE_LANE_EXCLUSION is a kill-switch whose default is ON whenever voice
-// sessions are configured: it changes nothing while no session holds a browser,
-// and it is what makes enabling live voice safe, so the unsafe state is the one
-// that needs the explicit opt-out ("0"/"false"/"no"/"off").
+// UBAG_VOICE_LANE_EXCLUSION is an opt-in flag, inert by default (BINDING rule 5):
+// it makes a job wait while a voice session holds its browser, which changes live
+// job scheduling, so the owner turns it on ("1"/"true"/"yes") together with live
+// voice media. A held job is deferred again on every retry with no upper bound
+// (ADR-0012), which is another reason it is not on by default.
 //
 // The browser-lane registrations stay process-local counts unless the voice store
 // is shared (postgres): only then can another replica's voice session or job
@@ -24,7 +25,7 @@ import (
 // store. A shared voice store with no admission backend (UBAG_ADMISSION_SHARED=0)
 // keeps them local and says so.
 func wireVoiceLaneExclusion(voiceStore voice.Store, topo topology.Store, registry *topology.ConcurrencyRegistry, admission *topology.SQLTokenBackend) executor.VoiceLaneProbe {
-	if voiceStore == nil || !envBoolDefaultTrue("UBAG_VOICE_LANE_EXCLUSION") {
+	if voiceStore == nil || !envBool("UBAG_VOICE_LANE_EXCLUSION") {
 		return nil
 	}
 	if voiceStoreIsShared() {

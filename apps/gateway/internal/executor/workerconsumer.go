@@ -159,7 +159,7 @@ type WorkerConsumer struct {
 	// drives the shared browser wait while a live voice session holds it: the
 	// job registers on the browser lane in Concurrency, then asks the probe, and
 	// a held lane sends it back to the queue after a delay (voicelane.go). Nil
-	// (voice off, or UBAG_VOICE_LANE_EXCLUSION=0) never looks.
+	// (voice off, or UBAG_VOICE_LANE_EXCLUSION unset) never looks.
 	VoiceLanes VoiceLaneProbe
 	// VoiceLaneRetryDelay is how long a job held back by a voice session waits
 	// before its lease goes back to the queue. Zero is 2s (the pool overload delay).
