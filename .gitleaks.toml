@@ -1,0 +1,16 @@
+# Picked up automatically by `gitleaks detect --source /repo` (ci.yml security-scan).
+title = "ubag gitleaks config"
+
+[extend]
+useDefault = true
+
+# Committed test vectors: HMAC digests and tokens derived from fake secrets such
+# as "relay-test-secret", and load-test threshold numbers. None are credentials.
+# A path allowlist (not per-commit fingerprints) also covers history scanning.
+[allowlist]
+description = "synthetic conformance and load-test fixtures"
+paths = [
+  '''packages/conformance/fixtures/voice-relay/v2\.json''',
+  '''packages/conformance/fixtures/worker-daemon/v2\.json''',
+  '''tests/load/thresholds\.goals\.json''',
+]

@@ -10,8 +10,6 @@ import json
 
 import pytest
 from ubag_worker.live.daemon import WarmWorkerDaemon, _driver_key
-from ubag_worker.live.page_driver import MockPageDriver
-from ubag_worker.live.selectors import PROVIDER_SELECTORS
 from ubag_worker.live.daemon_protocol import (
     EXIT_DEADLINE,
     JOB_END,
@@ -19,6 +17,8 @@ from ubag_worker.live.daemon_protocol import (
     _JobOutput,
     serve,
 )
+from ubag_worker.live.page_driver import MockPageDriver
+from ubag_worker.live.selectors import PROVIDER_SELECTORS
 
 
 class _StubDaemon:
