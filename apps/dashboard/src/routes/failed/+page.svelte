@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api/client';
-  import { normalizeJobs } from '$lib/api/jobs';
+  import { failedCount, failedStatusesToFetch, mergeNewestFirst, normalizeJobs, parseJobsSummary } from '$lib/api/jobs';
+  import { snapshots } from '$lib/stores/snapshot';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
@@ -31,19 +32,38 @@
 
   let lastUpdated = $state<Date | null>(null);
 
-  async function load(silent = false) {
+  // True failed total from /v1/jobs/summary (null on gateways that predate it).
+  let failedTotal = $state<number | null>(null);
+
+  const MAX_ROWS = 100;
+
+  // Reads only failed rows: the summary says which failed statuses are
+  // non-empty, then one filter[status] page per such status (not 100 full job
+  // bodies of every status). The summary goes through the shared TTL store.
+  async function load(silent = false, force = true) {
     if (!silent) {
       loading = true;
       error = null;
       denied = false;
     }
-    const res = await api.get<JobsResponse>('/v1/jobs?limit=100');
+    const sumRes = await snapshots.get('/v1/jobs/summary', () => api.get('/v1/jobs/summary'), { ttlMs: 10_000, force });
+    const summary = parseJobsSummary(sumRes.data);
+    const pages = await Promise.all(
+      failedStatusesToFetch(summary).map((s) =>
+        api.get<JobsResponse>(`/v1/jobs?limit=${MAX_ROWS}&filter%5Bstatus%5D=${encodeURIComponent(s)}`),
+      ),
+    );
     if (!silent) loading = false;
-    if (res.denied) { denied = true; return res; }
-    if (res.error) { error = res.error; return res; }
-    allJobs = normalizeJobs(res.data?.jobs);
+    const bad = pages.find((p) => p.denied || p.error);
+    if (bad) {
+      if (bad.denied) denied = true;
+      else error = bad.error;
+      return bad;
+    }
+    failedTotal = summary ? failedCount(summary) : null;
+    allJobs = mergeNewestFirst(pages.map((p) => normalizeJobs(p.data?.jobs)), MAX_ROWS);
     lastUpdated = new Date();
-    return res;
+    return pages[0] ?? sumRes;
   }
 
   // Requeue retries the failed job itself (POST /v1/jobs/{id}/retry) instead
@@ -82,7 +102,7 @@
   }
 
   onMount(() => {
-    load();
+    void load(false, false); // first paint may reuse a fresh summary from Overview/Metrics
     const stopPolling = pollWhileVisible(() => load(true), 45_000, { immediate: false });
     return stopPolling;
   });
@@ -101,7 +121,7 @@
   {:else if denied}
     <DeniedPanel resource="jobs" />
   {:else if error}
-    <ErrorPanel message={error} retry={load} />
+    <ErrorPanel message={error} retry={() => load()} />
   {:else if failed.length === 0}
     <EmptyState
       message="No failed jobs."
@@ -110,7 +130,10 @@
   {:else}
     <!-- Summary strip -->
     <div class="rounded-md border border-danger/30 bg-danger-soft px-4 py-2.5 text-sm text-danger font-medium">
-      {failed.length} job{failed.length === 1 ? '' : 's'} in terminal failure state
+      {failedTotal ?? failed.length} job{(failedTotal ?? failed.length) === 1 ? '' : 's'} in terminal failure state
+      {#if failedTotal !== null && failedTotal > failed.length}
+        (showing newest {failed.length})
+      {/if}
     </div>
 
     <div class="table-wrap">

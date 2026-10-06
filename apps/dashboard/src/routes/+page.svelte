@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { base } from '$app/paths';
   import { api } from '$lib/api/client';
+  import { snapshots } from '$lib/stores/snapshot';
   import { failedCount, normalizeJobs, parseJobsSummary } from '$lib/api/jobs';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
@@ -24,10 +25,19 @@
   let jobsError = $state<string | null>(null);
   let lastUpdated = $state<Date | null>(null);
 
-  // Terminal-failure states used to count failed jobs (contract vocabulary).
+  // Terminal-failure states, used only by the older-gateway fallback below.
   const FAILED_STATES = new Set(FAILED_STATUS_LIST);
 
-  type JobsResponse = Awaited<ReturnType<typeof api.get<{ jobs?: Job[]; total?: number }>>>;
+  type JobsList = { jobs?: Job[]; total?: number };
+  type JobsResponse = Awaited<ReturnType<typeof api.get<JobsList>>>;
+
+  // Overview reads go through the shared TTL snapshot store so Overview and
+  // Metrics (same endpoints) share one request; Refresh passes force.
+  const read = <T,>(path: string, force: boolean) =>
+    snapshots.get(path, () => api.get<T>(path), { ttlMs: 10_000, force });
+
+  // Recent Activity shows 5 rows: ask for 5, not 100 full job bodies.
+  const recentJobsRead = (force: boolean) => read<JobsList>('/v1/jobs?limit=5', force);
 
   function applyJobsResult(res: JobsResponse) {
     jobsLoading = false;
@@ -37,7 +47,7 @@
     recentJobs = normalizeJobs(res.data?.jobs).slice(0, 5);
   }
 
-  async function loadMetrics(jobsResponse?: JobsResponse) {
+  async function loadMetrics(jobsResponse?: JobsResponse, force = false) {
     // Derive overview metric cards from real JSON endpoints. The Prometheus
     // /v1/metrics endpoint is intentionally blocked at the edge and is not JSON,
     // so we aggregate counts from the resource endpoints instead.
@@ -46,10 +56,10 @@
     metricsDenied = false;
 
     const [jobsRes, targetsRes, browserRes, summaryRes] = await Promise.all([
-      jobsResponse ?? api.get<{ jobs?: Job[]; total?: number }>('/v1/jobs?limit=100'),
-      api.get('/v1/targets'),
-      api.get('/v1/browser/summary'),
-      api.get('/v1/jobs/summary'),
+      jobsResponse ?? recentJobsRead(force),
+      read('/v1/targets', force),
+      read('/v1/browser/summary', force),
+      read('/v1/jobs/summary', force),
     ]);
 
     metricsLoading = false;
@@ -58,8 +68,11 @@
     if (jobsRes.denied) { metricsDenied = true; return; }
     if (jobsRes.unauthorized) { metricsError = 'Not authenticated — check your gateway login.'; return; }
 
-    const jobs = jobsRes.data?.jobs ?? [];
     const summary = parseJobsSummary(summaryRes.data);
+    // Only gateways that predate /v1/jobs/summary need the capped list fallback.
+    const legacy = summary
+      ? []
+      : (await read<JobsList>('/v1/jobs?limit=100', force)).data?.jobs ?? [];
     // targets uses real {data:[...]} envelope
     const targetsData = targetsRes.data as Record<string, unknown> | null;
     const targets = (Array.isArray(targetsData?.['data']) ? targetsData!['data'] : []) as unknown[];
@@ -70,10 +83,10 @@
     metrics = {
       // /v1/jobs/summary carries true counts; the list page is capped at 100 rows,
       // so it is only a fallback for gateways that predate the summary route.
-      jobs_total: summary?.total ?? jobsRes.data?.total ?? jobs.length,
+      jobs_total: summary?.total ?? legacy.length,
       jobs_failed: summary
         ? failedCount(summary)
-        : jobs.filter((j) => FAILED_STATES.has((j.status ?? '').toLowerCase())).length,
+        : legacy.filter((j) => FAILED_STATES.has((j.status ?? '').toLowerCase())).length,
       jobs_queued: summary?.counts_by_status['queued'],
       targets_total: targets.length,
       browser_instances: browserInstances,
@@ -84,11 +97,10 @@
     jobsLoading = true;
     jobsError = null;
     jobsDenied = false;
-    const res = await api.get<{ jobs?: Job[]; total?: number }>('/v1/jobs?limit=100');
-    applyJobsResult(res);
+    applyJobsResult(await recentJobsRead(true));
   }
 
-  async function load() {
+  async function load(force = false) {
     metricsLoading = true;
     jobsLoading = true;
     metricsError = null;
@@ -98,13 +110,13 @@
 
     // Both sections consume the same collection. Reusing this response prevents
     // Recent Activity from hanging behind a duplicate concurrent request.
-    const jobsRes = await api.get<{ jobs?: Job[]; total?: number }>('/v1/jobs?limit=100');
+    const jobsRes = await recentJobsRead(force);
     applyJobsResult(jobsRes);
-    await loadMetrics(jobsRes);
+    await loadMetrics(jobsRes, force);
     lastUpdated = new Date();
   }
 
-  onMount(load);
+  onMount(() => { void load(); });
 
   function fmt(val: unknown): string {
     if (val == null) return '--';
@@ -124,7 +136,7 @@
   <PageHeader title="Overview" subtitle="Gateway pulse at a glance — queue depth, provider pool and live browser capacity.">
     {#snippet actions()}
       <UpdatedAgo at={lastUpdated} />
-      <button onclick={load} class="btn btn-secondary btn-sm">Refresh</button>
+      <button onclick={() => load(true)} class="btn btn-secondary btn-sm">Refresh</button>
     {/snippet}
   </PageHeader>
 
@@ -153,7 +165,7 @@
       </div>
     </div>
     {#if metricsError}
-      <ErrorPanel message={metricsError} retry={loadMetrics} />
+      <ErrorPanel message={metricsError} retry={() => loadMetrics(undefined, true)} />
     {/if}
   {/if}
 

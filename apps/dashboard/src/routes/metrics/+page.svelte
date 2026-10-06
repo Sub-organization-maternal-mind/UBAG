@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api/client';
   import { settings } from '$lib/stores/settings';
+  import { snapshots } from '$lib/stores/snapshot';
   import DeniedPanel from '$lib/components/DeniedPanel.svelte';
   import ErrorPanel from '$lib/components/ErrorPanel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -62,20 +63,30 @@
   // Terminal-failure states from the contract vocabulary.
 const FAILED_STATES = new Set(FAILED_STATUS_LIST);
 
-  async function load() {
+  // Shared TTL snapshot store: Metrics reuses reads Overview just made.
+  const read = <T,>(path: string, force: boolean) =>
+    snapshots.get(path, () => api.get<T>(path), { ttlMs: 10_000, force });
+
+  async function load(force = false) {
     // The Prometheus /v1/metrics endpoint is edge-blocked and is not JSON, so
     // aggregate operator metrics from the resource endpoints instead.
     loading = true;
     error = null;
     denied = false;
 
-    const [jobsRes, summaryRes, targetsRes, adaptersRes, browserRes] = await Promise.all([
-      api.get<{ jobs?: Array<{ status?: string }>; total?: number }>('/v1/jobs?limit=100'),
-      api.get('/v1/jobs/summary'),
-      api.get('/v1/targets'),
-      api.get('/v1/adapters'),
-      api.get('/v1/browser/summary'),
+    // Counts come from /v1/jobs/summary alone; no job bodies are fetched.
+    const [summaryRes, targetsRes, adaptersRes, browserRes] = await Promise.all([
+      read('/v1/jobs/summary', force),
+      read('/v1/targets', force),
+      read('/v1/adapters', force),
+      read('/v1/browser/summary', force),
     ]);
+    const summary = parseJobsSummary(summaryRes.data);
+
+    // Gateways that predate the summary route fall back to the capped list.
+    const jobsRes = summary
+      ? summaryRes
+      : await read<{ jobs?: Array<{ status?: string }> }>('/v1/jobs?limit=100', force);
 
     loading = false;
 
@@ -83,8 +94,7 @@ const FAILED_STATES = new Set(FAILED_STATUS_LIST);
     if (jobsRes.unauthorized) { error = 'Not authenticated — check your gateway login.'; return; }
     if (jobsRes.status < 0) { error = jobsRes.error ?? 'Failed to reach gateway'; return; }
 
-    const jobs = jobsRes.data?.jobs ?? [];
-    const summary = parseJobsSummary(summaryRes.data);
+    const jobs = summary ? [] : ((jobsRes.data as { jobs?: Array<{ status?: string }> } | null)?.jobs ?? []);
     // targets / adapters use real {data:[...]} envelope
     const targetsData = targetsRes.data as Record<string, unknown> | null;
     const targets = (Array.isArray(targetsData?.['data']) ? targetsData!['data'] : []) as unknown[];
@@ -95,7 +105,7 @@ const FAILED_STATES = new Set(FAILED_STATUS_LIST);
 
     metrics = {
       // True counts from /v1/jobs/summary; the capped list page is only a fallback.
-      jobs_total: summary?.total ?? jobsRes.data?.total ?? jobs.length,
+      jobs_total: summary?.total ?? jobs.length,
       jobs_failed: summary
         ? failedCount(summary)
         : jobs.filter((j) => FAILED_STATES.has((j.status ?? '').toLowerCase())).length,
@@ -126,7 +136,7 @@ const FAILED_STATES = new Set(FAILED_STATUS_LIST);
   });
 
   onMount(() => {
-    load();
+    void load();
     return () => chart?.destroy();
   });
 
@@ -150,7 +160,7 @@ const FAILED_STATES = new Set(FAILED_STATUS_LIST);
       <button onclick={() => (grafanaVisible = !grafanaVisible)} class="btn btn-secondary btn-sm">
         {grafanaVisible ? 'Hide Grafana' : 'Show Grafana Dashboard'}
       </button>
-      <button onclick={() => load()} class="btn btn-secondary btn-sm">Refresh</button>
+      <button onclick={() => load(true)} class="btn btn-secondary btn-sm">Refresh</button>
     {/snippet}
   </PageHeader>
 
@@ -190,7 +200,7 @@ const FAILED_STATES = new Set(FAILED_STATUS_LIST);
   {:else if denied}
     <DeniedPanel resource="metrics" />
   {:else if error}
-    <ErrorPanel message={error} retry={load} />
+    <ErrorPanel message={error} retry={() => load(true)} />
   {:else if !metrics || allEntries.length === 0}
     <EmptyState message="No metrics available." hint="The gateway may not expose /v1/metrics." />
   {:else}
