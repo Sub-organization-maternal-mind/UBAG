@@ -435,7 +435,12 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		c.Metrics.ObserveQueueWait(leasedAt.Sub(queueEnteredAt))
 	}
 	envelope := EnvelopeFromJobWithConversation(ctx, job, c.Conversations)
-	if attemptEventIDsEnabled() {
+	// UBAG_WORKER_STREAM_INGEST applies a stream's events before the job ends, so
+	// a redelivered job would re-emit legacy job:seq ids that collide with the
+	// abandoned attempt's already-applied events and be dropped by the store.
+	// Streaming therefore implies attempt-scoped ids.
+	streaming := c.streamsLive(envelope)
+	if attemptEventIDsEnabled() || streaming {
 		envelope.Attempt = &DispatchAttempt{ID: lease.LeaseID()}
 	}
 	if jobstore.TerminalStatus(job.Status) {
@@ -482,8 +487,15 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return c.finishTerminalLeasedJob(ctx, lease, assignedJob)
 	}
 
+	// Streaming: the sink applies non-terminal events while the worker runs and
+	// holds the single terminal; the run then returns just that terminal, which
+	// the ingestion below applies exactly like the batch path's last event.
+	var ingest *streamIngest
+	if streaming {
+		ingest = &streamIngest{c: c, job: job, envelope: envelope}
+	}
 	workerStarted := time.Now()
-	events, err := c.runWorkerWithCancellation(ctx, lease, execToken, envelope)
+	events, err := c.runWorkerWithCancellation(ctx, lease, execToken, envelope, ingest)
 	workerDuration := time.Since(workerStarted)
 	if err != nil && ctx.Err() == nil && errors.Is(err, ErrPoolOverloaded) {
 		// Lease-then-place (ADR-0011): the job was leased but no worker slot could
@@ -498,6 +510,16 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		}
 		c.observeWorkerRun(job.Target, outcome, workerDuration)
 		slog.Error("worker execution error", "job_id", envelope.JobID, "error", err)
+		var ingestErr *streamIngestError
+		if errors.As(err, &ingestErr) {
+			// The stream was abandoned by the ingestion itself (same classes the
+			// batch path reports after the run).
+			c.observeIngestion(job.Target, "failure", ingestErr.class, ingestErr.events, ingest.spent)
+			if ingestErr.missingJob {
+				_ = lease.Poison(ctx, "worker event referenced missing job")
+				return true, fmt.Errorf("worker event referenced missing job %s", job.ID)
+			}
+		}
 		// Post-submit failure (UBAG_WORKER_STRICT_SUBMIT): the provider may hold
 		// the turn, so never lease.Retry (shutdown and lease loss included).
 		// Terminal writes use a context that survives a cancelled parent.
@@ -548,6 +570,13 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return true, lease.Fail(opCtx)
 	}
 	ingestionStarted := time.Now()
+	eventCount := len(events)
+	if ingest != nil {
+		// Streamed: the events were applied during the run, so count them all and
+		// credit the time already spent applying them.
+		eventCount = ingest.events
+		ingestionStarted = ingestionStarted.Add(-ingest.spent)
+	}
 	if len(events) == 0 {
 		c.observeWorkerRun(job.Target, "failure", workerDuration)
 		c.observeIngestion(job.Target, "failure", "empty_result", 0, time.Since(ingestionStarted))
@@ -564,12 +593,19 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	normalizedEvents := make([]jobstore.WorkerEvent, len(events))
 	terminalEvents := 0
 	events = dropStaleAttemptEvents(envelope, events)
+	// The submission boundary is judged on everything this attempt produced: a
+	// streamed run applied its earlier events during the run, so carry the
+	// sink's prompt_submitted sighting into the evidence.
+	evidence := events
+	if ingest != nil && ingest.submitted {
+		evidence = append([]jobstore.WorkerEvent{{Type: promptSubmittedEventType}}, events...)
+	}
 	for index, event := range events {
 		normalized, err := normalizeWorkerEvent(envelope, event)
 		if err != nil {
 			c.observeWorkerRun(job.Target, "failure", workerDuration)
 			c.observeIngestion(job.Target, "failure", "invalid_event", index+1, time.Since(ingestionStarted))
-			if applyErr := c.applyFailure(ctx, lease, envelope, ambiguousIfSubmitted(err, events)); applyErr != nil {
+			if applyErr := c.applyFailure(ctx, lease, envelope, ambiguousIfSubmitted(err, evidence)); applyErr != nil {
 				_ = lease.Retry(ctx)
 				return true, applyErr
 			}
@@ -589,12 +625,12 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		if terminalEvents == 0 {
 			errorClass = "missing_terminal"
 		}
-		c.observeIngestion(job.Target, "failure", errorClass, len(events), time.Since(ingestionStarted))
+		c.observeIngestion(job.Target, "failure", errorClass, eventCount, time.Since(ingestionStarted))
 		if applyErr := c.applyFailure(
 			ctx,
 			lease,
 			envelope,
-			ambiguousIfSubmitted(fmt.Errorf("worker emitted %d terminal events; expected exactly one", terminalEvents), events),
+			ambiguousIfSubmitted(fmt.Errorf("worker emitted %d terminal events; expected exactly one", terminalEvents), evidence),
 		); applyErr != nil {
 			_ = lease.Retry(ctx)
 			return true, applyErr
@@ -606,41 +642,14 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	}
 
 	for index, normalized := range normalizedEvents {
-		// concurrency.cap_changed is orchestration telemetry, not a job-lifecycle
-		// event: record the reported ceiling and skip job-event application so the
-		// unknown type never poisons the job.
-		if normalized.Type == concurrencyChangeEventType {
-			c.recordConcurrencyChange(job, normalized)
-			continue
-		}
-		// browser.topology_reported is orchestration telemetry: project the
-		// snapshot into the in-memory topology store (when configured) and skip
-		// job-event application so the unknown type never poisons the job.
-		if normalized.Type == topologyReportEventType {
-			c.recordTopologyReport(job, normalized)
-			continue
-		}
-		// session.new_chat / session.configured are informational pre-submit events
-		// (fresh conversation + model/option enforcement), not lifecycle
-		// transitions: log for audit and skip application so the type never poisons
-		// the job (mirrors the orchestration-telemetry handling above).
-		if normalized.Type == conversationThreadBoundEventType ||
-			normalized.Type == conversationThreadReboundEventType ||
-			normalized.Type == conversationThreadBrokenEventType {
-			c.recordConversationEvent(ctx, job, normalized)
-			continue
-		}
-		if normalized.Type == newChatEventType || normalized.Type == configuredEventType ||
-			normalized.Type == fileAttachedEventType {
-			slog.Info("worker session event",
-				"job_id", normalized.JobID, "event_type", normalized.Type)
+		if c.handleTelemetryEvent(ctx, job, normalized) {
 			continue
 		}
 		if _, found, err := c.Jobs.ApplyWorkerEvent(ctx, normalized); err != nil {
 			c.observeWorkerRun(job.Target, "failure", workerDuration)
 			c.observeIngestion(job.Target, "failure", "store", index+1, time.Since(ingestionStarted))
 			slog.Error("ApplyWorkerEvent failed", "job_id", normalized.JobID, "event_type", normalized.Type, "error", err)
-			if applyErr := c.applyFailure(ctx, lease, envelope, ambiguousIfSubmitted(err, events)); applyErr != nil {
+			if applyErr := c.applyFailure(ctx, lease, envelope, ambiguousIfSubmitted(err, evidence)); applyErr != nil {
 				_ = lease.Retry(ctx)
 				return true, applyErr
 			}
@@ -654,29 +663,25 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			_ = lease.Poison(ctx, "worker event referenced missing job")
 			return true, fmt.Errorf("worker event referenced missing job %s", normalized.JobID)
 		}
-		c.raiseManualActionAlert(ctx, job, normalized)
-		c.recordLoginState(ctx, job, normalized)
-		if normalized.Type == "completed" {
-			c.recordConversationEvent(ctx, job, normalized)
-		}
+		c.afterEventApplied(ctx, job, normalized)
 	}
 
 	finalJob, found, err := c.Jobs.Get(ctx, lease.JobID())
 	if err != nil {
 		c.observeWorkerRun(job.Target, "failure", workerDuration)
-		c.observeIngestion(job.Target, "failure", "store", len(events), time.Since(ingestionStarted))
+		c.observeIngestion(job.Target, "failure", "store", eventCount, time.Since(ingestionStarted))
 		_ = lease.Retry(ctx)
 		return true, err
 	}
 	if !found {
 		c.observeWorkerRun(job.Target, "failure", workerDuration)
-		c.observeIngestion(job.Target, "failure", "missing_job", len(events), time.Since(ingestionStarted))
+		c.observeIngestion(job.Target, "failure", "missing_job", eventCount, time.Since(ingestionStarted))
 		_ = lease.Poison(ctx, "job disappeared during worker ingestion")
 		return true, fmt.Errorf("job %s disappeared during worker ingestion", lease.JobID())
 	}
 	if jobstore.TerminalStatus(finalJob.Status) {
 		c.observeWorkerRun(job.Target, workerMetricOutcome(finalJob.Status), workerDuration)
-		c.observeIngestion(job.Target, "success", "none", len(events), time.Since(ingestionStarted))
+		c.observeIngestion(job.Target, "success", "none", eventCount, time.Since(ingestionStarted))
 		c.observeStageTimings(job.Target, events)
 	}
 	if finalJob.Status == jobstore.StatusCanceled {
@@ -690,8 +695,8 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	}
 
 	c.observeWorkerRun(job.Target, "failure", workerDuration)
-	c.observeIngestion(job.Target, "failure", "missing_terminal", len(events), time.Since(ingestionStarted))
-	if applyErr := c.applyFailure(ctx, lease, envelope, ambiguousIfSubmitted(fmt.Errorf("worker did not reach a terminal status"), events)); applyErr != nil {
+	c.observeIngestion(job.Target, "failure", "missing_terminal", eventCount, time.Since(ingestionStarted))
+	if applyErr := c.applyFailure(ctx, lease, envelope, ambiguousIfSubmitted(fmt.Errorf("worker did not reach a terminal status"), evidence)); applyErr != nil {
 		_ = lease.Retry(ctx)
 		return true, applyErr
 	}
@@ -734,6 +739,42 @@ func terminalWorkerEventType(eventType string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// handleTelemetryEvent consumes the worker's orchestration and session telemetry
+// and reports whether event was one. None of these are job-lifecycle events, so
+// they are recorded (or logged) and never reach job-event application, where
+// their unknown types would poison the job. Shared by the batch ingestion and
+// the streaming sink so both treat telemetry identically.
+func (c *WorkerConsumer) handleTelemetryEvent(ctx context.Context, job jobstore.Job, normalized jobstore.WorkerEvent) bool {
+	switch normalized.Type {
+	case concurrencyChangeEventType:
+		// Record the reported AIMD ceiling.
+		c.recordConcurrencyChange(job, normalized)
+	case topologyReportEventType:
+		// Project the snapshot into the in-memory topology store (when configured).
+		c.recordTopologyReport(job, normalized)
+	case conversationThreadBoundEventType, conversationThreadReboundEventType, conversationThreadBrokenEventType:
+		c.recordConversationEvent(ctx, job, normalized)
+	case newChatEventType, configuredEventType, fileAttachedEventType:
+		// Informational pre-submit events (fresh conversation, model/option
+		// enforcement, attachments): log for audit only.
+		slog.Info("worker session event",
+			"job_id", normalized.JobID, "event_type", normalized.Type)
+	default:
+		return false
+	}
+	return true
+}
+
+// afterEventApplied runs the best-effort projections that follow a job event
+// that was applied to the store.
+func (c *WorkerConsumer) afterEventApplied(ctx context.Context, job jobstore.Job, normalized jobstore.WorkerEvent) {
+	c.raiseManualActionAlert(ctx, job, normalized)
+	c.recordLoginState(ctx, job, normalized)
+	if normalized.Type == "completed" {
+		c.recordConversationEvent(ctx, job, normalized)
 	}
 }
 
@@ -1058,7 +1099,7 @@ func (c *WorkerConsumer) workerQueue() (WorkerQueue, error) {
 	return nil, fmt.Errorf("worker consumer queue is not configured")
 }
 
-func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease WorkerLease, execToken string, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease WorkerLease, execToken string, envelope DispatchEnvelope, ingest *streamIngest) ([]jobstore.WorkerEvent, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -1128,7 +1169,7 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 		}
 	}()
 
-	events, err := c.runWorker(runCtx, envelope)
+	events, err := c.runWorker(runCtx, envelope, ingest)
 	cancel()
 	<-done
 	return events, err
@@ -1725,12 +1766,22 @@ func dropStaleAttemptEvents(envelope DispatchEnvelope, events []jobstore.WorkerE
 	}
 	kept := make([]jobstore.WorkerEvent, 0, len(events))
 	for _, event := range events {
-		if id, _ := event.Data["attempt_id"].(string); id != "" && id != envelope.Attempt.ID {
+		if staleAttemptEvent(envelope, event) {
 			continue
 		}
 		kept = append(kept, event)
 	}
 	return kept
+}
+
+// staleAttemptEvent reports whether event is stamped (data.attempt_id) by a
+// different attempt than the one this envelope leased.
+func staleAttemptEvent(envelope DispatchEnvelope, event jobstore.WorkerEvent) bool {
+	if envelope.Attempt == nil || envelope.Attempt.ID == "" {
+		return false
+	}
+	id, _ := event.Data["attempt_id"].(string)
+	return id != "" && id != envelope.Attempt.ID
 }
 
 func normalizeWorkerEvent(envelope DispatchEnvelope, event jobstore.WorkerEvent) (jobstore.WorkerEvent, error) {
@@ -1997,12 +2048,13 @@ var workerEnvAllowed = map[string]struct{}{
 	// Slot/stream/strict knobs and the mock benchmark gate: all non-secret
 	// flags. UBAG_ORCHESTRATOR_ENABLED is deliberately NOT forwarded (slot
 	// mode refuses it).
-	"UBAG_WORKER_SLOT_ID":           {},
-	"UBAG_WORKER_IDENTITY_LOCK":     {},
-	"UBAG_WORKER_STREAM_EVENTS":     {},
-	"UBAG_WORKER_STRICT_STREAM_END": {},
-	"UBAG_WORKER_STRICT_SUBMIT":     {},
-	"UBAG_MOCK_SYNTHETIC":           {},
+	"UBAG_WORKER_SLOT_ID":                 {},
+	"UBAG_WORKER_IDENTITY_LOCK":           {},
+	"UBAG_WORKER_STREAM_EVENTS":           {},
+	"UBAG_WORKER_STREAM_MAX_TOKEN_EVENTS": {},
+	"UBAG_WORKER_STRICT_STREAM_END":       {},
+	"UBAG_WORKER_STRICT_SUBMIT":           {},
+	"UBAG_MOCK_SYNTHETIC":                 {},
 	// Synthetic chat fixture (tools/synthetic-provider): a boolean and a loopback URL the
 	// worker validates itself. UBAG_WORKER_STAGE_TIMINGS is the stage-attribution flag (P0.9b).
 	"UBAG_SYNTHETIC_PROVIDER":     {},

@@ -2,9 +2,10 @@ package executor
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"os"
 	"strings"
+	"sync"
 
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 )
@@ -12,16 +13,26 @@ import (
 // EventSink receives worker events as a runner produces them. Events handed to
 // a sink are PROVISIONAL: the consumer treats them as final only after the run
 // ends without error and with exactly one valid terminal event (the same rule
-// the batch path enforces on the whole list).
+// the batch path enforces on the whole list). The WorkerConsumer's sink
+// (streamIngest) applies the non-terminal ones to the job store immediately and
+// holds the terminal back until the run ends cleanly.
 type EventSink interface {
 	Emit(ctx context.Context, event jobstore.WorkerEvent) error
 }
 
 // StreamingWorkerRunner is the optional incremental sibling of WorkerRunner. A
 // nil error means the run reached a clean end (e.g. the daemon's terminal
-// marker); a stream that just stops must return an error, never nil.
+// marker); a stream that just stops must return an error, never nil. Emit is
+// called serially, and never after StreamWorker has returned.
 type StreamingWorkerRunner interface {
 	StreamWorker(ctx context.Context, envelope DispatchEnvelope, sink EventSink) error
+}
+
+// streamSelector is the optional capability of a runner that streams only some
+// jobs: the serve router streams warm-daemon targets and keeps per-job worker
+// targets on the batch path. A runner without it streams every job.
+type streamSelector interface {
+	StreamsJob(envelope DispatchEnvelope) bool
 }
 
 // BatchStreamAdapter lifts a batch WorkerRunner into a StreamingWorkerRunner:
@@ -41,22 +52,6 @@ func (a BatchStreamAdapter) StreamWorker(ctx context.Context, envelope DispatchE
 	return nil
 }
 
-// collectingSink buffers streamed events under the same event-count bound as
-// the batch parser. ponytail: the byte budget stays with the runner's stdout
-// bound; per-attempt event/byte budgets arrive with incremental apply (P2.2).
-type collectingSink struct{ events []jobstore.WorkerEvent }
-
-func (s *collectingSink) Emit(_ context.Context, event jobstore.WorkerEvent) error {
-	if event.Type == "" {
-		return fmt.Errorf("worker event %d is missing type", len(s.events)+1)
-	}
-	if len(s.events) >= maxWorkerEvents {
-		return fmt.Errorf("worker emitted more than %d events", maxWorkerEvents)
-	}
-	s.events = append(s.events, event)
-	return nil
-}
-
 // streamIngestEnabled gates the streaming runner path (default off).
 func streamIngestEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("UBAG_WORKER_STREAM_INGEST"))) {
@@ -66,15 +61,40 @@ func streamIngestEnabled() bool {
 	return false
 }
 
-// runWorker is the consumer's single call site into the runner. Flag off (or a
-// batch-only runner) is the untouched RunWorker path.
-func (c *WorkerConsumer) runWorker(ctx context.Context, envelope DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
-	if sr, ok := c.Runner.(StreamingWorkerRunner); ok && streamIngestEnabled() {
-		sink := &collectingSink{events: []jobstore.WorkerEvent{}}
-		if err := sr.StreamWorker(ctx, envelope, sink); err != nil {
-			return nil, err
-		}
-		return sink.events, nil
+// warnStreamWithoutStrictSubmit logs once per process.
+var warnStreamWithoutStrictSubmit sync.Once
+
+// streamsLive reports whether this job takes the streaming path: the flag is on,
+// the runner streams, and (when the runner can say) it streams this job.
+func (c *WorkerConsumer) streamsLive(envelope DispatchEnvelope) bool {
+	if !streamIngestEnabled() {
+		return false
 	}
-	return c.Runner.RunWorker(ctx, envelope)
+	if _, ok := c.Runner.(StreamingWorkerRunner); !ok {
+		return false
+	}
+	if sel, ok := c.Runner.(streamSelector); ok && !sel.StreamsJob(envelope) {
+		return false
+	}
+	warnStreamWithoutStrictSubmit.Do(func() {
+		if !strictSubmitEnabled() {
+			slog.Warn("UBAG_WORKER_STREAM_INGEST is on without UBAG_WORKER_STRICT_SUBMIT: " +
+				"a job interrupted after tokens were streamed can be replayed from the queue; set both")
+		}
+	})
+	return true
+}
+
+// runWorker is the consumer's single call site into the runner. Without a sink
+// it is the untouched RunWorker path. With one (streamsLive) the runner streams
+// into it and the result is the single held terminal event, which the batch
+// ingestion then applies like the last event of any other run.
+func (c *WorkerConsumer) runWorker(ctx context.Context, envelope DispatchEnvelope, ingest *streamIngest) ([]jobstore.WorkerEvent, error) {
+	if ingest == nil {
+		return c.Runner.RunWorker(ctx, envelope)
+	}
+	if err := c.Runner.(StreamingWorkerRunner).StreamWorker(ctx, envelope, ingest); err != nil {
+		return nil, err
+	}
+	return ingest.finish()
 }

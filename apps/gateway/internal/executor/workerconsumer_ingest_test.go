@@ -69,11 +69,16 @@ func completedIngestData() map[string]any {
 	return map[string]any{"status": "completed", "result": map[string]any{"type": "text", "text": "hello"}}
 }
 
-func TestIngestTerminalValidationAlwaysFailsNeverCompletes(t *testing.T) {
-	cases := []struct {
-		name   string
-		runner WorkerRunFunc
-	}{
+type ingestFailureCase struct {
+	name   string
+	runner WorkerRunFunc
+}
+
+// ingestFailureCases is the table of runs the consumer must always end failed,
+// never completed. The batch test below and its streaming twin
+// (TestIngestTerminalValidationAlwaysFailsNeverCompletesStreamed) share it.
+func ingestFailureCases() []ingestFailureCase {
+	return []ingestFailureCase{
 		{
 			name:   "no events",
 			runner: func(context.Context, DispatchEnvelope) ([]jobstore.WorkerEvent, error) { return nil, nil },
@@ -147,7 +152,10 @@ func TestIngestTerminalValidationAlwaysFailsNeverCompletes(t *testing.T) {
 			},
 		},
 	}
-	for _, tc := range cases {
+}
+
+func TestIngestTerminalValidationAlwaysFailsNeverCompletes(t *testing.T) {
+	for _, tc := range ingestFailureCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			final, lease, events := runIngestConsumer(t, tc.runner)
 			if final.Status != jobstore.StatusFailedRetryable {

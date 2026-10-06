@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -13,6 +14,22 @@ import (
 )
 
 var _ StreamingWorkerRunner = (*DaemonWorkerRunner)(nil)
+
+// collectingSink buffers streamed events under the batch parser's event-count
+// bound. It is the plain sink the protocol tests below read results from; the
+// consumer's own sink is streamIngest.
+type collectingSink struct{ events []jobstore.WorkerEvent }
+
+func (s *collectingSink) Emit(_ context.Context, event jobstore.WorkerEvent) error {
+	if event.Type == "" {
+		return fmt.Errorf("worker event %d is missing type", len(s.events)+1)
+	}
+	if len(s.events) >= maxWorkerEvents {
+		return fmt.Errorf("worker emitted more than %d events", maxWorkerEvents)
+	}
+	s.events = append(s.events, event)
+	return nil
+}
 
 // dualRunner implements both interfaces and records which one the consumer
 // called, so the flag gate is observable.
@@ -55,9 +72,20 @@ func streamCases() map[string]WorkerRunFunc {
 	}
 }
 
-// With the flag on, the batch adapter must leave the consumer's observable end
-// state identical to the flag-off batch path for every outcome.
+// With the flag on, every outcome must end in the same job status and lease
+// outcome as the flag-off batch path. The event history differs in exactly one
+// way: a stream applies its non-terminal events as they arrive, so a run that
+// is later abandoned keeps them (the discarded partial) before the failure
+// event, while the batch path applied nothing. The terminal is never applied
+// unless the stream ended cleanly.
 func TestStreamIngestOnMatchesBatchOutcome(t *testing.T) {
+	streamHistory := map[string]string{
+		"completed":     "queued,assigned,running,completed",
+		"no terminal":   "queued,assigned,running,failed",
+		"two terminals": "queued,assigned,failed",
+		"no events":     "queued,assigned,failed",
+		"run error":     "queued,assigned,failed",
+	}
 	for name, fn := range streamCases() {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("UBAG_WORKER_STREAM_INGEST", "")
@@ -73,8 +101,11 @@ func TestStreamIngestOnMatchesBatchOutcome(t *testing.T) {
 			if onFinal.Status != offFinal.Status {
 				t.Fatalf("status on=%s off=%s", onFinal.Status, offFinal.Status)
 			}
-			if eventTypes(onEvents) != eventTypes(offEvents) {
-				t.Fatalf("events on=%s off=%s", eventTypes(onEvents), eventTypes(offEvents))
+			if got := eventTypes(onEvents); got != streamHistory[name] {
+				t.Fatalf("stream history = %s, want %s (batch history %s)", got, streamHistory[name], eventTypes(offEvents))
+			}
+			if (onFinal.Result == nil) != (offFinal.Result == nil) {
+				t.Fatalf("result on=%#v off=%#v", onFinal.Result, offFinal.Result)
 			}
 			if onLease.completed != offLease.completed || onLease.failed != offLease.failed || onLease.retried != offLease.retried {
 				t.Fatalf("lease outcome differs: on=%+v off=%+v", onLease, offLease)
