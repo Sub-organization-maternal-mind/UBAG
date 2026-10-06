@@ -238,6 +238,38 @@ plus the FIFO write; `speaker` times Opus encode plus the gateway socket write.
 Neither includes time spent waiting for the next frame, so these complement, not
 replace, the gateway-side frame age above.
 
+### Relay baseline profile and stop rule (`bench_relay.py`)
+
+`deploy/vps/browser/tests/bench_relay.py` is the Rust-gate control: it profiles
+the Python relay with real libopus and evaluates the pre-registered stop rule
+before any rewrite work. Run it in the browser image on an isolated container,
+never on the shared VPS:
+
+```
+docker run --rm --cap-add SYS_PTRACE -v "$PWD":/w -w /w/deploy/vps/browser <image with python3, libopus0, pulseaudio-utils>   python3 tests/bench_relay.py --sessions 1,5,10 --duration 30 --pulse-check --pyspy   --host-class "<where this ran>" --container-cpu-pct <live-call container CPU %> --out relay-baseline.json
+```
+
+N sessions are N relay processes (the relay serves one session per audio
+environment), each fed by a paced 20 ms real-libopus client and a fake parec.
+Reported per relay: CPU per call-minute, peak RSS, thread count, wake lag of a
+10 ms sleeper thread, mic FIFO-full drops, p50/p95/max frame turnaround, and the
+CPU split into libopus, syscalls and the rest (thread CPU time around the native
+calls; `--pyspy` adds `py-spy --native` and `--native --gil` as corroboration,
+and ctypes releases the GIL during libopus so `--gil` shows GIL holders, not
+codec time). `--pulse-check` runs `pactl list short sinks|sources` and flags a
+sink or monitor whose sample spec differs from the relay's 48 kHz mono s16le
+(hidden PulseAudio resampling, which costs the container, not the relay).
+
+Stop rule (roadmap-proposed, evaluated first): STOP if at least 70% of relay CPU
+is in libopus plus syscalls, or the relay is under 5% of container CPU
+(`--container-cpu-pct`, measured separately on a real container during a live
+call). The plan's own gate (at least 20% UBAG-controlled overhead, or at least
+25% CPU/memory, material in the mixed workload) is printed alongside. Verdicts:
+`stop`, `continue`, `inconclusive` (rule B not measurable), `invalid` (fake codec
+or no real FIFO). Non-lab numbers are NON-AUTHORITATIVE; fake parec, the client
+and real PulseAudio/Chrome CPU are outside the relay's figures. The pure rule and
+parser logic is covered by `tests/test_bench_relay_rules.py`.
+
 ## Offline self-tests
 
 ```
