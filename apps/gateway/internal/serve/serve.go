@@ -249,15 +249,43 @@ func Run(ctx context.Context) error {
 		return fmt.Errorf("invalid helper plane configuration: %w", err)
 	}
 
+	// Fleet grants (UBAG_FLEET_MANAGER_URL, default unset): the manager's
+	// allocations are polled into the node store with last-known-good semantics.
+	// With nothing configured nothing is ever granted.
+	fleetPoller, err := newFleetPollerFromEnv(helperNodes)
+	if err != nil {
+		return fmt.Errorf("invalid fleet manager configuration: %w", err)
+	}
+	if fleetPoller != nil {
+		slog.Info("fleet grant poller started")
+		go fleetPoller.Run(ctx)
+	}
+
 	// Helper dispatch (UBAG_HELPER_DISPATCH, default off): the primary dials the
 	// helper itself (decision D3) and runs placed jobs as fenced attempts there.
-	// The picker is NoHelperPicker until the placer is wired (P4.17).
-	helperRemote, err := newHelperRemoteFromEnv(jobs, helperNodes, hplane, enterprise.audit, executor.NoHelperPicker{})
+	// The placer (P4.17, ADR-0015) is the picker: it joins the tenant's own
+	// profiles with the granted capacity after a job is leased.
+	fleet, err := newHelperFleetFromEnv(ctx, helperNodes, fleetPoller, storeKind, db)
+	if err != nil {
+		return fmt.Errorf("invalid helper placement configuration: %w", err)
+	}
+	var helperPicker executor.HelperPicker = executor.NoHelperPicker{}
+	if fleet != nil {
+		helperPicker = fleet.picker
+	}
+	helperRemote, err := newHelperRemoteFromEnv(jobs, helperNodes, hplane, enterprise.audit, helperPicker)
 	if err != nil {
 		return fmt.Errorf("invalid helper dispatch configuration: %w", err)
 	}
 	if helperRemote != nil {
 		slog.Info("helper dispatch enabled")
+		if fleet != nil {
+			prober, err := newHelperProberFromEnv(helperNodes)
+			if err != nil {
+				return fmt.Errorf("invalid helper prober configuration: %w", err)
+			}
+			go prober.Run(ctx)
+		}
 	}
 	// Attempt reconcile (P4.18, with dispatch): ledger first, before a leased job is
 	// placed or run.
@@ -373,6 +401,9 @@ func Run(ctx context.Context) error {
 		consumer.Cancels = helperCancels
 		if helperReconciler != nil { // never a typed-nil interface: the gate holds every job without a ledger
 			consumer.Reconcile = helperReconciler
+		}
+		if helperRemote != nil {
+			fleet.wire(consumer) // holds wait off the worker; the pool follows the helper capacity
 		}
 		if closer, ok := consumer.Queue.(interface{ Close() }); ok {
 			defer closer.Close()
