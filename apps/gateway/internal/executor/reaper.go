@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"time"
 
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
@@ -35,6 +36,10 @@ type StaleJobReaper struct {
 	MaxLifetime time.Duration
 	Interval    time.Duration
 	Now         func() time.Time // injectable clock; defaults to time.Now().UTC()
+	// Attempts, when set (UBAG_EXECUTOR_ATTEMPTS ledger), makes the sweep
+	// attempt-aware: lapsed attempt leases are expired first, which closes the
+	// fence on their writers before the job's fate is decided below.
+	Attempts jobstore.AttemptStore
 }
 
 func (rp *StaleJobReaper) now() time.Time {
@@ -74,6 +79,14 @@ func (rp *StaleJobReaper) SweepOnce(ctx context.Context) (int, error) {
 	}
 	now := rp.now()
 	reaped := 0
+	if rp.Attempts != nil {
+		// Best effort: a ledger hiccup must not stop the deadline sweep.
+		if expired, err := rp.Attempts.ExpireAttempts(ctx, 0); err != nil {
+			slog.Warn("stale-job reaper: expire attempts failed", "error", err)
+		} else if len(expired) > 0 {
+			slog.Info("stale-job reaper: expired attempt leases", "count", len(expired))
+		}
+	}
 	for _, status := range jobstore.LifecycleStatuses() {
 		if jobstore.TerminalStatus(status) {
 			continue

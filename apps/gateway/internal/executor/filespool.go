@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -68,11 +69,13 @@ type FileSpoolDispatcher struct {
 	// files. Files dropped into the terminal dirs by another process after the
 	// load are not seen until then (the job store is authoritative; a terminal
 	// job is never re-enqueued).
-	terminalMu  sync.Mutex
-	terminalIDs map[string]struct{}
+	terminalMu     sync.Mutex
+	terminalIDs    map[string]struct{}
 	honorNotBefore atomic.Bool
-	notBeforeMu    sync.Mutex
-	notBefore      map[string]time.Time
+	// leaseTTL (UBAG_EXECUTOR_LEASE_TTL_MS) in ns; 0 = legacy no-expiry.
+	leaseTTL    atomic.Int64
+	notBeforeMu sync.Mutex
+	notBefore   map[string]time.Time
 	// beforeLease is a test seam called just before a pending envelope is
 	// claimed, so a test can deterministically lose the lease race.
 	beforeLease func(name string)
@@ -486,6 +489,105 @@ func (d *FileSpoolDispatcher) CancelLease(_ context.Context, lease FileSpoolLeas
 // grows behind it (2026-09-26/27 incident). Returns the number of envelopes
 // recovered.
 func (d *FileSpoolDispatcher) RecoverOrphanLeases() (int, error) {
+	return d.recoverLeases(nil)
+}
+
+// SetLeaseTTL turns on queue-lease expiry (UBAG_EXECUTOR_LEASE_TTL_MS). Zero
+// (the default) keeps the legacy behaviour: a lease never expires and only
+// startup RecoverOrphanLeases returns stranded files to pending. Call it at
+// wiring time, before the lease loop starts.
+func (d *FileSpoolDispatcher) SetLeaseTTL(ttl time.Duration) {
+	if d != nil {
+		d.leaseTTL.Store(int64(ttl))
+	}
+}
+
+// LeaseTTL reports the configured queue-lease TTL (0 = no expiry).
+func (d *FileSpoolDispatcher) LeaseTTL() time.Duration {
+	if d == nil {
+		return 0
+	}
+	return time.Duration(d.leaseTTL.Load())
+}
+
+// RenewLease extends a held lease by touching its file: the mtime (or, before
+// the first renewal, the lease time encoded in the file name) is the lease's
+// liveness stamp. It returns ErrLeaseLost when the file is gone (reclaimed
+// after expiry, or moved by a cancel) so the holder stops instead of racing
+// whoever now owns the job. With no TTL configured it is a no-op.
+func (d *FileSpoolDispatcher) RenewLease(_ context.Context, lease FileSpoolLease) error {
+	if d.LeaseTTL() <= 0 {
+		return nil
+	}
+	now := d.now()
+	if err := os.Chtimes(lease.Path, now, now); err != nil {
+		if os.IsNotExist(err) {
+			return ErrLeaseLost
+		}
+		return err
+	}
+	return nil
+}
+
+// ReclaimExpiredLeases returns leased/ files whose lease lapsed (no renewal
+// within the TTL) to pending, generalising RecoverOrphanLeases (which reclaims
+// every lease, valid only at startup when no lease can still be held). It is
+// a no-op without a TTL. A holder that was merely slow finds its file gone on
+// its next RenewLease and cancels its run.
+func (d *FileSpoolDispatcher) ReclaimExpiredLeases() (int, error) {
+	ttl := d.LeaseTTL()
+	if ttl <= 0 {
+		return 0, nil
+	}
+	now := d.now()
+	return d.recoverLeases(func(name string, mod time.Time) bool {
+		return now.Sub(leaseLiveness(name, mod)) > ttl
+	})
+}
+
+// RunLeaseReclaimer sweeps ReclaimExpiredLeases every interval (default
+// TTL/4) until ctx ends. A no-op without a TTL.
+func (d *FileSpoolDispatcher) RunLeaseReclaimer(ctx context.Context, interval time.Duration) error {
+	if d.LeaseTTL() <= 0 {
+		return nil
+	}
+	if interval <= 0 {
+		interval = d.LeaseTTL() / 4
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if n, err := d.ReclaimExpiredLeases(); err != nil {
+				slog.Warn("file spool expired-lease reclaim failed", "error", err)
+			} else if n > 0 {
+				slog.Info("reclaimed expired spool leases", "count", n)
+			}
+		}
+	}
+}
+
+// leaseLiveness is the later of the lease time encoded in "<job>.<leaseNanos>.json"
+// and the file mtime. Rename preserves the pending file's (old) mtime, so the
+// name keeps a freshly claimed lease from looking expired before its first renewal.
+func leaseLiveness(name string, mod time.Time) time.Time {
+	base := strings.TrimSuffix(name, ".json")
+	if idx := strings.LastIndex(base, "."); idx > 0 {
+		if n, err := strconv.ParseInt(base[idx+1:], 10, 64); err == nil {
+			if at := time.Unix(0, n); at.After(mod) {
+				return at
+			}
+		}
+	}
+	return mod
+}
+
+// recoverLeases moves leased/ files back to pending. expired == nil reclaims
+// every lease; otherwise only files for which expired(name, mtime) is true.
+func (d *FileSpoolDispatcher) recoverLeases(expired func(name string, mod time.Time) bool) (int, error) {
 	entries, err := os.ReadDir(d.leasedDir())
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -497,6 +599,12 @@ func (d *FileSpoolDispatcher) RecoverOrphanLeases() (int, error) {
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
+		}
+		if expired != nil {
+			info, err := entry.Info()
+			if err != nil || !expired(entry.Name(), info.ModTime()) {
+				continue
+			}
 		}
 		source := filepath.Join(d.leasedDir(), entry.Name())
 		jobID := strings.TrimSuffix(entry.Name(), ".json")
