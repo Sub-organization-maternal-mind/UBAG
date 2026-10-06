@@ -39,6 +39,14 @@ var (
 	// into "other" so a helper cannot grow the label set.
 	fencedReasons    = []string{"stale_generation", "attempt_expired", "attempt_mismatch", "commit_fenced"}
 	violationReasons = []string{"job_scope", "unknown_attempt", "node_mismatch", "fingerprint_mismatch", "helper_output_limit", "helper_event_invalid"}
+	// Placement outcomes (P4.17): where a leased job went, or why it was held. No
+	// tenant, job, node or profile ever becomes a label.
+	placementOutcomes = []string{
+		"placed", "local_no_fleet", "local_no_profile", "local_conversation",
+		"held_identity_busy", "held_no_capacity", "held_no_node", "held_affinity", "held_error",
+	}
+	// Probe results mirror nodes.ProbeOK, nodes.ProbeError and nodes.ProbeIncompatible.
+	probeResults = []string{"ok", "error", "incompatible"}
 )
 
 var (
@@ -47,6 +55,8 @@ var (
 	fencedRej  = map[string]int64{}
 	violations = map[string]int64{}
 	reconciled = map[nodes.ReconcileOutcome]int64{}
+	placements = map[string]int64{}
+	probes     = map[string]int64{}
 )
 
 func norm(set []string, v string) string {
@@ -94,6 +104,20 @@ func RecordReconcile(action, reason string) {
 	mu.Unlock()
 }
 
+// RecordPlacement counts one placement decision by outcome (bounded labels).
+func RecordPlacement(outcome string) {
+	mu.Lock()
+	placements[norm(placementOutcomes, outcome)]++
+	mu.Unlock()
+}
+
+// RecordProbe counts one helper capacity report by result (bounded labels).
+func RecordProbe(result string) {
+	mu.Lock()
+	probes[norm(probeResults, result)]++
+	mu.Unlock()
+}
+
 // NodeSource is the read side of nodes.Store the scrape needs.
 type NodeSource interface {
 	ListAllocations(ctx context.Context) ([]nodes.Allocation, error)
@@ -111,8 +135,12 @@ func header(w io.Writer, name, kind, help string) {
 }
 
 func writeReasons(w io.Writer, name string, m map[string]int64, fixed []string) {
+	writeLabeled(w, name, "reason", m, fixed)
+}
+
+func writeLabeled(w io.Writer, name, label string, m map[string]int64, fixed []string) {
 	for _, r := range append(append([]string{}, fixed...), "other") {
-		_, _ = fmt.Fprintf(w, "%s{reason=\"%s\"} %d\n", name, r, m[r])
+		_, _ = fmt.Fprintf(w, "%s{%s=\"%s\"} %d\n", name, label, r, m[r])
 	}
 }
 
@@ -139,6 +167,14 @@ func Write(ctx context.Context, w io.Writer, src NodeSource, now time.Time) {
 	for k, v := range reconciled {
 		rc[k] = v
 	}
+	pl := make(map[string]int64, len(placements))
+	for k, v := range placements {
+		pl[k] = v
+	}
+	pr := make(map[string]int64, len(probes))
+	for k, v := range probes {
+		pr[k] = v
+	}
 	mu.Unlock()
 
 	header(w, "ubag_lease_renew_failures_total", "counter", "Failed lease renewals by lease kind and reason.")
@@ -161,6 +197,10 @@ func Write(ctx context.Context, w io.Writer, src NodeSource, now time.Time) {
 	if other := rc[nodes.ReconcileOutcome{Action: "other", Reason: "other"}]; other > 0 {
 		_, _ = fmt.Fprintf(w, "ubag_helper_reconcile_total{action=\"other\",reason=\"other\"} %d\n", other)
 	}
+	header(w, "ubag_helper_placements_total", "counter", "Helper placement decisions for leased jobs: placed, run on this gateway, or held back.")
+	writeLabeled(w, "ubag_helper_placements_total", "outcome", pl, placementOutcomes)
+	header(w, "ubag_helper_probes_total", "counter", "Helper capacity reports by result (ok, error, incompatible).")
+	writeLabeled(w, "ubag_helper_probes_total", "result", pr, probeResults)
 
 	if src == nil {
 		return
