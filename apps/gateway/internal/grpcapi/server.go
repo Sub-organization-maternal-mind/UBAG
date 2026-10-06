@@ -750,10 +750,11 @@ func marshalJSON(value any) string {
 }
 
 func isTerminalEvent(event jobstore.Event) bool {
-	if raw, ok := event.Data["status"].(string); ok {
-		return jobstore.TerminalStatus(jobstore.Status(raw))
+	if raw, ok := event.Data["status"].(string); ok && jobstore.TerminalStatus(jobstore.Status(raw)) {
+		return true
 	}
-	return false
+	// blocked / failed(retryable) carry no terminal data.status but end the job.
+	return jobstore.EventEndsJob(event.Type, event.Data)
 }
 
 // sortJobs orders jobs by created_at, breaking ties on id in the SAME
