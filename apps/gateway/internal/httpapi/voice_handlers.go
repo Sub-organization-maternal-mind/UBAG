@@ -273,6 +273,44 @@ func hostsNodeSessions(m MediaNegotiator) bool {
 	return ok && n.HostsNodeSessions()
 }
 
+// NodeSessionMedia is the session-aware control surface of a node-hosting
+// negotiator (voice.NodeRouter over voice.RemoteNegotiator, P5.11). Each call is
+// addressed by the session record (tenant, node, lease generation), so it works on
+// any replica and a stale lease can never touch a successor's call; the node, not
+// the primary, holds the media.
+type NodeSessionMedia interface {
+	NodeMediaNegotiator
+	// MuteSession applies mute to the call's live media and returns once the node
+	// confirmed it.
+	MuteSession(ctx context.Context, session voice.Session, muted bool) error
+	// EndSession ends the call on its node (in the background) and, for a session
+	// that holds a terminating hold, releases the hold when the node acks that the
+	// provider left voice mode.
+	EndSession(ctx context.Context, session voice.Session, reason string)
+	// IssueMediaCredential signs the client's control-channel credential with the
+	// per-attempt media key the node verifies (it holds no app secret).
+	IssueMediaCredential(session voice.Session, expires time.Time) (string, bool)
+}
+
+// nodeSessionMedia returns the node control surface when the media plane hosts
+// sessions on Helper Nodes and implements it.
+func nodeSessionMedia(m MediaNegotiator) (NodeSessionMedia, bool) {
+	n, ok := m.(NodeSessionMedia)
+	return n, ok && n.HostsNodeSessions()
+}
+
+// voiceMediaCredential is the connect response's control-channel credential: the app
+// secret keys it for a primary-hosted session, the per-attempt media key for one
+// hosted on a node. ok=false when a node session's credentials cannot be issued.
+func (s *Server) voiceMediaCredential(session voice.Session, expires time.Time) (string, bool) {
+	if session.NodeID != "" {
+		if node, ok := nodeSessionMedia(s.voiceMedia); ok {
+			return node.IssueMediaCredential(session, expires)
+		}
+	}
+	return issueVoiceMediaCredential(s.appSecret, session, expires), true
+}
+
 // admitVoiceLanes keeps the placements whose browser has no running job and holds
 // a voice-admission registration on each browser it keeps, so a job that starts
 // meanwhile is held back (the consumer registers, then looks for it). The caller
@@ -674,6 +712,9 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 	}
 	if !session.LeaseExpires.IsZero() && session.LeaseExpires.Before(now) {
 		_ = s.voice.Terminate(ctx, tenantID, sessionID, now, "lease_expired")
+		if session.NodeID != "" {
+			s.dropVoiceMedia(ctx, session, "lease_expired") // the node may still hold the call
+		}
 		s.releaseVoiceNodeHolds(ctx)
 		s.voiceError(w, r, http.StatusConflict, "UBAG-VOICE-SESSION-STATE-005",
 			"voice session lease has expired", true, nil)
@@ -688,6 +729,13 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	expires := now.Add(voiceMediaCredentialTTL)
+	credential, ok := s.voiceMediaCredential(session, expires)
+	if !ok {
+		slog.Warn("voice media credential cannot be issued for a node session", "session_id", sessionID)
+		s.voiceMediaUnavailable(w, r)
+		return
+	}
 	answer, err := s.voiceMedia.HandleOffer(ctx, session, req.SDPOffer)
 	if err != nil {
 		// Diagnostics stay server-side: internal addresses and implementation
@@ -701,7 +749,7 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 	// means the lease is gone — tear the media down rather than hand out an
 	// answer for a session that no longer owns its resources.
 	if err := s.voice.RenewLease(ctx, tenantID, sessionID, now.Add(s.voiceLeaseTTL()), now); err != nil {
-		s.dropVoiceMedia(sessionID)
+		s.dropVoiceMedia(ctx, session, "lease_lost")
 		if errors.Is(err, voice.ErrNotFound) || errors.Is(err, voice.ErrConflict) {
 			s.voiceError(w, r, http.StatusConflict, "UBAG-VOICE-SESSION-STATE-005",
 				"voice session lease is no longer held", true, nil)
@@ -712,7 +760,6 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	s.beginVoiceActivation(session)
-	expires := now.Add(voiceMediaCredentialTTL)
 	var iceServers []voice.ICEServer
 	if provider, ok := s.voiceMedia.(interface {
 		ClientICEServers(voice.Session) []voice.ICEServer
@@ -724,7 +771,7 @@ func (s *Server) handleVoiceSessionConnect(w http.ResponseWriter, r *http.Reques
 		SessionID:       sessionID,
 		Status:          string(voice.StatusConnecting),
 		SDPAnswer:       answer,
-		MediaCredential: issueVoiceMediaCredential(s.appSecret, session, expires),
+		MediaCredential: credential,
 		MediaExpiresMS:  expires.UnixMilli(),
 		Kind:            "voice_session_connection",
 	})
@@ -748,10 +795,19 @@ func (s *Server) voiceLeaseTTL() time.Duration {
 	return defaultVoiceSessionTTL
 }
 
-// dropVoiceMedia closes any live media connection for the session.
-func (s *Server) dropVoiceMedia(sessionID string) {
+// dropVoiceMedia closes any live media connection for the session. A session hosted
+// on a Helper Node is ended there, in the background and fenced by its lease (the
+// node, not the primary, holds the media); every other session is dropped from the
+// primary's own hub.
+func (s *Server) dropVoiceMedia(ctx context.Context, session voice.Session, reason string) {
+	if session.NodeID != "" {
+		if node, ok := nodeSessionMedia(s.voiceMedia); ok {
+			node.EndSession(ctx, session, reason)
+		}
+		return
+	}
 	if dropper, ok := s.voiceMedia.(interface{ Disconnect(sessionID string) }); ok {
-		dropper.Disconnect(sessionID)
+		dropper.Disconnect(session.ID)
 	}
 }
 
@@ -768,10 +824,28 @@ func (s *Server) handleVoiceSessionMute(w http.ResponseWriter, r *http.Request, 
 			"muted (bool) is required", false, nil)
 		return
 	}
-	if _, ok := s.voiceSessionOrWrite(w, r, sessionID); !ok {
+	session, ok := s.voiceSessionOrWrite(w, r, sessionID)
+	if !ok {
 		return
 	}
 	tenantID, _ := requestScope(r)
+	if session.NodeID != "" {
+		if node, ok := nodeSessionMedia(s.voiceMedia); ok {
+			// The node owns the microphone path. The record is written only after the node
+			// confirmed the mute: a mute that did not reach the live media must never be
+			// reported as done, and a stale lease never reaches a node.
+			if err := node.MuteSession(r.Context(), session, *req.Muted); err != nil {
+				switch {
+				case errors.Is(err, voice.ErrNotFound), errors.Is(err, voice.ErrStaleGeneration), errors.Is(err, voice.ErrNodeMismatch):
+					s.mapVoiceStoreError(w, r, voice.ErrConflict) // the session ended or moved: re-read it
+				default:
+					slog.Warn("muting a voice session on its helper node failed", "session_id", sessionID, "error", err)
+					s.voiceMediaUnavailable(w, r)
+				}
+				return
+			}
+		}
+	}
 	if err := s.voice.SetMuted(r.Context(), tenantID, sessionID, *req.Muted, time.Now().UTC()); s.mapVoiceStoreError(w, r, err) {
 		return
 	}
@@ -816,18 +890,18 @@ func (s *Server) handleVoiceSessionTerminate(w http.ResponseWriter, r *http.Requ
 	if !s.authorizeGatewayAction(w, r, "job:create") {
 		return
 	}
-	if _, ok := s.voiceSessionOrWrite(w, r, sessionID); !ok {
+	session, ok := s.voiceSessionOrWrite(w, r, sessionID)
+	if !ok {
 		return
 	}
-	tenantID, _ := requestScope(r)
 	// Termination is idempotent in the store, and the media path drops
 	// immediately — cleanup never waits for ICE to notice the session died.
 	// With the terminating hold on, the leases outlive the record until the
 	// provider confirms deactivation (see terminateVoiceSession).
-	if err := s.terminateVoiceSession(r.Context(), tenantID, sessionID, time.Now().UTC(), "terminated_by_client"); s.mapVoiceStoreError(w, r, err) {
+	if err := s.terminateVoiceSession(r.Context(), session, time.Now().UTC(), "terminated_by_client"); s.mapVoiceStoreError(w, r, err) {
 		return
 	}
-	s.dropVoiceMedia(sessionID)
+	s.dropVoiceMedia(r.Context(), session, "terminated_by_client")
 	s.releaseVoiceNodeHolds(r.Context())
 	s.writeJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "status": "terminated", "kind": "voice_session"})
 }
