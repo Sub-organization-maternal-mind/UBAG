@@ -253,7 +253,7 @@ func (s *Server) voiceCapabilityView(ctx context.Context, tenantID, target strin
 // freeVoicePlacements counts this tenant's eligible (authenticated account,
 // hosting environment) pairs that no live session currently holds.
 func (s *Server) freeVoicePlacements(ctx context.Context, tenantID, target string) int {
-	placements := s.voicePlacements(ctx, tenantID, target, "")
+	placements, _ := s.voiceCandidates(ctx, tenantID, target, "") // a read: no admission, no lane registrations
 	if len(placements) == 0 {
 		return 0
 	}
