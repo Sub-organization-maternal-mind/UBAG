@@ -137,6 +137,10 @@ class DriftDetectedError(RuntimeError):
 class PageDriver(ABC):
     """High-level, selector-aware page operations used by the engine."""
 
+    #: Why the last stream_response ended: "settled" | "indicator_gone" |
+    #: "deadline" (None before any stream). "deadline" means the answer may be cut.
+    stream_end_reason: Optional[str] = None
+
     @abstractmethod
     def open(self, *, target_url: str, user_data_dir: str, headless: bool) -> None:
         """Open a user-owned persistent browser context and navigate to target."""
@@ -378,6 +382,8 @@ class MockPageDriver(PageDriver):
     response_text: str = "ready"
     tokens: Optional[Sequence[str]] = None
     drift_group: Optional[str] = None
+    # Scripted stream_end_reason reported after stream_response (None = "settled").
+    scripted_end_reason: Optional[str] = None
     screenshot_path: Optional[str] = "artifacts/mock-screenshot.png"
     # Setting keys reported as "already_set" (rest are reported "set"); lets a
     # test assert idempotency without a browser.
@@ -454,8 +460,10 @@ class MockPageDriver(PageDriver):
         self._guard_drift(
             selectors.response_container.name, selectors.selector_version
         )
+        self.stream_end_reason = None
         for token in self._resolved_tokens():
             yield token
+        self.stream_end_reason = self.scripted_end_reason or "settled"
 
     def read_final_response(
         self, selectors: ProviderSelectors, *, return_mode: str = "final"
@@ -1659,6 +1667,9 @@ class PlaywrightPageDriver(PageDriver):
         # before our first poll) keep the text-growth settle below unchanged.
         indicator_seen = False
         indicator_gone_at: Optional[float] = None
+        # Falls through the while-loop only at the deadline; the breaks below
+        # overwrite it with the real reason.
+        self.stream_end_reason = "deadline"
         grace_s = _indicator_gone_grace_s()
         # Reasoning modes pause (often >1s) while "thinking" with no streaming
         # indicator; widen the settle window so a mid-thought pause is not mistaken
@@ -1700,12 +1711,14 @@ class PlaywrightPageDriver(PageDriver):
             settled = (now - last_growth) >= settle_s
             if seen.strip() and not still_streaming:
                 if settled:
+                    self.stream_end_reason = "settled"
                     break
                 if (
                     indicator_gone_at is not None
                     and (now - indicator_gone_at) >= grace_s
                     and (now - last_growth) >= grace_s
                 ):
+                    self.stream_end_reason = "indicator_gone"
                     break
             time.sleep(0.4)
 

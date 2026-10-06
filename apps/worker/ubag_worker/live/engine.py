@@ -636,6 +636,7 @@ class LiveSessionEngine:
             stream_timeout_s = max(stream_timeout_s, _reasoning_response_timeout_s())
 
         token_index = 0
+        partial_parts: List[str] = []
         # first_token = submit -> first delta (blocked inside the generator's first
         # next()); provider_stream = first delta -> end of stream. A stream with no
         # deltas books its whole wait under provider_stream.
@@ -652,9 +653,34 @@ class LiveSessionEngine:
                 "delta": {"text": delta},
             }))
             token_index += 1
+            partial_parts.append(delta)
 
         t_end = time.perf_counter()
         timer.add("provider_stream", t_end - (t_first if t_first is not None else t_wait))
+
+        # Truncation guard (D4): a stream cut by its deadline is NOT a finished
+        # answer. With the flag on it ends timed_out; the partial text rides in
+        # data.partial and never in `result`. Return before the final read and the
+        # thread bind: the page holds a half-rendered turn (the warm daemon sees no
+        # completed event and discards the driver).
+        if getattr(driver, "stream_end_reason", None) == "deadline" and _env_flag(
+            "UBAG_WORKER_STRICT_STREAM_END", False
+        ):
+            partial_text = "".join(partial_parts)
+            events.append(("timed_out", {
+                "status": "timed_out",
+                "target": job.target,
+                "stream_end_reason": "deadline",
+                "submitted": True,
+                "partial": {"text": partial_text, "token_events": token_index},
+                "partial_text_chars": len(partial_text),
+                "metadata": {
+                    "adapter": self._selectors.provider_id,
+                    "selector_version": self._selectors.selector_version,
+                    "token_count": token_index,
+                },
+            }))
+            return {"events": events, "blocked": None}
 
         return_mode = str((job.options or {}).get("return_mode") or "final")
         with timer.span("extraction"):
