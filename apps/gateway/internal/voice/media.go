@@ -452,6 +452,14 @@ type MediaHub struct {
 	sessions map[string]*mediaSession
 }
 
+// MediaAvailable reports whether this hub can ever reach a relay: a hub whose
+// relay secret is empty refuses every session, so admitting a live session on it
+// would only pin a browser lane (and an account) for the whole lease.
+func (h *MediaHub) MediaAvailable() bool {
+	d, ok := h.Dialer.(*TCPRelayDialer)
+	return !ok || len(d.Secret) > 0
+}
+
 func (h *MediaHub) metrics() MediaMetrics {
 	if h.Metrics == nil {
 		return noopMediaMetrics{}

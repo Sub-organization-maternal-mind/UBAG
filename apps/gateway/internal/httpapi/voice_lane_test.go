@@ -232,3 +232,18 @@ func TestVoiceAndBrowserJobsExcludeEachOtherOnOneBrowser(t *testing.T) {
 		t.Fatalf("a job after the session ended must run: completed=%v ran=%d", resumed.completed.Load(), ran.Load()-ranBefore)
 	}
 }
+
+// unavailableMedia is a media plane that can never connect (no relay secret).
+type unavailableMedia struct{ fakeMediaNegotiator }
+
+func (*unavailableMedia) MediaAvailable() bool { return false }
+
+// A live session on a media plane that can never connect must not be admitted: it
+// would pin a browser lane for its whole lease (security review, P5.5).
+func TestVoiceLiveSessionRefusedWhileMediaCannotConnect(t *testing.T) {
+	_, h, _ := voiceTestServer(t, func(c *Config) { c.VoiceMedia = &unavailableMedia{} })
+	rec := doJSON(h, http.MethodPost, "/v1/voice/sessions", voiceBody("chatgpt_web"), authHeaders(""))
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "UBAG-VOICE-MEDIA-UNAVAILABLE-007") {
+		t.Fatalf("create = %d %s, want 503 media unavailable", rec.Code, rec.Body.String())
+	}
+}

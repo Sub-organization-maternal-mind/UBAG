@@ -1029,6 +1029,15 @@ type NodeRouter struct {
 	Remote *RemoteNegotiator
 }
 
+// MediaAvailable is true when a node can host the call or the primary hub can.
+func (r *NodeRouter) MediaAvailable() bool {
+	if r.Remote != nil {
+		return true
+	}
+	m, ok := r.Local.(interface{ MediaAvailable() bool })
+	return !ok || m.MediaAvailable()
+}
+
 // HostsNodeSessions marks the router as a media plane that can host node sessions.
 func (r *NodeRouter) HostsNodeSessions() bool { return r.Remote != nil }
 
