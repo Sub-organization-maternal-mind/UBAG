@@ -568,7 +568,10 @@ func (g *HelperIngest) terminal(out *helperv1.AttemptOutcome, data map[string]an
 		data["reconcile_required"] = true
 	}
 	if endReason != "" {
-		data["stream_end_reason"] = endReason
+		data["stream_end_reason"] = schemaStreamEndReason(endReason, status)
+		if data["stream_end_reason"] != endReason {
+			data["stream_end_detail"] = endReason // the helper's own token, outside the schema enum
+		}
 	}
 	if code != "" {
 		data["error_code"] = code
@@ -578,12 +581,10 @@ func (g *HelperIngest) terminal(out *helperv1.AttemptOutcome, data map[string]an
 	}
 	// data.partial: the helper's own object when it sent one, else the count of
 	// provisional token events this session saw. Never partial text in result.
-	// The key is token_count: payloadpolicy exempts it, while any other key with a
-	// "token" segment (token_events) is refused as a credential.
+	// It is reduced to the job-event schema's closed {text, token_events} shape.
 	if out.GetPartial() {
-		if _, isObject := data["partial"].(map[string]any); !isObject {
-			data["partial"] = map[string]any{"token_count": g.tokenEvents}
-		}
+		helperPartial, _ := data["partial"].(map[string]any)
+		data["partial"] = schemaPartial(helperPartial, g.tokenEvents)
 	} else {
 		delete(data, "partial")
 	}
@@ -697,4 +698,45 @@ func truncateUTF8(s string, max int) string {
 		s = s[:len(s)-1]
 	}
 	return s
+}
+
+// jobEventStreamEndReasons is the closed stream_end_reason enum of
+// job-event.schema.json.
+var jobEventStreamEndReasons = map[string]bool{
+	"provider_done": true, "deadline": true, "stalled": true, "cancelled": true, "error": true,
+}
+
+// schemaStreamEndReason maps a helper's free-form end reason onto the schema
+// enum: a known value passes, anything else follows the outcome status.
+func schemaStreamEndReason(reason string, status helperv1.AttemptStatus) string {
+	switch {
+	case jobEventStreamEndReasons[reason]:
+		return reason
+	case status == helperv1.AttemptStatus_ATTEMPT_STATUS_CANCELLED:
+		return "cancelled"
+	case status == helperv1.AttemptStatus_ATTEMPT_STATUS_TIMED_OUT:
+		return "deadline"
+	}
+	return "error"
+}
+
+// schemaPartial reduces a helper's partial object to the schema's closed
+// {text, token_events} shape; unknown keys (for example truncated) are dropped
+// and token_events falls back to the count of token events this session saw.
+func schemaPartial(in map[string]any, tokenEvents int) map[string]any {
+	out := map[string]any{"token_events": tokenEvents}
+	if text, ok := in["text"].(string); ok {
+		out["text"] = truncateUTF8(text, 1<<20)
+	}
+	switch n := in["token_events"].(type) {
+	case float64:
+		if n >= 0 {
+			out["token_events"] = int(n)
+		}
+	case int:
+		if n >= 0 {
+			out["token_events"] = n
+		}
+	}
+	return out
 }

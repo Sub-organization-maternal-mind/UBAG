@@ -62,7 +62,7 @@ export async function gw<T = unknown>(
       }
     }
 
-    const ra = response.headers.get('Retry-After');
+    const ra = response.headers?.get('Retry-After');
     const raSecs = ra ? Number(ra) : NaN;
     const raMs = Number.isFinite(raSecs) ? raSecs * 1000 : ra ? Date.parse(ra) - Date.now() : NaN;
     return {

@@ -126,7 +126,7 @@ function walk(dir, exts, out) {
 export function collectCodeTokens(root) {
   const files = [];
   walk(join(root, 'apps'), ['.go', '.py'], files);
-  walk(join(root, 'deploy'), ['.yml', '.yaml', '.example', '.env', '.sh'], files);
+  walk(join(root, 'deploy'), ['.yml', '.yaml', '.example', '.env', '.sh', '.py'], files);
   walk(join(root, 'tools'), ['.mjs'], files);
   files.push(join(root, 'docker-compose.vps.yml'));
   const tokens = new Set();

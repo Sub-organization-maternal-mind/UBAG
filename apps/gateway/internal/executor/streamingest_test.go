@@ -467,7 +467,8 @@ func TestStreamIngestRetryAfterAStreamedPartialCompletes(t *testing.T) {
 		t.Fatalf("second lease = %+v, want Complete only", second)
 	}
 	ids := strings.Join(rig.workerEventIDs(), ",")
-	for _, want := range []string{"lease_one_2", "lease_two_2", "lease_two_3", "lease_two_4"} {
+	one, two := attemptIDForLease("lease_one"), attemptIDForLease("lease_two")
+	for _, want := range []string{one + "_2", two + "_2", two + "_3", two + "_4"} {
 		if !strings.Contains(ids, want) {
 			t.Fatalf("event ids %s are missing %s: attempt-scoped ids must keep both attempts' events", ids, want)
 		}
@@ -652,7 +653,7 @@ func TestStreamIngestSelectionAndAttemptScopedIDs(t *testing.T) {
 			// Streaming applies events before the end of the run, so it implies
 			// attempt-scoped ids even without UBAG_WORKER_ATTEMPT_EVENT_IDS.
 			gotID, _ := runner.attemptID.Load().(string)
-			if tc.wantAttempt && gotID != "lease_ingest" || !tc.wantAttempt && gotID != "" {
+			if tc.wantAttempt && gotID != attemptIDForLease("lease_ingest") || !tc.wantAttempt && gotID != "" {
 				t.Fatalf("envelope attempt id = %q, want scoped=%v", gotID, tc.wantAttempt)
 			}
 		})

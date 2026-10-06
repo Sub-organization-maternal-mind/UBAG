@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -242,15 +244,129 @@ func TestSSEResumePastTerminalReturns204(t *testing.T) {
 	}
 }
 
-func TestSSEResumePastTerminalStaysOpenWhenFlagOff(t *testing.T) {
+// The 204 past a terminal event holds with the close-on-terminal flag off too
+// (the contract says "either way"); a client must never be left pinging.
+func TestSSEResumePastTerminalReturns204WhenFlagOff(t *testing.T) {
 	f := newSSEFixture(t, 50*time.Millisecond)
 	seedLifecycle(t, f)
-	frames, _, resp := f.openSSE(t, "", map[string]string{"Last-Event-ID": f.snapshotIDs(t)[2]})
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200 with the flag off", resp.StatusCode)
+	resp, _ := f.rawSSE(t, map[string]string{"Last-Event-ID": f.snapshotIDs(t)[2]})
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 with the flag off", resp.StatusCode)
 	}
-	if frame := nextFrame(t, frames); frame != ": ping" {
-		t.Fatalf("frame = %q, want idle ping (no replay, no close)", frame)
+}
+
+// sseCase issues the GET with a raw query string and returns the
+// status and the frame ids of a snapshot read (snapshot=true ends the stream).
+func (f *sseFixture) sseCase(t *testing.T, query string, headers map[string]string) (int, []string) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, f.server.URL+"/v1/sse/jobs/"+f.job.ID+query, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer dev-secret")
+	req.Header.Set("Ubag-Api-Version", DefaultAPIVersion)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open sse: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	var ids []string
+	for _, frame := range strings.Split(string(body), "\n\n") {
+		if id := frameID(frame); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return resp.StatusCode, ids
+}
+
+// Replays packages/conformance/fixtures/streaming/sse-resume.json. The store
+// assigns its own ids and sequences, so the fixture's events map to the seeded
+// events by position and its cursors by "events at or below".
+func TestSSEResumeConformanceFixture(t *testing.T) {
+	raw, err := os.ReadFile("../../../../packages/conformance/fixtures/streaming/sse-resume.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var fx struct {
+		Events []struct {
+			EventID  string `json:"event_id"`
+			Sequence int    `json:"sequence"`
+		} `json:"events"`
+		Cases []struct {
+			ID      string `json:"id"`
+			Request struct {
+				AfterSequence *int   `json:"after_sequence"`
+				LastEventID   string `json:"last_event_id"`
+			} `json:"request"`
+			Expect struct {
+				Status int      `json:"status"`
+				Frames []string `json:"frames"`
+			} `json:"expect"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &fx); err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+	f := newSSEFixture(t, 50*time.Millisecond)
+	f.apply(t, "fx_running", "running", 2, map[string]any{"status": "running"})
+	f.apply(t, "fx_tok1", "token", 3, map[string]any{"delta": "Par"})
+	f.apply(t, "fx_tok2", "token", 4, map[string]any{"delta": "is"})
+	f.apply(t, "fx_done", "completed", 5, map[string]any{
+		"status": "completed", "result": map[string]any{"type": "text", "text": "Paris"},
+	})
+	stored := f.snapshotIDs(t)
+	if len(stored) != len(fx.Events) {
+		t.Fatalf("seeded %d events, fixture has %d", len(stored), len(fx.Events))
+	}
+	byFixtureID := map[string]string{}
+	fromStore := map[string]string{}
+	for i, e := range fx.Events {
+		byFixtureID[e.EventID] = stored[i]
+		fromStore[stored[i]] = e.EventID
+	}
+	for _, c := range fx.Cases {
+		query := "?snapshot=true"
+		headers := map[string]string{}
+		if c.Request.AfterSequence != nil {
+			cursor := *c.Request.AfterSequence
+			if cursor >= 0 { // map the fixture cursor onto the store's own sequences
+				seen := 0
+				for _, e := range fx.Events {
+					if e.Sequence <= cursor {
+						seen++
+					}
+				}
+				cursor = seen
+			}
+			query += fmt.Sprintf("&after_sequence=%d", cursor)
+		}
+		if c.Request.LastEventID != "" {
+			id, ok := byFixtureID[c.Request.LastEventID]
+			if !ok {
+				id = c.Request.LastEventID
+			}
+			headers["Last-Event-ID"] = id
+		}
+		status, ids := f.sseCase(t, query, headers)
+		if status != c.Expect.Status {
+			t.Fatalf("%s: status = %d, want %d", c.ID, status, c.Expect.Status)
+		}
+		var got []string
+		for _, id := range ids {
+			got = append(got, fromStore[id])
+		}
+		if len(got) != len(c.Expect.Frames) {
+			t.Fatalf("%s: frames = %v, want %v", c.ID, got, c.Expect.Frames)
+		}
+		for i := range got {
+			if got[i] != c.Expect.Frames[i] {
+				t.Fatalf("%s: frames = %v, want %v", c.ID, got, c.Expect.Frames)
+			}
+		}
 	}
 }
 

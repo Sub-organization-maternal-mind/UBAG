@@ -111,8 +111,8 @@ services:
       # the live-browser profile turns the browser's audio stack on.
       UBAG_VOICE_STORE: ${UBAG_VOICE_STORE:-${UBAG_GATEWAY_STORE:-memory}}
       UBAG_VOICE_RECONCILER_FAIL_CLOSED: ${UBAG_VOICE_RECONCILER_FAIL_CLOSED:-}
-      # Voice and browser jobs exclude each other on a shared browser (P5.5). Empty/1 = on
-      # (changes nothing while no voice session holds the browser); 0 = off.
+      # Opt-in (P5.5): 1/true makes jobs wait while a voice session holds their shared browser.
+      # Empty = off (today's behaviour).
       UBAG_VOICE_LANE_EXCLUSION: ${UBAG_VOICE_LANE_EXCLUSION:-}
       UBAG_VOICE_AUDIO_RELAY_ADDR: ${UBAG_VOICE_AUDIO_RELAY_ADDR:-browser-viewer:9099}
       UBAG_VOICE_MAX_SESSIONS_PER_TENANT: ${UBAG_VOICE_MAX_SESSIONS_PER_TENANT:-4}

@@ -237,7 +237,7 @@ func TestHeldBackJobReleasesItsExecutionLeaseBeforeTheRetry(t *testing.T) {
 	}
 }
 
-// UBAG_VOICE_LANE_EXCLUSION=0 leaves VoiceLanes nil: today's behaviour.
+// UBAG_VOICE_LANE_EXCLUSION unset leaves VoiceLanes nil: today's behaviour.
 func TestNoProbeMeansNoExclusion(t *testing.T) {
 	r := newLaneRig(t)
 	r.startVoice("vs-1")

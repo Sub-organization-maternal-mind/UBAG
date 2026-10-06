@@ -3,11 +3,58 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
+	helperv1 "github.com/ubag/ubag/packages/proto/gen/go/ubag/helper/v1"
 )
+
+// The attempt id stamped into events must match job-event.schema.json
+// (^att_[A-Za-z0-9]+$) for every queue's lease id shape, and stay stable and
+// distinct per lease.
+func TestAttemptIDForLeaseMatchesSchemaPattern(t *testing.T) {
+	pattern := regexp.MustCompile(`^att_[A-Za-z0-9]+$`)
+	seen := map[string]bool{}
+	for _, lease := range []string{"1759752000123456789", "stream:consumer:12:3", "nats", "lease_ingest"} {
+		id := attemptIDForLease(lease)
+		if !pattern.MatchString(id) || len(id) > 128 {
+			t.Fatalf("attemptIDForLease(%q) = %q, not schema-conformant", lease, id)
+		}
+		if id != attemptIDForLease(lease) || seen[id] {
+			t.Fatalf("attemptIDForLease(%q) = %q is unstable or collides", lease, id)
+		}
+		seen[id] = true
+	}
+}
+
+// Helper-ingest terminal data must fit the closed job-event schema: stream_end_reason
+// in the enum, partial limited to {text, token_events}.
+func TestHelperIngestSchemaNormalizers(t *testing.T) {
+	cases := []struct {
+		reason string
+		status helperv1.AttemptStatus
+		want   string
+	}{
+		{"deadline", helperv1.AttemptStatus_ATTEMPT_STATUS_TIMED_OUT, "deadline"},
+		{"shutdown", helperv1.AttemptStatus_ATTEMPT_STATUS_CANCELLED, "cancelled"},
+		{"lease_expired", helperv1.AttemptStatus_ATTEMPT_STATUS_TIMED_OUT, "deadline"},
+		{"manual_login_required", helperv1.AttemptStatus_ATTEMPT_STATUS_FAILED, "error"},
+	}
+	for _, c := range cases {
+		if got := schemaStreamEndReason(c.reason, c.status); got != c.want {
+			t.Fatalf("schemaStreamEndReason(%q) = %q, want %q", c.reason, got, c.want)
+		}
+	}
+	got := schemaPartial(map[string]any{"text": "abc", "token_events": float64(4), "truncated": true, "token_count": 9}, 2)
+	if len(got) != 2 || got["text"] != "abc" || got["token_events"] != 4 {
+		t.Fatalf("schemaPartial = %#v, want only text and token_events", got)
+	}
+	if got := schemaPartial(nil, 3); len(got) != 1 || got["token_events"] != 3 {
+		t.Fatalf("schemaPartial(nil) = %#v, want the session token count", got)
+	}
+}
 
 func TestAttemptEnvelopeOmittedWhenUnset(t *testing.T) {
 	raw, _ := json.Marshal(DispatchEnvelope{})

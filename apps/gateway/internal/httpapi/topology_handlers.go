@@ -216,14 +216,14 @@ func redactRemoteEndpoint() bool {
 
 func instanceToResponse(instance topology.BrowserInstance, helperHosted bool) map[string]any {
 	out := map[string]any{
-		"instance_id":     instance.InstanceID,
-		"worker_id":       instance.WorkerID,
-		"tenant_id":       instance.TenantID,
-		"engine":          instance.Engine,
-		"state":           instance.State,
-		"context_count":   instance.ContextCount,
-		"tab_count":       instance.TabCount,
-		"created_at":      instance.CreatedAt,
+		"instance_id":   instance.InstanceID,
+		"worker_id":     instance.WorkerID,
+		"tenant_id":     instance.TenantID,
+		"engine":        instance.Engine,
+		"state":         instance.State,
+		"context_count": instance.ContextCount,
+		"tab_count":     instance.TabCount,
+		"created_at":    instance.CreatedAt,
 	}
 	// remote_endpoint is the browser's CDP endpoint (full browser control), so
 	// it is withheld from tenant responses when UBAG_REDACT_REMOTE_ENDPOINT is

@@ -12,30 +12,26 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// UBAG_VOICE_LANE_EXCLUSION is on whenever voice sessions are configured, and the
-// kill-switch is the explicit falsy values only.
-func TestVoiceLaneExclusionIsOnWithVoiceAndOffOnlyOnRequest(t *testing.T) {
+// UBAG_VOICE_LANE_EXCLUSION is opt-in: unset, empty or falsy leaves it off even
+// when voice sessions are configured; only an explicit truthy value turns it on.
+func TestVoiceLaneExclusionIsOptIn(t *testing.T) {
 	store := voice.NewMemoryStore()
 	registry := topology.NewConcurrencyRegistry()
 
-	t.Setenv("UBAG_VOICE_LANE_EXCLUSION", "")
-	if wireVoiceLaneExclusion(store, topology.NewMemoryStore(), registry, nil) == nil {
-		t.Fatal("voice configured and the switch unset: exclusion must be ON")
-	}
-	for _, off := range []string{"0", "false", "no", "off", " OFF "} {
+	for _, off := range []string{"", "0", "false", "no", "off", " OFF ", "anything-else"} {
 		t.Setenv("UBAG_VOICE_LANE_EXCLUSION", off)
 		if wireVoiceLaneExclusion(store, topology.NewMemoryStore(), registry, nil) != nil {
-			t.Fatalf("%q must switch exclusion off", off)
+			t.Fatalf("%q must leave exclusion off", off)
 		}
 	}
-	for _, on := range []string{"1", "true", "yes", "anything-else"} {
+	for _, on := range []string{"1", "true", "yes", " TRUE "} {
 		t.Setenv("UBAG_VOICE_LANE_EXCLUSION", on)
 		if wireVoiceLaneExclusion(store, topology.NewMemoryStore(), registry, nil) == nil {
-			t.Fatalf("%q must leave exclusion on", on)
+			t.Fatalf("%q must switch exclusion on", on)
 		}
 	}
 	// No voice sessions configured (UBAG_VOICE_STORE=disabled): nothing to exclude.
-	t.Setenv("UBAG_VOICE_LANE_EXCLUSION", "")
+	t.Setenv("UBAG_VOICE_LANE_EXCLUSION", "true")
 	if wireVoiceLaneExclusion(nil, topology.NewMemoryStore(), registry, nil) != nil {
 		t.Fatal("no voice store: no exclusion")
 	}
@@ -44,6 +40,7 @@ func TestVoiceLaneExclusionIsOnWithVoiceAndOffOnlyOnRequest(t *testing.T) {
 // A shared (postgres) voice store moves the browser-lane registrations into the
 // shared admission store; a per-process one keeps them local.
 func TestVoiceLaneRegistrationsAreSharedOnlyWithASharedVoiceStore(t *testing.T) {
+	t.Setenv("UBAG_VOICE_LANE_EXCLUSION", "true")
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "admission.db"))
 	if err != nil {
 		t.Fatal(err)

@@ -607,8 +607,8 @@ func TestHelperIngestTerminalOutcomes(t *testing.T) {
 			}
 			if tc.want.status == jobstore.StatusTimedOut {
 				partial, _ := data["partial"].(map[string]any)
-				if partial["token_count"] != float64(2) && partial["token_count"] != 2 {
-					t.Fatalf("data.partial = %#v, want the token_count", data["partial"])
+				if partial["token_events"] != float64(2) && partial["token_events"] != 2 {
+					t.Fatalf("data.partial = %#v, want the token_events count", data["partial"])
 				}
 				if data["stream_end_reason"] != "deadline" || data["submitted"] != true {
 					t.Fatalf("deadline event = %#v", data)

@@ -32,7 +32,7 @@ Pairs are not optional; each member of a pair is unsafe or pointless alone.
 | Worker pool | `UBAG_WORKER_POOL_SIZE` above 1 only after the streaming ladder is settled, and only up to a measured ceiling | The default ceiling of 3 is a placeholder; no slot cost was measured (P3.6). |
 | Helper plane | `UBAG_EXECUTOR_ATTEMPTS`, `UBAG_HELPER_NODES`, `UBAG_HELPER_PLANE`, `UBAG_HELPER_DISPATCH`, then `UBAG_HELPER_VOICE`, with `UBAG_FLEET_MANAGER_URL` beside the nodes rung | The ladder is in `RUNBOOK.md`; the canary is `CANARY.md` and is external-blocked. |
 
-Independent flags, any time after their own checklist: `UBAG_FILESPOOL_HONOR_NOT_BEFORE`, `UBAG_REDACT_REMOTE_ENDPOINT`, `UBAG_VOICE_RECONCILER_FAIL_CLOSED`, `UBAG_WARM_RESUME_FASTPATH`, `UBAG_PROFILE_OPTIONS_POLICY` (the last one carries a re-login cost, see its section).
+Independent flags, any time after their own checklist: `UBAG_VOICE_LANE_EXCLUSION` (only together with live voice media), `UBAG_FILESPOOL_HONOR_NOT_BEFORE`, `UBAG_REDACT_REMOTE_ENDPOINT`, `UBAG_VOICE_RECONCILER_FAIL_CLOSED`, `UBAG_WARM_RESUME_FASTPATH`, `UBAG_PROFILE_OPTIONS_POLICY` (the last one carries a re-login cost, see its section).
 
 ## 4. Per-flag checklists
 
@@ -144,6 +144,15 @@ Gateway. After 5 consecutive store errors per session, the reconciler stops medi
 - **Rollback:** unset and recreate. Containment of voice as a whole stays `UBAG_VOICE_STORE=disabled` (not applied anywhere by this program).
 - **Ledger:** record the voice posture at the time (store kind, relay secret set or not, as set or unset only).
 
+### `UBAG_VOICE_LANE_EXCLUSION`
+
+Gateway. Off by default and NOT live (a review corrected an earlier "already live" claim). Turning it on makes a non-mock job on a shared remote browser wait, retried after a 2 s hold with no upper bound, while a voice session holds that browser, and makes a voice admission skip a browser with a running job. On the serial consumer a held job also delays jobs behind it. A session needs only `job:create`, so any holder of that scope can hold a browser for the session lease. Turn it on only together with live voice media (relay secret set), never alone.
+
+- **Live-DOM verification:** not applicable (it gates scheduling, not provider pages).
+- **Canary criteria:** C0: with the flag on and a mock voice session, a job on the shared browser is held and runs after the session ends; with no session nothing changes. C1: one real call; a text job submitted during it waits and completes after hang-up. Proposed gate: no held job older than the session lease. Add an alarm on held-job age before C2 because the code has no deferral bound.
+- **Rollback:** unset and recreate. Held jobs run on the next retry; nothing is lost.
+- **Ledger:** record the voice posture (store kind, relay secret set or not, as set or unset only) and the longest observed held-job wait.
+
 ### `UBAG_WARM_RESUME_FASTPATH`
 
 Worker. Skips the new-chat gate on a warm resume. Depends on the page being in the expected state, so it is the most DOM-sensitive flag here.
@@ -171,12 +180,11 @@ The shared-fleet ladder. Each rung needs the previous one; the semantics, metric
 - **Rollback:** the containment order in `RUNBOOK.md`: drain the node, unset `UBAG_HELPER_DISPATCH` (after the drain), then `UBAG_HELPER_PLANE`, then `UBAG_HELPER_NODES`; unset `UBAG_FLEET_MANAGER_URL` to stop polling. Local execution never depended on these flags. Do not delete node tables.
 - **Ledger:** one entry per rung, with the node id, the grant generation and the certificate expiry noted (ids and times only, never certificates or keys).
 
-## 5. The two flags that are already live
+## 5. The flag that is already live
 
-These are on in production today (D2); only the kill-switch is documented, and nothing here changes them.
+This one is on in production today (D2); only the kill-switch is documented, and nothing here changes it. `docker-compose.vps.yml` passes it (default `true`), so setting it in `deploy/vps/env.local` and recreating the gateway works.
 
 - `UBAG_ADMISSION_SHARED`: default on (shared admission across the voice and job lanes). Kill-switch: set `false`, `0`, `no` or `off` and recreate; admission falls back to process-local counters and per-job execution leases are disabled (the memory queue lease becomes the only duplicate guard, P0.2 shard). Not a graduation candidate; do not touch it without a reason from an incident.
-- `UBAG_VOICE_LANE_EXCLUSION`: on whenever voice sessions are configured; changes nothing while no voice session holds a browser. Kill-switch: `0`, `false`, `no` or `off` and recreate.
 
 ## 6. Ledger entry template
 

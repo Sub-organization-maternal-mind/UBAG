@@ -44,7 +44,7 @@ Queue reasons add no job status, no event type and no error code. A queued job e
 
 ## Event streams
 
-`GET /v1/sse/jobs/{id}` resumes from the `Last-Event-ID` header. With `UBAG_SSE_CLOSE_ON_TERMINAL=true` (default off) the stream closes after a terminal event and answers `204` when a client resumes past one. `failed` and `failed_retryable` events count as terminal only when `data.retryable` is false, so retries on the same job still arrive. `UBAG_SSE_MAX_STREAMS` (default `0`, unlimited) caps open streams; over the cap the gateway answers `503` with `Retry-After`.
+`GET /v1/sse/jobs/{id}` resumes from the `Last-Event-ID` header and/or the `after_sequence` query (the larger cursor wins; a negative or malformed `after_sequence` is `400`). A cursor at or past the terminal event always answers `204`, with the close flag on or off. With `UBAG_SSE_CLOSE_ON_TERMINAL=true` (default off) the stream also closes right after it sends a terminal event. `failed` and `failed_retryable` events count as terminal only when `data.retryable` is false, so retries on the same job still arrive. `UBAG_SSE_MAX_STREAMS` (default `0`, unlimited) caps open streams; over the cap the gateway answers `503` (`UBAG-OVERLOAD-SSE-STREAMS-001`) with `Retry-After`.
 
 ## Cancellation
 
