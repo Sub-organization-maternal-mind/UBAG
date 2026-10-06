@@ -77,6 +77,28 @@
         "__ubag_control__": "restart",
         "proto": 2
       }
+    },
+    {
+      "id": "v2_readiness_probe",
+      "valid": true,
+      "json": {
+        "__ubag_control__": "probe",
+        "proto": 2,
+        "payload": {
+          "job": {
+            "target": "gemini_web"
+          }
+        }
+      }
+    },
+    {
+      "id": "probe_payload_not_object",
+      "valid": false,
+      "json": {
+        "__ubag_control__": "probe",
+        "proto": 2,
+        "payload": "gemini_web"
+      }
     }
   ],
   "job_ends": [
@@ -201,6 +223,39 @@
         "__ubag_control__": "probe",
         "proto": 2,
         "state": "sleeping"
+      }
+    },
+    {
+      "id": "readiness_authenticated",
+      "valid": true,
+      "json": {
+        "__ubag_control__": "probe",
+        "proto": 2,
+        "state": "idle",
+        "target": "gemini_web",
+        "login_state": "authenticated",
+        "selector_version": "2026-01"
+      }
+    },
+    {
+      "id": "readiness_busy",
+      "valid": true,
+      "json": {
+        "__ubag_control__": "probe",
+        "proto": 2,
+        "state": "busy",
+        "target": "gemini_web",
+        "selector_version": "2026-01"
+      }
+    },
+    {
+      "id": "readiness_bad_login_state",
+      "valid": false,
+      "json": {
+        "__ubag_control__": "probe",
+        "proto": 2,
+        "state": "idle",
+        "login_state": "logged_in"
       }
     }
   ],

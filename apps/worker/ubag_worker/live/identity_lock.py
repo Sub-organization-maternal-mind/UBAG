@@ -63,11 +63,23 @@ def _lock_dir() -> str:
     return os.path.join(os.path.dirname(ledger_path()) or ".", "identity-locks")
 
 
-class IdentityLock:
-    """Blocking cross-process lock for one physical-session key (context manager)."""
+class IdentityBusy(Exception):
+    """A non-blocking :class:`IdentityLock` found the identity held elsewhere."""
 
-    def __init__(self, key: str, lock_dir: Optional[str] = None) -> None:
+
+class IdentityLock:
+    """Cross-process lock for one physical-session key (context manager).
+
+    Blocking by default; ``blocking=False`` raises :class:`IdentityBusy` instead of
+    waiting (used by the read-only readiness probe, which must never queue behind
+    or in front of a job).
+    """
+
+    def __init__(
+        self, key: str, lock_dir: Optional[str] = None, *, blocking: bool = True
+    ) -> None:
         self._path = os.path.join(lock_dir or _lock_dir(), "identity-%s.lock" % key)
+        self._blocking = blocking
         self._fh = None
 
     def __enter__(self) -> "IdentityLock":
@@ -84,7 +96,12 @@ class IdentityLock:
         os.makedirs(os.path.dirname(self._path), exist_ok=True)
         fh = open(self._path, "a+")
         try:
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            fcntl.flock(
+                fh.fileno(), fcntl.LOCK_EX | (0 if self._blocking else fcntl.LOCK_NB)
+            )
+        except BlockingIOError:
+            fh.close()
+            raise IdentityBusy(self._path) from None
         except BaseException:
             fh.close()
             raise

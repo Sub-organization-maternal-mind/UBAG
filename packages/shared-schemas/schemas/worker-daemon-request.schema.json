@@ -62,9 +62,13 @@
       "properties": {
         "__ubag_control__": {
           "enum": ["hello", "probe"],
-          "description": "hello: negotiate the protocol version and learn capabilities. probe: read-only liveness/readiness query; MUST NOT touch the browser, type, or submit, and MUST NOT be sent while an operator login or viewer session is active."
+          "description": "hello: negotiate the protocol version and learn capabilities. probe: read-only query. Without payload it is a pure liveness query that never touches the browser. With payload it is a provider readiness probe: the daemon opens the identity's page and runs detect_login_state ONLY (never types, fills, submits or logs in), takes the physical-session identity lock without waiting (reply state busy when held), and rate-limits repeats per identity. A sender MUST NOT send a readiness probe while an operator login or viewer session is active."
         },
-        "proto": { "const": 2 }
+        "proto": { "const": 2 },
+        "payload": {
+          "type": "object",
+          "description": "probe only: the DispatchEnvelope identifying the provider session to check (target, tenant, profile). Never carries a prompt; the daemon ignores any prompt in it."
+        }
       }
     },
     "attempt_id": {

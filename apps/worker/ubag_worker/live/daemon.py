@@ -20,11 +20,12 @@ finish cleanly, discards the driver and goes cold -- i.e. today's behaviour.
 from __future__ import annotations
 
 import os
+import time
 from typing import Any, Callable, Dict, Iterator, Mapping, Optional, Tuple
 
 from .engine import LiveSessionEngine, _normalize_payload
-from .identity_lock import IdentityLock, identity_lock_enabled, physical_session_key
-from .page_driver import PageDriver, create_default_driver
+from .identity_lock import IdentityBusy, IdentityLock, identity_lock_enabled, physical_session_key
+from .page_driver import UNKNOWN, DriftDetectedError, PageDriver, create_default_driver
 from .selectors import PROVIDER_SELECTORS
 
 JsonObject = Dict[str, Any]
@@ -47,6 +48,13 @@ def _target_from_payload(payload: object) -> str:
     from .envelope import _target_from_payload
 
     return _target_from_payload(payload)
+
+
+def _probe_min_interval_s() -> float:
+    try:
+        return max(0.0, float(os.environ.get("UBAG_WORKER_PROBE_MIN_INTERVAL_S", "30")))
+    except ValueError:
+        return 30.0
 
 
 def _driver_key(payload: Mapping[str, Any]) -> DriverKey:
@@ -83,6 +91,9 @@ class WarmWorkerDaemon:
         self._orchestrator = orchestrator
         # Chat-ledger sink (UBAG_CHAT_LEDGER_ENABLED); None keeps behavior unchanged.
         self._chat_sink = chat_sink
+        # Readiness-probe rate limit: key -> (monotonic time, reply). See probe_readiness.
+        self._probe_cache: Dict[DriverKey, Tuple[float, JsonObject]] = {}
+        self._clock: Callable[[], float] = time.monotonic
 
     def warm_key(self, payload: Mapping[str, Any]) -> str:
         """One-way hash of the physical session (protocol v2 JOB_END ``warm_key``)."""
@@ -92,6 +103,83 @@ class WarmWorkerDaemon:
             user_data_dir=_normalize_payload(payload, target).user_data_dir,
             target=target,
         )
+
+    def probe_readiness(self, payload: Mapping[str, Any]) -> JsonObject:
+        """Read-only provider readiness (proto:2 ``probe`` carrying a payload).
+
+        Reuses ``driver.open`` + ``driver.detect_login_state`` ONLY: it never
+        types, fills, submits or starts a login (logins stay human-only), and it
+        takes the physical-session identity lock without waiting, so a probe can
+        neither overlap nor delay a job on the same identity (``busy`` instead).
+        Repeat probes of one identity inside ``UBAG_WORKER_PROBE_MIN_INTERVAL_S``
+        (default 30) are answered from the previous reply (``cached``) so a fleet
+        manager cannot hammer the provider page. The sender MUST NOT probe while an
+        operator login or viewer session is active; the daemon cannot see that.
+        """
+        target = _target_from_payload(payload)
+        selectors = self._selectors_by_target.get(target)
+        if selectors is None:
+            raise ValueError("no live selector configuration for target %r" % target)
+        normalized = _normalize_payload(payload, target)
+        key = _driver_key(payload)
+        reply: JsonObject = {
+            "target": target,
+            "selector_version": selectors.selector_version,
+        }
+
+        cached = self._probe_cache.get(key)
+        interval = _probe_min_interval_s()
+        if cached is not None and self._clock() - cached[0] < interval:
+            return {**cached[1], "cached": True}
+
+        lock = None
+        if identity_lock_enabled():
+            lock = IdentityLock(
+                physical_session_key(
+                    endpoint=os.environ.get("UBAG_REMOTE_BROWSER_ENDPOINT", ""),
+                    user_data_dir=normalized.user_data_dir,
+                    target=target,
+                ),
+                blocking=False,
+            )
+        try:
+            if lock is not None:
+                lock.__enter__()
+        except IdentityBusy:
+            # Not cached: busy says nothing about login state.
+            return {**reply, "state": "busy"}
+        try:
+            reply["state"] = "idle"
+            reply["login_state"] = self._detect_login_state(key, selectors, payload, normalized)
+        finally:
+            if lock is not None:
+                lock.__exit__(None, None, None)
+        self._probe_cache[key] = (self._clock(), reply)
+        return dict(reply)
+
+    def _detect_login_state(
+        self, key: DriverKey, selectors: Any, payload: Mapping[str, Any], normalized: Any
+    ) -> str:
+        warm = self._warm.get(key)
+        driver = warm
+        try:
+            if driver is None:
+                self._evict_other_keys(key)  # one Sync Playwright manager per thread
+                options = payload.get("options") if isinstance(payload, Mapping) else None
+                driver = self._driver_factory(options)
+                driver.open(
+                    target_url=selectors.target_url,
+                    user_data_dir=normalized.user_data_dir,
+                    headless=normalized.headless,
+                )
+            return driver.detect_login_state(selectors)
+        except DriftDetectedError:
+            return UNKNOWN
+        except Exception:  # noqa: BLE001 - a probe never fails the daemon or leaks details
+            return UNKNOWN
+        finally:
+            if warm is None:
+                _close_quietly(driver)  # a cold probe page is never kept or reused
 
     def run_job(self, payload: Mapping[str, Any]) -> Iterator[JsonObject]:
         """Drive one job; in slot mode, under the physical-session identity lock."""
