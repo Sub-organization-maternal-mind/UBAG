@@ -1,9 +1,52 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-10-06 (**`ci` fully green on `aab1432`; production on
-`sha-aab1432…` and healthy; the program's evidence half is still unstarted and
-the blocking reason for each item is listed below.** The OET shared fleet
-manager does not exist as a running service.)
+Last updated: 2026-10-06 (**`ci` fully green; production deployed and healthy;
+every program flag now has its compose passthrough so all of them are settable,
+still all off by default; the load harness's offline self-tests now run in CI.
+The OET shared fleet manager does not exist, and the evidence half of the
+program is blocked on hardware, credentials and human logins.**)
+
+## 2026-10-06 — Two pieces of the remaining work that were not blocked at all
+
+Both of these were listed as "blocked" work when they are ordinary preparatory
+code that needs no hardware, no credentials and no lab host. Done here.
+
+**1. Compose passthrough for every remaining `Compose: none` flag.** The silent
+no-op fixed for `UBAG_EVENT_NOTIFY` applied to **15** more flags, not one:
+`docker-compose.vps.yml` passes an explicit `environment:` list and has no
+`env_file`, so any variable missing from that list cannot be set from
+`deploy/vps/env.local` at all — it was not "off by default", it was
+*unsettable*, whatever an operator wrote. The 15: `UBAG_WORKER_STRICT_STREAM_END`,
+`UBAG_WORKER_STAGE_TIMINGS` (both already in the worker's `AllowedEnv` allowlist
+in `internal/workerdaemon/env.go`, so the compose line is all they needed),
+`UBAG_WORKER_ATTEMPT_EVENT_IDS`, `UBAG_SSE_CLOSE_ON_TERMINAL`,
+`UBAG_SSE_MAX_STREAMS`, `UBAG_FILESPOOL_HONOR_NOT_BEFORE`,
+`UBAG_REDACT_REMOTE_ENDPOINT`, `UBAG_EXECUTOR_ATTEMPTS`, `UBAG_HELPER_NODES`,
+`UBAG_HELPER_PLANE`, `UBAG_HELPER_DISPATCH`, `UBAG_HELPER_VOICE`,
+`UBAG_HELPER_RECONCILE_WINDOW_SECONDS`, `UBAG_FLEET_MANAGER_URL`,
+`UBAG_FLEET_POLL_SECONDS`. Every one is passed with an **empty** default, so the
+gateway reads exactly today's behaviour; the gateway environment went from 78 to
+93 keys. This makes them settable, **not enabled** — each still requires its
+`ROLLOUT.md` checklist before anyone turns it on, and `pnpm check:flag-graduation`
+enforces that a graduation cannot hide in a compose default. `FLAGS.md`'s 15
+`Compose` cells moved `none` → `empty`. There are now no `Compose: none` rows
+left in the inventory.
+
+**2. The load harness now runs its offline self-tests in CI.** The acceptance
+harness (P7.2) was in no workflow and not in `pnpm check`, so the gates that were
+hardened specifically to stop it reporting a misleading success — the
+`--require-goals` fail-closed thresholds, the echo check, the
+NON-AUTHORITATIVE labelling, the workload-manifest contract — only executed when
+someone remembered to run them by hand. Added as a `Load harness offline
+self-tests` step in the `node-suite` job (`pnpm test:load:offline`). Offline only:
+no gateway, no provider, no Docker. 115 tests pass in ~51s locally.
+
+Checks run: `pnpm check:flag-graduation` ok (30 flags, 20 managed) and its 5 unit
+tests pass; the three negative controls still fire (doc/compose disagreement, a
+graduation hidden in a compose default, a deleted compose line);
+`tools/run-small-deployment-check.mjs`, `tools/check-helper-deploy.mjs` and
+`tools/check-fleet-canary.mjs` pass (compose render skipped again — no Docker on
+this host); both YAML files parse; `pnpm test:load:offline` 115/115.
 
 ## 2026-10-06 — Third CI red fixed; `ci` green; and what is physically blocked
 

@@ -206,6 +206,35 @@ services:
       # UBAG_EVENT_NOTIFY and recreating the gateway; nothing is stored.
       UBAG_EVENT_NOTIFY: ${UBAG_EVENT_NOTIFY:-}
       UBAG_EVENT_FALLBACK_MS: ${UBAG_EVENT_FALLBACK_MS:-}
+      # Worker-side stream switches. These reach the worker through the
+      # AllowedEnv allowlist in internal/workerdaemon/env.go, so the compose line
+      # is what makes them settable at all. Empty = off = today's behaviour.
+      UBAG_WORKER_STRICT_STREAM_END: ${UBAG_WORKER_STRICT_STREAM_END:-}
+      UBAG_WORKER_STAGE_TIMINGS: ${UBAG_WORKER_STAGE_TIMINGS:-}
+      # Remaining gateway program switches, all empty = off. Listed here so that
+      # every graduated flag is reachable from env.local; before these lines,
+      # setting any of them in env.local did nothing at all (no env_file, explicit
+      # environment:). Turning one on still requires its ROLLOUT.md checklist -
+      # Live-DOM verification, canary criteria, rollback, ledger - because passing
+      # a value here is not the same as it being safe to run.
+      UBAG_WORKER_ATTEMPT_EVENT_IDS: ${UBAG_WORKER_ATTEMPT_EVENT_IDS:-}
+      UBAG_SSE_CLOSE_ON_TERMINAL: ${UBAG_SSE_CLOSE_ON_TERMINAL:-}
+      UBAG_SSE_MAX_STREAMS: ${UBAG_SSE_MAX_STREAMS:-}
+      UBAG_FILESPOOL_HONOR_NOT_BEFORE: ${UBAG_FILESPOOL_HONOR_NOT_BEFORE:-}
+      UBAG_REDACT_REMOTE_ENDPOINT: ${UBAG_REDACT_REMOTE_ENDPOINT:-}
+      UBAG_EXECUTOR_ATTEMPTS: ${UBAG_EXECUTOR_ATTEMPTS:-}
+      # Helper plane and shared fleet manager (empty = off; the plane stays inert
+      # and the gateway runs its local placement). UBAG_FLEET_MANAGER_URL is the
+      # one value with no in-code default worth guessing: unset means "no manager",
+      # which is correct until a manager actually exists and answers. The manager
+      # polls with the last-known-good allocation if it goes away.
+      UBAG_HELPER_NODES: ${UBAG_HELPER_NODES:-}
+      UBAG_HELPER_PLANE: ${UBAG_HELPER_PLANE:-}
+      UBAG_HELPER_DISPATCH: ${UBAG_HELPER_DISPATCH:-}
+      UBAG_HELPER_VOICE: ${UBAG_HELPER_VOICE:-}
+      UBAG_HELPER_RECONCILE_WINDOW_SECONDS: ${UBAG_HELPER_RECONCILE_WINDOW_SECONDS:-}
+      UBAG_FLEET_MANAGER_URL: ${UBAG_FLEET_MANAGER_URL:-}
+      UBAG_FLEET_POLL_SECONDS: ${UBAG_FLEET_POLL_SECONDS:-}
       # Live provider jobs (page loads, streamed responses) need more headroom
       # than mock jobs; matches the verified local live-runtime setting.
       # Covers auth readiness (57 s), manual login (300 s), three bounded

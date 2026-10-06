@@ -12,24 +12,24 @@ Column meanings.
 | Flag | Side | Default | Compose | Graduation | Read in |
 |---|---|---|---|---|---|
 | `UBAG_WORKER_STRICT_SUBMIT` | gateway + worker | off | empty | managed | `apps/gateway/internal/executor/submission.go` |
-| `UBAG_WORKER_STRICT_STREAM_END` | worker | off | none | managed | `apps/worker/ubag_worker/live/engine.py` |
+| `UBAG_WORKER_STRICT_STREAM_END` | worker | off | empty | managed | `apps/worker/ubag_worker/live/engine.py` |
 | `UBAG_WORKER_STREAM_EVENTS` | worker | off | empty | managed | `apps/worker/ubag_worker/live/daemon_protocol.py` |
 | `UBAG_WORKER_STREAM_INGEST` | gateway | off | empty | managed | `apps/gateway/internal/executor/streamrunner.go` |
-| `UBAG_WORKER_ATTEMPT_EVENT_IDS` | gateway | off | none | managed | `apps/gateway/internal/executor/workerconsumer.go` |
+| `UBAG_WORKER_ATTEMPT_EVENT_IDS` | gateway | off | empty | managed | `apps/gateway/internal/executor/workerconsumer.go` |
 | `UBAG_EVENT_NOTIFY` | gateway | off | empty | managed | `apps/gateway/internal/serve/serve.go` |
 | `UBAG_WORKER_POOL_SIZE` | gateway | 1 | 1 | managed | `apps/gateway/internal/serve/serve.go` |
-| `UBAG_SSE_CLOSE_ON_TERMINAL` | gateway | off | none | managed | `apps/gateway/internal/httpapi/server.go` |
-| `UBAG_FILESPOOL_HONOR_NOT_BEFORE` | gateway | off | none | managed | `apps/gateway/internal/serve/serve.go` |
-| `UBAG_REDACT_REMOTE_ENDPOINT` | gateway | off | none | managed | `apps/gateway/internal/httpapi/topology_handlers.go` |
+| `UBAG_SSE_CLOSE_ON_TERMINAL` | gateway | off | empty | managed | `apps/gateway/internal/httpapi/server.go` |
+| `UBAG_FILESPOOL_HONOR_NOT_BEFORE` | gateway | off | empty | managed | `apps/gateway/internal/serve/serve.go` |
+| `UBAG_REDACT_REMOTE_ENDPOINT` | gateway | off | empty | managed | `apps/gateway/internal/httpapi/topology_handlers.go` |
 | `UBAG_PROFILE_OPTIONS_POLICY` | worker | legacy | empty | managed | `apps/worker/ubag_worker/live/envelope.py` |
 | `UBAG_VOICE_RECONCILER_FAIL_CLOSED` | gateway | off | empty | managed | `apps/gateway/internal/serve/serve.go` |
 | `UBAG_WARM_RESUME_FASTPATH` | worker | off | empty | managed | `apps/worker/ubag_worker/live/daemon.py` |
-| `UBAG_EXECUTOR_ATTEMPTS` | gateway | off | none | managed | `apps/gateway/internal/serve/serve.go` |
-| `UBAG_HELPER_NODES` | gateway | off | none | managed | `apps/gateway/internal/serve/helper_nodes.go` |
-| `UBAG_HELPER_PLANE` | gateway | off | none | managed | `apps/gateway/internal/serve/helper_plane.go` |
-| `UBAG_HELPER_DISPATCH` | gateway | off | none | managed | `apps/gateway/internal/serve/helper_dispatch.go` |
-| `UBAG_HELPER_VOICE` | gateway + helper | off | none | managed | `apps/gateway/internal/helper/voice_config.go` |
-| `UBAG_FLEET_MANAGER_URL` | gateway | unset | none | managed | `apps/gateway/internal/nodes/allocation_source.go` |
+| `UBAG_EXECUTOR_ATTEMPTS` | gateway | off | empty | managed | `apps/gateway/internal/serve/serve.go` |
+| `UBAG_HELPER_NODES` | gateway | off | empty | managed | `apps/gateway/internal/serve/helper_nodes.go` |
+| `UBAG_HELPER_PLANE` | gateway | off | empty | managed | `apps/gateway/internal/serve/helper_plane.go` |
+| `UBAG_HELPER_DISPATCH` | gateway | off | empty | managed | `apps/gateway/internal/serve/helper_dispatch.go` |
+| `UBAG_HELPER_VOICE` | gateway + helper | off | empty | managed | `apps/gateway/internal/helper/voice_config.go` |
+| `UBAG_FLEET_MANAGER_URL` | gateway | unset | empty | managed | `apps/gateway/internal/nodes/allocation_source.go` |
 | `UBAG_ADMISSION_SHARED` | gateway | on | true | live | `apps/gateway/internal/serve/serve.go` |
 | `UBAG_VOICE_LANE_EXCLUSION` | gateway | off | empty | managed | `apps/gateway/internal/serve/voicelane.go` |
 | `UBAG_WORKER_POOL_MAX` | gateway | 3 | empty | knob | `apps/gateway/internal/serve/serve.go` |
@@ -37,10 +37,10 @@ Column meanings.
 | `UBAG_WORKER_STREAM_FLUSH_MS` | gateway | 50 | empty | knob | `apps/gateway/internal/executor/streamingest.go` |
 | `UBAG_WORKER_STREAM_MAX_BYTES` | gateway | 8388608 | empty | knob | `apps/gateway/internal/executor/streamingest.go` |
 | `UBAG_EVENT_FALLBACK_MS` | gateway | 2000 | empty | knob | `apps/gateway/internal/serve/serve.go` |
-| `UBAG_SSE_MAX_STREAMS` | gateway | 0 | none | knob | `apps/gateway/internal/httpapi/server.go` |
-| `UBAG_HELPER_RECONCILE_WINDOW_SECONDS` | gateway | 600 | none | knob | `apps/gateway/internal/serve/helper_dispatch.go` |
-| `UBAG_FLEET_POLL_SECONDS` | gateway | 30 | none | knob | `apps/gateway/internal/nodes/allocation_source.go` |
-| `UBAG_WORKER_STAGE_TIMINGS` | worker | off | none | knob | `apps/gateway/internal/workerdaemon/env.go` |
+| `UBAG_SSE_MAX_STREAMS` | gateway | 0 | empty | knob | `apps/gateway/internal/httpapi/server.go` |
+| `UBAG_HELPER_RECONCILE_WINDOW_SECONDS` | gateway | 600 | empty | knob | `apps/gateway/internal/serve/helper_dispatch.go` |
+| `UBAG_FLEET_POLL_SECONDS` | gateway | 30 | empty | knob | `apps/gateway/internal/nodes/allocation_source.go` |
+| `UBAG_WORKER_STAGE_TIMINGS` | worker | off | empty | knob | `apps/gateway/internal/workerdaemon/env.go` |
 
 Notes.
 

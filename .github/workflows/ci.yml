@@ -330,6 +330,13 @@ jobs:
         run: node tools/check-licenses.mjs
       - name: API reference freshness check
         run: node tools/check-api-reference.mjs
+      # The load harness is not in `pnpm check` and was in no CI job, so its
+      # fail-closed gates (goal thresholds, the echo check, non-authoritative
+      # labelling, the workload manifest contract) only ran when someone ran them
+      # by hand. Offline only here: no gateway, no provider, no Docker - the
+      # self-tests that verify the harness cannot report a false success.
+      - name: Load harness offline self-tests
+        run: pnpm test:load:offline
       # Phase 6: metrics cardinality + Grafana dashboard validation
       - name: Check Grafana dashboards (Task 2.5)
         run: node tools/check-grafana-dashboards.mjs deploy/grafana/dashboards/
