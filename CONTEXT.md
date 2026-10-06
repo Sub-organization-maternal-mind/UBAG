@@ -186,3 +186,11 @@ _Avoid_: exec lease (for this concept)
 
 **Exec Lease**:
 The existing gateway execution lease: 90 s TTL renewed every 10 s, token-per-job, no generation. Live in production today; the Attempt Lease supersedes it only for helper-dispatched work.
+
+**Daemon Pool**:
+The gateway-side supervisor (`UBAG_WORKER_POOL_SIZE` > 1, default 1 = the single warm daemon) of N isolated warm-daemon processes. It allows one active job per physical browser session (tenant-free), routes a job to the slot whose page for that session is still warm, and refuses a job it cannot place within a bounded wait with a retryable overload that the consumer answers with a delayed lease Retry (ADR-0011).
+_Avoid_: worker pool (the consumer's `PoolSize` goroutines are a different thing), fleet
+
+**Slot**:
+One worker daemon process of a Daemon Pool, started with `UBAG_WORKER_SLOT_ID`; it runs one job at a time and holds at most one warm page key. A failed or cancelled job kills only its own slot.
+_Avoid_: Helper Node (a Helper Node is a remote machine; slots live on the primary)

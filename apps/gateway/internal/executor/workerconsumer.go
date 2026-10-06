@@ -130,7 +130,10 @@ type WorkerConsumer struct {
 	// Each worker loops RunOnce independently; FileSpool rename-CAS and NATS
 	// fetch+ack are safe for concurrent LeaseNext. ProcessWorkerRunner is
 	// stateless (one subprocess per job) so mock/per-job jobs truly overlap;
-	// DaemonWorkerRunner keeps its mu so warm-daemon jobs stay serial there.
+	// DaemonWorkerRunner keeps its mu so warm-daemon jobs stay serial there. A
+	// DaemonPool (UBAG_WORKER_POOL_SIZE > 1) runs up to its Size jobs at once, so
+	// PoolSize must be at least that large for the slots to be used (the serve
+	// package raises it); jobs it cannot place are Retried after a delay.
 	PoolSize int
 	Plugins  *plugins.Host // optional; nil disables post-job hook
 	Metrics  WorkerMetricsRecorder
@@ -430,6 +433,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		return c.finishTerminalLeasedJob(ctx, lease, job)
 	}
 	var execToken string
+	releaseExecLease := func() {}
 	if c.ExecLeases != nil {
 		token, held, leaseErr := c.ExecLeases.AcquireToken(ctx,
 			[]topology.Lane{{Key: "exec:" + job.ID, Cap: 1}}, execLeaseTTL, time.Now().UTC())
@@ -444,11 +448,17 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 			return true, nil
 		}
 		execToken = token
-		defer func() {
-			releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			_ = c.ExecLeases.ReleaseToken(releaseCtx, execToken)
-		}()
+		// Idempotent: the overload path releases early (before the delayed
+		// Retry), and the deferred call then does nothing.
+		var releaseOnce sync.Once
+		releaseExecLease = func() {
+			releaseOnce.Do(func() {
+				releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				_ = c.ExecLeases.ReleaseToken(releaseCtx, execToken)
+			})
+		}
+		defer releaseExecLease()
 	}
 	assignedJob, found, err := c.Jobs.UpdateStatus(ctx, job.ID, jobstore.StatusAssigned)
 	if err != nil {
@@ -466,6 +476,12 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 	workerStarted := time.Now()
 	events, err := c.runWorkerWithCancellation(ctx, lease, execToken, envelope)
 	workerDuration := time.Since(workerStarted)
+	if err != nil && ctx.Err() == nil && errors.Is(err, ErrPoolOverloaded) {
+		// Lease-then-place (ADR-0011): the job was leased but no worker slot could
+		// take it. It never ran, so it is neither failed nor completed.
+		releaseExecLease()
+		return c.retryAfterOverload(ctx, lease, err)
+	}
 	if err != nil {
 		outcome := "failure"
 		if errors.Is(err, context.Canceled) {
@@ -1103,6 +1119,38 @@ func (c *WorkerConsumer) runWorkerWithCancellation(ctx context.Context, lease Wo
 
 // cancelWatchFallback is the safety-net Get cadence while the event hub is on.
 const cancelWatchFallback = 2 * time.Second
+
+const (
+	defaultOverloadRetryDelay = 2 * time.Second
+	maxOverloadRetryDelay     = 30 * time.Second
+)
+
+// retryAfterOverload returns a leased job whose placement was refused (a
+// saturated DaemonPool) to the queue AFTER a delay. The delay is what keeps a
+// saturated pool from becoming a busy loop: the file spool's Retry re-queues
+// instantly and wakes the poller, so lease -> overload -> Retry -> lease would
+// spin. The job stays leased while it waits, so no other consumer picks it up
+// early. It is a nack, never an ack: the job is not failed or completed, and its
+// status stays what the assignment made it.
+func (c *WorkerConsumer) retryAfterOverload(ctx context.Context, lease WorkerLease, cause error) (bool, error) {
+	delay, reason := defaultOverloadRetryDelay, "overloaded"
+	var overload *PoolOverloadError
+	if errors.As(cause, &overload) {
+		reason = overload.Reason
+		if overload.RetryAfter > 0 {
+			delay = min(overload.RetryAfter, maxOverloadRetryDelay)
+		}
+	}
+	slog.Warn("worker placement refused; retrying the lease after a delay",
+		"job_id", lease.JobID(), "reason", reason, "delay", delay)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
+	return true, lease.Retry(ctx)
+}
 
 // jobCanceled reports whether the job reached ANY terminal state under the
 // running worker (cancel, or a stale-job reaper timeout), so the run stops.

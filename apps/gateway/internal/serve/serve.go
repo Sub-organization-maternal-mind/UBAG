@@ -1607,11 +1607,38 @@ func buildWorkerRunner(
 	}
 	slog.Warn("worker daemon enabled: browser pages are reused between jobs",
 		"script", daemonScript)
-	daemon := &executor.DaemonWorkerRunner{
-		Python:     python,
-		Script:     daemonScript,
-		MaxRuntime: maxRuntime,
-		Artifacts:  artifactStore,
+	poolSize, requested, err := workerPoolSizeFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	var daemon executor.WorkerRunner
+	if poolSize > 1 {
+		poolWait, err := durationFromMillisEnv("UBAG_WORKER_POOL_WAIT_MS", 0)
+		if err != nil {
+			return nil, err
+		}
+		if poolSize != requested {
+			slog.Warn("worker daemon pool size clamped to the ceiling (raise UBAG_WORKER_POOL_MAX only "+
+				"after measuring slot memory against the gateway cgroup)",
+				"requested", requested, "applied", poolSize)
+		}
+		slog.Warn("worker daemon pool enabled: warm daemons run in isolated slots",
+			"slots", poolSize, "wait", poolWait)
+		daemon = &executor.DaemonPool{
+			Python:     python,
+			Script:     daemonScript,
+			MaxRuntime: maxRuntime,
+			Artifacts:  artifactStore,
+			Size:       poolSize,
+			MaxWait:    poolWait, // 0: the pool's own default (30s)
+		}
+	} else {
+		daemon = &executor.DaemonWorkerRunner{
+			Python:     python,
+			Script:     daemonScript,
+			MaxRuntime: maxRuntime,
+			Artifacts:  artifactStore,
+		}
 	}
 	return &targetWorkerRunner{
 		daemon: daemon,
@@ -1623,6 +1650,39 @@ func buildWorkerRunner(
 			Jobs:       jobs,
 		},
 	}, nil
+}
+
+const (
+	// defaultWorkerPoolCeiling is the provisional cap on UBAG_WORKER_POOL_SIZE.
+	// Every slot is a Python + Playwright driver process living in the gateway
+	// cgroup (1300 MiB in production, GOMEMLIMIT 950 MiB). P0.8 expects 2-3 slots to
+	// fit but the real slot cost is unmeasured (it needs a lab host: P0.13 budget),
+	// so the ceiling is conservative until UBAG_WORKER_POOL_MAX is set from numbers.
+	defaultWorkerPoolCeiling = 3
+	maxWorkerPoolCeiling     = 32
+)
+
+// workerPoolSizeFromEnv reads UBAG_WORKER_POOL_SIZE: how many isolated warm-daemon
+// slots run jobs at once. Unset is 1 -- the single warm daemon of today. The
+// applied size never exceeds UBAG_WORKER_POOL_MAX (default 3, hard max 32);
+// requested is what the operator asked for, so callers can report a clamp.
+func workerPoolSizeFromEnv() (size, requested int, err error) {
+	requested, err = intFromEnv("UBAG_WORKER_POOL_SIZE", 1)
+	if err != nil {
+		return 0, 0, err
+	}
+	ceiling, err := intFromEnv("UBAG_WORKER_POOL_MAX", defaultWorkerPoolCeiling)
+	if err != nil {
+		return 0, 0, err
+	}
+	return min(requested, ceiling, maxWorkerPoolCeiling), requested, nil
+}
+
+// coupledWorkerConcurrency raises the consumer's parallelism to the daemon pool
+// size. Every consumer goroutine runs one job, so a pool of N slots driven by
+// fewer than N goroutines would never use its extra slots.
+func coupledWorkerConcurrency(concurrency, poolSize int) int {
+	return max(concurrency, poolSize)
 }
 
 // guardLiveWorkerConcurrency warns when several per-job live workers would run
@@ -1721,6 +1781,20 @@ func newWorkerConsumerFromEnv(dispatcher executor.Dispatcher, jobs jobstore.Stor
 		return nil, err
 	}
 	workerConcurrency = guardLiveWorkerConcurrency(workerConcurrency, script)
+	if workerDaemonEnabled() {
+		poolSize, _, err := workerPoolSizeFromEnv()
+		if err != nil {
+			return nil, err
+		}
+		if coupled := coupledWorkerConcurrency(workerConcurrency, poolSize); coupled != workerConcurrency {
+			slog.Info("worker concurrency raised to the daemon pool size so the slots can overlap",
+				"concurrency", workerConcurrency, "pool_size", poolSize, "applied", coupled)
+			workerConcurrency = coupled
+		}
+	} else if poolSize, _, err := workerPoolSizeFromEnv(); err == nil && poolSize > 1 {
+		slog.Warn("UBAG_WORKER_POOL_SIZE is ignored: UBAG_WORKER_DAEMON is not enabled",
+			"pool_size", poolSize)
+	}
 	queue, err := workerQueueFromEnv(dispatcher, maxRuntime, pollInterval)
 	if err != nil {
 		return nil, err

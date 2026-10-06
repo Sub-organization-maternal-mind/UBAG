@@ -13,7 +13,8 @@ Highest on origin/main: 0005. Four planned ADRs each originally claimed 0006.
 | 0008 | rust-relay-adoption-gate | P0.3 |
 | 0009 | helper-grant-shrink-drain-ramp-telemetry (landed, P4.15) | P4.15 |
 | 0010 | helper-trust-plane (landed, P4.5) | P4.5 |
-| 0011+ | free (lease-then-place note: take next free) | later |
+| 0011 | lease-then-place-with-delayed-retry (landed, P3.6) | P3.6 |
+| 0012+ | free: take next free | later |
 
 ## Migrations
 

@@ -81,6 +81,19 @@ process per job. Set it to `true` only when warm browser-page reuse is intended;
 `/app/apps/worker/run_worker_daemon.py`. Reused pages clear pending attachment
 state before the next job.
 
+`UBAG_WORKER_POOL_SIZE` (default `1`, the single daemon) runs N isolated daemon
+slots instead. Each slot is its own worker process with its own page registry,
+and a failed or cancelled job kills only its slot. One job per physical browser
+session runs at a time (two tenants on one provider account still serialize), a
+job goes to the slot whose page for its session is still warm, and a job that
+cannot be placed within `UBAG_WORKER_POOL_WAIT_MS` (default 30 s) is retried
+after a short delay rather than failed (ADR-0011). The size is capped at
+`UBAG_WORKER_POOL_MAX` (default `3`): every slot is a Python + Playwright driver
+process inside the 1300m gateway cgroup, and the real per-slot cost has not been
+measured yet. Do not raise the cap without a measurement
+(`tools/perf/baseline-matrix.mjs budget`). Enabling the pool is a deploy change,
+not part of this repository's defaults.
+
 ## Antigravity CLI OAuth slots (opt-in, not yet production-verified)
 
 The `antigravity-oauth` profile installs the official `agy` Linux CLI into
