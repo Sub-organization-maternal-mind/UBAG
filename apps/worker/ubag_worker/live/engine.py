@@ -436,6 +436,15 @@ class LiveSessionEngine:
                 )
             except Exception:  # noqa: BLE001 - artifact capture is best-effort
                 screenshot = None
+            if getattr(exc, "post_submit", False):
+                # The prompt is already submitted: `blocked` maps to a retryable
+                # status and would invite a blind resubmit (BINDING D4).
+                event_type, data = self._post_submit_failure(
+                    driver, job, exc, reason="selector_drift_detected"
+                )
+                data["artifact_screenshot"] = screenshot
+                yield emit(event_type, data)
+                return
             yield emit("blocked", {
                 "status": "blocked",
                 "target": job.target,
@@ -467,6 +476,10 @@ class LiveSessionEngine:
                 "reason": exc.reason,
                 "message": str(exc),
             })
+            if getattr(exc, "post_submit", False):
+                event_type, data = self._post_submit_failure(driver, job, exc, reason=exc.reason)
+                yield emit(event_type, data)
+                return
             yield emit("blocked", {
                 "status": "blocked",
                 "target": job.target,
@@ -527,7 +540,9 @@ class LiveSessionEngine:
         progress: JsonObject = {"events": [], "submitted": False}
         try:
             return self._run_interaction_inner(driver, job, timer, progress)
-        except (DriftDetectedError, ManualActionRequired, LiveSessionError):
+        except (DriftDetectedError, ManualActionRequired, LiveSessionError) as exc:
+            if progress["submitted"] and _env_flag("UBAG_WORKER_STRICT_SUBMIT", False):
+                exc.post_submit = True  # iter_events ends it failed_terminal, never retryable
             raise
         except Exception as exc:  # noqa: BLE001 - classified by the submit marker
             if not (progress["submitted"] and _env_flag("UBAG_WORKER_STRICT_SUBMIT", False)):
@@ -536,7 +551,11 @@ class LiveSessionEngine:
             return {"events": progress["events"], "blocked": None}
 
     def _post_submit_failure(
-        self, driver: PageDriver, job: "_NormalizedJob", exc: BaseException
+        self,
+        driver: PageDriver,
+        job: "_NormalizedJob",
+        exc: BaseException,
+        reason: str = "post_submit_failure",
     ) -> tuple:
         """The terminal ``failed_terminal`` event for a failure after submit."""
         try:
@@ -550,7 +569,7 @@ class LiveSessionEngine:
             "submitted": True,
             "retryable": False,
             "reconcile_required": True,
-            "reason": "post_submit_failure",
+            "reason": reason,
             # Exception class only: never echo provider/page detail.
             "message": (
                 "prompt was submitted but the interaction failed (%s); the "
@@ -596,7 +615,9 @@ class LiveSessionEngine:
                         yield item
                     else:
                         held.append(item)
-            except (DriftDetectedError, ManualActionRequired, LiveSessionError):
+            except (DriftDetectedError, ManualActionRequired, LiveSessionError) as exc:
+                if progress["submitted"]:
+                    exc.post_submit = True
                 raise
             except Exception as exc:  # noqa: BLE001 - classified by the submit marker
                 if progress["submitted"]:
