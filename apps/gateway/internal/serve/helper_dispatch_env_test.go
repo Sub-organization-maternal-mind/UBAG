@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/executor"
 	"github.com/ubag/ubag/apps/gateway/internal/helperauth/authtest"
@@ -123,5 +124,76 @@ func TestHelperRemoteReadsTheWorkerRuntimeOnlyWhenOn(t *testing.T) {
 	setDispatchEnv(t, "false", good)
 	if runner, err := newHelperRemoteFromEnv(jobstore.NewMemoryStore(), nodes.NewMemoryStore(), &helperPlane{}, nil, executor.NoHelperPicker{}); runner != nil || err != nil {
 		t.Fatalf("with dispatch off: %v, %v", runner, err)
+	}
+}
+
+// The reconciler (P4.18) exists exactly when dispatch does, takes its window from
+// UBAG_HELPER_RECONCILE_WINDOW_SECONDS (60 s to 24 h, default 10 min) and needs a
+// store with the attempt ledger.
+func TestHelperReconcilerFromEnv(t *testing.T) {
+	setDispatchEnv(t, "true", writeDispatchEnv(t))
+	store := jobstore.NewMemoryStore()
+	runner, err := newHelperRemoteFromEnv(store, nodes.NewMemoryStore(), &helperPlane{}, nil, executor.NoHelperPicker{})
+	if err != nil || runner == nil {
+		t.Fatalf("runner = %v, err = %v", runner, err)
+	}
+
+	if rec, err := newHelperReconcilerFromEnv(store, nodes.NewMemoryStore(), nil); rec != nil || err != nil {
+		t.Fatalf("with dispatch off (no runner): %v, %v", rec, err)
+	}
+	for _, tc := range []struct {
+		value   string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"", nodes.DefaultReconcileWindow, false},
+		{"60", time.Minute, false},
+		{"600", 10 * time.Minute, false},
+		{"86400", 24 * time.Hour, false},
+		{"59", 0, true}, {"86401", 0, true}, {"0", 0, true}, {"-5", 0, true}, {"ten", 0, true},
+	} {
+		t.Run("window="+tc.value, func(t *testing.T) {
+			t.Setenv("UBAG_HELPER_RECONCILE_WINDOW_SECONDS", tc.value)
+			rec, err := newHelperReconcilerFromEnv(store, nodes.NewMemoryStore(), runner)
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "UBAG_HELPER_RECONCILE_WINDOW_SECONDS") {
+					t.Fatalf("err = %v, want the variable named", err)
+				}
+				return
+			}
+			if err != nil || rec == nil || rec.Config.Window != tc.want {
+				t.Fatalf("reconciler = %+v, err = %v, want window %s", rec, err, tc.want)
+			}
+			if rec.Ledger == nil || rec.Inspector == nil || rec.Registry == nil {
+				t.Fatalf("reconciler is not wired: %+v", rec)
+			}
+		})
+	}
+	t.Setenv("UBAG_HELPER_RECONCILE_WINDOW_SECONDS", "")
+	if _, err := newHelperReconcilerFromEnv(struct{ jobstore.Store }{}, nodes.NewMemoryStore(), runner); err == nil || !strings.Contains(err.Error(), "attempt ledger") {
+		t.Fatalf("a store without the ledger: err = %v", err)
+	}
+}
+
+// With dispatch on the reconciler owns the fence of a submitted attempt, so the
+// stale-job sweep must not expire lapsed attempts under it.
+func TestStaleJobReaperLeavesAttemptsToTheReconcilerWhenDispatchIsOn(t *testing.T) {
+	store := jobstore.NewMemoryStore()
+	for _, tc := range []struct {
+		name               string
+		attempts, dispatch string
+		wantLedger         bool
+	}{
+		{"ledger off", "false", "false", false},
+		{"ledger on, no dispatch (P4.3 behaviour)", "true", "false", true},
+		{"ledger on, dispatch on", "true", "true", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("UBAG_EXECUTOR_ATTEMPTS", tc.attempts)
+			t.Setenv("UBAG_HELPER_DISPATCH", tc.dispatch)
+			if got := newStaleJobReaperFromEnv(store, nil, nil).Attempts != nil; got != tc.wantLedger {
+				t.Fatalf("reaper ledger wired = %v, want %v", got, tc.wantLedger)
+			}
+		})
 	}
 }

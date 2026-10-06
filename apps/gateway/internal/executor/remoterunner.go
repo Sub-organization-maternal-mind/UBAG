@@ -101,6 +101,7 @@ const (
 	defaultHelperReconnectDelay   = 250 * time.Millisecond
 	maxHelperReconnectDelay       = 5 * time.Second
 	defaultHelperRetryDelay       = 5 * time.Second
+	defaultHelperPollEvery        = 2 * time.Second
 	// helperRunSlack is how long past MaxRuntime a run may take before the runner
 	// gives up on the helper (the helper's own backstop is deadline + 15 s).
 	helperRunSlack = 45 * time.Second
@@ -127,6 +128,10 @@ type RemoteConfig struct {
 	// not used: its adapters would behave differently.
 	RegistryDigest string
 	Limits         HelperIngestLimits
+	// Nodes resolves a node id to its endpoint (the node store's last accepted
+	// allocation). Only the reconciler paths (Inspect, Resume, P4.18) read it; nil
+	// makes them report the node as unreachable.
+	Nodes NodeEndpoints
 
 	LeaseTTL   time.Duration // default 120 s; at most jobstore.MaxAttemptLeaseTTL
 	RenewEvery time.Duration // default 20 s; must be at most LeaseTTL/3
@@ -142,6 +147,9 @@ type RemoteConfig struct {
 	RPCTimeout       time.Duration
 	CancelTimeout    time.Duration
 	ReconnectDelay   time.Duration
+	// PollEvery is how often Resume asks the helper about a submitted attempt it
+	// adopted (default 2 s).
+	PollEvery time.Duration
 	// RetryDelay is how long a job held back by a helper problem waits before its
 	// lease is retried (default 5 s).
 	RetryDelay time.Duration
@@ -165,7 +173,7 @@ func (c *RemoteConfig) defaults() error {
 		&c.MaxRuntime: defaultWorkerMaxRuntime, &c.MaxClockSkew: DefaultHelperMaxClockSkew,
 		&c.HandshakeTimeout: defaultHelperHandshakeTimeout, &c.RPCTimeout: defaultHelperRPCTimeout,
 		&c.CancelTimeout: defaultHelperCancelTimeout, &c.ReconnectDelay: defaultHelperReconnectDelay,
-		&c.RetryDelay: defaultHelperRetryDelay,
+		&c.RetryDelay: defaultHelperRetryDelay, &c.PollEvery: defaultHelperPollEvery,
 	} {
 		if *p <= 0 {
 			*p = d
@@ -287,7 +295,7 @@ func (r *RemoteWorkerRunner) Run(ctx context.Context, env DispatchEnvelope, plac
 		return fmt.Errorf("helper dispatch: %w", err)
 	}
 	a := &remoteAttempt{
-		r: r, env: env, node: placed.NodeID, attemptID: attemptID, spec: spec, body: body,
+		r: r, env: env, node: placed.NodeID, attemptID: attemptID, workload: r.cfg.WorkloadVersion, spec: spec, body: body,
 		fingerprint: helperFingerprint(env.JobID, spec.Target, spec.CommandType, body),
 	}
 	return a.run(ctx, placed)
@@ -353,6 +361,7 @@ type remoteAttempt struct {
 	env         DispatchEnvelope
 	node        string
 	attemptID   string
+	workload    string // the helper workload the attempt was leased under (the fence carries it)
 	spec        HelperAttemptSpec
 	body        helperJobBody
 	fingerprint string
@@ -469,7 +478,7 @@ func (a *remoteAttempt) connect(ctx context.Context, placed *Placement) error {
 		}
 		return held("helper_unreachable", err)
 	}
-	if reason := a.r.incompatible(hs, a.node); reason != "" {
+	if reason := a.r.incompatible(hs, a.node, false); reason != "" {
 		_ = conn.Close()
 		return held(reason, nil)
 	}
@@ -481,7 +490,10 @@ func (a *remoteAttempt) connect(ctx context.Context, placed *Placement) error {
 const HelperProtocolVersion = "ubag.helper.v1"
 
 // incompatible names why a handshake answer rules the helper out ("" = usable).
-func (r *RemoteWorkerRunner) incompatible(hs *helperv1.HandshakeResponse, node string) string {
+// resume is the lenient form for a helper that already holds an attempt: the
+// workload version and registry digest are the attempt's own business (its fence
+// carries the version it was leased under), so only protocol, node and clock count.
+func (r *RemoteWorkerRunner) incompatible(hs *helperv1.HandshakeResponse, node string, resume bool) string {
 	cfg := &r.cfg
 	skew := r.clock.Now().Sub(hs.GetServerTime().AsTime())
 	if skew < 0 {
@@ -492,9 +504,9 @@ func (r *RemoteWorkerRunner) incompatible(hs *helperv1.HandshakeResponse, node s
 		return "helper_protocol"
 	case hs.GetNodeId() != "" && hs.GetNodeId() != node:
 		return "helper_node_mismatch" // a cross-check only: the certificate already named the node
-	case hs.GetWorkloadVersion() != cfg.WorkloadVersion:
+	case !resume && hs.GetWorkloadVersion() != cfg.WorkloadVersion:
 		return "helper_workload_version"
-	case hs.GetRegistryDigest() == "" || hs.GetRegistryDigest() != cfg.RegistryDigest:
+	case !resume && (hs.GetRegistryDigest() == "" || hs.GetRegistryDigest() != cfg.RegistryDigest):
 		return "helper_registry_digest"
 	case !hs.GetServerTime().IsValid() || skew > cfg.MaxClockSkew:
 		return "helper_clock_skew"
@@ -507,7 +519,7 @@ func (a *remoteAttempt) fence() *helperv1.Fence {
 	return &helperv1.Fence{
 		JobId: a.env.JobID, AttemptId: a.attemptID, NodeId: a.node, LeaseGeneration: a.generation,
 		LeaseExpiresAt: timestamppb.New(a.helperLeaseExpiry()), InputFingerprint: a.fingerprint,
-		WorkloadVersion: a.cfg().WorkloadVersion,
+		WorkloadVersion: a.workload,
 	}
 }
 

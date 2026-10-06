@@ -174,6 +174,12 @@ type WorkerConsumer struct {
 	// stops the helper at once instead of waiting for the store poll. Nil keeps
 	// the poll as the only path.
 	Cancels *CancelRegistry
+	// Reconcile, when set together with Remote (UBAG_HELPER_DISPATCH, P4.18), is
+	// asked about every leased job before it is placed or run: a job that already
+	// has attempts in the ledger is never started blindly. It may hold the job,
+	// resume a submitted attempt on its helper, or fail the job closed for
+	// reconciling (reconcilegate.go). Nil is today's gateway.
+	Reconcile AttemptReconciler
 
 	inflight atomic.Int64
 }
@@ -497,16 +503,30 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		}
 		defer releaseExecLease()
 	}
+	// Ledger first (UBAG_HELPER_DISPATCH, P4.18): a job that already has attempts
+	// is never placed or run until the reconciler has judged them. Nothing has been
+	// assigned yet, so a hold only returns the lease.
+	var gate reconcileVerdict
+	if c.Reconcile != nil && c.Remote != nil {
+		if gate = c.reconcileGate(ctx, job.ID); gate.hold != nil {
+			releaseExecLease()
+			return c.retryAfterDelay(ctx, lease, gate.hold)
+		}
+	}
 	// Helper placement (UBAG_HELPER_DISPATCH): lease-then-place, before the job is
 	// assigned. A nil placement is the local path below; an error holds the job
-	// back (it never started) and retries the lease after a delay.
-	placed, placeErr := c.Remote.Place(ctx, envelope)
-	if placeErr != nil {
-		releaseExecLease()
-		return c.retryAfterDelay(ctx, lease, placeErr)
+	// back (it never started) and retries the lease after a delay. A job the gate
+	// resumes or fails closed is never placed.
+	var placed *Placement
+	if gate.resume == nil && gate.fail == nil {
+		var placeErr error
+		if placed, placeErr = c.Remote.Place(ctx, envelope); placeErr != nil {
+			releaseExecLease()
+			return c.retryAfterDelay(ctx, lease, placeErr)
+		}
 	}
 	defer placed.Release()
-	remote := placed != nil
+	remote := placed != nil || gate.resume != nil || gate.fail != nil
 	// A browser job and a live voice session exclude each other on the browser
 	// (voicelane.go). Checked before the job is assigned: a held-back job has not
 	// started, so it stays queued and goes back to the queue after a delay. A job
@@ -547,6 +567,12 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 		// arrive; the run itself returns no events, only whether it reached an
 		// end the store holds (below).
 		_, err = c.superviseRun(ctx, lease, execToken, laneHold, envelope.JobID, true, func(runCtx context.Context) ([]jobstore.WorkerEvent, error) {
+			switch {
+			case gate.fail != nil:
+				return nil, gate.fail // runs nothing: the failure below is the job's end
+			case gate.resume != nil:
+				return nil, c.Remote.Resume(runCtx, envelope, *gate.resume, gate.resumeBy)
+			}
 			return nil, c.Remote.Run(runCtx, envelope, placed)
 		})
 	} else {
@@ -1371,12 +1397,17 @@ func (c *WorkerConsumer) applyFailure(ctx context.Context, lease WorkerLease, en
 		// Same terminal shape the worker emits for a post-submit failure
 		// (engine.py, UBAG_WORKER_STRICT_SUBMIT): never retryable, reconcile.
 		eventType = "failed_terminal"
+		reason := "post_submit_failure"
+		var unresolved *reconcileFailure
+		if errors.As(cause, &unresolved) {
+			reason = "attempt_reconcile_" + unresolved.reason // P4.18: fixed tokens only
+		}
 		data = map[string]any{
 			"status":             string(jobstore.StatusFailedTerminal),
 			"retryable":          false,
 			"error_class":        "worker_execution",
 			"message":            "worker failed after prompt submission; reconcile required",
-			"reason":             "post_submit_failure",
+			"reason":             reason,
 			"submitted":          true,
 			"reconcile_required": true,
 			"stream_end_reason":  "error",

@@ -1,6 +1,6 @@
 {
   "title": "Fleet manager unreachable",
-  "description": "Makes the fleet manager unreachable for the allocation poller. Expected: attempts already placed keep renewing and finish on their helpers; no new grants, increases or placements are made, so new jobs run on the local runner; nothing is failed because the manager is down.",
+  "description": "Makes the fleet manager unreachable for the allocation poller. Expected: attempts already placed keep renewing and finish on their helpers; no new grants, increases or placements are made, so new jobs run on the local runner; nothing is failed because the manager is down. The attempt reconciler (P4.18) does not consult the manager either: a gateway restarted during the outage still settles an already-placed attempt from the ledger and the node store's last accepted state, and a job whose earlier attempt submitted is never sent to the local runner.",
   "tags": [
     "helper",
     "fleet",
@@ -18,7 +18,9 @@
   ],
   "covered_by": [
     "TestRemoteManagerDownKeepsInFlightAttemptsAndGrantsNothingNew",
-    "TestRemoteFallsBackToTheLocalRunnerWhenNothingIsPlaced"
+    "TestRemoteFallsBackToTheLocalRunnerWhenNothingIsPlaced",
+    "TestReconcileManagerDownStillSettlesAnAlreadyPlacedAttempt",
+    "TestReconcileGateManagerDownRunsAnUnsubmittedJobLocallyButNeverASubmittedOne"
   ],
   "configuration": {
     "helper_a_container": {
