@@ -4,6 +4,34 @@ Last updated: 2026-10-03 (CI green-up on feat/ci-green — the `ci` workflow
 has been red on every main push since the 09-27 closeout; see the section
 below and AGENT_HANDOFF.md "REMAINING WORK" for the live list.)
 
+## 2026-10-06 — Perf + shared-fleet program (branch feat/perf-fleet, slice P8.1 consolidation)
+
+Status: built on the integration branch `feat/perf-fleet` (about 92 slice PRs, one shard each in
+`docs/perf-fleet/slices/`, index in `docs/perf-fleet/slices/README.md`). **Nothing was deployed and no production flag was
+changed by the program** (decisions D1/D2 in `docs/perf-fleet/ctx/BINDING.md`). Every new behaviour is behind an env flag that is
+inert by default, except two safety gates that are already on and have kill-switches (`UBAG_ADMISSION_SHARED`,
+`UBAG_VOICE_LANE_EXCLUSION`). The flag inventory is `docs/perf-fleet/FLAGS.md`; the per-flag graduation, canary, rollback and
+ledger procedure is `docs/perf-fleet/ROLLOUT.md`; both are machine-checked against the code, compose file and
+`deploy/vps/env.example` by `pnpm check:flag-graduation` (`tools/flag-graduation-check.mjs`).
+
+What exists (all merged, flags off): event wake hub and SSE resume/close/cap (P1, P3.13); worker daemon protocol v2, strict
+submission and strict stream end, streaming ingest with attempt-scoped event ids, the bounded `DaemonPool` (P3); the attempt
+ledger, queue/attempt leases, helper plane (trust plane, node store, placer, prober, reconciler, helper service, workload
+image manifest, metrics, alerts, runbook) (P4); voice lane exclusion, relay metrics, helper voice RPCs, lease generation and
+node-aware voice placement (P5); truthful queue depth, `queue_reason`, fleet read API and dashboard panels (P2.6, P6); the
+measurement tooling (acceptance harness, ladder, baseline matrix, pprof, stage timings, synthetic provider, isolation suite,
+relay A/B harness) (P0, P7). Migrations 0022 to 0025 (attempts, helper nodes, helper profiles, voice lease generation) are
+additive and apply automatically on deploy; they are inert while their flags are off.
+
+What is NOT done or NOT measured (do not quote a number that does not exist):
+- **No capacity number.** No isolated lab host exists (D5); `docs/benchmarks/capacity-report.md` marks every goal not measured and is non-authoritative. No baseline matrix, ladder or 60-minute steady-state run was made.
+- **No helper canary has run** (P4.20 is external-blocked: no manager allocation API, no real helper, certificates or WireGuard, no operator route to bind a profile to a node, manager auth undefined). `docs/perf-fleet/CANARY.md` is the drill; its evidence section is empty.
+- **Voice**: live media is unavailable in production (relay secret unset, memory store). The human voice activation probe and two-way demo (P5.4) were not run, so `ready_controls` stay empty. P5.11 (primary RemoteMediaNegotiator) and P6.5 (dashboard voice panel) have no shard on this branch, so helper voice can be placed but not connected.
+- **Rust relay (P7.8) not started**; the A/B gate verdict (P7.5 to P7.7) is unevaluated because it needs real libopus on a Linux lab host.
+- P1.8 (create-path pprof and DB pool sizing) has no shard on this branch. P6.6 (warm-resume fast path) is built and merged off, not live-verified. P0.4 legacy-tool CI validation run was not performed.
+- `docker-compose.vps.yml` passes only some of the flags to the gateway container; flags whose Compose column in `FLAGS.md` is `none` have no effect from `env.local` until a reviewed compose line is added (ROLLOUT.md section 1).
+- P8.1 also exempted the exact key `token_events` in `apps/gateway/internal/payloadpolicy`: with `UBAG_WORKER_STRICT_STREAM_END` on, the worker's deadline-cut `data.partial.token_events` would otherwise have been refused as a credential-shaped key (found in P4.9). Checks for P8.1: `go test ./internal/payloadpolicy`, `node tools/flag-graduation-check.mjs`, its `node --test` file; no full suites were run.
+
 ## 2026-10-03 — CI green-up (feat/ci-green)
 
 The `ci` workflow was red on every main push since the 2026-09-27 closeout:
