@@ -299,14 +299,12 @@ test("security contract registry includes required event families", () => {
   }
 });
 
-test("fleet actions are operator/admin only and node audit events exist", () => {
+test("fleet actions are superadmin only and node audit events exist", () => {
   const m = permissionMatrix();
-  for (const role of ["viewer", "developer", "service"]) {
+  for (const role of ["viewer", "developer", "operator", "admin", "service"]) {
     for (const a of ["fleet:read", "fleet:manage"]) assert.equal(m[role].includes(a), false, `${role} ${a}`);
   }
-  for (const role of ["operator", "admin"]) {
-    for (const a of ["fleet:read", "fleet:manage"]) assert.equal(m[role].includes(a), true, `${role} ${a}`);
-  }
+  for (const a of ["fleet:read", "fleet:manage"]) assert.equal(m.superadmin.includes(a), true, `superadmin ${a}`);
   assert.equal(authorize({ actor: { id: "d1", type: "user", role: "developer" }, action: "fleet:manage" }).effect, "deny");
   assert.equal(authorize({ actor: { id: "s1", type: "service", role: "service" }, action: "fleet:read" }).effect, "deny");
   for (const n of ["node.enrolled", "node.cert_rotated", "node.revoked", "node.auth_rejected", "attempt.granted", "attempt.fenced_rejected", "attempt.committed", "asset.token_issued", "asset.read", "asset.write", "helper.policy_violation"]) {

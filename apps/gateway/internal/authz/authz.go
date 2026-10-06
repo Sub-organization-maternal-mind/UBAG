@@ -52,6 +52,10 @@ func sortStrings(s []string) {
 	}
 }
 
+// fleet:read and fleet:manage are deliberately absent from operator and admin:
+// those roles are per (tenant, app), while the fleet views are cross-tenant
+// (node ids, capacity, held-job counts). Only the platform-level superadmin
+// holds them, through the RoleAllows fast path.
 var roleActions = map[string]map[string]struct{}{
 	"viewer": {
 		"job:read": {},
@@ -83,8 +87,6 @@ var roleActions = map[string]map[string]struct{}{
 		"alerts:manage":     {},
 		"browser:read":      {},
 		"concurrency:read":  {},
-		"fleet:read":        {},
-		"fleet:manage":      {},
 	},
 	"admin": {
 		"job:create":        {},
@@ -108,8 +110,6 @@ var roleActions = map[string]map[string]struct{}{
 		"browser:read":      {},
 		"concurrency:read":  {},
 		"region:manage":     {},
-		"fleet:read":        {},
-		"fleet:manage":      {},
 	},
 	"superadmin": {
 		// Satisfied by the RoleAllows superadmin fast path; kept empty so the

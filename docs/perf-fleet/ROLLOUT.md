@@ -137,7 +137,7 @@ Worker. `namespaced` ignores caller-supplied profile directories and uses a per-
 
 ### `UBAG_VOICE_RECONCILER_FAIL_CLOSED`
 
-Gateway. After 5 consecutive store errors per session, the reconciler stops media instead of failing open. Voice media is unavailable in production today (relay secret unset), so this has no live effect until voice is enabled.
+Gateway. After 5 consecutive store errors per session, the reconciler stops media instead of failing open. Voice media is unavailable whenever no relay secret is configured (the default), so this has no live effect until voice media is enabled.
 
 - **Live-DOM verification:** not applicable.
 - **Canary criteria:** C0: with a faulting voice store, media stops after 5 errors; with a healthy store nothing changes. Proposed C2 gate: no call stopped while the store was healthy.

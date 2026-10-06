@@ -7,12 +7,16 @@ package benchutil
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"net"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -28,6 +32,9 @@ func OpenPostgres(b *testing.B) *sql.DB {
 	if dsn == "" {
 		b.Skip("UBAG_TEST_POSTGRES_DSN is not set")
 	}
+	if err := CheckDSN(dsn, os.Getenv("UBAG_BENCH_ALLOW_HOST")); err != nil {
+		b.Fatal(err)
+	}
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		b.Fatal(err)
@@ -40,6 +47,44 @@ func OpenPostgres(b *testing.B) *sql.DB {
 	db.SetMaxIdleConns(envInt("UBAG_BENCH_POOL_IDLE", 5))
 	b.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+// CheckDSN refuses a bench target that could be a shared or production
+// database: the benches write append-only audit rows and admission tokens.
+// Every host (including fallbacks) must be loopback, private, a unix socket,
+// or listed in allow (comma-separated, UBAG_BENCH_ALLOW_HOST), and the
+// database name must contain "bench" or "test". Mirrors checkTarget in
+// tests/load/acceptance.mjs.
+func CheckDSN(dsn, allow string) error {
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return fmt.Errorf("benchutil: UBAG_TEST_POSTGRES_DSN is not a valid DSN")
+	}
+	name := strings.ToLower(cfg.Database)
+	if !strings.Contains(name, "bench") && !strings.Contains(name, "test") {
+		return fmt.Errorf("benchutil: database name %q must contain \"bench\" or \"test\"; benches write append-only audit rows, never aim them at a shared or production database", cfg.Database)
+	}
+	allowed := map[string]bool{}
+	for _, h := range strings.Split(allow, ",") {
+		if h = strings.ToLower(strings.TrimSpace(h)); h != "" && !strings.Contains(h, "*") {
+			allowed[h] = true
+		}
+	}
+	hosts := []string{cfg.Host}
+	for _, f := range cfg.Fallbacks {
+		hosts = append(hosts, f.Host)
+	}
+	for _, h := range hosts {
+		h = strings.ToLower(h)
+		if strings.HasPrefix(h, "/") || h == "localhost" || strings.HasSuffix(h, ".localhost") || allowed[h] {
+			continue
+		}
+		if ip := net.ParseIP(h); ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
+			continue
+		}
+		return fmt.Errorf("benchutil: host %q is not loopback/private and is not listed in UBAG_BENCH_ALLOW_HOST (wildcards are ignored); never point benches at a shared or production database", h)
+	}
+	return nil
 }
 
 // Run drives op from Clients() goroutines until b.N calls were made, then

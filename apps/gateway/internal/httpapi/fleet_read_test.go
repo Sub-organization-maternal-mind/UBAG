@@ -42,7 +42,7 @@ func TestFleetNodesAndSummaryServeTheFleetToOperators(t *testing.T) {
 			HeldByReason: map[string]int{"identity_busy": 4},
 		},
 	}
-	for _, role := range []string{"operator", "admin"} {
+	for _, role := range []string{"superadmin"} {
 		server := NewServer(Config{AppSecret: "dev-secret", ActorRole: role, Fleet: src}).Handler()
 
 		resp := doJSON(server, http.MethodGet, "/v1/fleet/nodes?limit=2", "", authHeaders(""))
@@ -86,7 +86,7 @@ func TestFleetNodesAndSummaryServeTheFleetToOperators(t *testing.T) {
 }
 
 func TestFleetNodesRejectsABadLimit(t *testing.T) {
-	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "operator", Fleet: fakeFleet{}}).Handler()
+	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "superadmin", Fleet: fakeFleet{}}).Handler()
 	for _, limit := range []string{"0", "257", "abc", "-1"} {
 		resp := doJSON(server, http.MethodGet, "/v1/fleet/nodes?limit="+limit, "", authHeaders(""))
 		if resp.Code != http.StatusBadRequest {
@@ -97,7 +97,7 @@ func TestFleetNodesRejectsABadLimit(t *testing.T) {
 
 // A role without fleet:read never reaches the source, even when one is wired.
 func TestFleetRoutesWithASourceStillDenyOtherRoles(t *testing.T) {
-	for _, role := range []string{"viewer", "developer", "service"} {
+	for _, role := range []string{"viewer", "developer", "operator", "admin", "service"} {
 		server := NewServer(Config{AppSecret: "dev-secret", ActorRole: role, Fleet: fakeFleet{list: []nodes.FleetNode{fleetNode("n1")}}}).Handler()
 		for _, path := range fleetPaths {
 			if resp := doJSON(server, http.MethodGet, path, "", authHeaders("")); resp.Code != http.StatusForbidden {
@@ -108,7 +108,7 @@ func TestFleetRoutesWithASourceStillDenyOtherRoles(t *testing.T) {
 }
 
 func TestFleetSourceErrorIsAnOpaque500(t *testing.T) {
-	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "operator", Fleet: fakeFleet{err: errors.New("pq: password=hunter2 host=10.0.0.5")}}).Handler()
+	server := NewServer(Config{AppSecret: "dev-secret", ActorRole: "superadmin", Fleet: fakeFleet{err: errors.New("pq: password=hunter2 host=10.0.0.5")}}).Handler()
 	for _, path := range fleetPaths {
 		resp := doJSON(server, http.MethodGet, path, "", authHeaders(""))
 		if resp.Code != http.StatusInternalServerError {

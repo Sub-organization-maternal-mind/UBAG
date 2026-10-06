@@ -81,15 +81,16 @@ func TestSuperadminAllowsUnion(t *testing.T) {
 	}
 }
 
-// TestFleetActionsOperatorAdminOnly pins the P2.5 deny-default for fleet:*.
-func TestFleetActionsOperatorAdminOnly(t *testing.T) {
+// TestFleetActionsSuperadminOnly pins the deny-default for fleet:*: the fleet
+// views are cross-tenant, so tenant-level operator and admin do not hold them.
+func TestFleetActionsSuperadminOnly(t *testing.T) {
 	for _, action := range []string{"fleet:read", "fleet:manage"} {
-		for _, role := range []string{"viewer", "developer", "service", "", "node"} {
+		for _, role := range []string{"viewer", "developer", "operator", "admin", "service", "", "node"} {
 			if RoleAllows(role, action) {
 				t.Errorf("RoleAllows(%q, %q) = true, want false", role, action)
 			}
 		}
-		for _, role := range []string{"operator", "admin", "superadmin"} {
+		for _, role := range []string{"superadmin"} {
 			if !RoleAllows(role, action) {
 				t.Errorf("RoleAllows(%q, %q) = false, want true", role, action)
 			}

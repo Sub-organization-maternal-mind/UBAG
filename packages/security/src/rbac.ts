@@ -31,9 +31,9 @@ export const UBAG_ACTIONS = [
   "concurrency:read",
   "region:manage",
   "auth:pat:issue",
-  // Shared-fleet (helper node) read/manage; operator + admin only, never
-  // viewer/developer/service. Deny-default: ABAC with an empty bundle is
-  // permissive, so these are granted only via explicit role rows.
+  // Shared-fleet (helper node) read/manage; cross-tenant, so platform-level
+  // superadmin only (operator and admin are per-tenant roles). Deny-default:
+  // ABAC with an empty bundle is permissive, so no role row grants these.
   "fleet:read",
   "fleet:manage"
 ] as const;
@@ -84,8 +84,8 @@ export interface AuthzDecision {
 const ROLE_PERMISSIONS: Record<UbagRole, ReadonlySet<UbagAction>> = {
   viewer: new Set(["job:read"]),
   developer: new Set(["job:create", "job:read", "job:cancel", "job:retry", "artifact:write", "artifact:delete", "webhook:configure", "browser:read", "concurrency:read"]),
-  operator: new Set(["job:create", "job:read", "job:cancel", "job:retry", "artifact:write", "artifact:delete", "device:enroll", "device:revoke", "webhook:configure", "webhook:replay", "audit:read", "alerts:read", "alerts:manage", "browser:read", "concurrency:read", "fleet:read", "fleet:manage"]),
-  admin: new Set(["job:create", "job:read", "job:cancel", "job:retry", "artifact:write", "artifact:delete", "device:enroll", "device:revoke", "secret:rotate", "webhook:configure", "webhook:replay", "audit:read", "rate_limit:manage", "role:manage", "data:export", "data:erase", "alerts:read", "alerts:manage", "browser:read", "concurrency:read", "region:manage", "fleet:read", "fleet:manage"]),
+  operator: new Set(["job:create", "job:read", "job:cancel", "job:retry", "artifact:write", "artifact:delete", "device:enroll", "device:revoke", "webhook:configure", "webhook:replay", "audit:read", "alerts:read", "alerts:manage", "browser:read", "concurrency:read"]),
+  admin: new Set(["job:create", "job:read", "job:cancel", "job:retry", "artifact:write", "artifact:delete", "device:enroll", "device:revoke", "secret:rotate", "webhook:configure", "webhook:replay", "audit:read", "rate_limit:manage", "role:manage", "data:export", "data:erase", "alerts:read", "alerts:manage", "browser:read", "concurrency:read", "region:manage"]),
   superadmin: new Set(UBAG_ACTIONS),
   service: new Set(["job:create", "job:read", "job:cancel", "job:retry", "artifact:write", "artifact:delete", "webhook:replay"])
 };

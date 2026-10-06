@@ -22,3 +22,21 @@ Branch `feat/pf-review-security`, base `feat/perf-fleet`. All four findings were
 ## Not run
 
 Full gateway suite, `pnpm check`, Postgres-gated tests.
+
+## Round 2: P1.8 benches, fleet read view, committed production posture
+
+Branch `feat/pf-review-security-p18` (the earlier branch name was taken by another worktree), base `feat/perf-fleet`. All three findings were re-verified against the code and were real; all three are fixed.
+
+### Fixed
+
+1. **P1.8 benches could write to a shared or production Postgres (medium).** `benchutil.OpenPostgres` accepted any non-empty `UBAG_TEST_POSTGRES_DSN`. It now calls `benchutil.CheckDSN`, which refuses unless every host (fallbacks included) is loopback, private, link-local or a unix socket, or is listed in the new bench-only `UBAG_BENCH_ALLOW_HOST` (wildcards ignored), and the database name contains `bench` or `test`. This mirrors `checkTarget` in `tests/load/acceptance.mjs`. The admission bench no longer uses the real `global:all` lane key (`bench:global` / `bench:tenant`, extra lanes opt-in as before). The P1.8 runbook states both rules. Test: `TestCheckDSN`. The audit bench still appends to the append-only chain, but only to a database that passed the guard.
+2. **`fleet:read` / `fleet:manage` on tenant-level roles (medium).** Both views are cross-tenant (node ids, capacity, held-job counts over every tenant), while operator and admin are per-(tenant, app) roles. The actions are removed from operator and admin in `authz.go` and `packages/security/src/rbac.ts`; only the platform-level superadmin holds them (fast path). The action names stay in the contract (`UBAG_ACTIONS`), so `fleet:manage` is not lost for the route that will enforce it. Tests, OpenAPI text and docs were updated (`TestFleetActionsSuperadminOnly`; the httpapi fleet tests now run as superadmin and assert operator/admin get 403). The dashboard already treats 403 as "fleet panel not available". Consequence: a single-tenant deployment that wants the fleet panel must use a superadmin credential. Earlier slice notes (P2.5, P6.1, P6.4) still say "operator and admin"; this entry supersedes them.
+3. **Production posture in public docs (medium).** `ctx/BINDING.md` section 1, `slices/P0.1.md`, `slices/P0.2.md`, `slices/P0.13.md`, `slices/P0.14.md` and `ROLLOUT.md` no longer state the deployed commit, container and host sizing, co-tenancy or the canary pair, nor that the relay secret is empty in production. They keep env var names and documented defaults only ("unset by default"). The production-specific record belongs in a private ops note held by the owner. Git history still contains the earlier text; rewriting history is the owner's call. `ctx/reader-summaries.json` and `ctx/roadmap-notes.json` carry older, looser host descriptions (core count, "about 15 stacks") that predate this round and were not changed.
+
+### Checks run
+
+`go vet` on storekit, topology, authz, httpapi; `go test ./internal/storekit/benchutil ./internal/authz`; `go test ./internal/httpapi -run Fleet`; `node tools/check-contracts.mjs`; `node tools/check-api-reference.mjs`.
+
+### Not run
+
+`packages/security` node tests (need the package build; no node_modules in the worktree, but `check-contracts` cross-checks the RBAC table), Postgres-gated benches, full suites.

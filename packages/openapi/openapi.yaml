@@ -1239,7 +1239,7 @@ paths:
         an opaque node_id and a label only: no address, hostname, endpoint,
         certificate detail or browser endpoint is ever returned. Nodes are
         ordered by node_id and are not tenant-scoped, so the route needs the
-        fleet:read action, which only the operator and admin roles hold.
+        fleet:read action, which only the platform-level superadmin role holds (operator and admin are per-tenant roles).
         Answers 501 when this deployment has no fleet source.
       parameters:
         - $ref: "#/components/parameters/UbagApiVersion"

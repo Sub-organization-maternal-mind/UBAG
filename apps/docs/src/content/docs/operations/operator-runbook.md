@@ -102,7 +102,7 @@ If reproduction requires user or provider-session data, use approved masked or t
 
 ## Waiting Jobs
 
-A `queued` job carries a coarse `queue_reason` (see [Job Lifecycle](/contracts/job-lifecycle)). Read it on the Jobs page or in `GET /v1/jobs/summary` (`queued_by_reason`). Operators with `fleet:read` also see fine reasons as counts in `GET /v1/fleet/summary` (`held_by_reason`).
+A `queued` job carries a coarse `queue_reason` (see [Job Lifecycle](/contracts/job-lifecycle)). Read it on the Jobs page or in `GET /v1/jobs/summary` (`queued_by_reason`). Platform operators (the superadmin role, which alone holds `fleet:read`) also see fine reasons as counts in `GET /v1/fleet/summary` (`held_by_reason`).
 
 | Reason | First check |
 |--------|-------------|
