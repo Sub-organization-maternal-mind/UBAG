@@ -123,21 +123,9 @@ func (m *MemoryStore) CommitEvents(_ context.Context, ref AttemptRef, events []W
 	if !ok {
 		return Job{}, fmt.Errorf("%w: job %s", ErrAttemptNotFound, ref.JobID)
 	}
-	// All-or-nothing, like the Postgres transaction: a failing event rolls the
-	// job, its event log and its dedupe keys back to the pre-batch state.
-	before, eventCount, eventSeq, globalSeq := job, len(m.events[job.ID]), m.eventSeq[job.ID], m.eventSeqGlobal
-	keys := make(map[string]struct{}, len(m.eventKey[job.ID]))
-	for key := range m.eventKey[job.ID] {
-		keys[key] = struct{}{}
-	}
-	for _, event := range events {
-		var err error
-		if job, err = m.applyWorkerEventLocked(job, event); err != nil {
-			m.jobs[before.ID] = before
-			m.events[before.ID] = m.events[before.ID][:eventCount]
-			m.eventSeq[before.ID], m.eventSeqGlobal, m.eventKey[before.ID] = eventSeq, globalSeq, keys
-			return Job{}, err
-		}
+	job, err := m.applyBatchLocked(job, events)
+	if err != nil {
+		return Job{}, err
 	}
 	if a.State == AttemptActive && TerminalStatus(job.Status) {
 		now := m.now().UTC()
