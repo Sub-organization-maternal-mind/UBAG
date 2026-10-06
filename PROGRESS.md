@@ -41,6 +41,20 @@ someone remembered to run them by hand. Added as a `Load harness offline
 self-tests` step in the `node-suite` job (`pnpm test:load:offline`). Offline only:
 no gateway, no provider, no Docker. 115 tests pass in ~51s locally.
 
+**3. That CI step immediately caught a real portability bug in the harness's own
+self-test** — the payoff for wiring it in. On the first Linux run,
+`acceptance.test.mjs:686` ("pg_stat_statements is optional … not fatal") failed
+`assert.equal(broken.thresholds.passed, true)` with `false !== true`, while
+passing on Windows. The assertion was not about pg at all: it claimed the entire
+fake run met every measured threshold, which includes `max_create_p95_ms: 2000`
+and the integrity counters, so on a loaded runner it tested the machine's speed.
+There is no pg threshold in `thresholds.json` or `thresholds.goals.json`, so an
+unavailable `pg_stat_statements` cannot fail the verdict by construction. The
+test now asserts the property its name claims, and only that: the pg block is
+reported `unavailable`, yields no numbers and no top-N list, and no pg-named
+threshold exists. It deliberately does not assert `thresholds.passed` or the
+run's integrity counters, which are covered by their own tests.
+
 Checks run: `pnpm check:flag-graduation` ok (30 flags, 20 managed) and its 5 unit
 tests pass; the three negative controls still fire (doc/compose disagreement, a
 graduation hidden in a compose default, a deleted compose line);

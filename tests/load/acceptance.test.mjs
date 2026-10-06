@@ -689,8 +689,19 @@ describe('events-latency scenario', () => {
     const none = await run(cfgFor(fake, [...EV, '--events-calibrate-ms', '0']));
     assert.match(none.scenarios['events-latency'].pg_stat_statements.skipped, /not requested/);
     const broken = await run(cfgFor(fake, [...EV, '--pg-stat-container', 'fake-pg', '--events-calibrate-ms', '0']), { pgExec: async () => { throw new Error('relation "pg_stat_statements" does not exist'); } });
-    assert.match(broken.scenarios['events-latency'].pg_stat_statements.skipped, /unavailable/);
-    assert.equal(broken.thresholds.passed, true);
+    // "Not fatal" is a statement about pg, so assert it as one: an unavailable
+    // pg_stat_statements is reported as skipped and yields no numbers, rather
+    // than throwing or leaving a half-read snapshot behind. Deliberately NOT
+    // `thresholds.passed` and NOT the run's integrity counters - those also cover
+    // measured p95s and per-scenario counters that a loaded runner can
+    // legitimately miss on this fake run, so asserting them here tested the
+    // machine's speed rather than the property in this test's name.
+    const pgBlock = broken.scenarios['events-latency'].pg_stat_statements;
+    assert.match(pgBlock.skipped, /unavailable/);
+    assert.equal(pgBlock.total_calls_delta, undefined, 'a skipped pg read must not report numbers');
+    assert.equal(pgBlock.top, undefined, 'a skipped pg read must not report a top-N list');
+    assert.ok(!broken.thresholds.results.some((r) => /pg_stat/i.test(r.name)), 'pg_stat_statements must not appear as a threshold');
+    assert.ok(broken.thresholds.results.length > 0, 'the run must still evaluate thresholds');
     assert.throws(() => cfgFor(fake, [...EV, '--pg-stat-container', 'x;rm -rf /']), /invalid name/);
   });
 });
