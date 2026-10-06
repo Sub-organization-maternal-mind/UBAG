@@ -1342,6 +1342,14 @@ func (r ProcessWorkerRunner) materializeAttachments(ctx context.Context, envelop
 	return cleanup, nil
 }
 
+// MaterializeAttachments is materializeAttachments for callers outside this
+// package: a Helper Node injects its read-only staging ArtifactStore (perf-fleet
+// P4.10) as Artifacts and reuses the same fail-closed temp-file logic, so the
+// ubag-attach- temp prefix the worker's path guard requires stays in one place.
+func (r ProcessWorkerRunner) MaterializeAttachments(ctx context.Context, envelope *DispatchEnvelope) (func(), error) {
+	return r.materializeAttachments(ctx, envelope)
+}
+
 // attachmentHardlinkEnabled gates the hardlink fast path. Off by default: the
 // copy path is the long-standing behaviour. A hardlink shares the artifact's
 // inode, so it is only safe because the worker reads attachments (browser file

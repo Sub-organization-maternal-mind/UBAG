@@ -200,6 +200,13 @@ func Verify(token string, pub *rsa.PublicKey, e Expect) (Claims, error) {
 	return c, nil
 }
 
+// Peek returns the claims of a token whose signature, typ/aud, shape and expiry
+// are valid. Nothing in them is authorised yet: a caller uses it only to learn
+// which job to load (for its tenant) before it calls Authorize.
+func Peek(token string, pub *rsa.PublicKey, now time.Time) (Claims, error) {
+	return parse(token, pub, now)
+}
+
 // Request is what an asset RPC knows when it calls Authorize.
 type Request struct {
 	Node    string // authenticated mTLS node identity
