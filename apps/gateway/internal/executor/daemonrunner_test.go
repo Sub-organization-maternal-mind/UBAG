@@ -178,7 +178,16 @@ func TestHelperDaemon(t *testing.T) {
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		var request struct {
-			JobID string `json:"job_id"`
+			JobID   string `json:"job_id"`
+			Payload struct {
+				Job struct {
+					Input struct {
+						// job.input.sleep_ms makes a job take that long, so tests can tell
+						// overlapping jobs from serialized ones by their work windows.
+						SleepMS int `json:"sleep_ms"`
+					} `json:"input"`
+				} `json:"job"`
+			} `json:"payload"`
 		}
 		_ = json.Unmarshal(scanner.Bytes(), &request)
 		if os.Getenv("GO_HELPER_DIE") == "1" {
@@ -187,8 +196,13 @@ func TestHelperDaemon(t *testing.T) {
 		if request.JobID == "job_daemon_hang" {
 			time.Sleep(time.Hour)
 		}
-		fmt.Printf(`{"job_id":%q,"api_version":"2026-05-22","type":"completed","sequence":1,"data":{"pid":%d}}`+"\n",
-			request.JobID, os.Getpid())
+		startUS := time.Now().UnixMicro()
+		if ms := request.Payload.Job.Input.SleepMS; ms > 0 {
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		}
+		endUS := time.Now().UnixMicro()
+		fmt.Printf(`{"job_id":%q,"api_version":"2026-05-22","type":"completed","sequence":1,"data":{"pid":%d,"slot":%q,"start_us":%d,"end_us":%d}}`+"\n",
+			request.JobID, os.Getpid(), os.Getenv("GO_HELPER_SLOT"), startUS, endUS)
 		fmt.Printf(`{%q:true,"job_id":%q,"status":"completed"}`+"\n", daemonJobEndKey, request.JobID)
 	}
 }
@@ -252,29 +266,76 @@ func TestDaemonRunnerRestartsAfterTheDaemonDies(t *testing.T) {
 }
 
 // One browser profile, one job at a time: concurrent turns on a shared provider
-// account risk interleaved output and CAPTCHA/lockout.
+// account risk interleaved output and CAPTCHA/lockout. The pool of one slot
+// (TestDaemonPoolOfOneSerializesConcurrentJobs) keeps the same promise.
 func TestDaemonRunnerSerializesConcurrentJobs(t *testing.T) {
 	var spawns int32
 	runner := helperDaemonRunner(t, &spawns)
 
 	var wg sync.WaitGroup
+	windows := make(chan jobWindow, 4)
 	errs := make(chan error, 4)
 	for i := 0; i < 4; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, err := runner.RunWorker(context.Background(), daemonTestEnvelope()); err != nil {
+			env := daemonTestEnvelope()
+			env.Job.Input = map[string]any{"sleep_ms": 60}
+			events, err := runner.RunWorker(context.Background(), env)
+			if err != nil {
 				errs <- err
+				return
 			}
+			windows <- windowOf(t, events)
 		}()
 	}
 	wg.Wait()
 	close(errs)
+	close(windows)
 	for err := range errs {
 		t.Fatalf("concurrent job failed: %v", err)
 	}
 	if spawns != 1 {
 		t.Fatalf("spawned %d daemons, want 1", spawns)
+	}
+	var all []jobWindow
+	for w := range windows {
+		all = append(all, w)
+	}
+	assertNoOverlap(t, all)
+}
+
+// The run timeout must start once the daemon is held, not before the mutex: a job
+// queued behind another one would otherwise burn its own MaxRuntime budget waiting
+// and time out without ever having run.
+func TestDaemonRunnerMaxRuntimeStartsAfterTheMutex(t *testing.T) {
+	var spawns int32
+	runner := helperDaemonRunner(t, &spawns)
+	// Spawn the daemon first so process start-up does not eat the budget below.
+	if _, err := runner.RunWorker(context.Background(), daemonTestEnvelope()); err != nil {
+		t.Fatalf("warm-up job: %v", err)
+	}
+	runner.MaxRuntime = 700 * time.Millisecond
+
+	first := make(chan error, 1)
+	go func() {
+		env := daemonTestEnvelope()
+		env.Job.Input = map[string]any{"sleep_ms": 500}
+		_, err := runner.RunWorker(context.Background(), env)
+		first <- err
+	}()
+	time.Sleep(100 * time.Millisecond) // let the first job take the mutex
+
+	// The second job waits ~400ms for the mutex and then runs 400ms: 800ms in
+	// total is past MaxRuntime, but each run is inside it. Starting the clock
+	// before the mutex would time it out here.
+	second := daemonTestEnvelope()
+	second.Job.Input = map[string]any{"sleep_ms": 400}
+	if _, err := runner.RunWorker(context.Background(), second); err != nil {
+		t.Fatalf("queued job must get its own run budget once it holds the daemon: %v", err)
+	}
+	if err := <-first; err != nil {
+		t.Fatalf("first job: %v", err)
 	}
 }
 

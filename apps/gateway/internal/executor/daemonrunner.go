@@ -33,7 +33,9 @@ const daemonJobEndKey = "__ubag_job_end__"
 // One job at a time, enforced by mu: the daemon holds a single browser profile,
 // and concurrent turns on one provider account risk interleaved output and
 // CAPTCHA/lockout. That is also why the daemon itself runs one job at a time --
-// this mutex is the Go half of the same invariant.
+// this mutex is the Go half of the same invariant. A DaemonPool
+// (UBAG_WORKER_POOL_SIZE > 1) owns several of these as isolated slots and decides
+// which job goes to which slot; each slot still runs exactly one job at a time.
 type DaemonWorkerRunner struct {
 	Python     string
 	Script     string
@@ -43,6 +45,15 @@ type DaemonWorkerRunner struct {
 	// newCommand builds the daemon process. Overridable so tests can re-exec the
 	// test binary as a fake daemon instead of depending on a Python interpreter.
 	newCommand func() *exec.Cmd
+
+	// slotMode, slotID and poolSize are set only by DaemonPool. A slot daemon is
+	// spawned with UBAG_WORKER_SLOT_ID / UBAG_WORKER_POOL_SIZE so the worker scopes
+	// its page registry per slot, takes the cross-process identity lock and reaps
+	// the registries of slots beyond the pool size (P3.3). The zero value is the
+	// single legacy daemon, unchanged from before the pool existed.
+	slotMode bool
+	slotID   int
+	poolSize int
 
 	mu     sync.Mutex
 	cmd    *exec.Cmd
@@ -257,6 +268,14 @@ func (r *DaemonWorkerRunner) buildCommand() *exec.Cmd {
 	// Same scrubbed env as the per-job worker: the daemon is long-lived, so
 	// leaking the gateway's environment into it would be worse, not better.
 	cmd.Env = minimalWorkerEnv()
+	if r.slotMode {
+		// Appended last: for duplicate keys the last entry wins, so a stray
+		// UBAG_WORKER_SLOT_ID in the gateway's own environment cannot renumber a slot.
+		cmd.Env = append(cmd.Env,
+			fmt.Sprintf("UBAG_WORKER_SLOT_ID=%d", r.slotID),
+			fmt.Sprintf("UBAG_WORKER_POOL_SIZE=%d", r.poolSize),
+		)
+	}
 	cmd.Stderr = &limitedBuffer{max: maxWorkerStderrBytes}
 	return cmd
 }
@@ -325,7 +344,11 @@ func (r *DaemonWorkerRunner) ensureDaemon() error {
 	r.stdoutFile = outRead
 	r.stdout = bufio.NewReaderSize(outRead, 64*1024)
 	r.exited = exited
-	slog.Info("worker daemon started", "pid", cmd.Process.Pid)
+	if r.slotMode {
+		slog.Info("worker daemon started", "pid", cmd.Process.Pid, "slot", r.slotID)
+	} else {
+		slog.Info("worker daemon started", "pid", cmd.Process.Pid)
+	}
 	return nil
 }
 
@@ -353,17 +376,33 @@ func (r *DaemonWorkerRunner) discardDaemon() {
 	r.cmd, r.stdin, r.stdout, r.stdoutFile, r.exited = nil, nil, nil, nil, nil
 }
 
+// daemonJobFunc runs the protocol for one job on an already-started daemon.
+// submitted records that a prompt_submitted line went by (UBAG_WORKER_STRICT_SUBMIT).
+type daemonJobFunc func(ctx context.Context, stdin io.Writer, stdout *bufio.Reader, envelope DispatchEnvelope, maxRuntime time.Duration, submitted *atomic.Bool) error
+
+// batchDaemonJob is the protocol step behind RunWorker: events are buffered into
+// *events and only valid once the job reports a clean end.
+func batchDaemonJob(events *[]jobs.WorkerEvent) daemonJobFunc {
+	return func(_ context.Context, stdin io.Writer, stdout *bufio.Reader, env DispatchEnvelope, maxRuntime time.Duration, submitted *atomic.Bool) error {
+		var err error
+		*events, err = runDaemonJobTracked(stdin, stdout, env, maxRuntime, submitted)
+		return err
+	}
+}
+
+// streamingDaemonJob is the protocol step behind StreamWorker.
+func streamingDaemonJob(sink EventSink) daemonJobFunc {
+	return func(runCtx context.Context, stdin io.Writer, stdout *bufio.Reader, env DispatchEnvelope, maxRuntime time.Duration, submitted *atomic.Bool) error {
+		return streamDaemonJobTracked(runCtx, stdin, stdout, env, maxRuntime, sink, submitted)
+	}
+}
+
 // RunWorker implements WorkerRunner.
 func (r *DaemonWorkerRunner) RunWorker(
 	ctx context.Context, envelope DispatchEnvelope,
 ) ([]jobs.WorkerEvent, error) {
 	var events []jobs.WorkerEvent
-	err := r.runJob(ctx, envelope, func(_ context.Context, stdin io.Writer, stdout *bufio.Reader, env DispatchEnvelope, maxRuntime time.Duration, submitted *atomic.Bool) error {
-		var runErr error
-		events, runErr = runDaemonJobTracked(stdin, stdout, env, maxRuntime, submitted)
-		return runErr
-	})
-	if err != nil {
+	if err := r.runJob(ctx, envelope, batchDaemonJob(&events)); err != nil {
 		return nil, err
 	}
 	return events, nil
@@ -374,17 +413,37 @@ func (r *DaemonWorkerRunner) RunWorker(
 func (r *DaemonWorkerRunner) StreamWorker(
 	ctx context.Context, envelope DispatchEnvelope, sink EventSink,
 ) error {
-	return r.runJob(ctx, envelope, func(runCtx context.Context, stdin io.Writer, stdout *bufio.Reader, env DispatchEnvelope, maxRuntime time.Duration, submitted *atomic.Bool) error {
-		return streamDaemonJobTracked(runCtx, stdin, stdout, env, maxRuntime, sink, submitted)
-	})
+	return r.runJob(ctx, envelope, streamingDaemonJob(sink))
 }
 
-// runJob owns everything around one daemon job (deadline, attachments, the
-// one-job mutex, lazy spawn, discard-on-failure); job runs the protocol.
+func (r *DaemonWorkerRunner) maxRuntime() time.Duration {
+	if r.MaxRuntime <= 0 {
+		return defaultWorkerMaxRuntime
+	}
+	return r.MaxRuntime
+}
+
+// materializeDaemonAttachments writes a job's declared attachments to local temp
+// files exactly as the per-job runner does, so attachment jobs behave identically
+// under the daemon. Materialization has its own maxRuntime budget: it is not part
+// of the job's run timeout, which only starts once a daemon slot is held.
+func materializeDaemonAttachments(
+	ctx context.Context,
+	store artifacts.ArtifactStore,
+	envelope *DispatchEnvelope,
+	maxRuntime time.Duration,
+) (func(), error) {
+	attachCtx, cancel := context.WithTimeout(ctx, maxRuntime)
+	defer cancel()
+	return ProcessWorkerRunner{Artifacts: store}.materializeAttachments(attachCtx, envelope)
+}
+
+// runJob owns everything around one daemon job (attachments, the one-job mutex,
+// deadline, lazy spawn, discard-on-failure); job runs the protocol.
 func (r *DaemonWorkerRunner) runJob(
 	ctx context.Context,
 	envelope DispatchEnvelope,
-	job func(ctx context.Context, stdin io.Writer, stdout *bufio.Reader, envelope DispatchEnvelope, maxRuntime time.Duration, submitted *atomic.Bool) error,
+	job daemonJobFunc,
 ) (err error) {
 	// With UBAG_WORKER_STRICT_SUBMIT every failure is typed ErrNotSubmitted or
 	// ErrAmbiguous from the prompt_submitted marker this job's stream carried
@@ -392,26 +451,46 @@ func (r *DaemonWorkerRunner) runJob(
 	var submitted atomic.Bool
 	defer func() { err = classifySubmission(err, submitted.Load()) }()
 
-	maxRuntime := r.MaxRuntime
-	if maxRuntime <= 0 {
-		maxRuntime = defaultWorkerMaxRuntime
-	}
-	runCtx, cancel := context.WithTimeout(ctx, maxRuntime)
-	defer cancel()
-
-	// Materialize any declared attachments exactly as the per-job runner does, so
-	// attachment jobs behave identically under the daemon.
-	cleanupAttachments, err := ProcessWorkerRunner{Artifacts: r.Artifacts}.
-		materializeAttachments(runCtx, &envelope)
+	maxRuntime := r.maxRuntime()
+	cleanupAttachments, err := materializeDaemonAttachments(ctx, r.Artifacts, &envelope, maxRuntime)
 	if err != nil {
 		return err
 	}
 	if cleanupAttachments != nil {
 		defer cleanupAttachments()
 	}
+	return r.runExclusive(ctx, envelope, maxRuntime, &submitted, job)
+}
 
+// runExclusive takes the one-job mutex and runs the job. The mutex is not
+// context-aware, so a DaemonPool reserves the slot first and only then calls this:
+// the lock is then uncontended and never parks a cancelled caller.
+func (r *DaemonWorkerRunner) runExclusive(
+	ctx context.Context,
+	envelope DispatchEnvelope,
+	maxRuntime time.Duration,
+	submitted *atomic.Bool,
+	job daemonJobFunc,
+) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.runLocked(ctx, envelope, maxRuntime, submitted, job)
+}
+
+// runLocked runs one job on this runner's daemon. Callers must hold mu.
+//
+// The run timeout starts HERE, after the daemon is held. It used to start before
+// the mutex, so a job queued behind another one spent its own MaxRuntime budget
+// waiting and could time out without ever having run.
+func (r *DaemonWorkerRunner) runLocked(
+	ctx context.Context,
+	envelope DispatchEnvelope,
+	maxRuntime time.Duration,
+	submitted *atomic.Bool,
+	job daemonJobFunc,
+) error {
+	runCtx, cancel := context.WithTimeout(ctx, maxRuntime)
+	defer cancel()
 
 	if err := runCtx.Err(); err != nil {
 		return err
@@ -422,11 +501,14 @@ func (r *DaemonWorkerRunner) runJob(
 
 	errCh := make(chan error, 1)
 	stdin, stdout := r.stdin, r.stdout
-	go func() { errCh <- job(runCtx, stdin, stdout, envelope, maxRuntime, &submitted) }()
+	go func() { errCh <- job(runCtx, stdin, stdout, envelope, maxRuntime, submitted) }()
 
+	var err error
 	select {
 	case err = <-errCh:
 	case <-runCtx.Done():
+		// Cancel, caller deadline or MaxRuntime: kill THIS daemon only. A pool's
+		// other slots are separate processes and keep their warm pages.
 		r.discardDaemon()
 		<-errCh
 		return runCtx.Err()
@@ -444,6 +526,30 @@ func (r *DaemonWorkerRunner) runJob(
 func (r *DaemonWorkerRunner) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.discardDaemon()
+}
+
+// drain shuts the daemon down gracefully: once the active job is done (mu is
+// held only by a running job) it closes the daemon's stdin, which ends the
+// worker's serve loop on EOF so it closes its warm pages itself, and waits up to
+// grace for the process to exit before falling back to a kill.
+func (r *DaemonWorkerRunner) drain(grace time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.cmd == nil {
+		return
+	}
+	if r.stdin != nil {
+		_ = r.stdin.Close()
+	}
+	if r.exited != nil && grace > 0 {
+		timer := time.NewTimer(grace)
+		defer timer.Stop()
+		select {
+		case <-r.exited:
+		case <-timer.C:
+		}
+	}
 	r.discardDaemon()
 }
 
