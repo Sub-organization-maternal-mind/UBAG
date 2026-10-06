@@ -151,11 +151,20 @@ func (s HelperVoiceSpec) RelayDialer(address func(Session) (string, error)) *TCP
 
 // MediaCredentialVerifier returns the control-channel authorizer for a hub
 // (MediaHub.AuthorizeControl) that checks credentials with the per-attempt
-// media key alone: no app secret is involved.
+// media key alone: no app secret is involved. A Helper Node does not know the
+// session's app id (the voice fence carries none), so for a session without one
+// the app is taken from the credential itself: the per-attempt key authenticates
+// that field together with tenant, session and expiry, so nothing is weakened.
 func (s HelperVoiceSpec) MediaCredentialVerifier() func(Session, string) bool {
 	key := []byte(s.MediaKey)
 	return func(session Session, credential string) bool {
-		return len(key) > 0 && VerifyMediaCredential(key, session, credential, time.Now().UTC())
+		if len(key) == 0 {
+			return false
+		}
+		if parts := strings.Split(credential, "|"); session.AppID == "" && len(parts) == 6 {
+			session.AppID = parts[2]
+		}
+		return VerifyMediaCredential(key, session, credential, time.Now().UTC())
 	}
 }
 

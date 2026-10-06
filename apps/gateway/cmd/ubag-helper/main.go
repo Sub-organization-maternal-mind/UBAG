@@ -13,6 +13,11 @@
 // over internal/workerdaemon, the P3.6 pool): UBAG_HELPER_MAX_ATTEMPTS slots,
 // starting at one, one active operation per provider identity. The binary links
 // gRPC, the proto and those two packages only, never internal/executor.
+//
+// Helper-hosted voice (UBAG_HELPER_VOICE, default off) is the one exception to
+// that bar: its media endpoint is voice.MediaHub, which links pion and the voice
+// stores. It is therefore compiled in only with the helpervoice build tag
+// (voicemedia_on.go); the default binary refuses to start with the flag on.
 package main
 
 import (
@@ -51,20 +56,36 @@ func run() error {
 	// for the P4.10 staging client, so an attempt that declares attachments ends
 	// failed (helper_assets_unavailable) instead of running without them; the dial
 	// slice supplies the source.
+	var (
+		media    helper.VoiceMedia
+		extraEnv []string
+	)
+	if st.Voice.Enabled {
+		var closeMedia func()
+		if media, closeMedia, err = newVoiceMedia(st); err != nil {
+			return err
+		}
+		defer closeMedia()
+		// The worker that activates the provider's voice UI attaches to this node's
+		// own loopback browser; its CDP allowlist is set here, never by a job.
+		extraEnv = []string{"UBAG_VOICE_CDP_ALLOWED_HOSTS=127.0.0.1"}
+	}
 	rn, err := runner.New(runner.Config{
 		Python: st.WorkerPython, Script: st.WorkerScript, Slots: st.MaxAttempts, ProfileRoot: st.ProfileRoot,
+		ExtraEnv: extraEnv,
 	})
 	if err != nil {
 		return err
 	}
 	defer rn.Close()
-	node, err := st.Open(rn)
+	node, err := st.Open(rn, media)
 	if err != nil {
 		return err
 	}
 	slog.Info("ubag-helper starting", "node_id", st.NodeID, "listen", node.Listener.Addr().String(),
 		"version", helper.Version, "workload_version", st.WorkloadVersion, "registry_digest", node.RegistryDigest,
-		"chrome", st.ChromeBin, "max_attempts", st.MaxAttempts, "primary_identity", st.PrimaryURISAN)
+		"chrome", st.ChromeBin, "max_attempts", st.MaxAttempts, "primary_identity", st.PrimaryURISAN,
+		"voice", st.Voice.Enabled, "voice_environments", len(st.Voice.Environments))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return node.Run(ctx)

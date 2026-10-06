@@ -101,6 +101,12 @@ type Config struct {
 	// ProfileRoot is the directory profiles live under on this node
 	// (UBAG_PROFILE_DIR for the workers); "" keeps the worker's default.
 	ProfileRoot string
+	// ExtraEnv is KEY=VALUE entries the helper itself adds to every worker (never a
+	// job): helper-hosted voice sets UBAG_VOICE_CDP_ALLOWED_HOSTS=127.0.0.1 so the
+	// worker may attach to the node's own loopback browser. An entry that is denied
+	// (the primary's endpoints) or that carries primary-only configuration (secrets,
+	// DSNs) is refused by New.
+	ExtraEnv []string
 	// Assets stages declared attachments; nil refuses attempts that carry any.
 	Assets AssetSource
 	// MaxWait bounds how long a job waits for a slot (default 30s).
@@ -135,8 +141,14 @@ func New(cfg Config) (*Runner, error) {
 	if cfg.Slots > workerdaemon.MaxPoolSize {
 		return nil, fmt.Errorf("helper runner: at most %d slots", workerdaemon.MaxPoolSize)
 	}
+	for _, kv := range cfg.ExtraEnv {
+		key, _, _ := strings.Cut(kv, "=")
+		if _, denied := deniedEnv[strings.ToUpper(key)]; denied || key == workerPlaneEnv || key == workerProfileEnv || helper.CheckEnvIsolation([]string{kv}) != nil {
+			return nil, fmt.Errorf("helper runner: %s may not be added to the worker environment", key)
+		}
+	}
 	return &Runner{cfg: cfg, pool: &workerdaemon.Pool{
-		Python: cfg.Python, Script: cfg.Script, Env: func() []string { return WorkerEnv(cfg.ProfileRoot) },
+		Python: cfg.Python, Script: cfg.Script, Env: func() []string { return append(WorkerEnv(cfg.ProfileRoot), cfg.ExtraEnv...) },
 		Size: cfg.Slots, MaxWait: cfg.MaxWait, MaxQueue: cfg.Slots, NewSlotCommand: cfg.NewSlotCommand,
 	}}, nil
 }

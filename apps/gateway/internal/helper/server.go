@@ -132,6 +132,10 @@ type Config struct {
 	// CancelWait bounds how long CancelAttempt waits for the attempt to end
 	// (default 5s).
 	CancelWait time.Duration
+
+	// Voice enables HelperVoiceService (P5.10, UBAG_HELPER_VOICE). Nil, the
+	// default, serves no voice at all.
+	Voice *VoiceConfig
 }
 
 func (c *Config) defaults() error {
@@ -168,6 +172,9 @@ func (c *Config) defaults() error {
 	if c.MaxRetained <= 0 {
 		c.MaxRetained = defaultMaxRetained
 	}
+	if c.Voice != nil {
+		return c.Voice.defaults()
+	}
 	return nil
 }
 
@@ -188,6 +195,12 @@ type Server struct {
 	drainTimer Timer
 	closed     bool
 	hostWarned bool
+
+	// Voice calls (voice.go): by session id, and the call holding each audio
+	// environment. Both are guarded by mu, so admission is atomic with draining
+	// and closed.
+	voiceCalls   map[string]*voiceCall
+	voiceEnvBusy map[string]*voiceCall
 }
 
 var _ helperv1.HelperServiceServer = (*Server)(nil)
@@ -200,6 +213,7 @@ func NewServer(cfg Config) (*Server, error) {
 	return &Server{
 		cfg: cfg, clock: cfg.Clock, log: cfg.Logger.With("node_id", cfg.NodeID), gate: newGate(cfg.MaxAttempts),
 		attempts: map[string]*attempt{}, jobs: map[string]*attempt{},
+		voiceCalls: map[string]*voiceCall{}, voiceEnvBusy: map[string]*voiceCall{},
 	}, nil
 }
 
@@ -227,12 +241,16 @@ func (s *Server) Handshake(_ context.Context, req *helperv1.HandshakeRequest) (*
 	if req.GetProtocolVersion() != ProtocolVersion {
 		return nil, status.Errorf(codes.FailedPrecondition, "unsupported protocol version; this helper speaks %s", ProtocolVersion)
 	}
+	features := []string{"streaming_events", "attempt_reattach", "registry_digest"}
+	if s.cfg.Voice != nil {
+		features = append(features, "helper_voice")
+	}
 	return &helperv1.HandshakeResponse{
 		ProtocolVersion: ProtocolVersion,
 		HelperVersion:   s.cfg.HelperVersion,
 		WorkloadVersion: s.cfg.WorkloadVersion,
 		NodeId:          s.cfg.NodeID,
-		Features:        []string{"streaming_events", "attempt_reattach", "registry_digest"},
+		Features:        features,
 		ServerTime:      timestamppb.New(s.clock.Now()),
 		RegistryDigest:  s.cfg.RegistryDigest,
 	}, nil
@@ -384,6 +402,9 @@ func (s *Server) onDrainGrace() {
 	for _, a := range s.unfinished() {
 		a.kill(errDrainGrace)
 	}
+	for _, c := range s.liveVoiceCalls() {
+		c.end(errDrainGrace)
+	}
 }
 
 // Shutdown stops accepting attempts, kills the running ones (they end `failed`
@@ -398,6 +419,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	s.mu.Unlock()
 	for _, a := range s.unfinished() {
 		a.kill(errShutdown)
+	}
+	for _, c := range s.liveVoiceCalls() {
+		c.end(errShutdown)
 	}
 	done := make(chan struct{})
 	go func() { s.wg.Wait(); close(done) }()

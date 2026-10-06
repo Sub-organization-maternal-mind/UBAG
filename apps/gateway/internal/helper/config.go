@@ -151,6 +151,8 @@ type Settings struct {
 	WorkerScript string
 	WorkerPython string
 	ProfileRoot  string
+	// Voice is the helper-hosted voice configuration (UBAG_HELPER_VOICE, default off).
+	Voice VoiceSettings
 }
 
 // SettingsFromEnv validates the process environment (KEY=VALUE entries, e.g.
@@ -202,6 +204,11 @@ func SettingsFromEnv(environ []string, lookPath func(string) (string, error)) (S
 			errs = append(errs, fmt.Errorf("%s / %s: %w", EnvPrimaryURISAN, EnvPrimarySPKI, err))
 		}
 	}
+	voice, err := parseVoiceSettings(env)
+	if err != nil {
+		errs = append(errs, err)
+	}
+	st.Voice = voice
 	if raw := env[EnvMaxAttempts]; raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 || n > maxAttemptsCeiling {
@@ -240,8 +247,13 @@ type Node struct {
 // Open loads the registry digest, the CA, the node certificate (which must name
 // st.NodeID) and binds the listener on the WireGuard address. runner may be nil
 // (every attempt is then refused Unavailable, the state of the binary until
-// P4.12 wires the worker pool).
-func (st Settings) Open(runner Runner) (*Node, error) {
+// P4.12 wires the worker pool). voice is the media endpoint of
+// HelperVoiceService: it is required when st.Voice.Enabled and ignored
+// otherwise (the service is then not registered at all).
+func (st Settings) Open(runner Runner, voice VoiceMedia) (*Node, error) {
+	if st.Voice.Enabled && voice == nil {
+		return nil, errors.New(EnvVoice + " is on but this binary has no voice media endpoint (build it with -tags helpervoice)")
+	}
 	digest, err := RegistryDigest(st.AdaptersDir)
 	if err != nil {
 		return nil, fmt.Errorf("adapter registry: %w", err)
@@ -265,10 +277,14 @@ func (st Settings) Open(runner Runner) (*Node, error) {
 			slog.Warn("helper rejected a peer", "reason", reason)
 		}
 	}
-	srv, err := NewServer(Config{
+	cfg := Config{
 		NodeID: st.NodeID, HelperVersion: Version, WorkloadVersion: st.WorkloadVersion, RegistryDigest: digest,
 		Runner: runner, Host: NewCgroupSampler("", ""), MaxAttempts: st.MaxAttempts,
-	})
+	}
+	if st.Voice.Enabled {
+		cfg.Voice = &VoiceConfig{Media: voice, Environments: st.Voice.Environments}
+	}
+	srv, err := NewServer(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -276,10 +292,9 @@ func (st Settings) Open(runner Runner) (*Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen %s: %w", st.Listen, err)
 	}
-	return &Node{
-		Settings: st, RegistryDigest: digest, Server: srv, Listener: ln,
-		GRPC: auth.NewGRPCServer(auth.ServerTLSConfig(pool, kp.GetCertificate), srv),
-	}, nil
+	grpcSrv := auth.NewGRPCServer(auth.ServerTLSConfig(pool, kp.GetCertificate), srv)
+	srv.RegisterVoice(grpcSrv) // a no-op unless voice is configured
+	return &Node{Settings: st, RegistryDigest: digest, Server: srv, Listener: ln, GRPC: grpcSrv}, nil
 }
 
 // Run serves until ctx ends, then shuts down: new attempts are refused, running
