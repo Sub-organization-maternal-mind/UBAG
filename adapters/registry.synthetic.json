@@ -1,0 +1,20 @@
+{
+  "schema_version": "ubag.adapters.v0",
+  "kind": "synthetic_overlay",
+  "description": "Opt-in overlay for benchmark and acceptance runs (UBAG_SYNTHETIC_PROVIDER=1). Extends adapters/registry.json; never merged into it, so default dispatch, REQUIRED_ADAPTER_IDS and the registry checks never see these targets.",
+  "extends": "registry.json",
+  "safe_mode": {
+    "user_owned_sessions_only": true,
+    "automated_login": "forbidden",
+    "credential_scraping": "forbidden",
+    "credential_storage": "forbidden",
+    "captcha_solving": "forbidden",
+    "origin": "loopback_only"
+  },
+  "adapters": [
+    {
+      "id": "synthetic_chat",
+      "manifest": "synthetic_chat/manifest.json"
+    }
+  ]
+}

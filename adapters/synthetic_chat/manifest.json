@@ -1,0 +1,97 @@
+{
+  "schema_version": "ubag.adapter.v0",
+  "id": "synthetic_chat",
+  "display_name": "Synthetic Chat (local fixture)",
+  "version": "0.1.0",
+  "status": "stub",
+  "adapter_path": "synthetic_chat",
+  "entrypoint": "ubag_synthetic_chat_adapter:SyntheticChatAdapter",
+  "target_homepage": "http://127.0.0.1:4799/",
+  "aliases": [],
+  "login_posture": "manual_required",
+  "supported_command_types": [
+    "chat.prompt",
+    "chat.stream"
+  ],
+  "capabilities": [
+    "prompt_run",
+    "token_streaming",
+    "file_attach",
+    "synthetic_fixture"
+  ],
+  "attachments": {
+    "max_files": 4,
+    "max_file_bytes": 8388608,
+    "accepted": [
+      {
+        "kind": "document",
+        "content_types": [
+          "application/pdf",
+          "text/plain",
+          "text/markdown",
+          "text/csv",
+          "application/json"
+        ]
+      },
+      {
+        "kind": "image",
+        "content_types": [
+          "image/png",
+          "image/jpeg"
+        ]
+      },
+      {
+        "kind": "audio",
+        "content_types": [
+          "audio/wav",
+          "audio/x-wav"
+        ]
+      }
+    ]
+  },
+  "selector_strategy": {
+    "type": "provider_specific",
+    "drift_baseline_required": false
+  },
+  "artifact_policy": {
+    "screenshots": "on_failure_only",
+    "dom_snapshots": "drift_baseline_only",
+    "recordings": "post_login_debug_only"
+  },
+  "safe_mode": {
+    "manual_login_required": true,
+    "user_owned_sessions_only": true,
+    "automated_login": "forbidden",
+    "credential_scraping": "forbidden",
+    "credential_storage": "forbidden",
+    "captcha_solving": "forbidden",
+    "captcha_bypass": "forbidden"
+  },
+  "credential_policy": {
+    "collect_credentials": false,
+    "read_credentials_from_payload": false,
+    "scrape_credentials": false,
+    "store_credentials": false
+  },
+  "captcha_policy": {
+    "solve": false,
+    "bypass": false,
+    "delegate_to_solver": false,
+    "manual_only": true
+  },
+  "synthetic_test_prompts": [
+    "[[synthetic scenario=slow_think think_ms=500]] Reply with the word ready."
+  ],
+  "synthetic_overlay": {
+    "enabled_by": "UBAG_SYNTHETIC_PROVIDER",
+    "origin_env": "UBAG_SYNTHETIC_PROVIDER_URL",
+    "origin": "loopback_only",
+    "fixture": "tools/synthetic-provider/server.mjs",
+    "registry": "adapters/registry.synthetic.json"
+  },
+  "resource_policy": {
+    "network": "loopback_only",
+    "browser": "local_fixture_origin"
+  },
+  "not_implemented_reason": "Test fixture, not a real provider. It runs through the worker's live engine only when UBAG_SYNTHETIC_PROVIDER=1 and the fixture server is up on a loopback origin; it is not in adapters/registry.json and the default registry dispatch stays fail-closed like every other stub. Audio is accepted as an opaque attachment (no transcription); the fixture has no live voice."
+}
