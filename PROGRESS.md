@@ -1,9 +1,50 @@
 # UBAG Progress Ledger
 
-Last updated: 2026-10-06 (event-wake compose passthrough; Phase 0 baseline
-recorded; the perf + shared-fleet program merged to `main` and deployed as one
-changeset, every program flag still off by default. The OET shared fleet
-manager does not exist as a running service — see the entry below.)
+Last updated: 2026-10-06 (two CI reds on the merged program diagnosed and
+fixed; event-wake compose passthrough; Phase 0 baseline recorded; the perf +
+shared-fleet program merged to `main` and deployed as one changeset, every
+program flag still off by default. The OET shared fleet manager does not exist
+as a running service — see the entries below.)
+
+## 2026-10-06 — The two `ci` reds the merge inherited, and their fixes
+
+The deploy itself succeeded (`Gateway Image` green: build, `Deploy gateway`,
+`Deploy dashboard`; prod pinned `sha-0b51f0e…`, gateway/browser/nginx healthy),
+but `ci` was red on `main` for two reasons **neither of which the merge caused**.
+Both are fixed here.
+
+**1. `TestVoiceHubEndedOnItsOwnIsReportedToTheService` — a Linux-CI timing flake,
+now given an honest budget.** `voicehub_test.go` waited inside a hardcoded 10 s
+`eventually` for `MediaEnded` after closing the client peer connection. That
+condition is bounded by Pion's own ICE failure/consent detection, not by
+anything the test drives, and it settles markedly slower on the Linux CI runner
+than on a Windows host: the identical code passed at `8697f1b`
+(`ok … voicehub 6.797s`) and then failed **2/2** at `0b51f0e` with
+`voicehub_test.go:573: timed out waiting for MediaEnded (10.10s)`. It passes
+locally with and without `-race`. Fix: a new `eventuallyWithin(t, what, budget,
+cond)` used for that one wait at 20 s — the same budget this file already uses
+elsewhere (15 s and 20 s). **The assertion is unchanged**; this widens when the
+test gives up, not what it requires. The reason is recorded at the helper, so
+the next reader does not re-tighten it. Product behaviour is untouched, and the
+path is only reachable with `UBAG_HELPER_VOICE`, which is unset in production.
+
+**2. `pnpm audit` regression gate — baseline refreshed, as the gate instructs.**
+`check-npm-audit` failed on `high 31 -> 32` (`apps__docs 10 -> 11`), total 74.
+No dependency changed: the counts move because advisories are published
+continuously against the same build/test-only toolchain, and every entry in
+`apps__docs` reports `fix=unknown` (http-cache-semantics, sharp and smol-toml
+are all unpatched in the astro/starlight chain). Refreshed with the sanctioned
+`node tools/check-npm-audit.mjs --update`; now reports `74 known advisories, all
+within the committed baseline … No regression`. `--update` rewrites `_comment`
+from a stale hardcoded template, so the note was rewritten to record what this
+refresh actually was. **Still an owner decision** (unchanged from the 2026-10-03
+entry): a count-based gate re-reds on every publication wave against this
+backlog. Gating only on advisories with a patched version, or on newly
+vulnerable packages, would end the churn — that is a policy change, not a
+refresh, and was not made here.
+
+**Not verified:** no Docker on the workstation, so neither fix was exercised
+against Linux locally; CI on the resulting commit is the evidence for both.
 
 ## 2026-10-06 — Event-wake passthrough, Phase 0 baseline, program merged and deployed
 
