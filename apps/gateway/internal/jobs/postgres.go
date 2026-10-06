@@ -17,6 +17,7 @@ type PostgresStore struct {
 	waitInterval time.Duration
 	wake         *eventHub     // nil = legacy fixed-interval poll (UBAG_EVENT_NOTIFY=off)
 	wakeFallback time.Duration // fallback poll cadence while wake != nil
+	attempts     bool          // UBAG_EXECUTOR_ATTEMPTS: Ready also requires gateway_job_attempts
 }
 
 func NewPostgresStore(db *sql.DB) *PostgresStore {
@@ -521,12 +522,16 @@ func (p *PostgresStore) Ready(ctx context.Context) error {
 	if err := p.db.PingContext(ctx); err != nil {
 		return err
 	}
-	for _, objectName := range []string{
+	required := []string{
 		"gateway_job_id_seq",
 		"gateway_jobs",
 		"gateway_job_events",
 		"gateway_job_worker_event_keys",
-	} {
+	}
+	if p.attempts {
+		required = append(required, "gateway_job_attempts")
+	}
+	for _, objectName := range required {
 		if err := storekit.RequirePostgresObject(ctx, p.db, objectName); err != nil {
 			return err
 		}
