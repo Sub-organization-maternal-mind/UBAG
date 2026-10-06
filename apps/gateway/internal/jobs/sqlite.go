@@ -426,27 +426,18 @@ func (s *SQLiteStore) UpdateStatus(ctx context.Context, id string, status Status
 }
 
 func (s *SQLiteStore) ApplyWorkerEvent(ctx context.Context, event WorkerEvent) (Job, bool, error) {
+	return s.ApplyWorkerEvents(ctx, []WorkerEvent{event})
+}
+
+// ApplyWorkerEvents applies a batch of events for ONE job in a single
+// transaction: one lock, one commit, and one wake of the job's waiters instead
+// of one per event. Any failing event rolls the whole batch back.
+func (s *SQLiteStore) ApplyWorkerEvents(ctx context.Context, events []WorkerEvent) (Job, bool, error) {
 	if s == nil || s.db == nil {
 		return Job{}, false, fmt.Errorf("sqlite job store is not configured")
 	}
-	if event.JobID == "" {
-		return Job{}, false, fmt.Errorf("worker event job_id is required")
-	}
-	if event.Type == "" {
-		return Job{}, false, fmt.Errorf("worker event type is required")
-	}
-	if !knownWorkerEventType(event.Type) {
-		return Job{}, false, fmt.Errorf("worker event type %q is not supported", event.Type)
-	}
-	if event.APIVersion == "" {
-		return Job{}, false, fmt.Errorf("worker event api_version is required")
-	}
-	if event.TraceID == "" {
-		return Job{}, false, fmt.Errorf("worker event trace_id is required")
-	}
-	eventKey := workerEventKey(event)
-	if eventKey == "" {
-		return Job{}, false, fmt.Errorf("worker event must include event_id or positive sequence")
+	if err := validateEventBatch(events); err != nil {
+		return Job{}, false, err
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -455,39 +446,56 @@ func (s *SQLiteStore) ApplyWorkerEvent(ctx context.Context, event WorkerEvent) (
 	}
 	defer rollbackUnlessCommitted(tx)
 
-	job, sequence, found, err := s.getJobForUpdate(ctx, tx, event.JobID)
+	job, sequence, found, err := s.getJobForUpdate(ctx, tx, events[0].JobID)
 	if err != nil || !found {
 		return Job{}, found, err
 	}
-	if event.APIVersion != job.APIVersion {
-		return job, true, fmt.Errorf("worker event api_version %q does not match job api_version %q", event.APIVersion, job.APIVersion)
+	changed := false
+	for _, event := range events {
+		var eventChanged bool
+		if job, sequence, eventChanged, err = s.applyWorkerEventTx(ctx, tx, job, sequence, event); err != nil {
+			if job.ID == "" {
+				return Job{}, false, err
+			}
+			return job, true, err
+		}
+		changed = changed || eventChanged
 	}
-	if job.TraceID != "" && event.TraceID != job.TraceID {
-		return job, true, fmt.Errorf("worker event trace_id %q does not match job trace_id %q", event.TraceID, job.TraceID)
+	if err := tx.Commit(); err != nil {
+		return Job{}, false, err
+	}
+	if changed {
+		s.wake.notify(job.ID)
+	}
+	return job, true, nil
+}
+
+// applyWorkerEventTx applies one pre-checked event to the locked job row inside
+// tx (no commit). It returns the job and event sequence as of the call, and
+// whether the job changed (false for a duplicate event or a terminal job; the
+// dedupe key is still recorded). On a validation error it returns the
+// unchanged job; on a database error it returns the zero Job.
+func (s *SQLiteStore) applyWorkerEventTx(ctx context.Context, tx *sql.Tx, job Job, sequence int, event WorkerEvent) (Job, int, bool, error) {
+	if err := checkWorkerEventAgainstJob(job, event); err != nil {
+		return job, sequence, false, err
 	}
 
 	insertResult, err := tx.ExecContext(ctx, `
 INSERT INTO gateway_job_worker_event_keys (job_id, event_key, created_at)
 VALUES (?, ?, ?)
-ON CONFLICT DO NOTHING`, job.ID, eventKey, formatSQLiteTime(s.now().UTC()))
+ON CONFLICT DO NOTHING`, job.ID, workerEventKey(event), formatSQLiteTime(s.now().UTC()))
 	if err != nil {
-		return Job{}, false, err
+		return Job{}, sequence, false, err
 	}
 	if inserted, _ := insertResult.RowsAffected(); inserted == 0 {
-		if err := tx.Commit(); err != nil {
-			return Job{}, false, err
-		}
-		return job, true, nil
+		return job, sequence, false, nil
 	}
 	if TerminalStatus(job.Status) {
-		if err := tx.Commit(); err != nil {
-			return Job{}, false, err
-		}
-		return job, true, nil
+		return job, sequence, false, nil
 	}
 
 	if err := validateWorkerEventData(event.Type, event.Data); err != nil {
-		return job, true, err
+		return job, sequence, false, err
 	}
 	data, _ := sanitizeWorkerData(event.Type, event.Data).(map[string]any)
 	if data == nil {
@@ -515,19 +523,15 @@ ON CONFLICT DO NOTHING`, job.ID, eventKey, formatSQLiteTime(s.now().UTC()))
 
 	resultJSON, err := marshalNullableJSON(job.Result)
 	if err != nil {
-		return Job{}, false, err
+		return Job{}, sequence, false, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE gateway_jobs SET status = ?, result_json = ?, event_sequence = ?, updated_at = ? WHERE id = ?`, string(job.Status), resultJSON, sequence, formatSQLiteTime(job.UpdatedAt), job.ID); err != nil {
-		return Job{}, false, err
+		return Job{}, sequence, false, err
 	}
 	if err := insertSQLiteEvent(ctx, tx, job, sequence, event.Type, data, s.now().UTC()); err != nil {
-		return Job{}, false, err
+		return Job{}, sequence, false, err
 	}
-	if err := tx.Commit(); err != nil {
-		return Job{}, false, err
-	}
-	s.wake.notify(job.ID)
-	return job, true, nil
+	return job, sequence, true, nil
 }
 
 func (s *SQLiteStore) Ready(ctx context.Context) error {

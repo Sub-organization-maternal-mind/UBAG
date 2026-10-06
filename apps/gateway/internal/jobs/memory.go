@@ -376,6 +376,70 @@ func (m *MemoryStore) ApplyWorkerEvent(_ context.Context, event WorkerEvent) (Jo
 	return job, true, err
 }
 
+// ApplyWorkerEvents applies a batch of events for ONE job atomically: either
+// every event lands or (on an error) none does, and waiters are woken once for
+// the whole batch (the Postgres/SQLite stores notify once per commit). Events
+// apply in order with the same dedupe, terminal and validation rules as
+// ApplyWorkerEvent, so a replayed or out-of-order event is a no-op exactly as
+// it is one at a time. found=false means the job does not exist.
+func (m *MemoryStore) ApplyWorkerEvents(_ context.Context, events []WorkerEvent) (Job, bool, error) {
+	if err := validateEventBatch(events); err != nil {
+		return Job{}, false, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	job, ok := m.jobs[events[0].JobID]
+	if !ok {
+		return Job{}, false, nil
+	}
+	job, err := m.applyBatchLocked(job, events)
+	if err != nil {
+		return job, true, err
+	}
+	return job, true, nil
+}
+
+// validateEventBatch is the store-independent shape check of a batch: 1..
+// MaxAttemptCommitEvents events, all for the same job, each well-formed.
+func validateEventBatch(events []WorkerEvent) error {
+	if len(events) == 0 || len(events) > MaxAttemptCommitEvents {
+		return fmt.Errorf("worker event batch needs 1..%d events", MaxAttemptCommitEvents)
+	}
+	for _, event := range events {
+		if event.JobID != events[0].JobID {
+			return fmt.Errorf("worker event batch mixes jobs %q and %q", events[0].JobID, event.JobID)
+		}
+		if err := checkWorkerEvent(event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// applyBatchLocked applies events to job (m.mu held) all-or-nothing, like the
+// Postgres transaction: a failing event rolls the job, its event log and its
+// dedupe keys back to the pre-batch state and the unchanged job is returned
+// with the error.
+func (m *MemoryStore) applyBatchLocked(job Job, events []WorkerEvent) (Job, error) {
+	before, eventCount, eventSeq, globalSeq := job, len(m.events[job.ID]), m.eventSeq[job.ID], m.eventSeqGlobal
+	keys := make(map[string]struct{}, len(m.eventKey[job.ID]))
+	for key := range m.eventKey[job.ID] {
+		keys[key] = struct{}{}
+	}
+	for _, event := range events {
+		var err error
+		if job, err = m.applyWorkerEventLocked(job, event); err != nil {
+			m.jobs[before.ID] = before
+			m.events[before.ID] = m.events[before.ID][:eventCount]
+			m.eventSeq[before.ID], m.eventSeqGlobal, m.eventKey[before.ID] = eventSeq, globalSeq, keys
+			return before, err
+		}
+	}
+	return job, nil
+}
+
 // checkWorkerEvent is the store-independent shape check every worker event
 // must pass before it touches a job (shared by ApplyWorkerEvent and
 // CommitEvents on every store).

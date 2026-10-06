@@ -93,8 +93,15 @@ func (c *WorkerConsumer) runWorker(ctx context.Context, envelope DispatchEnvelop
 	if ingest == nil {
 		return c.Runner.RunWorker(ctx, envelope)
 	}
-	if err := c.Runner.(StreamingWorkerRunner).StreamWorker(ctx, envelope, ingest); err != nil {
-		return nil, err
+	runErr := c.Runner.(StreamingWorkerRunner).StreamWorker(ctx, envelope, ingest)
+	// Flush the pending batch whatever the outcome: tokens the worker produced
+	// stay in the history as the (discarded) partial of an abandoned attempt.
+	flushErr := ingest.close(ctx)
+	if runErr != nil {
+		return nil, runErr
+	}
+	if flushErr != nil {
+		return nil, flushErr
 	}
 	return ingest.finish()
 }

@@ -448,6 +448,47 @@ func (p *PostgresStore) ApplyWorkerEvent(ctx context.Context, event WorkerEvent)
 	return job, true, nil
 }
 
+// ApplyWorkerEvents applies a batch of events for ONE job in a single
+// transaction: one FOR UPDATE lock, one commit, and one wake of the job's
+// waiters instead of one per event. Any failing event rolls the whole batch back.
+func (p *PostgresStore) ApplyWorkerEvents(ctx context.Context, events []WorkerEvent) (Job, bool, error) {
+	if p == nil || p.db == nil {
+		return Job{}, false, fmt.Errorf("postgres job store is not configured")
+	}
+	if err := validateEventBatch(events); err != nil {
+		return Job{}, false, err
+	}
+
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Job{}, false, err
+	}
+	defer rollbackUnlessCommitted(tx)
+
+	job, sequence, found, err := p.getJobForUpdate(ctx, tx, events[0].JobID)
+	if err != nil || !found {
+		return Job{}, found, err
+	}
+	changed := false
+	for _, event := range events {
+		var eventChanged bool
+		if job, sequence, eventChanged, err = p.applyWorkerEventTx(ctx, tx, job, sequence, event); err != nil {
+			if job.ID == "" {
+				return Job{}, false, err
+			}
+			return job, true, err
+		}
+		changed = changed || eventChanged
+	}
+	if err := tx.Commit(); err != nil {
+		return Job{}, false, err
+	}
+	if changed {
+		p.wake.notify(job.ID)
+	}
+	return job, true, nil
+}
+
 // applyWorkerEventTx applies one pre-checked event to the locked job row inside
 // tx (no commit). It returns the job and event sequence as of the call, and
 // whether the job changed (false for a duplicate event or a terminal job; the

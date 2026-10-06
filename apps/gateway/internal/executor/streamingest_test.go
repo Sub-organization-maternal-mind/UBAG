@@ -121,6 +121,12 @@ func TestHelperStreamDaemon(t *testing.T) {
 			h.token(3, "lo")
 			h.done(4)
 			h.end("completed", "")
+		case "burst": // 200 tokens in a row, then the terminal
+			for i := 0; i < 200; i++ {
+				h.token(2+i, "x")
+			}
+			h.done(300)
+			h.end("completed", "")
 		case "hold": // tokens, then the terminal only once the test releases it
 			h.token(2, "hel")
 			h.token(3, "lo")
@@ -209,6 +215,9 @@ func newStreamRig(t *testing.T, scenario string) *streamRig {
 func newStreamRigOn(t *testing.T, scenario string, store jobstore.Store) *streamRig {
 	t.Helper()
 	t.Setenv("UBAG_WORKER_STREAM_INGEST", "1")
+	// Pin one store write per event so the exact-history tests below stay
+	// deterministic; the coalescing tests set their own window.
+	t.Setenv("UBAG_WORKER_STREAM_FLUSH_MS", "0")
 	dir := t.TempDir()
 	job, err := store.Create(t.Context(), jobstore.CreateRequest{
 		APIVersion: "2026-05-22", TenantID: "tenant_a", AppID: "app_a", Target: "mock", CommandType: "submit",
@@ -666,7 +675,7 @@ func newSinkForTest(t *testing.T) (*streamIngest, *jobstore.MemoryStore) {
 	return &streamIngest{c: consumer, job: job, envelope: EnvelopeFromJob(job)}, store
 }
 
-func TestStreamIngestSinkBoundsEventsAndRequiresType(t *testing.T) {
+func TestStreamIngestSinkEnforcesTheByteBudgetAndRequiresType(t *testing.T) {
 	sink, _ := newSinkForTest(t)
 	ctx := t.Context()
 	var ingestErr *streamIngestError
@@ -674,18 +683,156 @@ func TestStreamIngestSinkBoundsEventsAndRequiresType(t *testing.T) {
 		t.Fatalf("missing type error = %v", err)
 	}
 
-	sink, _ = newSinkForTest(t)
-	for i := 1; i <= maxWorkerEvents; i++ {
-		event := ingestTestEvent(sink.envelope, fmt.Sprintf("bound_%d", i), "token", i,
+	// More than the old 512-event cap is fine while the byte budget holds.
+	sink, store := newSinkForTest(t)
+	sink.configured, sink.budget, sink.interval = true, defaultStreamByteBudget, 0
+	for i := 1; i <= maxWorkerEvents+10; i++ {
+		event := ingestTestEvent(sink.envelope, fmt.Sprintf("many_%d", i), "token", i,
 			map[string]any{"status": "token_streaming", "delta": map[string]any{"text": "x"}})
 		if err := sink.Emit(ctx, event); err != nil {
 			t.Fatalf("emit %d: %v", i, err)
 		}
 	}
-	over := ingestTestEvent(sink.envelope, "bound_over", "token", maxWorkerEvents+1,
-		map[string]any{"status": "token_streaming", "delta": map[string]any{"text": "x"}})
-	if err := sink.Emit(ctx, over); !errors.As(err, &ingestErr) || ingestErr.class != "invalid_event" {
-		t.Fatalf("over the bound: err = %v, want a failure (never a silent truncation)", err)
+	if events, _, _ := store.ListEvents(ctx, sink.job.ID, 0, 1000); len(events) != maxWorkerEvents+10+1 {
+		t.Fatalf("stored %d events, want %d", len(events), maxWorkerEvents+10+1)
+	}
+
+	// The budget is explicit: an overrun fails the attempt, never truncates.
+	sink, _ = newSinkForTest(t)
+	sink.configured, sink.budget, sink.interval = true, 2*streamEventOverheadBytes+200, 0
+	big := func(id string, seq int) jobstore.WorkerEvent {
+		return ingestTestEvent(sink.envelope, id, "token", seq,
+			map[string]any{"status": "token_streaming", "delta": map[string]any{"text": strings.Repeat("y", 100)}})
+	}
+	if err := sink.Emit(ctx, big("b1", 1)); err != nil {
+		t.Fatalf("within budget: %v", err)
+	}
+	if err := sink.Emit(ctx, big("b2", 2)); !errors.As(err, &ingestErr) || ingestErr.class != "over_budget" {
+		t.Fatalf("over the byte budget: err = %v, want an over_budget failure (never a silent truncation)", err)
+	}
+}
+
+// Tokens arriving inside the window merge into one event; a non-token event
+// flushes at once, in the worker's order.
+func TestStreamIngestSinkCoalescesTokensAndFlushesInOrder(t *testing.T) {
+	sink, store := newSinkForTest(t)
+	sink.configured, sink.budget, sink.interval = true, defaultStreamByteBudget, time.Hour
+	ctx := t.Context()
+	token := func(i int, text string) jobstore.WorkerEvent {
+		return ingestTestEvent(sink.envelope, fmt.Sprintf("co_%d", i), "token", i,
+			map[string]any{"status": "token_streaming", "token_index": i, "delta": map[string]any{"text": text}})
+	}
+	// The first token after a quiet period is written at once.
+	if err := sink.Emit(ctx, token(1, "a")); err != nil {
+		t.Fatal(err)
+	}
+	for i, text := range []string{"b", "c", "d"} {
+		if err := sink.Emit(ctx, token(2+i, text)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if events, _, _ := store.ListEvents(ctx, sink.job.ID, 0, 10); eventTypes(events) != "queued,token" {
+		t.Fatalf("history = %s, want queued,token (the rest is coalescing)", eventTypes(events))
+	}
+	if err := sink.Emit(ctx, ingestTestEvent(sink.envelope, "co_run", "running", 9, map[string]any{"status": "running"})); err != nil {
+		t.Fatal(err)
+	}
+	events, _, _ := store.ListEvents(ctx, sink.job.ID, 0, 10)
+	if eventTypes(events) != "queued,token,token,running" {
+		t.Fatalf("history = %s, want the merged token before the running event", eventTypes(events))
+	}
+	merged := events[2].Data
+	if text, _ := tokenText(jobstore.WorkerEvent{Data: merged}); text != "bcd" || fmt.Sprint(merged["coalesced_deltas"]) != "3" {
+		t.Fatalf("merged token = %#v, want text bcd from 3 deltas", merged)
+	}
+}
+
+// A trailing token is written by the timer, and the run's end flushes the rest.
+func TestStreamIngestSinkFlushesATrailingTokenOnTheTimerAndOnClose(t *testing.T) {
+	sink, store := newSinkForTest(t)
+	sink.configured, sink.budget, sink.interval = true, defaultStreamByteBudget, 30*time.Millisecond
+	sink.lastFlush = time.Now()
+	ctx := t.Context()
+	token := func(i int, text string) jobstore.WorkerEvent {
+		return ingestTestEvent(sink.envelope, fmt.Sprintf("tm_%d", i), "token", i,
+			map[string]any{"status": "token_streaming", "delta": map[string]any{"text": text}})
+	}
+	if err := sink.Emit(ctx, token(1, "a")); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the timer to flush the trailing token", func() bool {
+		events, _, _ := store.ListEvents(ctx, sink.job.ID, 0, 10)
+		return eventTypes(events) == "queued,token"
+	})
+	sink.mu.Lock()
+	sink.interval = time.Hour
+	sink.lastFlush = time.Now()
+	sink.mu.Unlock()
+	if err := sink.Emit(ctx, token(2, "b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if events, _, _ := store.ListEvents(ctx, sink.job.ID, 0, 10); eventTypes(events) != "queued,token,token" {
+		t.Fatalf("history after close = %s, want queued,token,token", eventTypes(events))
+	}
+}
+
+// A store failure in the batch fails the attempt at the run's end.
+func TestStreamIngestSinkReportsABatchFailure(t *testing.T) {
+	sink, _ := newSinkForTest(t)
+	sink.configured, sink.budget, sink.interval = true, defaultStreamByteBudget, time.Hour
+	sink.lastFlush = time.Now()
+	ctx := t.Context()
+	if err := sink.Emit(ctx, ingestTestEvent(sink.envelope, "bf_1", "token", 1,
+		map[string]any{"status": "token_streaming", "delta": map[string]any{"text": "a"}})); err != nil {
+		t.Fatal(err)
+	}
+	sink.pending[0].JobID = "job_missing"
+	var ingestErr *streamIngestError
+	if err := sink.close(ctx); !errors.As(err, &ingestErr) || !ingestErr.missingJob {
+		t.Fatalf("close = %v, want a missing_job failure", err)
+	}
+}
+
+// A fast stream through the real consumer: 200 tokens collapse into a few
+// events, none is lost, the text is intact, and the terminal still completes it.
+func TestStreamIngestCoalescesABurstThroughTheConsumer(t *testing.T) {
+	rig := newStreamRig(t, "burst")
+	t.Setenv("UBAG_WORKER_STREAM_FLUSH_MS", "60000")
+	if res := rig.run(rig.lease("lease_burst")); res.err != nil {
+		t.Fatalf("RunOnce: %v", res.err)
+	}
+	if final := rig.final(); final.Status != jobstore.StatusCompleted || final.Result == nil {
+		t.Fatalf("status=%s result=%#v, want completed", final.Status, final.Result)
+	}
+	var text strings.Builder
+	var deltas, tokenEvents int
+	for _, event := range rig.events() {
+		if event.Type != "token" {
+			continue
+		}
+		tokenEvents++
+		part, _ := tokenText(jobstore.WorkerEvent{Data: event.Data})
+		text.WriteString(part)
+		switch n := event.Data["coalesced_deltas"].(type) {
+		case int:
+			deltas += n
+		case float64:
+			deltas += int(n)
+		default:
+			deltas++
+		}
+	}
+	if text.String() != strings.Repeat("x", 200) || deltas != 200 {
+		t.Fatalf("text len %d, deltas %d, want 200 and 200", text.Len(), deltas)
+	}
+	if tokenEvents > 3 {
+		t.Fatalf("%d token events stored, want the burst coalesced into a few", tokenEvents)
+	}
+	if h := rig.history(); !strings.HasSuffix(h, ",completed") {
+		t.Fatalf("history = %s, want the terminal last", h)
 	}
 }
 

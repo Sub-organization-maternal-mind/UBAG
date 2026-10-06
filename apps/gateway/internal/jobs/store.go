@@ -157,6 +157,11 @@ type Store interface {
 	// failure).
 	TransitionStatus(ctx context.Context, id string, from Status, to Status) (Job, bool, error)
 	ApplyWorkerEvent(ctx context.Context, event WorkerEvent) (Job, bool, error)
+	// ApplyWorkerEvents applies 1..MaxAttemptCommitEvents events for ONE job
+	// atomically (all or nothing) with one lock, one commit and one waiter wake.
+	// Each event follows ApplyWorkerEvent's dedupe/terminal/validation rules, so
+	// a replayed or out-of-order event is a no-op exactly as it is one at a time.
+	ApplyWorkerEvents(ctx context.Context, events []WorkerEvent) (Job, bool, error)
 	Ready(ctx context.Context) error
 }
 
