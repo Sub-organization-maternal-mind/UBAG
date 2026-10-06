@@ -40,6 +40,31 @@ TypeScript and Go, `fleet:manage` + MFA-gated, `profile.bound` /
 `profile.revoked` audited fail-closed into the target tenant's chain,
 bind-time node check against registered non-revoked nodes).
 
+**Live operator steps done the same evening (the plan's full-closeout pass).**
+
+- **Voice config blockers cleared on the primary.** `deploy/vps/env.local`
+  gained `UBAG_VOICE_STORE=postgres` (matching the gateway store; the old
+  in-memory warning is gone from boot) and a generated
+  `UBAG_VOICE_RELAY_SECRET` (48 hex, written root-only on the box, never
+  printed; backup `env.local.pre-voice-<stamp>` beside it). Gateway and
+  browser containers recreated; browser carries the same secret. Verified:
+  boot log `voice sessions enabled ... store: postgres`, zero voice warnings,
+  `/v1/ready` ready, and an authenticated mock smoke `job_000000001058`
+  completed with the prompt echoed (a first probe `job_000000001057` used a
+  wrong target id and failed_retryable — cancelled/terminal, harmless). The
+  two-way human voice demo itself still needs a person at the browser.
+- **`ci` red since 8b9e065f fixed (`e49e3bb`).** The new "Gateway (Go) full
+  suite, serialized" job failed on every push with
+  `gateway_conversations is missing` and NATS `no responders available`: it
+  set `UBAG_TEST_POSTGRES_DSN` without ever applying migrations, and its NATS
+  service container cannot take command args so JetStream was off. The job now
+  copies the main job's proven pattern (`docker run nats:2.10-alpine -js` +
+  ready wait, the Apply-Postgres-migrations step), and BOTH migration loops
+  now exit non-zero on any single failed psql (a for-loop's status is its last
+  iteration, which is how this stayed invisible). Not my code: f623698 and
+  a91109c failed identically while the older Integration-tests job passed the
+  same tests in the same commits.
+
 **What this unblocks and what stays external.** With the manager running and
 `Fleet__Ubag__Enabled` + `Fleet__Ubag__Hosts` set in its compose env, UBAG
 points at it with `UBAG_FLEET_MANAGER_URL` / `UBAG_FLEET_MANAGER_TOKEN`, an
