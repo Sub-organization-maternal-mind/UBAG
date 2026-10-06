@@ -238,12 +238,21 @@ type unavailableMedia struct{ fakeMediaNegotiator }
 
 func (*unavailableMedia) MediaAvailable() bool { return false }
 
-// A live session on a media plane that can never connect must not be admitted: it
-// would pin a browser lane for its whole lease (security review, P5.5).
+// With lane exclusion on, a live session on a media plane that can never connect
+// must not be admitted: it would pin a browser lane for its whole lease (security
+// review, P5.5). With it off (the default) create is unchanged (rules review).
 func TestVoiceLiveSessionRefusedWhileMediaCannotConnect(t *testing.T) {
-	_, h, _ := voiceTestServer(t, func(c *Config) { c.VoiceMedia = &unavailableMedia{} })
-	rec := doJSON(h, http.MethodPost, "/v1/voice/sessions", voiceBody("chatgpt_web"), authHeaders(""))
-	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "UBAG-VOICE-MEDIA-UNAVAILABLE-007") {
-		t.Fatalf("create = %d %s, want 503 media unavailable", rec.Code, rec.Body.String())
+	for _, exclusion := range []bool{true, false} {
+		registry := topology.NewConcurrencyRegistry()
+		_, h, _ := voiceTestServer(t, func(c *Config) {
+			c.VoiceMedia = &unavailableMedia{}
+			c.Concurrency = registry
+			c.VoiceLaneExclusion = exclusion
+		})
+		rec := doJSON(h, http.MethodPost, "/v1/voice/sessions", voiceBody("chatgpt_web"), authHeaders(""))
+		refused := rec.Code == http.StatusServiceUnavailable && strings.Contains(rec.Body.String(), "UBAG-VOICE-MEDIA-UNAVAILABLE-007")
+		if refused != exclusion {
+			t.Fatalf("exclusion=%v: create = %d %s", exclusion, rec.Code, rec.Body.String())
+		}
 	}
 }

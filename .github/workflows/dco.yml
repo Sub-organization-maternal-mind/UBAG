@@ -23,7 +23,9 @@ jobs:
           BASE_REF="origin/${{ github.base_ref }}"
           HEAD="${{ github.event.pull_request.head.sha }}"
           git fetch origin "${{ github.base_ref }}" --depth=50
-          COMMITS=$(git log --format=%H "${BASE_REF}..${HEAD}" 2>/dev/null || true)
+          # Merge commits ("Merge pull request #N") carry no author sign-off and are
+          # not contributions, so they are skipped.
+          COMMITS=$(git log --no-merges --format=%H "${BASE_REF}..${HEAD}" 2>/dev/null || true)
           if [ -z "$COMMITS" ]; then
             echo "No commits found in PR range — nothing to check."
             exit 0

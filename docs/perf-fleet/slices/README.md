@@ -102,6 +102,6 @@ Statuses below were taken from each shard's own Status line at the integration t
 | P7.7 | Rust-gate A/B harness, evaluator and verdict (no Rust written) | partial |
 | P7.8 | CONDITIONAL: Rust relay crate, env-selectable and rollbackable (NOT STARTED) | blocked (not started; Rust gate unevaluated) |
 | P7.9 | Publish measured capacity and close the ledger | partial |
-| P8.1 | Flag graduation and rollout runbook | merged when its PR is merged |
-| P1.8 | Create-path pprof + DB pool sizing | no shard at this tip (not landed) |
+| P8.1 | Flag graduation and rollout runbook | merged |
+| P1.8 | Create-path pprof + DB pool sizing | partial (benches and analysis merged, #192; exit gate unmet, needs the lab host) |
 | P6.5 | Dashboard voice sessions and capabilities panel | merged |
