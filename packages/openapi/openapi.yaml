@@ -2016,8 +2016,9 @@ paths:
           `after_sequence` and the sequence of the event named by `Last-Event-ID`; a
           `Last-Event-ID` that is not an event of this job is ignored (replay from the
           start, which at-least-once makes safe). A malformed `after_sequence` is a 400.
-        - Terminal: the first event whose type is a terminal job status ends the job's
-          event log. A gateway configured to close on terminal
+        - Terminal: the first event whose type is a terminal job status (including
+          `failed`, `failed_retryable` and `blocked`, which the store treats as
+          retryable-failed; a retry is a new job) ends the job's event log. A gateway configured to close on terminal
           (`UBAG_SSE_CLOSE_ON_TERMINAL`, default off) ends the stream right after
           sending it; otherwise the stream stays open until the TTL. Either way (flag on
           or off) a client that reconnects with a cursor at or past the terminal event's

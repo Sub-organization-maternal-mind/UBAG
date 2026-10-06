@@ -255,6 +255,33 @@ func TestSSEResumePastTerminalReturns204WhenFlagOff(t *testing.T) {
 	}
 }
 
+// failed(retryable) and blocked are terminal in the store (a retry is a new
+// job), so close-on-terminal must end the stream and a reconnect gets 204.
+func TestSSECloseOnTerminalForRetryableAndBlocked(t *testing.T) {
+	for _, tc := range []struct {
+		eventType string
+		data      map[string]any
+	}{
+		{"failed", map[string]any{"retryable": true}},
+		{"failed_retryable", map[string]any{"retryable": true}},
+		{"blocked", map[string]any{"status": "blocked"}},
+	} {
+		t.Run(tc.eventType, func(t *testing.T) {
+			f := newSSEFixtureCfg(t, 50*time.Millisecond, nil, func(c *Config) { c.SSECloseOnTerminal = true })
+			f.apply(t, "end_evt", tc.eventType, 2, tc.data)
+			frames, _, _ := f.openSSE(t, "", nil)
+			_ = nextFrame(t, frames) // queued
+			if got := frameEventName(nextFrame(t, frames)); got != "job."+tc.eventType {
+				t.Fatalf("frame = %q, want job.%s", got, tc.eventType)
+			}
+			expectClosed(t, frames)
+			if status, _ := f.sseCase(t, "?after_sequence=2&snapshot=true", nil); status != http.StatusNoContent {
+				t.Fatalf("resume status = %d, want 204", status)
+			}
+		})
+	}
+}
+
 // sseCase issues the GET with a raw query string and returns the
 // status and the frame ids of a snapshot read (snapshot=true ends the stream).
 func (f *sseFixture) sseCase(t *testing.T, query string, headers map[string]string) (int, []string) {

@@ -181,13 +181,18 @@ def test_exhausted_pre_submit_retries_raise_and_emit_nothing_held(monkeypatch):
     assert "session.new_chat" not in seen and "prompt_submitted" not in seen
 
 
-def test_post_submit_drift_is_blocked_not_retried(monkeypatch):
+def test_post_submit_drift_is_failed_terminal_not_retried(monkeypatch):
+    # `blocked` maps to a retryable status; after submit that would invite a
+    # blind resubmit, so drift ends failed_terminal with the reconcile marker (D4).
     drift = get_provider_selectors("chatgpt_web").response_container.name
     d = _Driver(drift_group=drift)
     events = _run(d, monkeypatch)
     assert d.submit_calls == 1
-    assert _types(events)[-2:] == ["prompt_submitted", "blocked"]
-    assert events[-1]["data"]["reason"] == "selector_drift_detected"
+    assert _types(events)[-2:] == ["prompt_submitted", "failed_terminal"]
+    data = events[-1]["data"]
+    assert data["reason"] == "selector_drift_detected"
+    assert data["submitted"] is True and data["reconcile_required"] is True
+    assert data["retryable"] is False
 
 
 def test_pre_submit_block_drops_held_events_like_the_buffered_path(monkeypatch):

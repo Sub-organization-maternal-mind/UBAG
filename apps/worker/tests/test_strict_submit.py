@@ -84,3 +84,22 @@ def test_flag_off_unchanged(monkeypatch):
     assert raised and d.submit_calls == 3
     ok = _run(_Driver(), monkeypatch, flag=False)
     assert "prompt_submitted" not in _types(ok) and ok[-1]["type"] == "completed"
+
+
+def test_post_submit_drift_is_terminal_with_reconcile_marker(monkeypatch):
+    # Buffered path, flag on: drift after submit must not surface as retryable `blocked`.
+    drift = get_provider_selectors("chatgpt_web").response_container.name
+    d = _Driver(drift_group=drift)
+    events = _run(d, monkeypatch)
+    assert d.submit_calls == 1
+    assert _types(events)[-1] == "failed_terminal"
+    data = events[-1]["data"]
+    assert data["submitted"] is True and data["reconcile_required"] is True
+    assert data["reason"] == "selector_drift_detected"
+    assert "blocked" not in _types(events)
+
+
+def test_post_submit_drift_flag_off_stays_blocked(monkeypatch):
+    drift = get_provider_selectors("chatgpt_web").response_container.name
+    events = _run(_Driver(drift_group=drift), monkeypatch, flag=False)
+    assert _types(events)[-1] == "blocked"

@@ -36,18 +36,10 @@ const (
 var sseFallbackInterval = jobstore.DefaultEventFallbackInterval
 
 // sseTerminalEvent reports whether an event ends the job for an SSE consumer.
-// failed/failed_retryable are terminal only when explicitly non-retryable: a
-// retryable failure may be followed by another attempt on the same stream.
+// It follows the store's mapping: failed, failed_retryable and blocked are
+// terminal (a retry is a new job, and the store drops later events).
 func sseTerminalEvent(event jobstore.Event) bool {
-	switch event.Type {
-	case "completed", "completed_with_warnings", "failed_terminal", "dead_letter",
-		"cancelled", "canceled", "timed_out", "timeout":
-		return true
-	case "failed":
-		retryable, ok := event.Data["retryable"].(bool)
-		return ok && !retryable
-	}
-	return false
+	return jobstore.EventEndsJob(event.Type, event.Data)
 }
 
 // resolveSSEResume finds the event named by Last-Event-ID in the job history.

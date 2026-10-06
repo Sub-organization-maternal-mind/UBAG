@@ -121,6 +121,18 @@ func shouldAdvanceStatus(current Status, next Status) bool {
 	return meta.rank >= curMeta.rank
 }
 
+// EventEndsJob reports whether a worker event of this type (with its data)
+// moves the job to a terminal status, using the same mapping the store applies
+// (blocked and failed/failed_retryable are terminal: a retry is a new job).
+func EventEndsJob(eventType string, data map[string]any) bool {
+	retryable := true
+	if r, ok := data["retryable"].(bool); ok {
+		retryable = r
+	}
+	status, ok := workerEventStatus(eventType, retryable)
+	return ok && TerminalStatus(status)
+}
+
 // workerEventStatus returns the canonical status for a worker event type,
 // with the aliases the worker emits (canceled, timeout, failed, blocked)
 // mapped in this one place. retryable distinguishes failed_retryable from

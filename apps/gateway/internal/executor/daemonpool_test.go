@@ -624,6 +624,34 @@ func TestDaemonPoolConsumerRetriesAnOverloadedPlacementAfterADelay(t *testing.T)
 	}
 }
 
+// A refusal after the job was assigned is still a hold operators can see (fleet
+// summary), but not one the tenant's queued-by-reason summary counts.
+func TestDaemonPoolOverloadNotesAnAssignedHold(t *testing.T) {
+	store := jobstore.NewMemoryStore()
+	job, envelope := queuedJob(t, store, "overload_hold_key_001")
+	board := NewHoldBoard()
+	consumer := &WorkerConsumer{
+		Queue: singleLeaseQueue{lease: &fakeWorkerLease{jobID: job.ID, leaseID: "lease_hold", envelope: envelope}},
+		Jobs:  store,
+		Holds: board,
+		Runner: WorkerRunFunc(func(context.Context, DispatchEnvelope) ([]jobstore.WorkerEvent, error) {
+			return nil, &PoolOverloadError{Reason: "wait_expired", RetryAfter: time.Millisecond}
+		}),
+	}
+	if processed, err := consumer.RunOnce(context.Background()); err != nil || !processed {
+		t.Fatalf("RunOnce processed=%v err=%v", processed, err)
+	}
+	if h, ok := board.Lookup(job.ID); !ok || h.Fine != "wait_expired" || !h.Assigned {
+		t.Fatalf("hold = %+v ok=%v, want an assigned wait_expired hold", h, ok)
+	}
+	if n := board.AllCounts()["wait_expired"]; n != 1 {
+		t.Fatalf("operator counts = %d, want 1", n)
+	}
+	if n := board.Counts(job.TenantID, job.AppID)["wait_expired"]; n != 0 {
+		t.Fatalf("queued counts = %d, want 0 for an assigned job", n)
+	}
+}
+
 // A saturated pool must not become a lease -> overload -> Retry -> lease spin on
 // the file spool, whose Retry re-queues instantly.
 func TestDaemonPoolConsumerDoesNotSpinOnASaturatedPool(t *testing.T) {
