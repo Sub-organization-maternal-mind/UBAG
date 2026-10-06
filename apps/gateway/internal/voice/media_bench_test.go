@@ -107,6 +107,10 @@ func runRelayLatency(tb testing.TB, n int, measure time.Duration) []latencyRow {
 		},
 		Metrics: recorder,
 	}
+	// UBAG_VOICE_QUEUE_MAX_AGE_MS (P5.3) lets the bench compare the age bound on/off.
+	if v, err := strconv.Atoi(os.Getenv("UBAG_VOICE_QUEUE_MAX_AGE_MS")); err == nil && v > 0 {
+		hub.QueueMaxAge = time.Duration(v) * time.Millisecond
+	}
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	defer func() {

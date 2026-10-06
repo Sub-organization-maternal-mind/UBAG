@@ -429,6 +429,12 @@ type MediaHub struct {
 	// StatsInterval is the pc.GetStats sampling period for link-quality
 	// metrics (zero = 2s, negative = off).
 	StatsInterval time.Duration
+	// QueueMaxAge drops a queued mic or speaker frame that waited longer than
+	// this before it is forwarded (counted as mic_age / speaker_age), in
+	// addition to the micBufferDepth count bound. 0 = count bound only
+	// (UBAG_VOICE_QUEUE_MAX_AGE_MS). Ages are stamped locally; the relay wire
+	// protocol is unchanged.
+	QueueMaxAge time.Duration
 
 	OnConnected func(Session)
 	// AuthorizeControl verifies the credential a client presents on the
@@ -571,23 +577,9 @@ func (h *MediaHub) HandleOffer(ctx context.Context, session Session, sdpOffer st
 				hub.metrics().AddFramesDropped("mic_muted", 1)
 				continue
 			}
-			frame := micFrame{payload: pkt.Payload, at: time.Now()}
-			select {
-			case ms.mic <- frame:
-			default:
-				// Buffer full: drop the OLDEST frame (freshest audio is most
-				// valuable for live voice) and count it.
-				select {
-				case <-ms.mic:
-					hub.metrics().AddFramesDropped("mic", 1)
-				default:
-				}
-				select {
-				case ms.mic <- frame:
-				default:
-					hub.metrics().AddFramesDropped("mic", 1)
-				}
-			}
+			pushDropOldest(ms.mic, micFrame{payload: pkt.Payload, at: time.Now()}, func() {
+				hub.metrics().AddFramesDropped("mic", 1)
+			})
 		}
 	})
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
@@ -784,16 +776,50 @@ type micFrame struct {
 	at      time.Time
 }
 
+// speakerFrame is a provider frame stamped when relay.Recv returned.
+type speakerFrame struct {
+	payload []byte
+	at      time.Time
+}
+
+// pushDropOldest enqueues v; when the buffer is full the OLDEST frame is
+// dropped (freshest audio is most valuable for live voice) and onDrop runs
+// once per frame lost.
+func pushDropOldest[T any](ch chan T, v T, onDrop func()) {
+	select {
+	case ch <- v:
+		return
+	default:
+	}
+	select {
+	case <-ch:
+		onDrop()
+	default:
+	}
+	select {
+	case ch <- v:
+	default:
+		onDrop()
+	}
+}
+
+// stale reports whether a frame stamped at `at` exceeded QueueMaxAge.
+func (h *MediaHub) stale(at time.Time) bool {
+	return h.QueueMaxAge > 0 && time.Since(at) > h.QueueMaxAge
+}
+
 type mediaSession struct {
-	id        string
-	session   Session
-	relay     RelayConn
-	pc        *webrtc.PeerConnection
-	track     *webrtc.TrackLocalStaticSample
-	mic       chan micFrame
-	done      chan struct{}
-	closeOnce sync.Once
-	muted     atomic.Bool
+	id      string
+	session Session
+	relay   RelayConn
+	pc      *webrtc.PeerConnection
+	track   *webrtc.TrackLocalStaticSample
+	// writeSample overrides track.WriteSample (tests only).
+	writeSample func(media.Sample) error
+	mic         chan micFrame
+	done        chan struct{}
+	closeOnce   sync.Once
+	muted       atomic.Bool
 	// controlAuthed is set once the client proves its scoped media credential
 	// on the control data channel.
 	controlAuthed atomic.Bool
@@ -831,6 +857,10 @@ func (ms *mediaSession) pumpMicToRelay(h *MediaHub) {
 				h.metrics().AddFramesDropped("mic_muted", 1)
 				continue
 			}
+			if h.stale(frame.at) {
+				h.metrics().AddFramesDropped("mic_age", 1)
+				continue
+			}
 			if err := ms.relay.Send(frame.payload); err != nil {
 				h.closeSession(ms, "relay_send_failed", true)
 				return
@@ -850,6 +880,14 @@ func (ms *mediaSession) pumpRelayToSpeaker(h *MediaHub) {
 		case <-readCtx.Done():
 		}
 	}()
+	// With an age bound, Recv keeps draining the relay socket into a bounded
+	// queue and a separate writer drops frames that waited too long; without
+	// it the pump writes inline exactly as before.
+	var queue chan speakerFrame
+	if h.QueueMaxAge > 0 {
+		queue = make(chan speakerFrame, micBufferDepth)
+		go ms.writeSpeakerQueue(h, queue)
+	}
 	for {
 		select {
 		case <-ms.done:
@@ -867,17 +905,51 @@ func (ms *mediaSession) pumpRelayToSpeaker(h *MediaHub) {
 				return
 			}
 		}
-		if err := ms.track.WriteSample(media.Sample{Data: frame, Duration: opusFrameDuration}); err != nil {
-			select {
-			case <-ms.done:
-				return
-			default:
-				// The frame is lost and the session ends: count the drop.
+		if queue != nil {
+			pushDropOldest(queue, speakerFrame{payload: frame, at: recvAt}, func() {
 				h.metrics().AddFramesDropped(DirectionSpeaker, 1)
-				h.closeSession(ms, "track_write_failed", true)
+			})
+			continue
+		}
+		if !ms.writeSpeaker(h, frame, recvAt) {
+			return
+		}
+	}
+}
+
+func (ms *mediaSession) writeSpeakerQueue(h *MediaHub, queue <-chan speakerFrame) {
+	for {
+		select {
+		case <-ms.done:
+			return
+		case f := <-queue:
+			if h.stale(f.at) {
+				h.metrics().AddFramesDropped("speaker_age", 1)
+				continue
+			}
+			if !ms.writeSpeaker(h, f.payload, f.at) {
 				return
 			}
 		}
-		h.observeAge(DirectionSpeaker, recvAt)
 	}
+}
+
+// writeSpeaker writes one frame to the return track; false = session ended.
+func (ms *mediaSession) writeSpeaker(h *MediaHub, frame []byte, recvAt time.Time) bool {
+	write := ms.writeSample
+	if write == nil {
+		write = ms.track.WriteSample
+	}
+	if err := write(media.Sample{Data: frame, Duration: opusFrameDuration}); err != nil {
+		select {
+		case <-ms.done:
+		default:
+			// The frame is lost and the session ends: count the drop.
+			h.metrics().AddFramesDropped(DirectionSpeaker, 1)
+			h.closeSession(ms, "track_write_failed", true)
+		}
+		return false
+	}
+	h.observeAge(DirectionSpeaker, recvAt)
+	return true
 }
