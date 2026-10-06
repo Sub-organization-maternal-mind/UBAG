@@ -42,7 +42,22 @@ def _orchestrator_if_enabled(worker_id: str = "worker-daemon"):
     return LiveOrchestrator(worker_id=worker_id)
 
 
+def _reap_orphan_slot_registries() -> None:
+    """Slot mode only: close tabs left by slots beyond the current pool size."""
+    from ubag_worker.live.identity_lock import slot_id
+    from ubag_worker.live.page_driver import reap_orphan_registries
+
+    raw = os.environ.get("UBAG_WORKER_POOL_SIZE", "").strip()
+    if slot_id() is None or not raw.isdigit():
+        return
+    try:
+        reap_orphan_registries(int(raw), os.environ.get("UBAG_REMOTE_BROWSER_ENDPOINT", "").strip())
+    except Exception:  # noqa: BLE001 - best-effort housekeeping
+        pass
+
+
 def main() -> int:
+    _reap_orphan_slot_registries()
     daemon = WarmWorkerDaemon(orchestrator=_orchestrator_if_enabled())
 
     # SIGTERM/SIGINT previously leaked the warm browser page: nothing closed

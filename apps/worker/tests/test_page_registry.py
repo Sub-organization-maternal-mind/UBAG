@@ -85,3 +85,25 @@ def test_no_registry_file_means_no_http_calls(registry):
     page_driver._close_stale_pages(
         "http://b:9223", opener=lambda *a, **k: pytest.fail("must not call the browser")
     )
+
+
+def test_registry_path_unset_slot_is_legacy_name(tmp_path, monkeypatch):
+    monkeypatch.setenv("UBAG_CHAT_LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
+    monkeypatch.delenv("UBAG_WORKER_SLOT_ID", raising=False)
+    path = page_driver._page_registry_path()
+    assert path.endswith(".json") and ".slot" not in path
+    assert path.startswith(str(tmp_path))
+
+
+def test_registry_update_leaves_no_tmp_file_and_uses_unique_tmp(registry, monkeypatch):
+    seen = []
+    real_replace = page_driver.os.replace
+
+    def spy(src, dst):
+        seen.append(src)
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(page_driver.os, "replace", spy)
+    page_driver._registry_update(add="AAAAAAAA1111")
+    assert seen and seen[0] != str(registry) + ".tmp"
+    assert [p.name for p in registry.parent.iterdir()] == [registry.name]
