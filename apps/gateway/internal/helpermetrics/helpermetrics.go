@@ -47,6 +47,13 @@ var (
 	}
 	// Probe results mirror nodes.ProbeOK, nodes.ProbeError and nodes.ProbeIncompatible.
 	probeResults = []string{"ok", "error", "incompatible"}
+	// Voice placement outcomes (P5.9): where one helper-hosted voice candidate went.
+	// Host health (node_unavailable), media capability (not_voice_capable), capacity
+	// and lane refusals are separate buckets, and provider readiness (the account's
+	// login state) is never one of them: it is decided before a node is asked.
+	voicePlacementOutcomes = []string{
+		"placed", "node_unavailable", "not_voice_capable", "no_capacity", "identity_busy", "wan_endpoint", "error",
+	}
 )
 
 var (
@@ -57,6 +64,7 @@ var (
 	reconciled = map[nodes.ReconcileOutcome]int64{}
 	placements = map[string]int64{}
 	probes     = map[string]int64{}
+	voicePlace = map[string]int64{}
 )
 
 func norm(set []string, v string) string {
@@ -108,6 +116,14 @@ func RecordReconcile(action, reason string) {
 func RecordPlacement(outcome string) {
 	mu.Lock()
 	placements[norm(placementOutcomes, outcome)]++
+	mu.Unlock()
+}
+
+// RecordVoicePlacement counts one helper-hosted voice placement decision by
+// outcome (bounded labels).
+func RecordVoicePlacement(outcome string) {
+	mu.Lock()
+	voicePlace[norm(voicePlacementOutcomes, outcome)]++
 	mu.Unlock()
 }
 
@@ -175,6 +191,10 @@ func Write(ctx context.Context, w io.Writer, src NodeSource, now time.Time) {
 	for k, v := range probes {
 		pr[k] = v
 	}
+	vp := make(map[string]int64, len(voicePlace))
+	for k, v := range voicePlace {
+		vp[k] = v
+	}
 	mu.Unlock()
 
 	header(w, "ubag_lease_renew_failures_total", "counter", "Failed lease renewals by lease kind and reason.")
@@ -199,6 +219,8 @@ func Write(ctx context.Context, w io.Writer, src NodeSource, now time.Time) {
 	}
 	header(w, "ubag_helper_placements_total", "counter", "Helper placement decisions for leased jobs: placed, run on this gateway, or held back.")
 	writeLabeled(w, "ubag_helper_placements_total", "outcome", pl, placementOutcomes)
+	header(w, "ubag_helper_voice_placements_total", "counter", "Helper-hosted voice placement decisions per candidate account: placed, or why its node could not host it (host health, media capability, capacity, identity lane).")
+	writeLabeled(w, "ubag_helper_voice_placements_total", "outcome", vp, voicePlacementOutcomes)
 	header(w, "ubag_helper_probes_total", "counter", "Helper capacity reports by result (ok, error, incompatible).")
 	writeLabeled(w, "ubag_helper_probes_total", "result", pr, probeResults)
 

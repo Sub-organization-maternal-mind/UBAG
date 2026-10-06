@@ -605,7 +605,7 @@ WHERE status = 'terminated' AND terminating_until <> '' AND terminating_until <=
 
 func (s *SQLiteStore) ListLeaseHolders(ctx context.Context, now time.Time) ([]LeaseHolder, error) {
 	rows, err := s.db.QueryContext(ctx, `
-SELECT session_id, tenant_id, target, instance_ref FROM gateway_voice_sessions
+SELECT session_id, tenant_id, target, instance_ref, node_id FROM gateway_voice_sessions
 WHERE mode <> 'utterance' AND instance_ref <> '' AND `+sqliteLiveOrHeld(""), formatSQLiteTime(now))
 	if err != nil {
 		return nil, err
@@ -614,7 +614,7 @@ WHERE mode <> 'utterance' AND instance_ref <> '' AND `+sqliteLiveOrHeld(""), for
 	var out []LeaseHolder
 	for rows.Next() {
 		var h LeaseHolder
-		if err := rows.Scan(&h.SessionID, &h.TenantID, &h.Target, &h.InstanceRef); err != nil {
+		if err := rows.Scan(&h.SessionID, &h.TenantID, &h.Target, &h.InstanceRef, &h.NodeID); err != nil {
 			return nil, err
 		}
 		out = append(out, h)

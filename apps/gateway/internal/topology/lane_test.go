@@ -37,6 +37,36 @@ func TestBrowserLaneKeyIsTheBrowserNotTheSpelling(t *testing.T) {
 	}
 }
 
+// A helper-hosted voice environment is loopback on its node and registers no CDP
+// endpoint in the primary's topology (P5.9, ADR-0017), so it has no browser lane:
+// a voice admission for it registers nothing on the primary's lanes and sees no
+// primary job. The node's own identity lane and workload slot are the placer's
+// business (nodes.Placer), not this registry's.
+func TestPlacementNodeHostedEnvironmentHasNoBrowserLane(t *testing.T) {
+	helperEnv := BrowserInstance{InstanceID: "helper-env-1", TenantID: "tenant_a", State: "ready"}
+	lane := BrowserLaneKey(helperEnv.RemoteEndpoint)
+	if lane != "" {
+		t.Fatalf("a helper-hosted environment has no browser lane, got %q", lane)
+	}
+	r := NewConcurrencyRegistry()
+	hold, err := r.EnterLane(t.Context(), LaneVoice, lane)
+	if err != nil || hold != nil {
+		t.Fatalf("EnterLane on no lane = %v, %v; want no registration", hold, err)
+	}
+	// A primary job on a real browser is invisible from it, in both directions.
+	job, err := r.EnterLane(t.Context(), LaneJob, BrowserLaneKey("http://browser:9222"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer job.Release()
+	if n, err := r.LaneHolders(t.Context(), LaneJob, lane); err != nil || n != 0 {
+		t.Fatalf("holders on no lane = %d, %v", n, err)
+	}
+	if n, err := r.LaneHolders(t.Context(), LaneVoice, BrowserLaneKey("http://browser:9222")); err != nil || n != 0 {
+		t.Fatalf("a node-hosted call must not register on the primary's browser: %d, %v", n, err)
+	}
+}
+
 func TestLaneRegistrationsAreCountedPerKindAndReleasedOnce(t *testing.T) {
 	r := NewConcurrencyRegistry()
 	ctx := t.Context()

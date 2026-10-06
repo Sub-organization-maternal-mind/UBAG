@@ -333,6 +333,34 @@ func TestPlacerReserveNeverOverbooksUnderContention(t *testing.T) {
 	}
 }
 
+// Voice placement (P5.9) reads the grant's voice_capable flag from the same view
+// that decides host health: a node is listed only when it is eligible, and then
+// carries whether it can host media. A node whose reservation is unknown is not
+// listed at all, voice capable or not.
+func TestPlacementNodesCarryVoiceCapability(t *testing.T) {
+	const gib = int64(1) << 30
+	f := newFleet()
+	voiceNode := grant("helper-v", 2)
+	voiceNode.VoiceCapable, voiceNode.UDPPortMin, voiceNode.UDPPortMax, voiceNode.NATIP = true, 40000, 40063, "203.0.113.7"
+	unknown := voiceNode
+	unknown.NodeID, unknown.ReservationState = "helper-u", ReservationUnknown
+	f.add(grant("helper-a", 2), hostState("helper-a", 4, 8*gib))
+	f.add(voiceNode, hostState("helper-v", 4, 8*gib))
+	f.add(unknown, hostState("helper-u", 4, 8*gib))
+
+	view, err := f.placer(t, -1).Nodes(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, n := range view {
+		got[n.ID] = n.VoiceCapable
+	}
+	if len(got) != 2 || got["helper-a"] || !got["helper-v"] {
+		t.Fatalf("view = %v, want helper-a (not voice capable) and helper-v (voice capable) only", got)
+	}
+}
+
 func TestPlacerConfigIsValidated(t *testing.T) {
 	if _, err := NewPlacer(PlacerConfig{}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("empty config = %v", err)

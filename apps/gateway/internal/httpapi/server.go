@@ -63,6 +63,7 @@ import (
 	"github.com/ubag/ubag/apps/gateway/internal/templates"
 	"github.com/ubag/ubag/apps/gateway/internal/topology"
 	voice "github.com/ubag/ubag/apps/gateway/internal/voice"
+	"github.com/ubag/ubag/apps/gateway/internal/voiceplace"
 	"github.com/ubag/ubag/apps/gateway/internal/webhooks"
 	"github.com/ubag/ubag/apps/gateway/internal/workflow"
 )
@@ -292,6 +293,12 @@ type Config struct {
 	// one. Wired from UBAG_VOICE_LANE_EXCLUSION (default on when voice is on).
 	VoiceLaneExclusion bool
 
+	// VoiceNodes places a voice call whose account lives on a Helper Node onto that
+	// node (P5.9, UBAG_HELPER_VOICE; ADR-0017): the node must be eligible and voice
+	// capable, and the call takes one workload slot and the account's identity lane.
+	// Nil (default) is the previous behaviour: every call is hosted on the primary.
+	VoiceNodes *voiceplace.Placer
+
 	// VoiceSessionTTL is the default lease window between renewals
 	// (30s..1h). Zero selects the 10-minute default.
 	VoiceSessionTTL time.Duration
@@ -351,6 +358,7 @@ type Server struct {
 	voiceContextIdx  bool
 	voiceHold        bool // terminating hold on (needs voiceActivation)
 	voiceLanes       bool // voice admission respects running browser jobs (needs concurrency)
+	voiceNodes       *voiceplace.Placer
 	voiceLife        voiceLifecycle
 	voiceMedia       MediaNegotiator
 	voiceSessionTTL  time.Duration
@@ -674,6 +682,7 @@ func NewServer(config Config) *Server {
 		voiceContextIdx:    config.VoiceContextIndex,
 		voiceHold:          config.VoiceProviderActivation && config.VoiceTerminatingHold,
 		voiceLanes:         config.VoiceLaneExclusion && config.Concurrency != nil,
+		voiceNodes:         config.VoiceNodes,
 		voiceMedia:         config.VoiceMedia,
 		voiceSessionTTL:    config.VoiceSessionTTL,
 

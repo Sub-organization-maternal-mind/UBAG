@@ -245,7 +245,10 @@ func (s *Server) voiceControlFailureState(ctx context.Context, jobID string) str
 // (replacement media) do not re-activate: the provider's voice session is
 // still live.
 func (s *Server) beginVoiceActivation(sess voice.Session) {
-	if !s.voiceActivation {
+	if !s.voiceActivation || sess.NodeID != "" {
+		// A session hosted on a Helper Node is activated by that node, against its
+		// own loopback browser, as part of the offer (D7); the primary never runs a
+		// control job for an environment it has no CDP endpoint for.
 		return
 	}
 	s.voiceLife.mu.Lock()

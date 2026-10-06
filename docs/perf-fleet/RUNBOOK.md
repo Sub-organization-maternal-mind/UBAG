@@ -14,7 +14,7 @@ Each rung needs the previous one. All default off.
 | `UBAG_HELPER_PLANE` | 2 | Separate mTLS gRPC listener for helpers. |
 | `UBAG_HELPER_DISPATCH` | 3 | The primary dials helpers and runs placed jobs as fenced attempts (P4.14; needs `UBAG_EXECUTOR_ATTEMPTS`, `UBAG_HELPER_CLIENT_CERT_FILE`, `UBAG_HELPER_CLIENT_KEY_FILE`, `UBAG_HELPER_WORKLOAD_VERSION`). The placer (P4.17, ADR-0016) is the picker and the prober: a job is placed only for a tenant that has a profile bound on an eligible node, every other job runs locally. There is no operator route to bind a profile yet (P4.16 follow-up), so until there is, nothing is placed. It also turns on the attempt reconciler (P4.18; window `UBAG_HELPER_RECONCILE_WINDOW_SECONDS`, default 600) and stops the stale-job sweep from expiring attempts. |
 | `UBAG_FLEET_MANAGER_URL` | - | Where grants come from (needs `UBAG_HELPER_NODES`; `UBAG_FLEET_POLL_SECONDS` default 30, `UBAG_FLEET_GRANT_STALE_GRACE_SECONDS` default 600). Unset: nothing is polled and nothing is ever granted. There is no authentication on this request yet (the manager's scheme is undefined). |
-| `UBAG_HELPER_VOICE` | 4 | Voice media on a helper (not wired yet). |
+| `UBAG_HELPER_VOICE` | 4 | Voice on a helper. Primary side so far: placement (P5.9, ADR-0017; see "Voice calls queued for placement") and the terminating hold (P5.8). The media negotiator that dials the helper (P5.11) is not wired yet, so a call placed on a node can be created but not connected. Needs the whole ladder and the voice store; with the ladder on and no helper placement the gateway refuses to start. |
 | `UBAG_EXECUTOR_ATTEMPTS` | - | Attempt ledger (needed by the fenced commit path; Postgres or memory store). |
 | `UBAG_EXECUTOR_LEASE_TTL_MS` | - | Queue lease TTL (`0` = legacy no expiry; otherwise 30000 to 900000). |
 
@@ -37,6 +37,7 @@ All on `GET /v1/metrics` (unauthenticated, cross-tenant aggregates; no tenant, j
 | `ubag_helper_fenced_rejects_total` | counter | `reason` | Helper writes refused as stale or fenced (`UBAG-WORKER-NODE-FENCED-005`). |
 | `ubag_helper_policy_violations_total` | counter | `reason` | Helper streams rejected or failed for scope, content or budget violations. |
 | `ubag_helper_placements_total` | counter | `outcome` | Placement decisions for leased jobs that were offered to the placer: `placed`, run here (`local_no_fleet`, `local_no_profile`, `local_conversation`) or held back (`held_identity_busy`, `held_no_capacity`, `held_no_node`, `held_affinity`, `held_error`). A held job is counted once per retry. |
+| `ubag_helper_voice_placements_total` | counter | `outcome` | Helper-hosted voice placement decisions, one per candidate account (P5.9): `placed`, or why its node could not host it: `node_unavailable` (host health: not granted, draining, silent, expired, reservation unknown, unknown host size), `not_voice_capable` (healthy, but no media UDP range and NAT address), `no_capacity`, `identity_busy` (a job or another call holds the account), `wan_endpoint` (the environment carries a CDP endpoint in the topology), `error`. The account's login state is not an outcome. Counted once per admission attempt, so a queued call that is retried counts again. |
 | `ubag_helper_probes_total` | counter | `result` | Capacity reports the prober asked helpers for: `ok`, `error` (dial, timeout or store failure) or `incompatible` (another workload version or adapter registry digest). |
 | `ubag_helper_reconcile_total` | counter | `action` (`run`, `wait`, `resume`, `fail_closed`), `reason` | Attempt reconcile decisions (P4.18) for leased jobs that already have attempts. Only the pairs the policy can produce exist, all from the first scrape; a `wait` repeats every few seconds while a job is held. |
 
@@ -121,6 +122,19 @@ Source: `executor.FleetPicker` and the consumer (ADR-0016). The log line is `wor
 A job is **not** held when no helper node is eligible at all (nothing granted, manager unreachable past the stale grace, every node silent or draining), when the tenant has no profile for the target, or when a conversation cannot resume on a helper: it runs on this gateway. Up to 64 leases wait off the worker (the holds of the attempt reconcile gate, P4.18, share the same bound); past that the waiting is synchronous and a long pile-up of held jobs at the head of the file spool can delay the jobs behind it (peek-by-eligibility, which needs a queue API change, is the answer if that is ever seen). On NATS each hold consumes one delivery (`UBAG_NATS_WORKER_MAX_DELIVER`, default 5): raise it before enabling dispatch there.
 
 The probes: `ubag_helper_probes_total{result="error"}` rising for one node means its heartbeat will age out in 45 s and it stops taking placements; `result="incompatible"` means the node runs another workload version or adapter registry than this primary's `UBAG_HELPER_WORKLOAD_VERSION` and `UBAG_ADAPTERS_DIR`, and gets no heartbeat until it is upgraded.
+
+### Voice calls queued for placement
+
+Only with `UBAG_HELPER_VOICE` on. A voice session whose account has a profile on a node is hosted by that node (ADR-0017); when the node cannot take it the session is created `queued` (202) and `connect` answers 409 "no provider account or browser environment is free", the same as any queued call. The client never sees why; `ubag_helper_voice_placements_total{outcome}` and the `voice node placement` log lines do. Provider readiness (the account is logged in) and host health (the node can host) are separate: check the account first (`GET /v1/browser/contexts`, `login_state` must be `authenticated`; a login is an out-of-band human login on the helper), then the node.
+
+- `node_unavailable`: the node is not eligible for placements at all. Same causes and fixes as "Heartbeat stale or missing" and "No eligible helper nodes"; a reservation the manager has not confirmed (`reservation_unknown`) is ineligible by design.
+- `not_voice_capable`: the node is healthy but its grant has `voice_capable` false. The manager must open the node's bounded UDP range and set its NAT 1:1 address (the grant then carries `voice_capable`, `udp_port_range` and `nat_ip`); the node's own `UBAG_HELPER_VOICE_UDP_PORTS` and `UBAG_HELPER_VOICE_NAT_1TO1_IP` must match. The node still takes jobs meanwhile.
+- `no_capacity`: every workload slot of the node is taken; a voice call takes one, like a job.
+- `identity_busy`: a job or another call is running on the same account; it clears when that ends.
+- `wan_endpoint`: the account's environment is registered in the topology with a CDP endpoint, which a helper-hosted environment must not have (it is loopback on the node). Re-register it without `remote_endpoint`.
+- `error`: the node store or the profile registry could not be read; with the registry down no voice call is placed at all.
+
+A helper-bound account is never hosted on the primary's browsers: while its node is down its calls queue. Environment names (`instance_ref`) must be unique across the fleet. After a primary restart a surviving node-bound session no longer holds its node slot in this process (the helper's own admission is the backstop).
 
 ### Remote attempt held back, lost or failed for reconcile
 
