@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,6 +74,34 @@ func (s *Server) resolveSSEResume(ctx context.Context, jobID, lastEventID string
 	return jobstore.Event{}, false, nil
 }
 
+// sseTerminalAtOrBefore reports whether the job's log holds a terminal event
+// with a sequence at or below cursor, i.e. a client resuming at cursor has seen
+// the end. The caller already knows nothing follows the cursor, so this only
+// runs on that rare path; the scan is bounded like resolveSSEResume.
+func (s *Server) sseTerminalAtOrBefore(ctx context.Context, jobID string, cursor int) (bool, error) {
+	after := 0
+	for scanned := 0; scanned < sseResumeScanMax; {
+		page, _, err := s.jobs.ListEvents(ctx, jobID, after, sseResumeScanPage)
+		if err != nil {
+			return false, err
+		}
+		for _, event := range page {
+			if event.Sequence > cursor {
+				return false, nil
+			}
+			if sseTerminalEvent(event) {
+				return true, nil
+			}
+			after = event.Sequence
+		}
+		if len(page) < sseResumeScanPage {
+			break
+		}
+		scanned += len(page)
+	}
+	return false, nil
+}
+
 func (s *Server) countSSEWakeup(source string) {
 	s.metrics.mu.Lock()
 	s.metrics.sseWakeups[source]++
@@ -122,9 +151,11 @@ func (s *Server) waitSSEEventsHub(ctx context.Context, jobID string, after int, 
 
 // handleJobSSE implements GET /v1/sse/jobs/{id}. It replays history, then
 // waits for new events (hub wake when the store has one, else WaitEvents).
-// Last-Event-ID resumes after that event. With UBAG_SSE_CLOSE_ON_TERMINAL the
-// stream ends after the first terminal event and a reconnect that already saw
-// one gets 204, which stops EventSource from reconnecting.
+// Last-Event-ID and the after_sequence query both resume the stream; the larger
+// resolved cursor wins and a malformed or negative after_sequence is a 400. A
+// cursor at or past the job's terminal event gets 204 whatever the flags, which
+// stops EventSource from reconnecting. With UBAG_SSE_CLOSE_ON_TERMINAL the
+// stream additionally ends right after the first terminal event it sends.
 func (s *Server) handleJobSSE(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		s.writeMethodNotAllowed(w, r, http.MethodGet)
@@ -144,7 +175,7 @@ func (s *Server) handleJobSSE(w http.ResponseWriter, r *http.Request) {
 
 	if !s.tryIncrementSSEConnections() {
 		w.Header().Set("Retry-After", "5")
-		e := queueError("UBAG-SSE-STREAM-CAP-001", "too many open event streams; retry later", true)
+		e := queueError("UBAG-OVERLOAD-SSE-STREAMS-001", "too many open event streams; retry later", true)
 		e.RetryAfterMS = ptrInt(5 * 1000)
 		s.writeError(w, r, http.StatusServiceUnavailable, e)
 		return
@@ -162,17 +193,21 @@ func (s *Server) handleJobSSE(w http.ResponseWriter, r *http.Request) {
 	}
 
 	afterSequence := 0
+	if raw := strings.TrimSpace(r.URL.Query().Get("after_sequence")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			s.writeError(w, r, http.StatusBadRequest, validationError("UBAG-VALIDATION-EVENT-SEQUENCE-001", "after_sequence must be a non-negative integer"))
+			return
+		}
+		afterSequence = parsed
+	}
 	if lastID := strings.TrimSpace(r.Header.Get("Last-Event-ID")); lastID != "" && len(lastID) <= sseLastEventIDMax {
 		seen, found, err := s.resolveSSEResume(r.Context(), job.ID, lastID)
 		if err != nil {
 			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to load job events"))
 			return
 		}
-		if found {
-			if s.sseCloseOnTerminal && sseTerminalEvent(seen) {
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
+		if found && seen.Sequence > afterSequence {
 			afterSequence = seen.Sequence
 		}
 	}
@@ -185,6 +220,17 @@ func (s *Server) handleJobSSE(w http.ResponseWriter, r *http.Request) {
 	if !found {
 		s.writeJobNotFound(w, r)
 		return
+	}
+	if len(events) == 0 && afterSequence > 0 {
+		done, err := s.sseTerminalAtOrBefore(r.Context(), job.ID, afterSequence)
+		if err != nil {
+			s.writeError(w, r, http.StatusInternalServerError, internalError("failed to load job events"))
+			return
+		}
+		if done {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")

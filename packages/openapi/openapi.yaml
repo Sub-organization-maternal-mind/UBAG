@@ -2019,18 +2019,19 @@ paths:
         - Terminal: the first event whose type is a terminal job status ends the job's
           event log. A gateway configured to close on terminal
           (`UBAG_SSE_CLOSE_ON_TERMINAL`, default off) ends the stream right after
-          sending it; otherwise the stream stays open until the TTL. Either way a client
-          that reconnects with a cursor at or past the terminal event's `sequence`
-          receives HTTP 204 with no body, which is the one response that makes
-          EventSource stop reconnecting.
+          sending it; otherwise the stream stays open until the TTL. Either way (flag on
+          or off) a client that reconnects with a cursor at or past the terminal event's
+          `sequence` receives HTTP 204 with no body, which is the one response that
+          makes EventSource stop reconnecting.
         - Provisional tokens: `token` and `token_streaming` events are a live view of
           one attempt and may be discarded if that attempt is abandoned; the job result
           comes only from a terminal event (see the JobEvent schema). Do not build the
           result by concatenating token events.
 
-        Until the gateway implements resume (roadmap slice P3.13) it ignores
-        `Last-Event-ID` and `after_sequence` on this route and replays from the start;
-        that remains conformant for clients that dedupe by `event_id`.
+        - Stream cap: a gateway configured with `UBAG_SSE_MAX_STREAMS` (default `0`,
+          unlimited) answers HTTP 503 `UBAG-OVERLOAD-SSE-STREAMS-001` with a
+          `Retry-After` header once that many streams are open. The 204 does not hold
+          a stream slot.
       parameters:
         - $ref: "#/components/parameters/UbagApiVersion"
         - $ref: "#/components/parameters/JobId"
@@ -2040,7 +2041,7 @@ paths:
           schema:
             type: integer
             minimum: 0
-          description: Resume cursor; only events with a greater sequence are sent. Combined with Last-Event-ID by taking the larger resolved cursor.
+          description: Resume cursor; only events with a greater sequence are sent. Combined with Last-Event-ID by taking the larger resolved cursor. A negative or non-integer value is a 400.
         - name: Last-Event-ID
           in: header
           required: false
@@ -2074,6 +2075,17 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "500":
           $ref: "#/components/responses/InternalError"
+        "503":
+          description: The gateway is at its open-stream cap (UBAG_SSE_MAX_STREAMS); retry after the Retry-After delay.
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
   /v1/openai/chat/completions:
     post:
       tags: [OpenAICompat]

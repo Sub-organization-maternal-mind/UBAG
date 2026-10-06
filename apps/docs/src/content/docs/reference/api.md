@@ -183,5 +183,5 @@ Typed clients: TypeScript `@ubag/sdk` (`VoiceMediaClient`, `textPart`,
 
 - `queue_reason` and `queue_reason_since` are optional on a queued job; absence means unknown. `/v1/jobs/summary` adds `queued_by_reason`.
 - `/v1/fleet/*` needs `fleet:read` and answers `501` without a fleet source.
-- `GET /v1/sse/jobs/{id}` honours `Last-Event-ID`; it may answer `204` (resumed past a terminal event, flag-gated) or `503` with `Retry-After` (stream cap). The OpenAPI text for these is still pending (P2.7).
+- `GET /v1/sse/jobs/{id}` honours `Last-Event-ID` and `after_sequence` (larger cursor wins, negative is `400`); it answers `204` when resumed at or past a terminal event (flag on or off) and `503` with `Retry-After` at the stream cap.
 

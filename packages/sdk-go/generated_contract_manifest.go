@@ -266,6 +266,7 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 	"UBAG-INTERNAL-CRYPTO-005":                     {Category: "internal", Retryable: true, RetryAfterMs: 0},
 	"UBAG-OVERLOAD-REQUESTS-001":                   {Category: "overload", Retryable: true, RetryAfterMs: 0},
 	"UBAG-OVERLOAD-UPLOAD-001":                     {Category: "overload", Retryable: true, RetryAfterMs: 0},
+	"UBAG-OVERLOAD-SSE-STREAMS-001":                {Category: "overload", Retryable: true, RetryAfterMs: 0},
 	"UBAG-VOICE-UNSUPPORTED-001":                   {Category: "voice", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VOICE-NOT-CONFIGURED-002":                {Category: "voice", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VOICE-SESSION-LIMIT-003":                 {Category: "voice", Retryable: true, RetryAfterMs: 0},

@@ -979,6 +979,10 @@ export const UBAG_ERROR_CODES = {
     "category": "overload",
     "retryable": true
   },
+  "UBAG-OVERLOAD-SSE-STREAMS-001": {
+    "category": "overload",
+    "retryable": true
+  },
   "UBAG-VOICE-UNSUPPORTED-001": {
     "category": "voice",
     "retryable": false

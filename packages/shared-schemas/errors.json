@@ -296,7 +296,8 @@
         "description": "Gateway self-protection: concurrent-request and in-memory upload budgets. Always retryable; responses carry Retry-After and retry_after_ms.",
         "codes": [
           { "code": "UBAG-OVERLOAD-REQUESTS-001", "message": "The gateway is at its concurrent-request limit", "retryable": true },
-          { "code": "UBAG-OVERLOAD-UPLOAD-001",   "message": "The gateway is holding its maximum upload memory", "retryable": true }
+          { "code": "UBAG-OVERLOAD-UPLOAD-001",   "message": "The gateway is holding its maximum upload memory", "retryable": true },
+          { "code": "UBAG-OVERLOAD-SSE-STREAMS-001", "message": "The gateway is at its open event-stream cap (UBAG_SSE_MAX_STREAMS)", "retryable": true }
         ]
       },
       {
