@@ -528,6 +528,25 @@ WHERE status = 'terminated' AND terminating_until IS NOT NULL AND terminating_un
 	return ids, err
 }
 
+func (s *PostgresStore) ListLeaseHolders(ctx context.Context, now time.Time) ([]LeaseHolder, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT session_id, tenant_id, target, instance_ref FROM gateway_voice_sessions
+WHERE mode <> 'utterance' AND instance_ref <> '' AND `+postgresLiveOrHeld("", "$1"), now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LeaseHolder
+	for rows.Next() {
+		var h LeaseHolder
+		if err := rows.Scan(&h.SessionID, &h.TenantID, &h.Target, &h.InstanceRef); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 func (s *PostgresStore) GlobalSessionCounts(ctx context.Context) (int, int, error) {
 	var active, queued int
 	if err := s.db.QueryRowContext(ctx, `

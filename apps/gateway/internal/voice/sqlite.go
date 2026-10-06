@@ -603,6 +603,25 @@ WHERE status = 'terminated' AND terminating_until <> '' AND terminating_until <=
 	return ids, err
 }
 
+func (s *SQLiteStore) ListLeaseHolders(ctx context.Context, now time.Time) ([]LeaseHolder, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT session_id, tenant_id, target, instance_ref FROM gateway_voice_sessions
+WHERE mode <> 'utterance' AND instance_ref <> '' AND `+sqliteLiveOrHeld(""), formatSQLiteTime(now))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LeaseHolder
+	for rows.Next() {
+		var h LeaseHolder
+		if err := rows.Scan(&h.SessionID, &h.TenantID, &h.Target, &h.InstanceRef); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
 func (s *SQLiteStore) GlobalSessionCounts(ctx context.Context) (int, int, error) {
 	var active, queued int
 	if err := s.db.QueryRowContext(ctx, `

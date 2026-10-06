@@ -42,6 +42,9 @@ type TokenBackend interface {
 	PutLaneCap(ctx context.Context, laneKey string, cap int, now time.Time) error
 	// SweepExpired deletes expired unassociated tokens and reports how many.
 	SweepExpired(ctx context.Context, now time.Time) (int, error)
+	// LaneLive counts the live tokens on one lane (read-only, no admission).
+	// Browser-lane exclusion (lane.go) reads the other side's presence with it.
+	LaneLive(ctx context.Context, laneKey string, now time.Time) (int, error)
 	// LaneKindCounts reports live tokens per lane kind (the lane key prefix
 	// before the first ':') for low-cardinality metrics.
 	LaneKindCounts(ctx context.Context, now time.Time) (map[string]int, error)
@@ -268,6 +271,12 @@ func (b *SQLTokenBackend) SweepExpired(ctx context.Context, now time.Time) (int,
 		return 0, nil
 	}
 	return n, b.deleteTokens(ctx, where, b.ts(now))
+}
+
+func (b *SQLTokenBackend) LaneLive(ctx context.Context, laneKey string, now time.Time) (int, error) {
+	var live int
+	err := b.db.QueryRowContext(ctx, b.liveCountSQL(), laneKey, b.ts(now)).Scan(&live)
+	return live, err
 }
 
 func (b *SQLTokenBackend) LaneKindCounts(ctx context.Context, now time.Time) (map[string]int, error) {

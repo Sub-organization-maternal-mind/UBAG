@@ -77,6 +77,13 @@ type ConcurrencyRegistry struct {
 	// Tokens on one lane are interchangeable, so pairing the oldest pending
 	// token with the next created job is safe.
 	pending map[string][]string
+
+	// lanes and laneBackend back the browser-lane registry (lane.go): who is
+	// using a physical browser right now, jobs or a live voice session.
+	// Process-local counts under mu by default; laneBackend (UseLaneBackend)
+	// moves them to the shared token store.
+	lanes       map[string]map[LaneKind]int
+	laneBackend TokenBackend
 }
 
 // LaneLimits are the optional shared budgets layered over the per-lane

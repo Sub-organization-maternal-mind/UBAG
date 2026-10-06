@@ -27,6 +27,7 @@ var leaseContract = []struct {
 	{"MediaLeaseRenewVersusSweep", testMediaLeaseRenewVersusSweep},
 	{"TerminatingHoldBlocksReuse", testTerminatingHoldBlocksReuse},
 	{"TerminatingHoldIsFenced", testTerminatingHoldIsFenced},
+	{"LeaseHoldersFollowLeases", testLeaseHoldersFollowLeases},
 }
 
 func TestVoiceLeaseContract(t *testing.T) {
