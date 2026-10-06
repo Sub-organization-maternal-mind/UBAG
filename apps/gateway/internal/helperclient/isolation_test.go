@@ -647,8 +647,19 @@ func TestIsolationLostHelperNeverProducesAStaleCommit(t *testing.T) {
 
 func lostHelperScenario(t *testing.T, how lostHow, submitted bool, n int) {
 	// Every helper but the last is lost; the last one is healthy and takes reassigned jobs.
+	//
+	// The lease only has to be short enough that a lost helper's lease lapses
+	// inside this test (see the reassignment step below); it does not have to be
+	// shorter than the dispatcher takes to acquire, ship and start an attempt.
+	// A flat 1.5s was fine for one or two workloads and too tight for ten on a
+	// loaded -race runner: the attempts were fenced as attempt_expired before
+	// the helper ever saw them, so the "did not all reach the helper" wait
+	// expired. That is a harness limit, not the property under test, so scale
+	// the TTL with the workload count and keep the 1/6 renew ratio. The sibling
+	// scenario above already uses 4s for the same reason.
+	leaseTTL := time.Duration(1500+250*n) * time.Millisecond
 	f := newIsoFleet(t, helpersFor(n, 1), func(c *executor.RemoteConfig) {
-		c.LeaseTTL, c.RenewEvery, c.MaxClockSkew = 1500*time.Millisecond, 250*time.Millisecond, 100*time.Millisecond
+		c.LeaseTTL, c.RenewEvery, c.MaxClockSkew = leaseTTL, leaseTTL/6, 100*time.Millisecond
 	})
 	victims, healthy := f.nodes[:len(f.nodes)-1], len(f.nodes)-1
 	mode := modeHoldPre
@@ -661,15 +672,23 @@ func lostHelperScenario(t *testing.T, how lostHow, submitted bool, n int) {
 		job, env := f.job(tenantOf[k%2], mode)
 		envs[k], ids[k] = env, job.ID
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 90*time.Second)
+	// Every wait in this scenario scales with n, because it runs n concurrent
+	// attempts and the numbers tuned for one workload are not enough for ten on
+	// an oversubscribed runner (go test runs several package binaries at once,
+	// each with its own GOMAXPROCS, on a 2-core box). They are preconditions for
+	// the assertions below, not the assertions: what an attempt must never do is
+	// still checked, and it is still checked within a bounded time.
+	budget := time.Duration(90+15*n) * time.Second
+	ctx, cancel := context.WithTimeout(t.Context(), budget)
 	defer cancel()
 
 	errs := make(chan []error, 1)
 	go func() { errs <- f.runAll(ctx, envs, func(k int) int { return k % len(victims) }) }()
+	startDeadline := time.After(budget / 3) // one shared deadline, not n of them
 	for range n {
 		select {
 		case <-f.nodes[0].started: // one channel shared by the fleet
-		case <-time.After(30 * time.Second):
+		case <-startDeadline:
 			t.Fatal("the attempts did not all reach the helper")
 		}
 	}
@@ -681,7 +700,7 @@ func lostHelperScenario(t *testing.T, how lostHow, submitted bool, n int) {
 	var runErrs []error
 	select {
 	case runErrs = <-errs:
-	case <-time.After(60 * time.Second):
+	case <-time.After(budget): // runAll is bounded by ctx, which is `budget`
 		t.Fatal("Run did not return after the helper was lost")
 	}
 	for k, err := range runErrs {
