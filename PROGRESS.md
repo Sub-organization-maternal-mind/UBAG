@@ -17,11 +17,47 @@ Deploy: `gateway-image.yml` no longer has a test job. Its deploy job needs
 `build` and `dashboard` only, so a push to `main` builds, pushes and deploys
 without a test step. Live issues are reported and fixed by hand.
 
-Last updated: 2026-10-07 (**Phase 1's "manager does not exist" blocker is
-resolved in code: the OET shared fleet manager now has a UBAG allocation
-endpoint, and UBAG can authenticate to it and bind helper profiles. The
-manager's image build runs in the OET repo's fleet workflow; enrollment of a
-real helper, certificates and live evidence are still external.**)
+**2026-10-08 reconciliation (post-handoff probe; full state in
+`docs/handoff/2026-10-08-agent-handoff.md`).** Read-only probe of production at
+`sha-4f631af`, gateway healthy, `UBAG_BUILD_COMMIT=4f631af`:
+
+- **Rollback target: `sha-e81e483`** (2026-10-06 fleet-manager bridge fix), the
+  deploy immediately before `4f631af`. Supersedes `sha-a8880d3` wherever it is
+  named as the rollback below (five deploys old). The drill has never been run;
+  owner decision 2026-10-08: record the target, schedule the drill separately.
+- **Voice supersession confirmed live:** the 2026-10-06 rows below that say
+  production cannot run live voice are wrong as of 2026-10-07/08 —
+  `UBAG_VOICE_RELAY_SECRET` is set (48 hex, seen only as name+length) in both
+  the gateway and the browser, and `UBAG_VOICE_STORE=postgres`. Still open: the
+  human two-way probe (P5.4). **Owner decision 2026-10-08: rotate the relay
+  secret at the NEXT deploy window** (an earlier session printed its value into
+  a transcript; the exposed value stays valid until that rotation).
+- **Helper flags are SET.** The running gateway carries `UBAG_FLEET_MANAGER_URL`,
+  `UBAG_FLEET_MANAGER_TOKEN` (48) and `UBAG_HELPER_NODES`; the manager URL
+  answers `HTTP/1.1 401` from the gateway container (alive, fail-closed without
+  the bearer token). The 2026-10-06 "unset, no composition line" note below is
+  stale; the 2026-10-07 entries at the top of this file and in
+  `AGENT_HANDOFF.md` are the correct ones. Owner decision 2026-10-08: leave the
+  flags set.
+- **`docs/perf-fleet/slices/` is gone from `main`** (removed with the test
+  strip). Where sections below cite a shard (the P7.5 command, the P1.8 shard,
+  the slice index), recover it with
+  `git show pre-strip-tests:docs/perf-fleet/slices/<path>`.
+- **Remote hygiene done 2026-10-08 (owner-approved):** all 111 fully-merged
+  `feat/pf-*` / `feat/perf-fleet` branches deleted from `origin`, each verified
+  `git rev-list --count origin/main..<branch>` = 0 first. Deliberately left:
+  the three `origin/ci-logs-*` branches (commits not on `main`, provenance
+  unreviewed) and the 16 open Dependabot PRs (untriaged). Local `bak-p011`
+  kept as-is (owner choice); the `scratchpad/recovered-untracked/` P1.8
+  reconstruction was not locatable on this machine and the item is dropped
+  (owner choice).
+
+Last updated: 2026-10-08. The 2026-10-07 Phase-1 note below still stands
+(**Phase 1's "manager does not exist" blocker is resolved in code: the OET
+shared fleet manager now has a UBAG allocation endpoint, and UBAG can
+authenticate to it and bind helper profiles. The manager's image build runs in
+the OET repo's fleet workflow; enrollment of a real helper, certificates and
+live evidence are still external.**)
 
 **`ci` fully green again (`e49e3bb` verified on 37533190411):** every job
 success including the formerly-red "Gateway (Go) full suite, serialized".
@@ -297,14 +333,14 @@ was not modified.
 
 | Item | Why it cannot proceed from here |
 |---|---|
-| Phase 1 — shared fleet integration | **The OET shared fleet manager does not exist.** No code to integrate against, and building a second infrastructure controller is explicitly out of UBAG's scope (BINDING). Needs the manager built, enrolled helper VPSs, SSH/credential onboarding |
+| Phase 1 — shared fleet integration | **The OET shared fleet manager does not exist.** No code to integrate against, and building a second infrastructure controller is explicitly out of UBAG's scope (BINDING). Needs the manager built, enrolled helper VPSs, SSH/credential onboarding (Superseded 2026-10-07/08 — the manager exists as OET-repo code with a live UBAG allocation endpoint; see the reconciliation note at the top of this file) |
 | Phase 2 — remote text/attachments | No helper exists to run on. P4.20 canary: "no canary has run" |
-| Phase 3 — remote voice | No helper, and production cannot run live voice today: `UBAG_VOICE_RELAY_SECRET is not set` and `UBAG_VOICE_STORE` is memory while the gateway store is postgres (both logged at boot). Needs a real call for evidence |
+| Phase 3 — remote voice | No helper, and production cannot run live voice today: `UBAG_VOICE_RELAY_SECRET is not set` and `UBAG_VOICE_STORE` is memory while the gateway store is postgres (both logged at boot). Needs a real call for evidence (Superseded 2026-10-07/08 — secret set, `UBAG_VOICE_STORE=postgres`; see the reconciliation note at the top of this file. The open part is the human two-way probe) |
 | Phase 4 exit gate (P1.8) | Create-path benches are env-gated on a real Postgres DSN; `benchutil.CheckDSN` refuses non-loopback/private hosts, and there is no Docker here. Exit gate: "needs the lab host" |
-| Phase 5 — Rust gate | `tests/load/voice-relay-gate.json` sets `require_authoritative: true`. The P7.5 profile needs real libopus + a Linux isolated container + `--container-cpu-pct` "which only a real call can give"; a `--fake-codec` run returns `invalid` by design. Verdict is `UNEVALUATED`, so per the roadmap P7.6–P7.8 stay open. Exact command is recorded in `docs/perf-fleet/slices/P7.5.md` |
+| Phase 5 — Rust gate | `tests/load/voice-relay-gate.json` sets `require_authoritative: true`. The P7.5 profile needs real libopus + a Linux isolated container + `--container-cpu-pct` "which only a real call can give"; a `--fake-codec` run returns `invalid` by design. Verdict is `UNEVALUATED`, so per the roadmap P7.6–P7.8 stay open. Exact command: `git show pre-strip-tests:docs/perf-fleet/slices/P7.5.md` (shards removed from `main` 2026-10-08) |
 | Phase 6 — capacity and acceptance | The report is deliberately labelled NON-AUTHORITATIVE; the 1/2/5/10/20 ladder needs an isolated lab host and a 60-minute steady-state run. Publishing a number from the shared VPS would be a false claim — that box serves live traffic |
 | All real-provider evidence | Logins are human-only, forever (provider-refresh skill). No account is signed in, and `tools/provider-refresh/` requires a human at the browser |
-| Rollback | Documented (redeploy `sha-a8880d3`) but never exercised |
+| Rollback | Documented (redeploy `sha-e81e483` — the build immediately before `4f631af`; supersedes `sha-a8880d3`) but never exercised; drill unscheduled, owner decision 2026-10-08 |
 
 Nothing in this list is blocked by missing code. Every item needs hardware, a
 credential, a lab host or a human at a browser.
@@ -410,7 +446,7 @@ not a local full-suite pass.
 ## 2026-10-06 — Perf + shared-fleet program (branch feat/perf-fleet, slice P8.1 consolidation)
 
 Status: built on the integration branch `feat/perf-fleet` (about 92 slice PRs, one shard each in
-`docs/perf-fleet/slices/`, index in `docs/perf-fleet/slices/README.md`). **Nothing was deployed and no production flag was
+`docs/perf-fleet/slices/`, index in `docs/perf-fleet/slices/README.md` — shards removed from `main` 2026-10-08, recover with `git show pre-strip-tests:docs/perf-fleet/slices/README.md`). **Nothing was deployed and no production flag was
 changed by the program** (decisions D1/D2 in `docs/perf-fleet/ctx/BINDING.md`). Every new behaviour is behind an env flag that is
 inert by default, except one safety gate that is already on and has a kill-switch (`UBAG_ADMISSION_SHARED`;
 `UBAG_VOICE_LANE_EXCLUSION` is opt-in and off by default, not live). The flag inventory is `docs/perf-fleet/FLAGS.md`; the per-flag graduation, canary, rollback and
@@ -431,7 +467,7 @@ What is NOT done or NOT measured (do not quote a number that does not exist):
 - **No helper canary has run** (P4.20 is external-blocked: no manager allocation API, no real helper, certificates or WireGuard, no operator route to bind a profile to a node, manager auth undefined). `docs/perf-fleet/CANARY.md` is the drill; its evidence section is empty.
 - **Voice**: live media is unavailable in production (relay secret unset, memory store). The human voice activation probe and two-way demo (P5.4) were not run, so `ready_controls` stay empty. P5.11 (primary RemoteMediaNegotiator, ADR-0018) and P6.5 (dashboard voice panel) are merged with shards, so helper voice can be placed and connected in code, but no two-way call was run on a real helper.
 - **Rust relay (P7.8) not started**; the A/B gate verdict (P7.5 to P7.7) is unevaluated because it needs real libopus on a Linux lab host.
-- P1.8 (create-path pprof and DB pool sizing) is partial (shard `docs/perf-fleet/slices/P1.8.md`, #192): the env-gated Postgres benchmarks and the analysis are merged, no before/after number was measured and no default changed; the open work is the lab-host sweep. P6.6 (warm-resume fast path) is built and merged off, not live-verified. P0.4 legacy-tool CI validation run was not performed.
+- P1.8 (create-path pprof and DB pool sizing) is partial (shard removed from `main` 2026-10-08 — `git show pre-strip-tests:docs/perf-fleet/slices/P1.8.md`; #192): the env-gated Postgres benchmarks and the analysis are merged, no before/after number was measured and no default changed; the open work is the lab-host sweep. P6.6 (warm-resume fast path) is built and merged off, not live-verified. P0.4 legacy-tool CI validation run was not performed.
 - `docker-compose.vps.yml` passes only some of the flags to the gateway container; flags whose Compose column in `FLAGS.md` is `none` have no effect from `env.local` until a reviewed compose line is added (ROLLOUT.md section 1).
 - P8.1 also exempted the exact key `token_events` in `apps/gateway/internal/payloadpolicy`: with `UBAG_WORKER_STRICT_STREAM_END` on, the worker's deadline-cut `data.partial.token_events` would otherwise have been refused as a credential-shaped key (found in P4.9). Checks for P8.1: `go test ./internal/payloadpolicy`, `node tools/flag-graduation-check.mjs`, its `node --test` file; no full suites were run.
 

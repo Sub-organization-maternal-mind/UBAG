@@ -11,6 +11,35 @@ tests is tagged `pre-strip-tests`. The gates are now `pnpm typecheck`, `pnpm lin
 below that name `pnpm test:*` commands describe the removed suites; the commands
 no longer exist.
 
+## 2026-10-08 reconciliation (read this second)
+
+`docs/handoff/2026-10-08-agent-handoff.md` is the state-of-record handoff for
+`4f631af`. Its probe re-verified: `main` = `origin/main` = `4f631af`, all four
+production containers on `sha-4f631af`, gateway healthy,
+`UBAG_VOICE_STORE=postgres`, relay secret set (48 hex, name+length only).
+
+Owner decisions recorded 2026-10-08:
+
+1. **Rotate `UBAG_VOICE_RELAY_SECRET` at the next deploy window** (not before):
+   an earlier session printed its value into a session transcript. Until that
+   rotation the exposed value is still live in production.
+2. **Rollback target is `sha-e81e483`** — the deploy immediately before
+   `4f631af` (2026-10-06 fleet-manager bridge fix). This supersedes
+   `sha-a8880d3` in the 2026-10-06 entries below. The drill has never been run
+   and is unscheduled.
+3. **Helper flags stay set.** The live gateway has `UBAG_FLEET_MANAGER_URL`,
+   `UBAG_FLEET_MANAGER_TOKEN` (48) and `UBAG_HELPER_NODES`; the manager URL
+   answers `401` unauthenticated from the gateway container (alive,
+   fail-closed). The 2026-10-06 "unset / no composition line" text below is
+   stale; the 2026-10-07 section above is the correct one.
+4. **All 111 fully-merged `feat/pf-*` / `feat/perf-fleet` branches were deleted
+   from `origin`** (each verified fully merged into `main` first). The three
+   `origin/ci-logs-*` branches (commits not on `main`, provenance unreviewed)
+   and the 16 open Dependabot PRs were deliberately left untouched.
+5. Local `bak-p011` (two load-test commits) stays as-is. The
+   `scratchpad/recovered-untracked/` P1.8 reconstruction was not locatable on
+   the workstation and the item is dropped.
+
 ## Fleet-manager state changed on 2026-10-07 (read this before touching Phase 1)
 
 The 2026-10-06 entry below says "the OET shared fleet manager does not exist
