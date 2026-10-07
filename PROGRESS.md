@@ -9,6 +9,40 @@ real helper, certificates and live evidence are still external.**)
 **`ci` fully green again (`e49e3bb` verified on 37533190411):** every job
 success including the formerly-red "Gateway (Go) full suite, serialized".
 
+**The helper is ENROLLED, and the allocation path is one owner click from
+end-to-end (2026-10-07 late evening).** After the correction below, the
+manager's own database showed the helper ALREADY ENROLLED and Active:
+`helper-upcloud-singapore` (213.163.201.37, 4c/7887 MiB, region sg-sin1,
+ApiNodeId `rw_01m49h...`, DesiredRevision 10) — the parallel session's
+console work had done the enroll/drain/enable; the earlier "two console
+steps" handoff was already stale. Driving the live chain found two real
+defects, both fixed in the OET repo and shipped (b92ba8f50 + f689274b3
+there, fleet build green, sync dispatched):
+
+1. **Scalar env values do not bind to the `string[]` Hosts setting.** With
+   `Fleet__Ubag__Hosts=*` visibly present in the container env the endpoint
+   kept serving an empty list; an indexed `Fleet__Ubag__Hosts__0` injected via
+   a compose override made the helper publish instantly with the exact
+   expected OET-first grant (1000m / 2767 MiB after the 3000/5120 budget).
+   The setting is now a scalar string parsed in code ("*" or comma-separated
+   ids) — the documented owner contract is finally true.
+2. **A pinless entry breaks UBAG's strict parser for the WHOLE list.** The
+   trust-plane revision published hosts without a rendered leaf as
+   `"cert_identity":{"uri_san":""}`, and the gateway rejected every poll with
+   `untrusted manager response: allocation 0`. The builder now skips hosts
+   whose leaf S10 has not rendered; absence is the honest and the safe shape.
+
+Current live state: the manager serves a clean, parseable, empty list (zero
+gateway poll failures); `.env.production` carries the durable owner settings
+(`FLEET_UBAG_ENABLED=true`, `FLEET_UBAG_HOSTS=*`,
+`FLEET_IMAGE_AUTOAPPROVEDIGESTS=true`) and the sync-allowlist passes them
+through. **The one remaining step is a single owner-console action**: trigger
+the agent rollout (or repair) once — `RollRun` renders the host's UBAG leaf
+via `put-certs` (digest auto-approval is already enabled so the earlier
+`digest_not_approved_by_api` failure cannot recur) — and the next 30-second
+UBAG poll publishes the helper with its SPKI pin, completing the Phase-1
+allocation loop end to end.
+
 **CORRECTION (same night, owner challenge accepted): "no helper VPS exists"
 was wrong.** A helper VPS exists and is alive: `213.163.201.37`
 (`ubuntu-4cpu-8gb-sg-sin1`, 4 CPU / 8 GB, Singapore — the exact machine of the
