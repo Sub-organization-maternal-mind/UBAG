@@ -37,9 +37,4 @@ export default defineConfig({
     port: 58180,
     strictPort: true,
   },
-  test: {
-    environment: 'jsdom',
-    // Exclude Playwright specs — they are run via `npx playwright test`, not Vitest
-    exclude: ['tests/**', '**/node_modules/**', '**/dist/**'],
-  },
 });

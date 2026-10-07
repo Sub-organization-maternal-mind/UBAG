@@ -1,6 +1,15 @@
 # UBAG Agent Handoff
 
-Last updated: 2026-10-07
+Last updated: 2026-10-08
+
+## 2026-10-08: no automated tests (read this first)
+
+Every test suite, test runner, and test-only fixture was removed, along with the
+perf-fleet per-slice shards in `docs/perf-fleet/slices/`. The last commit with
+tests is tagged `pre-strip-tests`. The gates are now `pnpm typecheck`, `pnpm lint`,
+`go vet`/`go build`, `ruff check`, and the dashboard/docs builds. Older entries
+below that name `pnpm test:*` commands describe the removed suites; the commands
+no longer exist.
 
 ## Fleet-manager state changed on 2026-10-07 (read this before touching Phase 1)
 

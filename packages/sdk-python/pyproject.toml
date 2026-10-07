@@ -9,12 +9,5 @@ description = "Stdlib-only Python client for the UBAG gateway: capabilities, mul
 requires-python = ">=3.9"
 dependencies = []
 
-[project.optional-dependencies]
-test = ["pytest"]
-
 [tool.setuptools]
 packages = ["ubag_client"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]

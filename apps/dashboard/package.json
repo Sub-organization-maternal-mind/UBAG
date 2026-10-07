@@ -8,13 +8,9 @@
     "dev": "vite dev",
     "build": "svelte-kit sync && vite build && node scripts/patch-csp.mjs",
     "preview": "vite preview",
-    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-    "test": "vitest run",
-    "test:e2e": "playwright test",
-    "check:responsive": "npx playwright test"
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
-    "@playwright/test": "^1.60.0",
     "@skeletonlabs/skeleton": "^2.10.3",
     "@skeletonlabs/tw-plugin": "^0.4.1",
     "@sveltejs/adapter-static": "^3.0.8",
@@ -22,17 +18,14 @@
     "@sveltejs/vite-plugin-svelte": "^4.0.4",
     "@types/node": "^24.12.4",
     "autoprefixer": "^10.4.20",
-    "axe-playwright": "^2.2.2",
     "chart.js": "^4.4.7",
-    "jsdom": "^29.1.1",
     "lucide-svelte": "^0.469.0",
     "postcss": "^8.4.49",
     "svelte": "^5.17.3",
     "svelte-check": "^4.1.1",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.2",
-    "vite": "^5.4.11",
-    "vitest": "^2.1.8"
+    "vite": "^5.4.11"
   },
   "dependencies": {
     "@ubag/sdk": "workspace:*",

@@ -4,28 +4,27 @@ Self-hostable platform that lets applications drive web-based AI and automation 
 
 ## Agent operating rules (read first — every session, every coding agent)
 
-- **Skip long builds/CI during routine coding.** Don't run full suites (`pnpm test:v0:local`, `pnpm check`, full gateway builds, etc.) as part of normal implementation work — do small, targeted checks only (a single test, `go vet`, a quick lint). Code the bulk of the change, then commit and push once it's done; the user runs full verification separately and will report any errors back.
+- **Skip long builds/CI during routine coding.** Don't run full sweeps (`pnpm check`, full gateway builds, etc.) as part of normal implementation work — do small, targeted checks only (a single `tsc`, `go vet`, `ruff check`, a quick lint). Automated tests were removed on 2026-10-08 (last commit with tests: tag `pre-strip-tests`). Code the bulk of the change, then commit and push once it's done; the user runs full verification separately and will report any errors back.
 - **Never act on assumptions.** When a decision needs the user's input (ambiguous scope, missing config/credentials, a choice between approaches), stop and ask in a clarifying question that presents your top recommendation(s) as selectable options — don't guess and implement.
 
 ## Tech stack
 
 - pnpm workspace monorepo (Node 25+, TypeScript) — `apps/` + `packages/`
 - Go: `apps/gateway` (dependency-light HTTP gateway), `packages/sdk-go`, `deploy/operator`
-- Python: `apps/worker` (JSONL runner + provider adapters), `tests/chaos`
+- Python: `apps/worker` (JSONL runner + provider adapters)
 - Rust: `packages/sidecar-rust`; `apps/mobile` is Tauri 2 + Svelte (read-only gateway monitoring)
 - Docs: Astro Starlight (`apps/docs`); dashboard: `apps/dashboard` (NAJM/Hallmark theme, strict CSP)
 
 ## Commands
 
 - Install: `pnpm install`
-- Full local gate: `pnpm test:v0:local` — add Go gateway tests with `pnpm test:v0`
-- Aggregate check: `pnpm check` (blueprint coverage + contracts + SDK freshness + key suites)
-- Per-area suites: `pnpm test:schema | test:edge-store | test:security | test:worker | test:sdk | test:conformance | test:observability | test:cli | test:dashboard | test:deployment | test:docs | test:gateway`
-- Contract lint: `pnpm lint:openapi`, `pnpm lint:schemas`, `pnpm lint:proto`
-- Gateway (Go) via Makefile: `make gateway-build | gateway-run | gateway-test | gateway-vet`
+- Aggregate check: `pnpm check` (= `pnpm lint` + `pnpm typecheck`)
+- Typecheck: `pnpm typecheck` (7 TypeScript packages, dashboard and mobile svelte-check)
+- Lint and contract gates: `pnpm lint` (`lint:openapi`, `lint:schemas`, `lint:proto`, `check:contracts`, `check:blueprint`, `check:sdk-freshness`)
+- Go (vet + build): `make gateway-vet` / `make lint`; `cd apps/gateway && go build ./...`
+- Builds: `pnpm dashboard:build`, `pnpm docs:build`
+- Worker lint: `ruff check apps/worker adapters`
 - Dev servers: `pnpm docs:dev`, `pnpm dashboard:dev`
-- Go tests resolve `go` from PATH, else the portable toolchain under `%LOCALAPPDATA%\CodexToolchains` (`tools/run-go-tests.mjs`)
-- Postgres gateway-store / webhook-outbox integration tests are optional and skipped by default (`pnpm test:gateway:postgres`)
 - Windows quirk: README invokes pnpm as `cmd /c pnpm ...` — use that form if plain `pnpm` misbehaves in your shell
 
 ## Architecture orientation
@@ -34,7 +33,7 @@ Self-hostable platform that lets applications drive web-based AI and automation 
 - `apps/worker` (Python): v0 worker; JSONL runner drives provider adapters. A warm-browser daemon + stdin/stdout protocol exists behind flags (inert by default — see conventions).
 - `adapters/`: safe-mode manifests + stubs per provider (chatgpt_web, gemini_web, deepseek_web, mistral_lechat, duckai_web, generic_chat, generic_form, mock) with `registry.json` as the index.
 - `packages/`: contracts first — `openapi/`, `shared-schemas/`, `proto/` define the API; `sdk-typescript/` + `sdk-go/` are validated against shared `conformance/` fixtures; plus `security/` (auth, RBAC/ABAC, audit, webhook signing contracts), `edge-store/` (SQLite/localfs store + queue contracts; `migrations/` at repo root), `observability/`, `cli/`, `sidecar/` + `sidecar-rust/`, `adapter-registry/`, `plugins/`.
-- `tools/`: the `check-*.mjs` / `run-*.mjs` scripts behind the pnpm `test:*` and `check:*` commands.
+- `tools/`: the kept contract checks (`check-blueprint-coverage.mjs`, `check-contracts.mjs`, `check-proto-contracts.mjs`), SDK generation (`make-sdks/`), and runtime/ops helpers (`live-browser/`, `local-launcher/`, `antigravity-quota/`, `synthetic-provider/server.mjs`, `run-small-smoke-probe.mjs`). Test runners and the other check scripts were removed.
 - `deploy/` + `docker-compose.small.yml`: small self-host profile; `deploy/operator` is Go.
 
 ## Conventions & rules

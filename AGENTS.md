@@ -5,7 +5,7 @@
 
 ## Agent operating rules (read first — every session, every coding agent)
 
-- **Skip long builds/CI during routine coding.** Don't run full suites (`pnpm test:v0:local`, `pnpm check`, full gateway builds, etc.) as part of normal implementation work — do small, targeted checks only (a single test, `go vet`, a quick lint). Code the bulk of the change, then commit and push once it's done; the user runs full verification separately and will report any errors back.
+- **Skip long builds/CI during routine coding.** Don't run full sweeps (`pnpm check`, full gateway builds, etc.) as part of normal implementation work — do small, targeted checks only (a single `tsc`, `go vet`, `ruff check`, a quick lint). Automated tests were removed on 2026-10-08 (last commit with tests: tag `pre-strip-tests`). Code the bulk of the change, then commit and push once it's done; the user runs full verification separately and will report any errors back.
 - **Never act on assumptions.** When a decision needs the user's input (ambiguous scope, missing config/credentials, a choice between approaches), stop and ask in a clarifying question that presents your top recommendation(s) as selectable options — don't guess and implement.
 
 ## Automatic UI/UX Design Skill
@@ -41,7 +41,7 @@ Skill path:
 
 The skill is agent-agnostic (plain markdown — point any coding agent at that path). Default mode: treat "check/fix/update provider selectors or models" as `providers verify all` first, then `providers rebase <id>` per provider with findings. Hard rules inside the skill are binding: human-only logins, menu-only interaction during verification, no guessed selectors, targeted tests only.
 
-Tooling (no dependencies): `tools/provider-refresh/provider-probe.mjs` (live DOM capture + diff), `tools/provider-refresh/verify-settings.mjs` (live canary of the click paths), `tools/provider-refresh/check-provider-selectors.mjs` (static cross-file gate, wired as `pnpm check:provider-selectors`).
+Tooling (no dependencies): `tools/provider-refresh/provider-probe.mjs` (live DOM capture + diff), `tools/provider-refresh/verify-settings.mjs` (live canary of the click paths). The static selector gate (`check-provider-selectors.mjs`, formerly `pnpm check:provider-selectors`) was removed on 2026-10-08 with the test suites.
 
 ## Continuation Ledger
 

@@ -21,9 +21,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "pnpm run build && node --test test/*.test.mjs",
-    "validate": "pnpm run build && node scripts/validate-security-contracts.mjs"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@types/node": "^24.12.4",

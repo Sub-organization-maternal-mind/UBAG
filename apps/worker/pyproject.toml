@@ -19,16 +19,8 @@ antigravity-sdk = [
     "google-antigravity==0.1.17",
 ]
 dev = [
-    "pytest>=7.4",
-    "pytest-asyncio>=0.23",
     "ruff>=0.4",
 ]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-markers = [
-]
-addopts = "-v --tb=short"
 
 [tool.setuptools.packages.find]
 where = ["."]

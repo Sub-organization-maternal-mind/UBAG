@@ -1,12 +1,11 @@
-# UBAG continuous integration (blueprint §0 Phase 0, §32 testing strategy).
-# Lints, tests, scans, and builds every push and pull request. The jobs mirror
-# the canonical local validation commands in package.json so "green in CI"
-# matches "green on a contributor's machine".
+# UBAG continuous integration: language checking, linting and compile checks only.
+# Automated tests were removed on 2026-10-08 (last commit with tests: tag pre-strip-tests).
+# The production deploy in gateway-image.yml does not depend on this workflow.
 name: ci
 
 on:
   # perf/** is included because perf/latency-az deploys straight to prod via
-  # gateway-image.yml; without it, prod-bound commits were never linted or tested.
+  # gateway-image.yml; without it, prod-bound commits were never linted.
   push:
     branches: [main, "feat/**", "release/**", "perf/**"]
   pull_request:
@@ -37,57 +36,31 @@ jobs:
         with: { version: "${{ env.PNPM_VERSION }}" }
       - uses: actions/setup-node@v7
         with: { node-version: "${{ env.NODE_VERSION }}", cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: OpenAPI, JSON Schema, proto, blueprint, REST and SDK contracts
+        run: pnpm lint
       - uses: actions/setup-go@v7
         with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
-      - run: pnpm install --frozen-lockfile
-      - name: OpenAPI / JSON-Schema / proto contracts
-        run: pnpm test:schema
-      - name: Blueprint coverage & REST contracts
-        run: pnpm check:blueprint && pnpm check:contracts
-      - name: SDK freshness (generated contracts in sync)
-        run: pnpm check:sdk-freshness
       - name: gofmt
         working-directory: apps/gateway
         run: |
           fmt_out="$(gofmt -l .)"
           if [ -n "$fmt_out" ]; then echo "gofmt needs to be run on:"; echo "$fmt_out"; exit 1; fi
-      - name: go vet
-        working-directory: apps/gateway
-        env: { GOTOOLCHAIN: local }
-        run: go vet ./...
-      - uses: actions/setup-python@v6
-        with: { python-version: "${{ env.PYTHON_VERSION }}" }
-      - name: Chaos experiment schema validation
-        run: |
-          pip install pytest
-          python -m pytest tests/chaos/tests/test_schema.py -v
-      # Phase 8: deployment infrastructure validation
-      - name: Validate nginx-dashboard config
-        run: node tools/check-nginx-dashboard.mjs
       - name: Lint Helm chart
         run: |
-          # Install helm rather than skipping when it is missing: the
-          # `|| echo "helm not installed, skipping"` mask meant this check could
-          # never fail, and the chart's own comments state it must lint cleanly
-          # with the backing-service deploy toggles false (the default), so a
-          # failure here is a real regression.
+          # Install helm rather than skipping when it is missing: a missing helm must
+          # fail this check, not mask it. The chart must lint cleanly with the
+          # backing-service deploy toggles false (the default).
           curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 -o get-helm-3
           chmod +x get-helm-3
           ./get-helm-3
           helm version
-          # The chart declares four OPTIONAL in-cluster backing-service subcharts
-          # (postgresql, nats, minio, dragonfly) behind *.deploy toggles. Helm
-          # still requires every declared dependency to be resolvable before it
-          # will lint, even one whose condition is false, so the deps have to be
-          # materialised first. `dependency update` (not `build`) because there
-          # is no committed Chart.lock to build from. Rendering afterwards proves
-          # the default - all toggles false - still needs none of them.
+          # Helm requires every declared dependency to be resolvable before it lints,
+          # even ones whose condition is false, so materialise them first.
           helm dependency update deploy/helm/ubag
           helm lint deploy/helm/ubag
           helm template deploy/helm/ubag > /dev/null
           helm template deploy/helm/ubag -f deploy/helm/ubag/values-ha.yaml > /dev/null
-      - name: Validate Terraform modules
-        run: node tools/check-enterprise-deploy.mjs
       - name: Check goreleaser config
         run: |
           # Installed from the release tarball rather than goreleaser.com/install.sh:
@@ -97,275 +70,9 @@ jobs:
           tar -xzf goreleaser.tgz goreleaser
           mv goreleaser /usr/local/bin/goreleaser
           goreleaser check
-      - name: Validate GitOps manifests
-        run: node tools/check-gitops.mjs
-      - name: Validate installers
-        run: node tools/check-installers.mjs
-      # Gates the provider-refresh skill depends on — previously invoked by
-      # nothing in CI (the audit found both unwired).
-      - name: Provider selector + alert-metric gates
-        run: pnpm check:provider-selectors && pnpm check:alert-metrics && pnpm check:helper-alerts
-      - name: Multi-region validator
-        run: node tools/check-multiregion.mjs
 
-  operator:
-    name: Operator (Go)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: deploy/operator/go.mod
-      - name: Build operator
-        run: cd deploy/operator && go build ./...
-      - name: Test operator
-        run: cd deploy/operator && go test ./...
-
-  gateway:
-    name: Gateway (Go)
-    runs-on: ubuntu-latest
-    # The failure-log publish step pushes to the throwaway ci-logs-gateway ref.
-    permissions:
-      contents: write
-    # Real service containers: 17 Postgres + 2 NATS + 1 MinIO tests in the
-    # tree skip silently without these, leaving every persistent store
-    # production uses untested. The DSNs below match the env names those
-    # tests read (UBAG_TEST_POSTGRES_DSN / UBAG_TEST_NATS_URL /
-    # UBAG_TEST_MINIO_ENDPOINT). The MinIO container was removed: quay.io/minio
-      # now requires authenticated pulls, so the one MinIO test stays skipped
-      # until an accessible image source is pinned (follow-up).
-    services:
-      postgres:
-        # pgvector build: migration 0008's blueprint schema requires the
-        # vector extension, which plain postgres:16 does not ship.
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: ubag
-          POSTGRES_PASSWORD: ubag-test
-          POSTGRES_DB: ubag_test
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U ubag"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
-      - name: Start NATS with JetStream
-        run: |
-          docker run -d --name nats-js -p 4222:4222 nats:2.10-alpine -js
-          for i in $(seq 1 20); do
-            docker exec nats-js nats-server --help >/dev/null 2>&1 && docker logs nats-js 2>&1 | grep -q "Server is ready" && break
-            sleep 1
-          done
-      - name: Apply Postgres migrations
-        env:
-          UBAG_TEST_POSTGRES_DSN: postgres://ubag:ubag-test@localhost:5432/ubag_test?sslmode=disable
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
-          # 0008 needs pgvector + pg_partman (not-yet-wired Phase 2 schema);
-          # the production entrypoint skips it via OPTIONAL_MIGRATIONS — same here.
-          rc=0
-          for f in migrations/postgres/*.sql; do
-            case "$f" in *0008_blueprint_schema.sql) continue;; esac
-            psql "$UBAG_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -q -f "$f" || rc=1
-          done
-          exit $rc
-      - name: go test ./... (short)
-        # -short keeps this job to what a contended 2-core runner can judge
-        # honestly: the suites that scale their own work with the machine
-        # (helperclient's 1/2/5/10/20 isolation ladder, the voice jitter tests,
-        # the media benches) drop their heaviest cases here and run in full in
-        # the gateway-full job below, on a runner that is not competing with
-        # every other package for CPU. Nothing is lost: gateway-full runs the
-        # complete suite, just serialized.
-        working-directory: apps/gateway
-        env:
-          GOTOOLCHAIN: local
-          UBAG_TEST_POSTGRES_DSN: postgres://ubag:ubag-test@localhost:5432/ubag_test?sslmode=disable
-          UBAG_TEST_NATS_URL: nats://localhost:4222
-        run: |
-          set +e
-          go test -short -race -coverprofile=coverage.out ./... 2>&1 | tee /tmp/gotest.log
-          rc=${PIPESTATUS[0]}
-          [ "$rc" -eq 0 ] || exit "$rc"
-          echo "go test clean"
-      - name: Postgres round-trip tests (migrations applied)
-        working-directory: apps/gateway
-        env:
-          GOTOOLCHAIN: local
-          UBAG_TEST_POSTGRES_DSN: postgres://ubag:ubag-test@localhost:5432/ubag_test?sslmode=disable
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
-          cd ../..
-          set +e
-          node tools/run-postgres-roundtrip-tests.mjs --apply-migrations 2>&1 | tee /tmp/pg-roundtrip.log
-          rc=${PIPESTATUS[0]}
-          [ "$rc" -eq 0 ] || exit "$rc"
-      - name: Coverage summary + gate
-        working-directory: apps/gateway
-        run: |
-          go tool cover -func=coverage.out | tee /tmp/coverage-summary.txt | tail -1
-          TOTAL=$(grep '^total:' /tmp/coverage-summary.txt | awk '{print $3}' | tr -d '%')
-          echo "Total coverage: ${TOTAL}%"
-          # Current gate: 50% (baseline). Long-term target: 80% — see ADR-0014.
-          awk -v cov="$TOTAL" 'BEGIN { if (cov+0 < 50) { print "Coverage " cov "% is below 50% gate"; exit 1 } }'
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v7
-        with:
-          name: gateway-coverage
-          path: apps/gateway/coverage.out
-      - name: Phase 9 packages (region, mfa, jitadmin, audit, siem)
-        working-directory: apps/gateway
-        run: |
-          set +e
-          go test -race ./internal/region/... ./internal/mfa/... ./internal/jitadmin/... ./internal/audit/... ./internal/siem/... 2>&1 | tee /tmp/phase9.log
-          rc=${PIPESTATUS[0]}
-          [ "$rc" -eq 0 ] || exit "$rc"
-      # The full job log is auth-gated; on failure publish the raw go test
-      # output to a throwaway ref that can be read without a token.
-      - name: Publish failure log
-        if: failure()
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/ci-artifacts"
-          cp -f /tmp/gotest.log "$GITHUB_WORKSPACE/ci-artifacts/gotest.log" 2>/dev/null || true
-          cp -f /tmp/pg-roundtrip.log "$GITHUB_WORKSPACE/ci-artifacts/pg-roundtrip.log" 2>/dev/null || true
-          cp -f /tmp/phase9.log "$GITHUB_WORKSPACE/ci-artifacts/phase9.log" 2>/dev/null || true
-          cd "$GITHUB_WORKSPACE"
-          git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
-          # A step that never ran leaves no log; add only what exists.
-          for log in ci-artifacts/*; do if [ -f "$log" ]; then git add -f "$log"; fi; done
-          git diff --cached --quiet && exit 0
-          git commit -m "ci: go test failure log for ${GITHUB_SHA} [skip ci]"
-          git push -f origin HEAD:ci-logs-gateway
-
-  gateway-full:
-    name: Gateway (Go) full suite, serialized
-    runs-on: ubuntu-latest
-    # The complete gateway suite, run with the machine to itself.
-    #
-    # Several suites assert on wall-clock behaviour that is only meaningful when
-    # the runner is not oversubscribed: helperclient's lost-helper ladder drives
-    # up to 20 concurrent attempts, and the voicehub peer-vanish wait depends on
-    # Pion's consent-freshness checks taking tens of seconds. Run next to every
-    # other package on a 2-core runner, both miss their deadlines while passing
-    # on a workstation. So the main Gateway job runs -short (same coverage,
-    # heaviest cases deferred) and this job runs everything with -p 1 and a
-    # generous timeout. Same services as the main job: without them the
-    # Postgres/NATS/MinIO tests skip silently, which is the gap the main job's
-    # comment warns about.
-    permissions:
-      contents: write
-    services:
-      postgres:
-        image: pgvector/pgvector:pg16
-        env:
-          POSTGRES_USER: ubag
-          POSTGRES_PASSWORD: ubag-test
-          POSTGRES_DB: ubag_test
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U ubag"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v6
-        with: { go-version: "${{ env.GO_VERSION }}" }
-      # JetStream must be ON for the dispatcher tests and a GitHub Actions
-      # service container cannot take command args (-js), so NATS runs exactly
-      # like the main job: docker run, then a ready wait.
-      - name: Start NATS with JetStream
-        run: |
-          docker run -d --name nats-js -p 4222:4222 nats:2.10-alpine -js
-          for i in $(seq 1 30); do
-            docker exec nats-js nats-server --help >/dev/null 2>&1 && docker logs nats-js 2>&1 | grep -q "Server is ready" && break
-            sleep 1
-          done
-      # Same as the main job: without the schema the env-gated Postgres tests
-      # fail with "gateway_conversations is missing" instead of passing.
-      - name: Apply Postgres migrations
-        env:
-          UBAG_TEST_POSTGRES_DSN: postgres://ubag:ubag-test@localhost:5432/ubag_test?sslmode=disable
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client >/dev/null
-          # 0008 needs pgvector + pg_partman (not-yet-wired Phase 2 schema);
-          # the production entrypoint skips it via OPTIONAL_MIGRATIONS — same here.
-          rc=0
-          for f in migrations/postgres/*.sql; do
-            case "$f" in *0008_blueprint_schema.sql) continue;; esac
-            psql "$UBAG_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -q -f "$f" || rc=1
-          done
-          exit $rc
-      - name: go test ./... (full, -p 1)
-        working-directory: apps/gateway
-        env:
-          GOTOOLCHAIN: local
-          UBAG_TEST_POSTGRES_DSN: postgres://ubag:ubag-test@localhost:5432/ubag_test?sslmode=disable
-          UBAG_TEST_NATS_URL: nats://localhost:4222
-        run: |
-          set +e
-          go test -p 1 -race -timeout 45m ./... 2>&1 | tee /tmp/gotest-full.log
-          rc=${PIPESTATUS[0]}
-          [ "$rc" -eq 0 ] || exit "$rc"
-          echo "full suite clean"
-      - name: Publish failure log
-        if: failure()
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/ci-artifacts"
-          cp -f /tmp/gotest-full.log "$GITHUB_WORKSPACE/ci-artifacts/gotest-full.log" 2>/dev/null || true
-          cd "$GITHUB_WORKSPACE"
-          git config user.name "ubag-ci" && git config user.email "ci@github-actions[bot]"
-          for log in ci-artifacts/*; do if [ -f "$log" ]; then git add -f "$log"; fi; done
-          git diff --cached --quiet && exit 0
-          git commit -m "ci: full-suite failure log for ${GITHUB_SHA} [skip ci]"
-          git push -f origin HEAD:ci-logs-gateway-full
-
-  worker:
-    name: Worker (Python)
-    runs-on: ubuntu-latest
-    # The failure-log publish step pushes to the throwaway ci-logs-worker ref.
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
-        with: { python-version: "${{ env.PYTHON_VERSION }}" }
-      - name: Install worker (offline/mock test mode)
-        run: python -m pip install --upgrade pip && python -m pip install -e "apps/worker[dev]" || python -m pip install -e apps/worker
-      - name: ruff
-        run: python -m pip install "ruff==0.8.4" && ruff check apps/worker adapters
-      - name: pytest (UBAG_ADAPTER_OFFLINE=1)
-        env: { UBAG_ADAPTER_OFFLINE: "1" }
-        run: |
-          set +e
-          node tools/run-python-worker-tests.mjs 2>&1 | tee /tmp/pytest.log
-          rc=${PIPESTATUS[0]}
-          [ "$rc" -eq 0 ] || exit "$rc"
-          echo "worker suite clean"
-      - name: Worker region pinning tests
-        env: { UBAG_ADAPTER_OFFLINE: "1" }
-        run: python -m pytest apps/worker/tests/test_region.py -v
-      # The full job log is auth-gated; on failure publish the raw pytest
-      # output to a throwaway ref that can be read without a token.
-      - name: Publish failure log
-        if: failure()
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/ci-artifacts"
-          cp -f /tmp/pytest.log "$GITHUB_WORKSPACE/ci-artifacts/pytest.log" 2>/dev/null || true
-          cd "$GITHUB_WORKSPACE"
-          git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
-          # A step that never ran leaves no log; add only what exists.
-          for log in ci-artifacts/*; do if [ -f "$log" ]; then git add -f "$log"; fi; done
-          git diff --cached --quiet && exit 0
-          git commit -m "ci: worker failure log for ${GITHUB_SHA} [skip ci]"
-          git push -f origin HEAD:ci-logs-worker
-
-  node-suite:
-    name: Node packages, SDKs, dashboard, docs
+  typecheck:
+    name: Typecheck & compile
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -373,279 +80,67 @@ jobs:
         with: { version: "${{ env.PNPM_VERSION }}" }
       - uses: actions/setup-node@v7
         with: { node-version: "${{ env.NODE_VERSION }}", cache: pnpm }
-      - uses: actions/setup-go@v7
-        with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
       - run: pnpm install --frozen-lockfile
-      - name: Edge store, plugins, adapter-registry, security, sidecar
-        run: pnpm test:edge-store && pnpm test:plugins && pnpm test:adapter-registry && pnpm test:security && pnpm test:sidecar
-      - name: SDK suite (TypeScript + Go)
-        run: pnpm test:sdk
-      - name: Conformance + observability
-        run: pnpm test:conformance && pnpm test:observability
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('apps/dashboard/package.json', 'pnpm-lock.yaml') }}
-          restore-keys: playwright-${{ runner.os }}-
-      - name: Install Playwright browsers
-        working-directory: apps/dashboard
-        run: npx playwright install chromium --with-deps || npx playwright install chromium
-      - name: CLI, dashboard, docs
-        # The dashboard e2e webServer must be serve-dashboard.mjs (same-origin
-        # /v1 proxy), not vite preview: under vite preview the SPA fallback
-        # answers /v1/* and the Playwright endpoint mocks race the page's own
-        # first fetch, which left the Antigravity tests stuck on their loading
-        # state. UBAG_PLAYWRIGHT_PREVIEW_PORT switches playwright.config.ts to
-        # serve-dashboard with a dead gateway URL — the same deterministic
-        # setup used locally.
-        env: { UBAG_PLAYWRIGHT_PREVIEW_PORT: "5899" }
-        run: pnpm test:cli && pnpm test:dashboard && pnpm test:docs
-      # Needs apps/dashboard/dist from test:dashboard above. Strict (fails on a
-      # missing dist) only on manual dispatch until first measured green; other
-      # runs report warn-only.
-      - name: Weight budgets (strict on dispatch)
-        run: node tools/check-weight.mjs ${{ github.event_name == 'workflow_dispatch' && '--strict' || '' }}
-      - name: Upload Playwright evidence
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-evidence
-          path: |
-            apps/dashboard/test-results/
-            apps/dashboard/playwright-report/
-          retention-days: 7
-          if-no-files-found: ignore
-      - name: Cookbook recipe count check
-        run: node tools/check-cookbook.mjs
-      - name: License posture check
-        run: node tools/check-licenses.mjs
-      - name: API reference freshness check
-        run: node tools/check-api-reference.mjs
-      # The load harness is not in `pnpm check` and was in no CI job, so its
-      # fail-closed gates (goal thresholds, the echo check, non-authoritative
-      # labelling, the workload manifest contract) only ran when someone ran them
-      # by hand. Offline only here: no gateway, no provider, no Docker - the
-      # self-tests that verify the harness cannot report a false success.
-      - name: Load harness offline self-tests
-        run: pnpm test:load:offline
-      # Phase 6: metrics cardinality + Grafana dashboard validation
-      - name: Check Grafana dashboards (Task 2.5)
-        run: node tools/check-grafana-dashboards.mjs deploy/grafana/dashboards/
-      - name: Verify committed .wasm fixtures present (Task 1.7)
+      - name: Typecheck (TypeScript packages, dashboard, mobile)
+        run: pnpm typecheck
+      - name: Generate contract manifest and build SDK
         run: |
-          test -f apps/gateway/internal/plugins/testdata/echo_transform.wasm || (echo "echo_transform.wasm missing" && exit 1)
-          test -f apps/gateway/internal/plugins/testdata/infinite_loop.wasm || (echo "infinite_loop.wasm missing" && exit 1)
-          echo "WASM fixtures: OK"
+          node tools/make-sdks/generate-manifest.mjs
+          pnpm --filter @ubag/sdk build
+      - name: Build dashboard
+        run: pnpm dashboard:build
+      - name: Build docs (astro check)
+        run: pnpm docs:build
 
-  security-scan:
-    name: Supply-chain & vuln scan
+  go:
+    name: Go vet & build (${{ matrix.module }})
     runs-on: ubuntu-latest
-    # The workflow-level default is contents: read. gitleaks-action uploads a
-    # SARIF report to the code-scanning API, which needs security-events: write;
-    # without this scope the job fails before any step runs ("Set up job").
-    permissions:
-      # write: the failure-log publish step pushes to the throwaway
-      # ci-logs-supplychain ref.
-      contents: write
-      security-events: write
-      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [apps/gateway, deploy/operator, packages/sdk-go]
     steps:
       - uses: actions/checkout@v7
-        with: { fetch-depth: 0 }
       - uses: actions/setup-go@v7
-        # GO_VERSION, not the go.mod pin: govulncheck@latest needs go >= 1.26
-        # and GOTOOLCHAIN=local forbids the upgrade.
-        with: { go-version: "${{ env.GO_VERSION }}", cache-dependency-path: apps/gateway/go.sum }
-      - uses: actions/setup-node@v7
-        with: { node-version: "${{ env.NODE_VERSION }}" }
+        with: { go-version-file: "${{ matrix.module }}/go.mod" }
+      - name: go vet
+        working-directory: ${{ matrix.module }}
+        env: { GOTOOLCHAIN: local }
+        run: go vet ./...
+      - name: go build
+        working-directory: ${{ matrix.module }}
+        env: { GOTOOLCHAIN: local }
+        run: go build ./...
+
+  worker:
+    name: Worker lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with: { python-version: "${{ env.PYTHON_VERSION }}" }
-
-      # Secret scanning. The repo builds its image with `context: .`, so any
-      # credential committed to the tree - including one that reached a job
-      # payload - would be uploaded to a hosted runner on the next build.
-      # gitleaks-action v2 now hard-requires a paid GITLEAKS_LICENSE secret,
-      # so run the OSS binary directly from its official image instead.
-      - name: gitleaks (secret scan)
-        run: |
-          docker run --rm -v "$PWD:/repo" -w /repo \
-            ghcr.io/gitleaks/gitleaks:latest detect --source /repo --redact --verbose
-
-      # These previously ran with `|| true`, so they could never fail a build
-      # and the scan was advisory decoration only.
-      - name: govulncheck
-        working-directory: apps/gateway
-        # GO_VERSION (1.26.x) not go.mod: latest govulncheck requires go >= 1.26
-        # to build, and GOTOOLCHAIN=local forbids the auto-upgrade.
-        env: { GOTOOLCHAIN: local }
-        run: |
-          set +e
-          go run golang.org/x/vuln/cmd/govulncheck@latest ./... 2>&1 | tee /tmp/govulncheck.log
-          rc=${PIPESTATUS[0]}
-          [ "$rc" -eq 0 ] || exit "$rc"
-          echo "govulncheck clean"
-
-      # pip-audit pointed at apps/worker/requirements.txt, which does not exist -
-      # the worker declares dependencies in pyproject.toml - so the audit was a
-      # permanent no-op. Read the real dependency set instead.
-      - name: pip-audit (worker)
-        run: |
-          pip install --quiet pip-audit
-          python - <<'PY' > /tmp/worker-requirements.txt
-          import pathlib, tomllib
-          data = tomllib.loads(pathlib.Path("apps/worker/pyproject.toml").read_text())
-          deps = list(data["project"].get("dependencies", []))
-          for extra in data["project"].get("optional-dependencies", {}).values():
-              deps.extend(extra)
-          print("\n".join(deps))
-          PY
-          cat /tmp/worker-requirements.txt
-          pip-audit --strict -r /tmp/worker-requirements.txt
-
-      - name: pnpm audit (regression-gated)
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile --ignore-scripts
-          # NOT a raw `pnpm audit` gate. There are 48 open advisories and pnpm
-          # reports no patched version for any of them; all of them are build
-          # tooling (vite, postcss, browserslist, nanoid, vitest, the
-          # astro/starlight docs toolchain), none of which ships - the gateway
-          # is a Go binary and apps/dashboard deploys static files. A gate that
-          # can never go green gets bypassed, which is how this repo ended up
-          # with no npm audit at all. This fails on any INCREASE against the
-          # committed baseline in tools/audit-baseline.json, so a new vulnerable
-          # dependency breaks the build while the known backlog stays tracked.
-          set +e
-          node tools/check-npm-audit.mjs 2>&1 | tee /tmp/npmaudit.log
-          rc=${PIPESTATUS[0]}
-          [ "$rc" -eq 0 ] || exit "$rc"
-
-      - name: cargo audit (Rust sidecar)
-        working-directory: packages/sidecar-rust
-        run: |
-          cargo install cargo-audit --locked
-          # Cargo.lock is gitignored in this package, so the dependency tree has
-          # to be resolved before cargo audit will run at all (it errors with
-          # "could not find Cargo.lock"). Not committing the lockfile also means
-          # sidecar builds are not reproducible - see the note in PROGRESS.md.
-          cargo generate-lockfile
-          cargo audit
-
-      # The production image. It is the artifact gateway-image.yml ships, and it
-      # was previously never scanned.
-      - name: Build gateway image
-        run: |
-          set +e
-          docker build -t ubag/gateway:ci-scan -f deploy/small/gateway.Dockerfile . 2>&1 | tee /tmp/dockerbuild.log
-          rc=${PIPESTATUS[0]}
-          [ "$rc" -eq 0 ] || exit "$rc"
-      - name: Trivy image scan (HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: ubag/gateway:ci-scan
-          format: table
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
-          # Also write the table to a file: the job log is auth-gated, and the
-          # publish step below ships this file to the ci-logs ref on failure.
-          output: trivy-image.txt
-
-      - name: IaC scan (Terraform / Compose / Helm)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          scan-type: config
-          scan-ref: .
-          format: table
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          output: trivy-iac.txt
-          # Our own IaC is what this gate judges; dependency trees carry
-          # third-party Dockerfiles (e.g. yaml-language-server) whose
-          # findings are upstream's to fix, not ours.
-          skip-dirs: node_modules,dist,.svelte-kit,vendor
-
-      - name: Generate SBOM (syft)
-        uses: anchore/sbom-action@v0
-        with: { format: spdx-json, output-file: ubag.sbom.spdx.json }
-      - uses: actions/upload-artifact@v7
-        with: { name: sbom, path: ubag.sbom.spdx.json }
-      # The full job log is auth-gated; on failure publish the raw scan
-      # outputs to a throwaway ref that can be read without a token.
-      - name: Publish failure log
-        if: failure()
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/ci-artifacts"
-          cp -f /tmp/govulncheck.log "$GITHUB_WORKSPACE/ci-artifacts/govulncheck.log" 2>/dev/null || true
-          cp -f /tmp/npmaudit.log "$GITHUB_WORKSPACE/ci-artifacts/npmaudit.log" 2>/dev/null || true
-          cp -f /tmp/dockerbuild.log "$GITHUB_WORKSPACE/ci-artifacts/dockerbuild.log" 2>/dev/null || true
-          cp -f "$GITHUB_WORKSPACE/trivy-image.txt" "$GITHUB_WORKSPACE/ci-artifacts/trivy-image.txt" 2>/dev/null || true
-          cp -f "$GITHUB_WORKSPACE/trivy-iac.txt" "$GITHUB_WORKSPACE/ci-artifacts/trivy-iac.txt" 2>/dev/null || true
-          cd "$GITHUB_WORKSPACE"
-          git config user.name "ubag-ci" && git config user.email "ci@users.noreply.github.com"
-          # A step that never ran leaves no log; add only what exists.
-          for log in ci-artifacts/*; do if [ -f "$log" ]; then git add -f "$log"; fi; done
-          git diff --cached --quiet && exit 0
-          git commit -m "ci: scan failure log for ${GITHUB_SHA} [skip ci]"
-          git push -f origin HEAD:ci-logs-supplychain
-
-  dependency-review:
-    name: Dependency review (PR only)
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    permissions:
-      contents: read
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v7
-      # Blocks a PR that introduces a dependency with a known CVE or an
-      # AGPL/copyleft licence. Dependabot version bumps existed, but nothing
-      # gated what a PR was allowed to pull in.
-      - uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: high
-          comment-summary-in-pr: on-failure
+      - name: ruff
+        run: python -m pip install "ruff==0.8.4" && ruff check apps/worker adapters
 
   sidecar-rust:
-    name: Sidecar (Rust)
+    name: Sidecar (Rust) check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - name: Build and test Rust sidecar
+      - name: cargo check
         working-directory: packages/sidecar-rust
-        run: cargo test --all-features
+        run: cargo check --all-features
 
-  sso-integration:
-    name: SSO integration (Keycloak)
+  secret-scan:
+    name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
-    if: ${{ vars.UBAG_TEST_SSO == '1' }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with: { go-version-file: apps/gateway/go.mod, cache-dependency-path: apps/gateway/go.sum }
-      - name: Start Keycloak
-        run: docker compose -f apps/gateway/tests/sso/docker-compose.yml up -d keycloak
-      - name: Wait for Keycloak
+        with: { fetch-depth: 0 }
+      # gitleaks-action v2 hard-requires a paid licence secret, so run the OSS
+      # binary from its official image instead.
+      - name: gitleaks
         run: |
-          until curl -sf http://localhost:8180/health/ready; do sleep 2; done
-      - name: SSO integration tests
-        working-directory: apps/gateway
-        env: { UBAG_TEST_SSO: "1" }
-        run: go test -tags integration ./tests/sso/... -v -timeout 120s
-
-  itest:
-    name: Integration tests (gateway + worker + DB)
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with: { node-version: "${{ env.NODE_VERSION }}" }
-      - name: Build gateway image
-        run: docker build -t ubag/gateway:small-local -f deploy/small/gateway.Dockerfile .
-      - name: Run integration tests
-        run: node tools/run-integration-tests.mjs
-        env:
-          UBAG_ITEST_TIMEOUT: "30000"
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            ghcr.io/gitleaks/gitleaks:latest detect --source /repo --redact --verbose

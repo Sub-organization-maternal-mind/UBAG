@@ -1,5 +1,22 @@
 # UBAG Progress Ledger
 
+**2026-10-08: automated tests and per-slice shards removed (live ledger entry).**
+All test suites, test runners, test-only fixtures and test CI gates were deleted,
+along with `docs/perf-fleet/slices/` (the per-slice progress shards) and
+`docs/perf-fleet/ctx/slices.json`. The consolidated perf-fleet sections below
+still record that program. The last commit with tests is tagged
+`pre-strip-tests` (`d49a8bc`).
+
+Kept gates: `pnpm typecheck` (7 TypeScript packages, dashboard and mobile
+svelte-check); `pnpm lint` (OpenAPI, JSON Schema, proto, blueprint coverage, REST
+contracts, SDK freshness); gofmt, `go vet` and `go build` for the gateway,
+operator and Go SDK; `ruff check` for the worker and adapters; Rust `cargo check`;
+dashboard and docs builds; Helm lint and goreleaser check; gitleaks; DCO.
+
+Deploy: `gateway-image.yml` no longer has a test job. Its deploy job needs
+`build` and `dashboard` only, so a push to `main` builds, pushes and deploys
+without a test step. Live issues are reported and fixed by hand.
+
 Last updated: 2026-10-07 (**Phase 1's "manager does not exist" blocker is
 resolved in code: the OET shared fleet manager now has a UBAG allocation
 endpoint, and UBAG can authenticate to it and bind helper profiles. The

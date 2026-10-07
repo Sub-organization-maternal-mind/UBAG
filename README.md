@@ -28,36 +28,13 @@ This repository has completed the docs-first Milestone 0 baseline and the curren
 cmd /c pnpm install
 cmd /c pnpm docs:dev
 cmd /c pnpm docs:build
-cmd /c pnpm check:docs-responsive
-cmd /c pnpm test:schema
-cmd /c pnpm test:edge-store
-cmd /c pnpm test:security
-cmd /c pnpm test:worker
-cmd /c pnpm test:sdk
-cmd /c pnpm test:conformance
-cmd /c pnpm test:observability
-cmd /c pnpm test:cli
-cmd /c pnpm test:dashboard
-cmd /c pnpm test:deployment
-cmd /c pnpm test:docs
-cmd /c pnpm test:gateway
-cmd /c pnpm test:v0
+cmd /c pnpm dashboard:build
+cmd /c pnpm typecheck
+cmd /c pnpm lint
 cmd /c pnpm check
 ```
 
-`test:gateway` and Go SDK checks use `go` from `PATH` when available, otherwise the repo test runner uses the portable Go toolchain under `%LOCALAPPDATA%\CodexToolchains`.
-
-Postgres gateway-store and webhook outbox integration tests are optional and skipped by default.
-Use a disposable database because the tests apply
-`migrations/postgres/0001_gateway_stores.sql` and dependent migrations before
-exercising Postgres-backed job/event, idempotency, artifact metadata, and
-webhook outbox stores:
-
-```powershell
-$env:UBAG_TEST_POSTGRES_DSN="postgres://ubag:password@127.0.0.1:5432/ubag_test?sslmode=disable"
-cmd /c pnpm test:gateway
-Remove-Item Env:\UBAG_TEST_POSTGRES_DSN
-```
+Automated tests were removed on 2026-10-08. The last commit that still has them is tagged `pre-strip-tests`. `pnpm typecheck` and `pnpm lint` are the gates; production issues are fixed by hand.
 
 The edge gateway can be started with:
 

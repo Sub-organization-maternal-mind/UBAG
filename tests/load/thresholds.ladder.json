@@ -1,9 +1,0 @@
-{
-  "_description": "Ladder-only goals for tests/load/ladder.mjs, merged over the integrity zeros of thresholds.json and the plan goals of thresholds.goals.json (accept p95 <= 200 ms = max_steady_create_p95_ms, read p95 <= 100 ms = max_steady_read_p95_ms, memory headroom >= 20 %, zero OOM kills, voice relay p95 <= 100 ms). Under --require-goals every unmeasured goal FAILS.",
-  "_overload_note": "max_overload_rate_pct is a harness choice, not a plan number: a step that needed admission refusals (429/503) did not sustain N clients, so the default is 0. Raise it only to study graceful degradation.",
-  "_integrity_note": "duplicate committed results = duplicate result bodies + duplicate terminal events + one job id returned for two idempotency keys. False-successful truncation = a completed job whose result is a proper prefix of the expected echo, or (with --truncation-probes) a deadline-cut synthetic stream reported completed; it is only measured for the mock and synthetic_chat targets.",
-  "max_overload_rate_pct": 0,
-  "max_duplicate_committed_results": 0,
-  "max_false_successful_truncations": 0,
-  "max_attachment_violations": 0
-}

@@ -18,7 +18,7 @@ The DCO check in CI will reject any PR with unsigned commits.
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feat/my-feature`
 3. Make your changes following the code style
-4. Run the test suite: `make test-all`
+4. Run the gates: `make lint` and `pnpm typecheck` (automated tests were removed on 2026-10-08)
 5. Sign your commits: `git commit -s`
 6. Open a pull request against `master`
 
@@ -44,11 +44,11 @@ chore: dependency bump
 
 ## Testing
 
-Run the full test suite before submitting:
+Automated tests were removed on 2026-10-08 (last commit with tests: tag `pre-strip-tests`). Before submitting, run the language and lint gates:
 
 ```bash
-make test-all     # unit + coverage gate + pnpm suites
-make itest        # integration tests (requires Docker)
+make lint         # gateway go vet + OpenAPI, schema, proto, blueprint and SDK contract gates
+pnpm typecheck    # TypeScript, Svelte and Astro typecheck
 ```
 
 ## Questions?

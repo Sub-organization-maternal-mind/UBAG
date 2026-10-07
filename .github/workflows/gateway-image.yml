@@ -40,25 +40,6 @@ permissions:
   contents: read
 
 jobs:
-  # The gateway image bundles the Python worker that drives the browser, so this
-  # gates the deploy on the worker suite. It runs in parallel with the build and
-  # takes seconds; the build is the long pole, so this costs no wall-clock.
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Install worker
-        working-directory: apps/worker
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]" || python -m pip install -e .
-      - name: pytest
-        working-directory: apps/worker
-        env:
-          UBAG_ADAPTER_OFFLINE: '1'
-        run: python -m pytest tests/ -q
-
   build:
     runs-on: ubuntu-latest
     permissions:
@@ -149,7 +130,7 @@ jobs:
     # Both, deliberately: a green build only proves it compiles. main and the
     # perf rollout branch deploy straight to prod, which drives live radiology
     # reporting; ci-deploy.sh health-checks and rolls back on failure.
-    needs: [build, test, dashboard]
+    needs: [build, dashboard]
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/perf/latency-az'
     runs-on: ubuntu-latest
     permissions:

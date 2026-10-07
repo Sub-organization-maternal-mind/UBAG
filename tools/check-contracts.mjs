@@ -63,9 +63,9 @@ const docChecks = {
     'Rollback'
   ],
   'apps/docs/src/content/docs/testing/strategy.md': [
-    'UBAG_TEST_POSTGRES_DSN',
-    'cmd /c pnpm test:gateway',
-    'disposable database'
+    'Tests were removed',
+    'cmd /c pnpm lint',
+    'cmd /c pnpm typecheck'
   ],
   'apps/docs/src/content/docs/deployment/profiles.md': [
     'UBAG_GATEWAY_STORE=postgres',

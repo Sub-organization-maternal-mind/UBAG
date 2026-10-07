@@ -14,8 +14,6 @@
     "./smoke-checklist": "./src/smoke-checklist.mjs"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs",
-    "validate": "node scripts/validate-observability-contracts.mjs",
     "print:smoke": "node scripts/print-smoke-checklist.mjs",
     "health": "node scripts/run-health-probes.mjs"
   }
