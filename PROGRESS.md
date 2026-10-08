@@ -52,6 +52,37 @@ without a test step. Live issues are reported and fixed by hand.
   reconstruction was not locatable on this machine and the item is dropped
   (owner choice).
 
+**2026-10-08 (later): relay secret ROTATED and the rollback drill RUN — both complete.**
+
+- **Rotation done.** New 48-hex `UBAG_VOICE_RELAY_SECRET` generated on the box
+  (never printed or transmitted off it), applied to `env.local`; pre-change
+  backup `env.local.pre-rotation-20261008-*`. Verified by one-way digests only:
+  old `37aee516…` → new `d4d0f21d…`, identical in gateway and browser. The
+  owner-unknown `ubag-voice-demo-*` containers hold NO relay secret (their env
+  digest equals the md5 of the empty string), so rotation could not break them.
+  The earlier transcript exposure is now dead. This supersedes the "rotate at
+  the NEXT deploy window" decision recorded above.
+- **Rollback drill (first ever) — PASSED, with one real finding.** The workflow
+  CANNOT roll back: `gateway-image.yml`'s deploy job is gated to
+  `github.ref == 'refs/heads/main' || 'refs/heads/perf/latency-az'`, so a
+  dispatch on an old sha builds images but never deploys them (run 37765375821:
+  build+dashboard+test green, **deploy skipped**; a tag
+  `rollback-drill/e81e483` had to be created because dispatch does not accept a
+  bare sha). The real mechanism is the forced-command
+  `/opt/docker/ubag/deploy/small/ci-deploy.sh` on the box (reads
+  `$SSH_ORIGINAL_COMMAND`, GHCR token on stdin, health-checks and auto-rolls
+  back on failure). Executed directly with
+  `deploy-gateway sha-e81e4838…`: gateway, browser and chat-reaper rolled to
+  the previous build, gateway healthy on the first check, and the recreated
+  containers carried the NEW relay secret — rotation and rollback verified
+  together. Rolled forward with the sanctioned
+  `gh workflow run gateway-image.yml --ref main` (run 37766159892, deploy
+  green): production back on `sha-cb630dce` (docs commit on top of `4f631af`),
+  `/v1/ready` OK through the nginx path, zero error keywords in the logs.
+  **Ledger correction: "rollback = redeploy `sha-<old>`" only works as
+  `ci-deploy.sh deploy-gateway sha-<old>` on the box (with registry auth), or
+  by widening the workflow's deploy gate — the workflow alone cannot do it.**
+
 Last updated: 2026-10-08. The 2026-10-07 Phase-1 note below still stands
 (**Phase 1's "manager does not exist" blocker is resolved in code: the OET
 shared fleet manager now has a UBAG allocation endpoint, and UBAG can
@@ -340,7 +371,7 @@ was not modified.
 | Phase 5 — Rust gate | `tests/load/voice-relay-gate.json` sets `require_authoritative: true`. The P7.5 profile needs real libopus + a Linux isolated container + `--container-cpu-pct` "which only a real call can give"; a `--fake-codec` run returns `invalid` by design. Verdict is `UNEVALUATED`, so per the roadmap P7.6–P7.8 stay open. Exact command: `git show pre-strip-tests:docs/perf-fleet/slices/P7.5.md` (shards removed from `main` 2026-10-08) |
 | Phase 6 — capacity and acceptance | The report is deliberately labelled NON-AUTHORITATIVE; the 1/2/5/10/20 ladder needs an isolated lab host and a 60-minute steady-state run. Publishing a number from the shared VPS would be a false claim — that box serves live traffic |
 | All real-provider evidence | Logins are human-only, forever (provider-refresh skill). No account is signed in, and `tools/provider-refresh/` requires a human at the browser |
-| Rollback | Documented (redeploy `sha-e81e483` — the build immediately before `4f631af`; supersedes `sha-a8880d3`) but never exercised; drill unscheduled, owner decision 2026-10-08 |
+| Rollback | Drilled 2026-10-08 and PASSED: `sha-e81e4838` ran healthy in production, then rolled forward (see the 2026-10-08 "later" entry at the top). Target for the current build: `sha-e81e483` — but only via `ci-deploy.sh deploy-gateway sha-<old>` on the box; the workflow's deploy gate refuses non-`main` refs |
 
 Nothing in this list is blocked by missing code. Every item needs hardware, a
 credential, a lab host or a human at a browser.

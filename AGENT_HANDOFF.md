@@ -40,6 +40,32 @@ Owner decisions recorded 2026-10-08:
    `scratchpad/recovered-untracked/` P1.8 reconstruction was not locatable on
    the workstation and the item is dropped.
 
+## 2026-10-08 (later): rotation DONE, drill DONE
+
+Same-day follow-up on decisions 1 and 2 above:
+
+- **`UBAG_VOICE_RELAY_SECRET` was rotated** — new 48-hex value generated on the
+  box, never printed or transmitted; verified by one-way digests only (old
+  `37aee516…` → new `d4d0f21d…`, identical in gateway and browser). The
+  transcript exposure is dead. The `ubag-voice-demo-*` containers hold no relay
+  secret and were unaffected.
+- **The rollback drill ran end to end and passed.** Finding: `gateway-image.yml`'s
+  deploy job only runs for `main` (or the stale `perf/latency-az`), so
+  "redeploy `sha-<old>`" must be executed as
+  `/opt/docker/ubag/deploy/small/ci-deploy.sh deploy-gateway sha-<old>` on the
+  box (GHCR token on stdin; health-checks and auto-rolls-back on failure; it
+  also rewrites the compose file and the image pins in `env.local` from the
+  image's embedded deploy-config). Verified: `sha-e81e4838` ran healthy in
+  production with the new secret paired, then rolled forward to `sha-cb630dce`
+  via workflow run 37766159892 (deploy green). Tag `rollback-drill/e81e483` on
+  origin marks the drill target.
+- **Remote hygiene:** the three `origin/ci-logs-*` branches were tagged
+  `archive/ci-logs-*` and their branch refs deleted (commits preserved).
+  Dependabot triage: #85/#86 are obsolete (main already has pion dtls 3.1.4 /
+  stun 3.1.5 via a8880d3); the six npm major bumps (#26, #27, #28, #29, #30,
+  #74) need real migrations, not merges; the rest need rebase + CI or
+  regeneration (see the 2026-10-08 session report).
+
 ## Fleet-manager state changed on 2026-10-07 (read this before touching Phase 1)
 
 The 2026-10-06 entry below says "the OET shared fleet manager does not exist
