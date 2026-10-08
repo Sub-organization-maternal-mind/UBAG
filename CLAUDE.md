@@ -46,7 +46,7 @@ Self-hostable platform that lets applications drive web-based AI and automation 
 
 ## Gotchas
 
-- The repo previously lived at `D:\Projects\UBAG` on a different machine; `AGENTS.md` and older docs contain stale absolute paths (`D:\...`, `C:\Users\Dr Faisal Maqsood PC\...`). The current root is `E:\Projects\UBAG` — translate stale paths, never propagate them.
+- The repo previously lived at `E:\Projects\UBAG` on a different machine; `AGENTS.md` and older docs contain stale absolute paths (`E:\...`, `C:\Users\Dr Faisal Maqsood PC\...`). The current root is `D:\Projects\UBAG` — translate stale paths, never propagate them.
 - Web-adapter DOM selectors are brittle and get re-baselined against the live pages (see gemini_web `prompt_input` history) — verify against the live DOM before changing selector baselines.
 
 ## Code navigation
