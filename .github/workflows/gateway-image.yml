@@ -115,7 +115,7 @@ jobs:
         run: pnpm --filter @ubag/dashboard build
       - name: Tar dist
         run: tar -czf /tmp/dashboard-dist.tar.gz -C apps/dashboard dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dashboard-dist-${{ github.sha }}
           path: /tmp/dashboard-dist.tar.gz
@@ -157,7 +157,7 @@ jobs:
             "deploy-gateway sha-${{ github.sha }}"
 
       - name: Download dashboard dist
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: dashboard-dist-${{ github.sha }}
           path: /tmp/dashboard-artifact
