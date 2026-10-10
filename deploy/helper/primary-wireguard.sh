@@ -13,8 +13,9 @@ install -m 755 "$(dirname "$0")/sync-wireguard-peers.py" /usr/local/sbin/ubag-sy
 cat > /usr/local/sbin/ubag-wireguard-firewall <<'FIREWALL'
 #!/bin/sh
 set -eu
+iptables -C INPUT -s 213.163.201.37/32 -p udp --dport 51821 -j ACCEPT 2>/dev/null || iptables -I INPUT -s 213.163.201.37/32 -p udp --dport 51821 -j ACCEPT
 iptables -C INPUT -i ubagwg -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || iptables -I INPUT -i ubagwg -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-iptables -C INPUT -i ubagwg -p icmp -j ACCEPT 2>/dev/null || iptables -A INPUT -i ubagwg -p icmp -j ACCEPT
+iptables -C INPUT -i ubagwg -p icmp -j ACCEPT 2>/dev/null || iptables -I INPUT -i ubagwg -p icmp -j ACCEPT
 iptables -C INPUT -i ubagwg -j DROP 2>/dev/null || iptables -A INPUT -i ubagwg -j DROP
 # Published Docker ports traverse FORWARD, rather than INPUT.
 iptables -C DOCKER-USER -i ubagwg -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || iptables -I DOCKER-USER -i ubagwg -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT

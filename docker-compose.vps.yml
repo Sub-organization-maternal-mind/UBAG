@@ -75,6 +75,8 @@ services:
         UBAG_ANTIGRAVITY_SLOT_2_ID: ${UBAG_ANTIGRAVITY_SLOT_2_ID:-acct_2}
         UBAG_ANTIGRAVITY_SLOT_3_ID: ${UBAG_ANTIGRAVITY_SLOT_3_ID:-acct_3}
     image: ${UBAG_GATEWAY_IMAGE:-ubag/gateway:vps-local}
+    # Only the primary certificate subdirectory is mounted from the fleet owner.
+    group_add: ["10020"]
     # One full core avoids throttling the embedded Python worker on a 6-vCPU VPS.
     cpus: "${UBAG_GATEWAY_CPUS:-1.00}"
     mem_limit: 1300m

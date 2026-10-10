@@ -1563,6 +1563,10 @@ func (c *WorkerConsumer) applyFailure(ctx context.Context, lease WorkerLease, en
 	id := failureEventID(lease, envelope)
 	digest := sha256.Sum256([]byte(id))
 	data["diagnostic_ref"] = "diag_" + hex.EncodeToString(digest[:12])
+	data["attempt_id"] = attemptIDForLease(lease.LeaseID())
+	if envelope.Attempt != nil && envelope.Attempt.ID != "" {
+		data["attempt_id"] = envelope.Attempt.ID
+	}
 	if len(duration) > 0 {
 		data["elapsed_ms"] = duration[0].Milliseconds()
 	}
