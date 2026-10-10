@@ -25,11 +25,11 @@
   "network": {
     "mode": "host",
     "listen": [
-      { "name": "grpc", "protocol": "tcp", "address": "{{wireguard_address}}", "port": 7443 }
+      { "name": "grpc", "protocol": "tcp", "address": "{{wireguard_address}}", "port": 7444 }
     ]
   },
   "env": [
-    { "name": "UBAG_HELPER_LISTEN", "value": "{{wireguard_address}}:7443" },
+    { "name": "UBAG_HELPER_LISTEN", "value": "{{wireguard_address}}:7444" },
     { "name": "UBAG_HELPER_NODE_ID", "value": "{{node_id}}" },
     { "name": "UBAG_HELPER_CA_FILE", "value": "/etc/ubag-helper/tls/ca.pem" },
     { "name": "UBAG_HELPER_TLS_CERT_FILE", "value": "/etc/ubag-helper/tls/node.crt" },
@@ -45,6 +45,6 @@
     { "name": "tmp", "type": "tmpfs", "target": "/tmp", "read_only": false }
   ],
   "resources": {
-    "requests": { "cpu_millis": 1500, "memory_bytes": 2684354560, "shm_bytes": 1073741824 }
+    "requests": { "cpu_millis": 1000, "memory_bytes": 2684354560, "shm_bytes": 1073741824 }
   }
 }

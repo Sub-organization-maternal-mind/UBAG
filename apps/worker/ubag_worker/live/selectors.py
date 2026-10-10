@@ -711,7 +711,7 @@ GEMINI_WEB = ProviderSelectors(
     # persisted Extended selection is clicked exactly once to return to
     # Standard. With thinking off the engine takes the plain (non-reasoning)
     # response timeout.
-    # Updated 2026-09-08: operator requires 3.8 Flash with Extended thinking disabled.
+            # Live 2026-10-10: effort is a Low/Medium/High menu, replacing Extended.
     settings=(
         ProviderSetting(
             key="model",
@@ -729,8 +729,8 @@ GEMINI_WEB = ProviderSelectors(
         ),
         ProviderSetting(
             key="thinking",
-            kind="toggle",
-            desired=False,
+            kind="choice",
+            desired="Low",
             open_steps=(
                 (
                     "button[data-test-id='bard-mode-menu-button']",
@@ -738,8 +738,8 @@ GEMINI_WEB = ProviderSelectors(
                     "button.input-area-switch",
                 ),
             ),
-            on_when=("gem-menu-item.selected:has-text('Extended thinking')",),
-            toggle_click=("gem-menu-item:has-text('Extended thinking')",),
+            satisfied_when="gem-menu-item.selected:has-text(\"{value}\")",
+            apply_click="gem-menu-item:has-text(\"{value}\")",
         ),
     ),
     reasoning=False,
@@ -945,7 +945,7 @@ DUCKAI_WEB = ProviderSelectors(
         ProviderSetting(
             key="model",
             kind="choice",
-            desired="GPT-5.6 Luna",
+            desired="GPT-6 Luna",
             open_steps=(
                 (
                     "button[data-testid='model-picker-button']",

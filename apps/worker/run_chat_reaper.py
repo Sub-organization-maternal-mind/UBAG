@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import time
 from typing import Any, Dict, List
 
@@ -44,6 +45,7 @@ from ubag_worker.live.page_driver import create_default_driver  # noqa: E402
 from ubag_worker.live.selectors import get_provider_selectors  # noqa: E402
 
 DEFAULT_TTL_SECONDS = 7200.0  # 2 hours
+_STATUS: Dict[str, Any] = {}
 
 
 def _flag(name: str, default: bool = False) -> bool:
@@ -54,6 +56,27 @@ def _flag(name: str, default: bool = False) -> bool:
 
 
 def _emit(record: Dict[str, Any]) -> None:
+    # Status survives the one-process-per-cycle loop. Only unchanged summaries
+    # are quiet; actual deletes, failures and dry-run targets are always emitted.
+    if record.get("type") in ("reaper.scan", "reaper.skipped", "reaper.done"):
+        path = chat_ledger.ledger_path() + ".reaper-status.json"
+        key = str(record["type"]) + ":" + str(record.get("target", ""))
+        if not _STATUS:
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    _STATUS.update(json.load(handle))
+            except (OSError, ValueError):
+                pass
+        if _STATUS.get(key) == record:
+            return
+        _STATUS[key] = record
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=os.path.dirname(path), delete=False, encoding="utf-8") as handle:
+                json.dump(_STATUS, handle)
+                temporary = handle.name
+            os.replace(temporary, path)
+        except OSError:
+            pass  # reporting must never make cleanup fail
     sys.stdout.write(json.dumps(record, separators=(",", ":")) + "\n")
     sys.stdout.flush()
 

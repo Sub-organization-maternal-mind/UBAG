@@ -231,6 +231,13 @@ services:
       UBAG_HELPER_NODES: ${UBAG_HELPER_NODES:-}
       UBAG_HELPER_PLANE: ${UBAG_HELPER_PLANE:-}
       UBAG_HELPER_DISPATCH: ${UBAG_HELPER_DISPATCH:-}
+      UBAG_HELPER_GRPC_ADDR: ${UBAG_HELPER_GRPC_ADDR:-}
+      UBAG_HELPER_CA_FILE: ${UBAG_HELPER_CA_FILE:-}
+      UBAG_HELPER_TLS_CERT_FILE: ${UBAG_HELPER_TLS_CERT_FILE:-}
+      UBAG_HELPER_TLS_KEY_FILE: ${UBAG_HELPER_TLS_KEY_FILE:-}
+      UBAG_HELPER_CLIENT_CERT_FILE: ${UBAG_HELPER_CLIENT_CERT_FILE:-}
+      UBAG_HELPER_CLIENT_KEY_FILE: ${UBAG_HELPER_CLIENT_KEY_FILE:-}
+      UBAG_HELPER_WORKLOAD_VERSION: ${UBAG_HELPER_WORKLOAD_VERSION:-}
       UBAG_HELPER_VOICE: ${UBAG_HELPER_VOICE:-}
       UBAG_HELPER_RECONCILE_WINDOW_SECONDS: ${UBAG_HELPER_RECONCILE_WINDOW_SECONDS:-}
       UBAG_FLEET_MANAGER_URL: ${UBAG_FLEET_MANAGER_URL:-}
@@ -270,6 +277,7 @@ services:
       UBAG_CHAT_LEDGER_PATH: /var/lib/ubag/chat-ledger/ledger.jsonl
     volumes:
       - executor_spool:/var/lib/ubag/executor-spool
+      - ${UBAG_HELPER_PRIMARY_TLS_DIR:-/opt/docker/ubag/helper-tls}:/etc/ubag-helper/primary:ro
       - artifact_data:/var/lib/ubag/artifacts
       - chat_ledger:/var/lib/ubag/chat-ledger
       - antigravity_accounts:/var/lib/ubag/antigravity

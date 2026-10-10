@@ -221,6 +221,16 @@ func ValidateModelSettings(target string, settings map[string]any, catalog Model
 			}
 		case "choice":
 			str, ok := value.(string)
+			// Gemini's observed Low/Medium/High menu replaced the old toggle.
+			// Accept existing boolean callers while resolving to the live labels.
+			if target == "gemini_web" && key == "thinking" {
+				if legacy, boolean := value.(bool); boolean {
+					str, ok = "Low", true
+					if legacy {
+						str = "High"
+					}
+				}
+			}
 			if !ok || !slices.Contains(setting.Values, str) {
 				return &ModelSettingsError{
 					Code:    catalogChoiceCode(key),

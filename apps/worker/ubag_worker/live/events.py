@@ -47,6 +47,7 @@ STAGE_KEYS = (
     "worker_start",
     "browser_prep",
     "auth_check",
+    "provider_config",
     "attachment_materialize",
     "provider_submit",
     "first_token",
@@ -65,14 +66,17 @@ class StageTimer:
 
     def __init__(self) -> None:
         self._ms: Dict[str, float] = {}
+        self.last_stage = "worker_start"
 
     def add(self, stage: str, seconds: float) -> None:
         if stage not in STAGE_KEYS:
             raise ValueError("unknown stage %r" % stage)
         self._ms[stage] = self._ms.get(stage, 0.0) + max(seconds, 0.0) * 1000.0
+        self.last_stage = stage
 
     @contextmanager
     def span(self, stage: str) -> Iterator[None]:
+        self.last_stage = stage
         start = time.perf_counter()
         try:
             yield

@@ -740,7 +740,7 @@ func (c *WorkerConsumer) RunOnce(ctx context.Context) (bool, error) {
 				return true, err
 			}
 		}
-		if applyErr := c.applyFailure(opCtx, lease, envelope, err); applyErr != nil {
+		if applyErr := c.applyFailure(opCtx, lease, envelope, err, workerDuration); applyErr != nil {
 			if ambiguous {
 				// No replay even when the failure cannot be recorded; the
 				// stale-job reaper settles the job. (Ledger-backed in P3.8.)
@@ -1530,7 +1530,7 @@ func (c *WorkerConsumer) jobCanceled(ctx context.Context, jobID string) bool {
 	return err == nil && found && jobstore.TerminalStatus(job.Status)
 }
 
-func (c *WorkerConsumer) applyFailure(ctx context.Context, lease WorkerLease, envelope DispatchEnvelope, cause error) error {
+func (c *WorkerConsumer) applyFailure(ctx context.Context, lease WorkerLease, envelope DispatchEnvelope, cause error, duration ...time.Duration) error {
 	data := map[string]any{
 		"status":      string(jobstore.StatusFailedRetryable),
 		"retryable":   true,
@@ -1558,8 +1558,19 @@ func (c *WorkerConsumer) applyFailure(ctx context.Context, lease WorkerLease, en
 			"stream_end_reason":  "error",
 		}
 	}
+	class, stage := workerFailureClass(cause)
+	data["error_class"], data["execution_stage"] = class, stage
+	id := failureEventID(lease, envelope)
+	digest := sha256.Sum256([]byte(id))
+	data["diagnostic_ref"] = "diag_" + hex.EncodeToString(digest[:12])
+	if len(duration) > 0 {
+		data["elapsed_ms"] = duration[0].Milliseconds()
+	}
+	if class == "worker_deadline" {
+		data["message"] = "worker execution deadline exceeded"
+	}
 	event := jobstore.WorkerEvent{
-		EventID:    failureEventID(lease, envelope),
+		EventID:    id,
 		JobID:      lease.JobID(),
 		APIVersion: envelope.APIVersion,
 		Type:       eventType,

@@ -669,6 +669,8 @@ def _resolve_provider_config(provider_id: str, options: Mapping[str, Any]) -> di
     opt = options.get("provider_config")
     if isinstance(opt, Mapping):
         config.update(opt)
+    if provider_id == "gemini_web" and isinstance(config.get("thinking"), bool):
+        config["thinking"] = "High" if config["thinking"] else "Low"
     return {key: sanitize_provider_config_value(val) for key, val in config.items()}
 
 

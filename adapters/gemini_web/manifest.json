@@ -34,7 +34,12 @@
         ]
       },
       "thinking": {
-        "kind": "toggle"
+        "kind": "choice",
+        "values": [
+          "Low",
+          "Medium",
+          "High"
+        ]
       }
     }
   },

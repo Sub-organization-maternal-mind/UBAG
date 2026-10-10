@@ -1398,3 +1398,6 @@ Local evidence harness: `tests/load/acceptance.mjs` (see `docs/load-testing.md`;
 never aim it at the shared VPS). A throwaway local Postgres works for the
 Postgres suites: `initdb` in a temp dir, start it on a loopback port, then
 `UBAG_TEST_POSTGRES_DSN=… node tools/run-postgres-roundtrip-tests.mjs --apply-migrations`.
+
+## 2026-10-10 failure repair continuation
+History reset and RadioPad authentication repair are live. Snapshot `/opt/docker/ubag/maintenance/job-reset-20261010T140307Z` must remain until acceptance. Provider menu changes and sanitized diagnostics are implemented; helper deployment/remote acceptance still pending. Helper attachments currently fail closed, voice remains disabled; helper provider profiles require human login. Fleet manager source is in the OET repository; unrelated OET dirty files were excluded from our commit. See the appended PROGRESS entry for counts and verification. Preserve cutoff jobs created after the reset and never replay historical jobs.

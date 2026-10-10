@@ -63,6 +63,10 @@
       "if": { "required": ["reconcile_required"], "properties": { "reconcile_required": { "const": true } } },
       "then": { "required": ["submitted"], "properties": { "submitted": { "const": true } } },
       "properties": {
+        "error_class": { "type": "string", "maxLength": 64, "description": "Sanitized boundary failure category; never raw exception text." },
+        "execution_stage": { "type": "string", "maxLength": 64 },
+        "elapsed_ms": { "type": "integer", "minimum": 0 },
+        "diagnostic_ref": { "type": "string", "pattern": "^diag_[a-f0-9]{24}$" },
         "attempt_id": {
           "type": "string",
           "pattern": "^att_[A-Za-z0-9]+$",
@@ -103,6 +107,7 @@
             "worker_start": { "type": "number", "minimum": 0, "description": "Worker/runner startup before job work begins." },
             "browser_prep": { "type": "number", "minimum": 0, "description": "Browser/page/session preparation." },
             "auth_check": { "type": "number", "minimum": 0, "description": "Read-only signed-in-state check (safe-mode: never logs in)." },
+            "provider_config": { "type": "number", "minimum": 0, "description": "Provider model and reasoning menu configuration." },
             "attachment_materialize": { "type": "number", "minimum": 0, "description": "Staging attachments for upload." },
             "provider_submit": { "type": "number", "minimum": 0, "description": "Prompt entry and submit on the provider page." },
             "first_token": { "type": "number", "minimum": 0, "description": "Submit to first response token." },

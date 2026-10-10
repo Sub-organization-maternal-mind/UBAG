@@ -35,6 +35,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 # apt-get upgrade applies Debian security updates the base tag has not picked up.
 RUN apt-get update -qq \
   && apt-get upgrade -y -qq \
+  && apt-get install -y -qq --no-install-recommends xvfb x11vnc novnc websockify \
   && rm -rf /var/lib/apt/lists/* \
   && pip3 install --no-cache-dir "playwright>=1.49" \
   && playwright install --with-deps chromium \
@@ -49,6 +50,8 @@ WORKDIR /app
 COPY --from=build /out/ubag-helper /app/ubag-helper
 COPY apps/worker /app/apps/worker
 COPY adapters /app/adapters
+COPY deploy/helper/entrypoint.sh /app/helper-entrypoint.sh
+COPY deploy/helper/operator-login.py /app/operator-login.py
 
 # Non-secret paths only. UBAG_HELPER_LISTEN, _NODE_ID, _PRIMARY_URI_SAN,
 # _WORKLOAD_VERSION and _MAX_ATTEMPTS are per-node and come from the workload
@@ -64,4 +67,4 @@ USER 10001:10001
 
 # No EXPOSE and no default listen address: the helper binds exactly one
 # WireGuard address (UBAG_HELPER_LISTEN) and refuses a wildcard.
-ENTRYPOINT ["/app/ubag-helper"]
+ENTRYPOINT ["/bin/sh", "/app/helper-entrypoint.sh"]

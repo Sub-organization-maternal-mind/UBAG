@@ -11,6 +11,7 @@ import (
 // JobStages is the closed stage set of data.timings_ms. It mirrors
 // job-event.schema.json and observability JOB_STAGES (a test pins the schema).
 var JobStages = []string{
+	"provider_config",
 	"worker_start", "browser_prep", "auth_check", "attachment_materialize",
 	"provider_submit", "first_token", "provider_stream", "extraction",
 }

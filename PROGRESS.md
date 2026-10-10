@@ -1,5 +1,27 @@
 # UBAG Progress Ledger
 
+## 2026-10-10 — Production failure repair and helper activation (in progress)
+
+Approved scope: repair future jobs, activate one real helper through the OET fleet manager,
+and delete all historical jobs across tenant_edge and tenant_oet without replay.
+Read-only census: 1,056 jobs; 258 drift, 130 login blocks, 141 generic failures,
+30 timeouts, two terminal failures. The dashboard's 875/495 matches tenant_edge.
+
+History reset executed with `tools/reset-job-history.sh --execute`: 1,056 jobs,
+9,446 associated events and 52 job-owned files removed, related deliveries,
+alerts and artifact metadata cleaned; no orphan events. ID sequence remains 1,058.
+Recovery snapshot (server-only, restricted):
+`/opt/docker/ubag/maintenance/job-reset-20261010T140307Z` (validated pg_dump + tar).
+Accounts, configuration, browser profiles, audit history and unrelated stacks retained.
+
+Current helper blockers: manager endpoint changed 7443→443 at unchanged generation 18;
+expired retained grant; only OET fleet-agent exists, UBAG Handshake returns 404;
+node cert lasts ~90 days versus UBAG's <=72h rule; dispatch/plane/attempts off,
+zero profiles and helper heartbeat rows. Implementing durable allocation revision,
+compatible renewing trust and actual helper workload; helper voice remains off.
+Historical generic causes cannot be reconstructed from the retained container logs.
+Verification and deployment evidence will be appended before completion.
+
 **2026-10-08: automated tests and per-slice shards removed (live ledger entry).**
 All test suites, test runners, test-only fixtures and test CI gates were deleted,
 along with `docs/perf-fleet/slices/` (the per-slice progress shards) and
@@ -4429,3 +4451,14 @@ media UDP range; CDP/VNC/relay never published; checks extended.
    timeout 30 s vs DTX silence; lane-lock serialization bounds single-lane create
    throughput (~130 jobs/s locally); facade multi-MiB prompts are refused at
    create (use attachments).
+
+### 2026-10-10 — Failure repair and helper activation implementation (in progress)
+
+- Executed the approved all-tenant history reset: 1,056 selected jobs, 9,446 events and 52 selected files removed. Restricted recovery snapshot: `/opt/docker/ubag/maintenance/job-reset-20261010T140307Z`; validated pg_dump and file manifest retained. Selected-job and orphan-event counts are zero; ID sequence remained 1,058. Gateway returned healthy after consumers resumed.
+- Provider menus verified over production CDP: DuckAI GPT-6 Luna + Reasoning + search off; Gemini 3.8 Flash + Low thinking; DeepSeek DeepThink on; ChatGPT GPT-5.6 Sol. ChatGPT's effort pill is absent for Sol and remains explicitly best-effort. Mistral has no verified composer and is not accepted as working.
+- Rebased DuckAI's renamed model and Gemini's observed Low/Medium/High effort menu. Legacy Gemini boolean thinking is accepted and mapped to Low/High. ChatGPT's catalog now matches observed model rows.
+- Added bounded, sanitized failure classifications/stage/elapsed/diagnostic references and provider configuration timing; no raw exception text, credentials, prompts or browser content are added to errors. Post-submit ambiguity remains terminal and requires reconciliation.
+- RadioPad's invalid credential replaced with a dedicated tenant_edge/radiopad developer PAT expiring 2027-01-08. Verified its real `/v1/targets` calls changed from 401 to 200 after API recreation; gateway authorization retained.
+- Helper image gains a local headed display and SSH-loopback-only operator viewer; no automated login. Workload request is one CPU and one attempt, helper voice disabled. Attachments remain fail-closed (`helper_assets_unavailable`) because the existing helper runner has no AssetSource.
+- Fleet-manager implementation is committed in its own repository: durable allocation revision/fingerprint, <=72-hour node/primary certificates, automatic renewal and restricted helper reconciliation. Targeted manager build, Python syntax, worker Ruff and Go helper build passed. Existing SQLite vulnerability warning is not resolved by this scope.
+- Pending: pinned CI image builds/rollout, WireGuard handshake, live helper RPC/capacity, tenant profile bindings and human provider logins, remote canary/fencing/capacity and final cleanup-reference checks. Do not mark complete from container health alone.

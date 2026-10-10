@@ -61,6 +61,7 @@ from .events import (
     CONVERSATION_THREAD_REBOUND_EVENT_TYPE,
     JsonObject,
     StageTimer,
+    digest,
     stage_timings_enabled,
     worker_event,
 )
@@ -213,11 +214,26 @@ class LiveSessionEngine:
         orch_signal = None
 
         sequence = 1
+        submitted = False
         _attempt = payload.get("attempt")
         attempt_id = str(_attempt.get("id") or "") if isinstance(_attempt, Mapping) else ""
 
         def emit(event_type: str, data: Mapping[str, Any]) -> JsonObject:
-            nonlocal sequence
+            nonlocal sequence, submitted
+            submitted = submitted or event_type == "prompt_submitted" or bool(data.get("submitted"))
+            if event_type in ("blocked", "failed", "failed_terminal", "timed_out", "completed"):
+                data = dict(data)
+                if stage_timings_enabled():
+                    data["timings_ms"] = timer.as_dict()
+                if event_type != "completed":
+                    data["execution_stage"] = timer.last_stage
+                    data["elapsed_ms"] = round((time.perf_counter() - t_start) * 1000)
+                    reason = data.get("reason", "")
+                    data.setdefault("error_class", {
+                        "manual_login_required": "provider_login",
+                        "selector_drift_detected": "selector_drift",
+                    }.get(reason, "provider_interaction"))
+                    data["diagnostic_ref"] = "diag_" + digest("%s:%s:%s" % (job.job_id, attempt_id, sequence))[:24]
             event = worker_event(
                 api_version=job.api_version,
                 job_id=job.job_id,
@@ -489,6 +505,20 @@ class LiveSessionEngine:
                 "retryable": True,
                 "message": str(exc),
             })
+        except Exception as exc:  # noqa: BLE001 - retain a safe cause without page/credential text
+            orch_success = False
+            if submitted:
+                event_type, data = self._post_submit_failure(driver, job, exc)
+                yield emit(event_type, data)
+                return
+            yield emit("failed", {
+                "status": "failed_retryable",
+                "target": job.target,
+                "retryable": True,
+                "error_class": "provider_deadline" if isinstance(exc, TimeoutError) or type(exc).__name__ == "TimeoutError" else "provider_interaction",
+                "reason": "browser_operation_failed",
+                "message": "Provider browser operation failed; inspect the diagnostic stage.",
+            })
         finally:
             # Release the orchestration lease via the context manager (which
             # performs record_outcome) and surface any AIMD cap change as a
@@ -541,11 +571,11 @@ class LiveSessionEngine:
         try:
             return self._run_interaction_inner(driver, job, timer, progress)
         except (DriftDetectedError, ManualActionRequired, LiveSessionError) as exc:
-            if progress["submitted"] and _env_flag("UBAG_WORKER_STRICT_SUBMIT", False):
+            if progress["submitted"] and _env_flag("UBAG_WORKER_STRICT_SUBMIT", True):
                 exc.post_submit = True  # iter_events ends it failed_terminal, never retryable
             raise
         except Exception as exc:  # noqa: BLE001 - classified by the submit marker
-            if not (progress["submitted"] and _env_flag("UBAG_WORKER_STRICT_SUBMIT", False)):
+            if not (progress["submitted"] and _env_flag("UBAG_WORKER_STRICT_SUBMIT", True)):
                 raise
             progress["events"].append(self._post_submit_failure(driver, job, exc))
             return {"events": progress["events"], "blocked": None}
@@ -725,7 +755,7 @@ class LiveSessionEngine:
             })
 
         if job.config_enabled and self._selectors.settings:
-            with timer.span("browser_prep"):
+            with timer.span("provider_config"):
                 applied_settings = driver.ensure_provider_config(
                     self._selectors, overrides=job.provider_config
                 )
@@ -815,7 +845,7 @@ class LiveSessionEngine:
         # UBAG_WORKER_STRICT_SUBMIT (implied by UBAG_WORKER_STREAM_EVENTS) so the
         # default event stream stays byte-identical.
         progress["submitted"] = True
-        if streaming or _env_flag("UBAG_WORKER_STRICT_SUBMIT", False):
+        if streaming or _env_flag("UBAG_WORKER_STRICT_SUBMIT", True):
             yield ("prompt_submitted", {
                 "status": "prompt_submitted",
                 "target": job.target,

@@ -16,6 +16,8 @@ var AllowedEnv = map[string]struct{}{
 	"TEMP":                                {},
 	"TMP":                                 {},
 	"HOME":                                {},
+	"DISPLAY":                             {},
+	"PLAYWRIGHT_BROWSERS_PATH":            {},
 	"USERPROFILE":                         {},
 	"UBAG_ADAPTER_OFFLINE":                {},
 	"UBAG_WORKER_OFFLINE":                 {},
