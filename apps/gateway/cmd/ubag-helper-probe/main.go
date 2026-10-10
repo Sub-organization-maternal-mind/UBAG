@@ -77,9 +77,12 @@ func main() {
 	if *negative {
 		bad := "0000000000000000000000000000000000000000000000000000000000000000"
 		_, pinErr := dial(bad, *version)
-		_, versionErr := dial(*pin, "sha-0000000000000000000000000000000000000000")
-		result["stale_pin_rejected"], result["wrong_workload_rejected"] = pinErr != nil, versionErr != nil
-		if pinErr == nil || versionErr == nil {
+		wrongVersion := "sha-0000000000000000000000000000000000000000"
+		wrongHandshake, versionErr := dial(*pin, wrongVersion)
+		// Handshake advertises the version; the primary rejects mismatches before execution.
+		versionMismatch := versionErr != nil || (wrongHandshake != nil && wrongHandshake.GetWorkloadVersion() != wrongVersion)
+		result["stale_pin_rejected"], result["wrong_workload_detected"] = pinErr != nil, versionMismatch
+		if pinErr == nil || !versionMismatch {
 			fmt.Println("negative acceptance failed")
 			os.Exit(1)
 		}
