@@ -916,7 +916,7 @@ class LiveSessionEngine:
         # thread bind: the page holds a half-rendered turn (the warm daemon sees no
         # completed event and discards the driver).
         if getattr(driver, "stream_end_reason", None) == "deadline" and _env_flag(
-            "UBAG_WORKER_STRICT_STREAM_END", False
+            "UBAG_WORKER_STRICT_STREAM_END", True
         ):
             partial_text = "".join(partial_parts)
             yield ("timed_out", {
