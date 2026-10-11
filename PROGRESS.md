@@ -4485,3 +4485,6 @@ media UDP range; CDP/VNC/relay never published; checks extended.
 - Production menu inspection observed GPT-6, GPT-5.6 Sol and GPT-5.5; required model selection now verifies GPT-6 using the observed aria-checked radio row. Old ChatGPT choices and the obsolete Thinking effort setting are removed from the adapter; the current Power control has not been mapped and no effort claim is made.
 - Fresh production OET-PAT job1072 explicitly requested `chatgpt_web|GPT-6`, completed in68.6s and returned a valid synthetic external-tool request. It was not a renamed5.6 result.
 - Prior catalog release38ffdf8 is live healthy (Gateway Image38136439857, CI38136439954 passed). This correction replaces its Sol entry with GPT-6. Targeted worker Ruff/Python compilation and gateway Go vet passed; corrected rollout and real admin acceptance pending.
+
+### 2026-10-11 — Full admin acceptance excludes DuckAI
+- Corrected GPT-6 gateway release9bc3516 is live; Gateway Image38137548782 passed. Real OET admin tool loop exposed DuckAI post-submission extraction failure1075; fresh diagnostic1076 failed before submission at setting:model. Earlier plain/protocol canaries are insufficient to certify the full loop. DuckAI is removed from facade discovery pending repair and complete acceptance; native provider job APIs remain compatible. No ambiguous submitted job was replayed.

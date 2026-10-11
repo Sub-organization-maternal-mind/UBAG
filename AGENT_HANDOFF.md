@@ -1412,3 +1412,6 @@ Production admin picker silently selected Anthropic despite a UBAG override. Rep
 
 ## Owner correction 2026-10-11: GPT-6
 ChatGPT production menu and synthetic job1072 verify GPT-6. Replace Sol with GPT-6 in public catalogs/default worker selection. Obsolete effort control is removed; Power is unmapped, do not claim Medium. OET migrates older ChatGPT routing preferences to6 while preserving immutable message/job history. Corrected rollout/admin acceptance pending.
+
+## 2026-10-11 DuckAI acceptance gate
+DuckAI1075 failed after submission during extraction;1076 failed during model configuration. Remove it from selectable facade/OET catalogs until complete live acceptance passes. GPT-6 release9bc3516 is live. Continue actual GPT-6/DeepSeek admin tool checks; do not replay1075.
