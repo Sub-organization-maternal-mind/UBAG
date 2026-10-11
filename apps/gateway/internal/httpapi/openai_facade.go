@@ -596,7 +596,6 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 // IDs — the facade surfaces them in the models list for discovery but
 // rejects them as chat model IDs; use the bare target (operator default)
 // for those.
-//
 func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool) {
 	model = strings.TrimSpace(model)
 	if model == "" {
