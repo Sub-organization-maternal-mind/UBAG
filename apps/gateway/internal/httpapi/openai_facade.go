@@ -333,7 +333,7 @@ func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 // credential. Native target/settings APIs remain available to operators; settings,
 // mocks and unverified providers must not appear as working assistant models.
 func (s *Server) facadeModels() []openAIFacadeModel {
-	ids := []string{"chatgpt_web|GPT-5.6 Sol", "duckai_web|GPT-6 Luna", "deepseek_web"}
+	ids := []string{"chatgpt_web|GPT-6", "duckai_web|GPT-6 Luna", "deepseek_web"}
 	models := make([]openAIFacadeModel, 0, len(ids))
 	for _, id := range ids {
 		models = append(models, openAIFacadeModel{ID: id, Object: "model", OwnedBy: "ubag"})
@@ -372,9 +372,7 @@ func facadeChoiceModelIDs(target string) []string {
 // values (see resolveFacadeModel). Shared with facadeModels so the list and
 // the resolver agree.
 func facadeCuratedModelIDs(target string) []string {
-	if target == "chatgpt_web" {
-		return []string{"chatgpt_web" + facadeModelSeparator + "GPT-5.6 Sol + Medium"}
-	}
+
 	if target == "antigravity_sdk" {
 		return []string{
 			"antigravity_sdk" + facadeModelSeparator + "gemini-3.8-flash",
@@ -599,11 +597,6 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 // rejects them as chat model IDs; use the bare target (operator default)
 // for those.
 //
-// Composite ChatGPT ID: the OET board offers ONE curated entry,
-// "chatgpt_web|GPT-5.6 Sol + Medium", which binds BOTH settings at once
-// ({"model": "GPT-5.6 Sol", "thinking": "Medium"}) — the operator's
-// always-Sol-Medium default as a single pick, so a stale or wrong-effort
-// combo can never be selected.
 func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool) {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -618,11 +611,6 @@ func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool)
 	}
 	if value == "" {
 		return target, nil, true
-	}
-	// Composite ChatGPT ID (board-curated, not a manifest value): bind both
-	// the model and the thinking level at once.
-	if target == "chatgpt_web" && value == "GPT-5.6 Sol + Medium" {
-		return target, map[string]any{"model": "GPT-5.6 Sol", "thinking": "Medium"}, true
 	}
 	catalog := resolveModelCatalog(target)
 	for name, setting := range catalog.Settings {

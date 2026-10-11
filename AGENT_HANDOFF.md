@@ -1409,3 +1409,6 @@ Final rollout: gateway 742a270 live healthy, runs 38062389716/38062389678 succee
 
 ## 2026-10-11 OET admin integration continuation
 Production admin picker silently selected Anthropic despite a UBAG override. Repair is in OET alongside a strict external-tool JSON bridge (execution stays in AiToolInvoker), three verified model choices and no automatic browser replay. UBAG facade discovery is narrowed to ChatGPT GPT-5.6 Sol, DuckAI GPT-6 Luna, DeepSeek. Gemini job 1065 failed after submission: do not replay it. Live admin acceptance/deployment pending; continue with signed-in Chrome admin tab. Preserve helper dispatch OFF, recovery snapshot and unrelated dirty OET files.
+
+## Owner correction 2026-10-11: GPT-6
+ChatGPT production menu and synthetic job1072 verify GPT-6. Replace Sol with GPT-6 in public catalogs/default worker selection. Obsolete effort control is removed; Power is unmapped, do not claim Medium. OET migrates older ChatGPT routing preferences to6 while preserving immutable message/job history. Corrected rollout/admin acceptance pending.

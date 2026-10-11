@@ -371,31 +371,15 @@ CHATGPT_WEB = ProviderSelectors(
         list_ready="a[href^='/c/']",
         baseline_version="2026-07-17-verified",
     ),
-    # Operator default (always-on), superseding the 2026-06-29 "leave the account
-    # default" decision: pin GPT-5.6 Sol + Medium intelligence on every job.
-    # The worker resolves this default when no per-job override is present;
-    # the gateway forwards UBAG_PROVIDER_CONFIG_CHATGPT_WEB into the worker
-    # subprocess env (see executor minimalWorkerEnv) so an operator override
-    # survives process boundaries. A drifted effort setting fails CLOSED as
-    # selector_drift_detected (required=True) instead of answering off-Medium.
-    #
-    # Re-baselined 2026-09-26 against live chatgpt.com: the flattened single
-    # model menu (button aria-label "Select ChatGPT model") shows
-    # menuitemradio rows Latest / GPT-5.6 Sol / GPT-5.5 ("Leaving on October
-    # 14") / Pro with aria-checked on the current one - "Latest" is the
-    # account default, the pinned operator default GPT-5.6 Sol remains
-    # selectable. The effort pill div (aria-label "Thinking effort<value>")
-    # opens a menu of the same menuitemradio shape; its label embeds the
-    # current value, so satisfied_when reads the pill without opening anything
-    # when the desired value is already active.
-    #
-    # Order matters: model is enforced BEFORE thinking, because switching model can
-    # reset the intelligence level (settings are applied in declaration order).
+    # Required GPT-6 model, verified 2026-10-11 on the production account.
+    # The live menu exposes aria-checked radio rows for GPT-6 and older models.
+    # Its effort UI is now Power; the old Thinking effort pill is absent, so
+    # do not advertise or silently pretend to apply the obsolete effort setting.
     settings=(
         ProviderSetting(
             key="model",
             kind="choice",
-            desired="GPT-5.6 Sol",
+            desired="GPT-6",
             open_steps=(
                 (
                     "button[aria-label*='Select ChatGPT model']",
@@ -405,27 +389,8 @@ CHATGPT_WEB = ProviderSelectors(
             satisfied_when="[role='menuitemradio'][aria-checked='true']:has-text(\"{value}\")",
             apply_click="[role='menuitemradio']:has-text(\"{value}\")",
         ),
-        ProviderSetting(
-            key="thinking",
-            kind="choice",
-            desired="Medium",
-            open_steps=(
-                (
-                    "[aria-label*='Thinking effort']",
-                ),
-            ),
-            satisfied_when="[aria-label*='Thinking effort']:has-text(\"{value}\")",
-            apply_click="[role='menuitemradio']:has-text(\"{value}\")",
-            # Verified 2026-09-26: the effort pill only renders for models that
-            # expose adjustable effort (the account default "Latest" does; the
-            # pinned "GPT-5.6 Sol" runs a fixed effort and shows NO pill). A
-            # missing pill under Sol is the UI's real answer, not drift, so the
-            # setting is best-effort: enforced whenever the pill exists,
-            # reported as "unverified" (never a job-failing drift) otherwise.
-            required=False,
-        ),
     ),
-    # Medium intelligence thinks before answering, so give the reader the longer
+    # GPT-6 can think before answering, so give the reader the longer
     # reasoning timeout rather than mistaking a think for a hang.
     reasoning=True,
 )

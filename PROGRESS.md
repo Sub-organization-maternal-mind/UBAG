@@ -4480,3 +4480,8 @@ media UDP range; CDP/VNC/relay never published; checks extended.
 - Facade discovery now publishes only these three verified chat models, excluding mock/generic/transcription IDs, settings masquerading as models, unavailable providers and unverified variants. Native target/settings APIs remain intact.
 - OET repair in its repository adds a bounded JSON tool bridge through existing RBAC/schema/approval execution, retains actual UBAG routing, disables automatic browser-call replay and removes stale models from both admin catalogs. Synthetic protocol requests passed for DeepSeek 1069, ChatGPT 1070 and DuckAI 1071 after clarifying external tool execution.
 - Targeted gateway `go vet ./internal/httpapi` passed. Deployment and full signed-in admin tool-loop acceptance pending. Helper dispatch remains OFF and previous recovery snapshot retained.
+
+### 2026-10-11 — Owner correction: ChatGPT must use GPT-6
+- Production menu inspection observed GPT-6, GPT-5.6 Sol and GPT-5.5; required model selection now verifies GPT-6 using the observed aria-checked radio row. Old ChatGPT choices and the obsolete Thinking effort setting are removed from the adapter; the current Power control has not been mapped and no effort claim is made.
+- Fresh production OET-PAT job1072 explicitly requested `chatgpt_web|GPT-6`, completed in68.6s and returned a valid synthetic external-tool request. It was not a renamed5.6 result.
+- Prior catalog release38ffdf8 is live healthy (Gateway Image38136439857, CI38136439954 passed). This correction replaces its Sol entry with GPT-6. Targeted worker Ruff/Python compilation and gateway Go vet passed; corrected rollout and real admin acceptance pending.
