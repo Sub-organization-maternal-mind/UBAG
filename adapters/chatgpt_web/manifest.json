@@ -1,7 +1,7 @@
 {
   "schema_version": "ubag.adapter.v0",
   "id": "chatgpt_web",
-  "display_name": "ChatGPT Web",
+  "display_name": "ChatGPT",
   "version": "0.1.0",
   "status": "stub",
   "adapter_path": "chatgpt_web",
@@ -132,5 +132,5 @@
     "network": "blocked_until_manual_session_runtime",
     "browser": "manual_user_owned_session_required"
   },
-  "not_implemented_reason": "ChatGPT Web ships real Playwright manual-session automation behind the worker's live engine (run_live). The default registry dispatch stays fail-closed: it requires a user-owned manual browser session runtime, manual login, and a re-confirmed drift baseline before executing jobs."
+  "not_implemented_reason": "ChatGPT ships real Playwright manual-session automation behind the worker's live engine (run_live). The default registry dispatch stays fail-closed: it requires a user-owned manual browser session runtime, manual login, and a re-confirmed drift baseline before executing jobs."
 }

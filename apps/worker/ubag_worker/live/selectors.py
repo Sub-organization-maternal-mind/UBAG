@@ -241,7 +241,7 @@ class ProviderSelectors:
 
 CHATGPT_WEB = ProviderSelectors(
     provider_id="chatgpt_web",
-    display_name="ChatGPT Web",
+    display_name="ChatGPT",
     target_url="https://chatgpt.com/",
     # Re-baselined 2026-09-26 against live chatgpt.com (logged-in): the composer
     # was rebuilt (ComposerModeSurface/ComposerLayoutRoot, no __composer-pill
@@ -397,7 +397,7 @@ CHATGPT_WEB = ProviderSelectors(
 
 DEEPSEEK_WEB = ProviderSelectors(
     provider_id="deepseek_web",
-    display_name="DeepSeek Web",
+    display_name="Deepseek",
     target_url="https://chat.deepseek.com/",
     # Re-baselined 2026-09-26 against live chat.deepseek.com (logged-in): the
     # Expert/Instant/Vision mode pills are GONE from the composer - the footer
@@ -525,9 +525,9 @@ DEEPSEEK_WEB = ProviderSelectors(
 
 GEMINI_WEB = ProviderSelectors(
     provider_id="gemini_web",
-    display_name="Gemini Web",
+    display_name="Gemini",
     target_url="https://gemini.google.com/app",
-    selector_version="2026-09-08-gemini-3.8-standard",
+    selector_version="2026-10-11-gemini-high-login-fixed",
     # Re-baselined 2026-07-15 against live gemini.google.com/app. Gemini's
     # composer is a Quill editor whose <rich-textarea> holds TWO contenteditable
     # divs: the real composer (div.ql-editor, ~439x24) and an invisible
@@ -586,7 +586,7 @@ GEMINI_WEB = ProviderSelectors(
     login_signal=SelectorGroup(
         "login_signal",
         (
-            "a[href*='accounts.google.com']",
+            # The logged-in account menu points to SignOutOptions; it is not a login wall.
             "text=Sign in",
             "input[type='email']",
         ),
@@ -657,26 +657,8 @@ GEMINI_WEB = ProviderSelectors(
     # Same as ChatGPT: no in-call capture (the Gemini voice capture does not
     # even list "Listen"). Empty until a live probe taken during a call.
     voice_readiness=VoiceReadiness(),
-    # Operator default (always-on): "3.8 Flash" with Extended thinking OFF.
-    #
-    # Re-baselined 2026-07-17 against live gemini.google.com. Google FLATTENED the
-    # mode picker: the nested "Thinking level" gem-menu-item (whose submenu offered
-    # Standard / Extended) is GONE, and "Extended thinking" is now a sibling entry
-    # in the single menu opened by data-test-id='bard-mode-menu-button':
-    #     3.8 Flash | 3.7 Flash | 3.6 Flash | 3.5 Flash-Lite | 3.1 Pro | Extended thinking
-    # "Standard" no longer exists as a label at all.
-    #
-    # Crucially the model and Extended thinking are NOT mutually exclusive —
-    # verified live on 2026-07-23: clicking "3.6 Flash" can leave Extended
-    # selected too. Standard has no menu label; it is the state where the
-    # independent Extended toggle is OFF.
-    #
-    # Both settings are idempotent. The model is a labelled choice; thinking is
-    # represented as a toggle whose desired state is False (Standard), so a
-    # persisted Extended selection is clicked exactly once to return to
-    # Standard. With thinking off the engine takes the plain (non-reasoning)
-    # response timeout.
-            # Live 2026-10-10: effort is a Low/Medium/High menu, replacing Extended.
+    # Live 2026-10-11: model3.8 Flash and Low/Medium/High effort are independent choices.
+    # Owner requires High; preserve the reasoning response budget.
     settings=(
         ProviderSetting(
             key="model",
@@ -695,7 +677,7 @@ GEMINI_WEB = ProviderSelectors(
         ProviderSetting(
             key="thinking",
             kind="choice",
-            desired="Low",
+            desired="High",
             open_steps=(
                 (
                     "button[data-test-id='bard-mode-menu-button']",
@@ -707,7 +689,7 @@ GEMINI_WEB = ProviderSelectors(
             apply_click="gem-menu-item:has-text(\"{value}\")",
         ),
     ),
-    reasoning=False,
+    reasoning=True,
 )
 
 MISTRAL_LECHAT = ProviderSelectors(
@@ -774,7 +756,7 @@ MISTRAL_LECHAT = ProviderSelectors(
 )
 
 # ---------------------------------------------------------------------------
-# Duck.ai Web (https://duck.ai/) — DuckDuckGo's private multi-model chat.
+# Duck.ai (https://duck.ai/) — DuckDuckGo's private multi-model chat.
 #
 # Baselines below were confirmed read-only against the live site 2026-09-07
 # via CDP (fresh anonymous tab — no login wall; free tier needs no account):
@@ -792,7 +774,7 @@ MISTRAL_LECHAT = ProviderSelectors(
 
 DUCKAI_WEB = ProviderSelectors(
     provider_id="duckai_web",
-    display_name="Duck.ai Web",
+    display_name="Duck.ai",
     target_url="https://duck.ai/",
     selector_version="2026-09-07-duckai-reply-sibling-verified",
     prompt_input=SelectorGroup(

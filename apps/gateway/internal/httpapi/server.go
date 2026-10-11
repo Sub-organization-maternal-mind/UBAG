@@ -3623,11 +3623,11 @@ func (s *Server) emitAuthorizationAudit(r *http.Request, principal authenticated
 func targetCatalog() []map[string]any {
 	return []map[string]any{
 		{"key": "mock", "adapter_key": "mock", "display_name": "Mock Target", "safe_mode": true, "manual_login_required": false},
-		{"key": "deepseek_web", "adapter_key": "deepseek_web", "display_name": "DeepSeek Web", "safe_mode": true, "manual_login_required": true},
-		{"key": "chatgpt_web", "adapter_key": "chatgpt_web", "display_name": "ChatGPT Web", "safe_mode": true, "manual_login_required": true},
-		{"key": "gemini_web", "adapter_key": "gemini_web", "display_name": "Gemini Web", "safe_mode": true, "manual_login_required": true},
+		{"key": "deepseek_web", "adapter_key": "deepseek_web", "display_name": "Deepseek", "safe_mode": true, "manual_login_required": true},
+		{"key": "chatgpt_web", "adapter_key": "chatgpt_web", "display_name": "ChatGPT", "safe_mode": true, "manual_login_required": true},
+		{"key": "gemini_web", "adapter_key": "gemini_web", "display_name": "Gemini", "safe_mode": true, "manual_login_required": true},
 		{"key": "mistral_lechat", "adapter_key": "mistral_lechat", "display_name": "Mistral Le Chat", "safe_mode": true, "manual_login_required": true},
-		{"key": "duckai_web", "adapter_key": "duckai_web", "display_name": "Duck.ai Web", "safe_mode": true, "manual_login_required": true},
+		{"key": "duckai_web", "adapter_key": "duckai_web", "display_name": "Duck.ai", "safe_mode": true, "manual_login_required": true},
 		{"key": "generic_chat", "adapter_key": "generic_chat", "display_name": "Generic Chat", "safe_mode": true, "manual_login_required": true},
 		{"key": "generic_form", "adapter_key": "generic_form", "display_name": "Generic Form", "safe_mode": true, "manual_login_required": true},
 		{"key": "antigravity_sdk", "adapter_key": "antigravity_sdk", "display_name": "Antigravity SDK", "safe_mode": true, "manual_login_required": false},

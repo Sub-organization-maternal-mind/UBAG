@@ -118,6 +118,10 @@ class ManualActionRequired(RuntimeError):
         self.reason = reason
 
 
+class BrowserAttachError(RuntimeError):
+    """The private browser connection did not recover before the attach deadline."""
+
+
 class DriftDetectedError(RuntimeError):
     """Raised when every fallback selector for a required group fails.
 
@@ -648,8 +652,8 @@ class PlaywrightPageDriver(PageDriver):
 
         raw = os.environ.get("UBAG_CDP_ATTACH_ATTEMPTS", "").strip()
         if raw.isdigit() and int(raw) > 0:
-            return int(raw)
-        return 5
+            return min(int(raw), 20)
+        return 12
 
     def _connect_over_cdp_resilient(self, browser_type, endpoint):  # pragma: no cover - requires browser
         """Attach over CDP, retrying briefly if the browser is mid-restart.
@@ -663,15 +667,19 @@ class PlaywrightPageDriver(PageDriver):
 
         attempts = self._cdp_attach_attempts()
         last_exc: Optional[Exception] = None
+        deadline = _time.monotonic() + 25.0
         for index in range(attempts):
             try:
-                return browser_type.connect_over_cdp(endpoint)
+                remaining = deadline - _time.monotonic()
+                if remaining <= 0:
+                    break
+                return browser_type.connect_over_cdp(endpoint, timeout=min(5000, max(1, int(remaining * 1000))))
             except Exception as exc:  # noqa: BLE001 - browser may be relaunching
                 last_exc = exc
                 if index == attempts - 1:
                     break
-                _time.sleep(min(2.0, 0.5 * (index + 1)))
-        raise RuntimeError(
+                _time.sleep(min(2.0, 0.5 * (index + 1), max(0.0, deadline - _time.monotonic())))
+        raise BrowserAttachError(
             "could not attach to the live browser over CDP at %s after %d attempts; "
             "the browser-viewer Chromium may be restarting" % (endpoint, attempts)
         ) from last_exc

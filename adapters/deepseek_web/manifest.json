@@ -1,7 +1,7 @@
 {
   "schema_version": "ubag.adapter.v0",
   "id": "deepseek_web",
-  "display_name": "DeepSeek Web",
+  "display_name": "Deepseek",
   "version": "0.1.0",
   "status": "stub",
   "adapter_path": "deepseek_web",
@@ -93,5 +93,5 @@
     "network": "blocked_until_manual_session_runtime",
     "browser": "manual_user_owned_session_required"
   },
-  "not_implemented_reason": "DeepSeek Web ships real Playwright manual-session automation behind the worker's live engine (run_live). The default registry dispatch stays fail-closed: it requires a user-owned manual browser session runtime, manual login, and a re-confirmed drift baseline before executing jobs."
+  "not_implemented_reason": "Deepseek ships real Playwright manual-session automation behind the worker's live engine (run_live). The default registry dispatch stays fail-closed: it requires a user-owned manual browser session runtime, manual login, and a re-confirmed drift baseline before executing jobs."
 }

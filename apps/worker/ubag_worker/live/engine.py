@@ -67,6 +67,7 @@ from .events import (
 )
 from .page_driver import (
     AUTHENTICATED,
+    BrowserAttachError,
     DriftDetectedError,
     ManualActionRequired,
     PageDriver,
@@ -516,8 +517,8 @@ class LiveSessionEngine:
                 "target": job.target,
                 "retryable": True,
                 "error_class": "provider_deadline" if isinstance(exc, TimeoutError) or type(exc).__name__ == "TimeoutError" else "provider_interaction",
-                "reason": "browser_operation_failed",
-                "message": "Provider browser operation failed; inspect the diagnostic stage.",
+                "reason": "browser_endpoint_unavailable" if isinstance(exc, BrowserAttachError) else "browser_operation_failed",
+                "message": "Browser connection did not recover within 25 seconds; inspect browser health." if isinstance(exc, BrowserAttachError) else "Provider browser operation failed; inspect the diagnostic stage.",
             })
         finally:
             # Release the orchestration lease via the context manager (which

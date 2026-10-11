@@ -585,17 +585,9 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-// resolveFacadeModel maps a facade model ID to a native target plus validated
-// model settings. A bare target uses operator defaults; "target|value" binds
-// the catalog choice setting offering that value (e.g. chatgpt_web|GPT-5.6
-// Sol binds {"model": ...}, deepseek_web|Instant binds {"mode": ...}).
-// Thinking levels ride the same mechanism: chatgpt_web|Medium binds
-// {"thinking": "Medium"}, duckai_web|Reasoning binds {"reasoning":
-// "Reasoning"}. Toggle-kind settings (gemini_web thinking, deepseek
-// deepthink) have no labelled values, so they are NOT addressable as model
-// IDs — the facade surfaces them in the models list for discovery but
-// rejects them as chat model IDs; use the bare target (operator default)
-// for those.
+// resolveFacadeModel maps a facade ID to validated native settings.
+// A bare target uses operator defaults; target|value binds a catalog choice.
+// Gemini's curated 3.8 Flash High entry binds both model and thinking settings.
 func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool) {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -612,6 +604,12 @@ func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool)
 		return target, nil, true
 	}
 	catalog := resolveModelCatalog(target)
+	if target == "gemini_web" && value == "3.8 Flash High" {
+		if slices.Contains(catalog.Settings["model"].Values, "3.8 Flash") && slices.Contains(catalog.Settings["thinking"].Values, "High") {
+			return target, map[string]any{"model": "3.8 Flash", "thinking": "High"}, true
+		}
+		return "", nil, false
+	}
 	for name, setting := range catalog.Settings {
 		if setting.Kind == "choice" && slices.Contains(setting.Values, value) {
 			return target, map[string]any{name: value}, true

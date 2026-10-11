@@ -1,7 +1,7 @@
 {
   "schema_version": "ubag.adapter.v0",
   "id": "duckai_web",
-  "display_name": "Duck.ai Web",
+  "display_name": "Duck.ai",
   "version": "0.1.0",
   "status": "stub",
   "adapter_path": "duckai_web",
@@ -108,5 +108,5 @@
     "network": "blocked_until_manual_session_runtime",
     "browser": "manual_user_owned_session_required"
   },
-  "not_implemented_reason": "Duck.ai Web ships real Playwright manual-session automation behind the worker's live engine (run_live). The default registry dispatch stays fail-closed: it requires a user-owned manual browser session runtime, manual login/consent handling, and a re-confirmed drift baseline before executing jobs."
+  "not_implemented_reason": "Duck.ai ships real Playwright manual-session automation behind the worker's live engine (run_live). The default registry dispatch stays fail-closed: it requires a user-owned manual browser session runtime, manual login/consent handling, and a re-confirmed drift baseline before executing jobs."
 }
