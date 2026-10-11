@@ -68,6 +68,7 @@ from .events import (
 from .page_driver import (
     AUTHENTICATED,
     BrowserAttachError,
+    BrowserSessionLostError,
     DriftDetectedError,
     ManualActionRequired,
     PageDriver,
@@ -607,6 +608,15 @@ class LiveSessionEngine:
                 "provider thread must be reconciled before any retry"
             ) % type(exc).__name__,
         }
+        if isinstance(exc, TimeoutError) or type(exc).__name__ == "TimeoutError":
+            data["reason"] = "provider_response_timeout"
+            data["error_class"] = "provider_deadline"
+        elif isinstance(exc, BrowserSessionLostError):
+            data["reason"] = "browser_session_lost"
+            data["error_class"] = "browser_connection"
+        if isinstance(exc, DriftDetectedError):
+            data["selector_group"] = exc.group_name
+            data["selector_version"] = exc.selector_version
         if thread_url:
             data["current_thread_url"] = thread_url
         return ("failed_terminal", data)
@@ -868,25 +878,27 @@ class LiveSessionEngine:
         # deltas books its whole wait under provider_stream.
         t_wait = time.perf_counter()
         t_first = None
-        for delta in driver.stream_response(self._selectors, timeout_s=stream_timeout_s):
-            if t_first is None:
-                t_first = time.perf_counter()
-                timer.add("first_token", t_first - t_wait)
-            delta_count += 1
-            partial_parts.append(delta)
-            if token_budget is not None and token_index >= token_budget:
-                tail_parts.append(delta)
-                continue
-            yield ("token", {
-                "status": "token_streaming",
-                "target": job.target,
-                "token_index": token_index,
-                "delta": {"text": delta},
-            })
-            token_index += 1
-
-        t_end = time.perf_counter()
-        timer.add("provider_stream", t_end - (t_first if t_first is not None else t_wait))
+        timer.last_stage = "provider_stream"
+        try:
+            for delta in driver.stream_response(self._selectors, timeout_s=stream_timeout_s):
+                if t_first is None:
+                    t_first = time.perf_counter()
+                    timer.add("first_token", t_first - t_wait)
+                    timer.last_stage = "provider_stream"
+                delta_count += 1
+                partial_parts.append(delta)
+                if token_budget is not None and token_index >= token_budget:
+                    tail_parts.append(delta)
+                    continue
+                yield ("token", {
+                    "status": "token_streaming",
+                    "target": job.target,
+                    "token_index": token_index,
+                    "delta": {"text": delta},
+                })
+                token_index += 1
+        finally:
+            timer.add("provider_stream", time.perf_counter() - (t_first if t_first is not None else t_wait))
 
         if tail_parts:
             # ponytail: one trailing event, not a live tail; P2.2 per-attempt budgets lift the cap.

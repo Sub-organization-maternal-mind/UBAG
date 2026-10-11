@@ -122,6 +122,10 @@ class BrowserAttachError(RuntimeError):
     """The private browser connection did not recover before the attach deadline."""
 
 
+class BrowserSessionLostError(RuntimeError):
+    """The browser disconnected after a prompt may already have been submitted."""
+
+
 class DriftDetectedError(RuntimeError):
     """Raised when every fallback selector for a required group fails.
 
@@ -1074,8 +1078,8 @@ class PlaywrightPageDriver(PageDriver):
         its pre-submit ``baseline`` (this turn's node has appeared) and return that
         candidate's ``.last`` (newest) element. On a fresh chat every baseline is
         0 and the first assistant node makes ``.last`` == ``.first`` -- byte-
-        identical to the previous behaviour. Times out into ``DriftDetectedError``
-        (the job fails loudly) rather than ever returning a prior turn's answer.
+        identical to the previous behaviour. An absent new turn is a response
+        timeout, not proof that a selector changed. Never return a prior answer.
         """
         import time
 
@@ -1083,6 +1087,8 @@ class PlaywrightPageDriver(PageDriver):
         poll_s = 0.25
         last_error: Optional[Exception] = None
         while True:
+            if not self._page_is_live():
+                raise BrowserSessionLostError("provider browser disconnected while awaiting a response")
             for candidate in group.as_list():
                 base = baseline.get(candidate, 0)
                 try:
@@ -1104,7 +1110,7 @@ class PlaywrightPageDriver(PageDriver):
                     last_error = exc
                     continue
             if time.monotonic() >= deadline:
-                raise DriftDetectedError(group.name, group.baseline_version) from last_error
+                raise TimeoutError("provider did not expose a new response before the response deadline") from last_error
             # No new turn yet. Pace the wait: unlike _first_visible, the count<=base
             # branch above has no blocking wait_for, so without this the loop would
             # busy-spin a CPU core for the whole (up to reasoning-length) timeout
@@ -1689,12 +1695,12 @@ class PlaywrightPageDriver(PageDriver):
         # the earlier answers are already on screen; _await_new_response waits for
         # a node beyond the pre-submit baseline and returns the newest one, so the
         # poll below tracks the reply we just triggered.
+        deadline = time.monotonic() + timeout_s
         container = self._await_new_response(
             selectors.response_container,
             self._response_baseline,
             timeout_ms=int(timeout_s * 1000),
         )
-        deadline = time.monotonic() + timeout_s
         seen = ""
         last_growth = time.monotonic()
         # Provider-signalled completion: once the provider's OWN streaming control
@@ -1728,6 +1734,8 @@ class PlaywrightPageDriver(PageDriver):
             try:
                 current = container.inner_text(timeout=2000)
             except Exception:  # noqa: BLE001
+                if not self._page_is_live():
+                    raise BrowserSessionLostError("provider browser disconnected while reading a response") from None
                 current = seen
             if len(current) > len(seen):
                 yield current[len(seen):]
