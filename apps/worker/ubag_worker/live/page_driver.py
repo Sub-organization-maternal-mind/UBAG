@@ -22,6 +22,7 @@ Security invariants enforced here:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -29,7 +30,7 @@ import sys
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Iterator, List, Mapping, Optional, Sequence
+from typing import Callable, Iterator, List, Mapping, Optional, Sequence
 
 from .selectors import ProviderSelectors, SelectorGroup
 
@@ -640,6 +641,9 @@ class PlaywrightPageDriver(PageDriver):
         # reader wait for THIS turn's node and skip the earlier ones. Captured in
         # submit_prompt, consumed by stream_response. Empty on a fresh chat.
         self._response_baseline: dict[str, int] = {}
+        self._submitted_prompt_digest = ""
+        self._recovered_final_text: Optional[str] = None
+        self._response_recovery_attempted = False
         # True right after prepare_for_next_job navigated to the provider root and
         # clicked New chat with nothing else done since. The engine calls
         # start_new_chat again straight afterwards; that second click (plus its
@@ -1068,7 +1072,7 @@ class PlaywrightPageDriver(PageDriver):
                 counts[candidate] = 0
         return counts
 
-    def _await_new_response(self, group, baseline, *, timeout_ms: int):  # pragma: no cover - requires real browser
+    def _await_new_response(self, group, baseline, *, timeout_ms: int, recover: Optional[Callable[[], Optional[str]]] = None):  # pragma: no cover - requires real browser
         """Wait for THIS turn's response container and return its NEWEST locator.
 
         A resumed multi-turn thread already shows prior assistant turns; reading
@@ -1084,6 +1088,7 @@ class PlaywrightPageDriver(PageDriver):
         import time
 
         deadline = time.monotonic() + max(timeout_ms, 0) / 1000.0
+        recovery_at = time.monotonic() + 15.0
         poll_s = 0.25
         last_error: Optional[Exception] = None
         while True:
@@ -1111,6 +1116,11 @@ class PlaywrightPageDriver(PageDriver):
                     continue
             if time.monotonic() >= deadline:
                 raise TimeoutError("provider did not expose a new response before the response deadline") from last_error
+            if recover is not None and time.monotonic() >= recovery_at:
+                answer = recover()
+                if answer is not None:
+                    return answer
+                recovery_at = time.monotonic() + 5.0
             # No new turn yet. Pace the wait: unlike _first_visible, the count<=base
             # branch above has no blocking wait_for, so without this the loop would
             # busy-spin a CPU core for the whole (up to reasoning-length) timeout
@@ -1533,6 +1543,9 @@ class PlaywrightPageDriver(PageDriver):
     # -- interaction -----------------------------------------------------
     def submit_prompt(self, selectors: ProviderSelectors, prompt: str) -> None:  # pragma: no cover
         self._fresh_chat = False
+        self._submitted_prompt_digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+        self._recovered_final_text = None
+        self._response_recovery_attempted = False
         # Turn-aware read baseline: snapshot how many assistant turns are already
         # on the page BEFORE we submit, so stream_response/read_final_response can
         # target the NEW turn and never latch a prior turn's answer on a resumed
@@ -1696,11 +1709,20 @@ class PlaywrightPageDriver(PageDriver):
         # a node beyond the pre-submit baseline and returns the newest one, so the
         # poll below tracks the reply we just triggered.
         deadline = time.monotonic() + timeout_s
+        def recover() -> Optional[str]:
+            return self._recover_saved_chatgpt_answer(
+                selectors, timeout_ms=max(1, min(15000, int((deadline - time.monotonic()) * 1000)))
+            )
         container = self._await_new_response(
             selectors.response_container,
             self._response_baseline,
             timeout_ms=int(timeout_s * 1000),
+            recover=recover,
         )
+        if isinstance(container, str):
+            self.stream_end_reason = "reconciled"
+            yield container
+            return
         seen = ""
         last_growth = time.monotonic()
         # Provider-signalled completion: once the provider's OWN streaming control
@@ -1716,6 +1738,7 @@ class PlaywrightPageDriver(PageDriver):
         # overwrite it with the real reason.
         self.stream_end_reason = "deadline"
         grace_s = _indicator_gone_grace_s()
+        recovery_at = time.monotonic() + 15.0
         # Reasoning modes pause (often >1s) while "thinking" with no streaming
         # indicator; widen the settle window so a mid-thought pause is not mistaken
         # for completion and the partial answer captured.
@@ -1767,11 +1790,79 @@ class PlaywrightPageDriver(PageDriver):
                 ):
                     self.stream_end_reason = "indicator_gone"
                     break
+            if not seen.strip() and now >= recovery_at:
+                answer = recover()
+                if answer is not None:
+                    self.stream_end_reason = "reconciled"
+                    yield answer
+                    return
+                recovery_at = time.monotonic() + 5.0
             time.sleep(0.4)
+
+    def _recover_saved_chatgpt_answer(self, selectors: ProviderSelectors, *, timeout_ms: int) -> Optional[str]:
+        """Observe the normal page reload's GET; never call a private API or resubmit."""
+        from urllib.parse import urlsplit
+
+        from .chatgpt_recovery import completed_answer
+
+        if selectors.provider_id != "chatgpt_web" or self._response_recovery_attempted:
+            return None
+        if not self._submitted_prompt_digest or not self._page_is_live():
+            return None
+        if self._visible_now_state(selectors.streaming_indicator) is not False:
+            return None
+        if not self._visible_now(selectors.response_completion_indicator):
+            return None
+        # A prior turn's toolbar must not interrupt generation of the new turn.
+        assistant_selector = "[data-content-search-unit-key*='assistant']"
+        try:
+            assistants = self._page.locator(assistant_selector)
+            if assistants.count() <= self._response_baseline.get(assistant_selector, 0):
+                return None
+            # Both attributes and this toolbar ancestry were observed live.
+            if not assistants.last.evaluate(
+                "el => !!el.closest('[data-content-search-turn-key]')?.querySelector("
+                "\"[data-talvt-turn-state='complete'] button[aria-label='Regenerate response']\")",
+                timeout=min(timeout_ms, 5000),
+            ):
+                return None
+        except Exception:  # noqa: BLE001 - cannot prove this turn finished
+            return None
+        url = self.current_thread_url(selectors)
+        thread_id = urlsplit(url).path.removeprefix("/c/")
+        if not _is_same_origin_https(url, selectors.target_url) or not _SAFE_CONV_ID_RE.fullmatch(thread_id):
+            return None
+        self._response_recovery_attempted = True
+        expected_path = "/backend-api/conversations/" + thread_id
+        try:
+            # Endpoint and schema observed in the provider's own 2026-10-11 UI.
+            # Credentials stay in the browser. No request headers/body are read.
+            with self._page.expect_response(
+                lambda response: response.request.method == "GET"
+                and _is_same_origin_https(response.url, selectors.target_url)
+                and urlsplit(response.url).path == expected_path,
+                timeout=timeout_ms,
+            ) as observed:
+                self._page.reload(wait_until="domcontentloaded", timeout=timeout_ms)
+            response = observed.value
+            if response.status != 200:
+                return None
+            body = response.body()
+            if len(body) > 8 * 1024 * 1024:
+                return None
+            answer = completed_answer(
+                json.loads(body), thread_id=thread_id, prompt_digest=self._submitted_prompt_digest
+            )
+            self._recovered_final_text = answer
+            return answer
+        except Exception:  # noqa: BLE001 - recovery is bounded and fail-closed
+            return None
 
     def read_final_response(  # pragma: no cover
         self, selectors: ProviderSelectors, *, return_mode: str = "final"
     ) -> str:
+        if self._recovered_final_text is not None:
+            return self._recovered_final_text
         # Reasoning models (e.g. DeepSeek R1) render the chain-of-thought and the final
         # answer as separate nodes; response_container (.first) can latch the thinking
         # pane. When the job requested return_mode="final" and the provider declares an

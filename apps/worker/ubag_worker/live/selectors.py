@@ -171,6 +171,8 @@ class ProviderSelectors:
     # nodes; response_container alone (.first) can latch the thinking pane. When set,
     # read_final_response uses this as the authoritative source for return_mode="final".
     final_answer_container: Optional[SelectorGroup] = None
+    # Optional completed-turn control used only for read-only answer recovery.
+    response_completion_indicator: Optional[SelectorGroup] = None
     # Optional hidden <input type=file> for targets that support uploading a file
     # (e.g. dictation audio) into the chat before submitting the prompt. When None
     # the target does not support file attachment and the engine emits
@@ -252,7 +254,7 @@ CHATGPT_WEB = ProviderSelectors(
     # current value ("Thinking effortMedium"). Assistant replies render under
     # div[data-content-search-unit-key*='assistant'] with a MarkdownRoot child;
     # the old data-message-author-role/article DOM is gone.
-    selector_version="2026-10-05-answer-readiness-rebased",
+    selector_version="2026-10-11-saved-final-answer-recovery",
     prompt_input=SelectorGroup(
         "prompt_input",
         (
@@ -288,6 +290,12 @@ CHATGPT_WEB = ProviderSelectors(
             "div.markdown.prose",
             "[data-testid^='conversation-turn'] .markdown",
         ),
+    ),
+    response_completion_indicator=SelectorGroup(
+        "response_completion_indicator",
+        # Observed 2026-10-11: blank DIL render with a saved final answer.
+        # This control is only detected; recovery NEVER clicks Regenerate.
+        ("[data-talvt-turn-state='complete'] button[aria-label='Regenerate response']",),
     ),
     authenticated_signal=SelectorGroup(
         "authenticated_signal",
