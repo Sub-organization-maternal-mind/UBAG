@@ -1800,7 +1800,7 @@ class PlaywrightPageDriver(PageDriver):
             time.sleep(0.4)
 
     def _recover_saved_chatgpt_answer(self, selectors: ProviderSelectors, *, timeout_ms: int) -> Optional[str]:
-        """Observe the normal page reload's GET; never call a private API or resubmit."""
+        """Observe normal thread navigation's GET; never request it directly or resubmit."""
         from urllib.parse import urlsplit
 
         from .chatgpt_recovery import completed_answer
@@ -1834,16 +1834,21 @@ class PlaywrightPageDriver(PageDriver):
             return None
         self._response_recovery_attempted = True
         expected_path = "/backend-api/conversations/" + thread_id
+        recovery_page = None
         try:
             # Endpoint and schema observed in the provider's own 2026-10-11 UI.
             # Credentials stay in the browser. No request headers/body are read.
-            with self._page.expect_response(
+            # A reload can reuse SPA bootstrap state without fetching the saved
+            # conversation. A separate read-only tab performs normal navigation
+            # and leaves the execution tab untouched.
+            recovery_page = self._page.context.new_page()
+            with recovery_page.expect_response(
                 lambda response: response.request.method == "GET"
                 and _is_same_origin_https(response.url, selectors.target_url)
                 and urlsplit(response.url).path == expected_path,
                 timeout=timeout_ms,
             ) as observed:
-                self._page.reload(wait_until="domcontentloaded", timeout=timeout_ms)
+                recovery_page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
             response = observed.value
             if response.status != 200:
                 return None
@@ -1857,6 +1862,12 @@ class PlaywrightPageDriver(PageDriver):
             return answer
         except Exception:  # noqa: BLE001 - recovery is bounded and fail-closed
             return None
+        finally:
+            if recovery_page is not None:
+                try:
+                    recovery_page.close()
+                except Exception:  # noqa: BLE001 - never close the execution browser
+                    pass
 
     def read_final_response(  # pragma: no cover
         self, selectors: ProviderSelectors, *, return_mode: str = "final"
