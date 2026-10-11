@@ -333,7 +333,7 @@ func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 // credential. Native target/settings APIs remain available to operators; settings,
 // mocks and unverified providers must not appear as working assistant models.
 func (s *Server) facadeModels() []openAIFacadeModel {
-	ids := []string{"chatgpt_web|GPT-6", "deepseek_web"}
+	ids := []string{"chatgpt_web|GPT-6", "deepseek_web", "gemini_web|3.8 Flash High"}
 	models := make([]openAIFacadeModel, 0, len(ids))
 	for _, id := range ids {
 		models = append(models, openAIFacadeModel{ID: id, Object: "model", OwnedBy: "ubag"})
