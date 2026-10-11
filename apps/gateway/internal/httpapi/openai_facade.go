@@ -329,27 +329,14 @@ func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, openAIFacadeModelList{Object: "list", Data: s.facadeModels()})
 }
 
-// facadeModels lists one model per target plus one target|setting entry per
-// caller-selectable model-catalog choice, mirroring the manifests the native
-// create path validates against. Deterministic order: catalog order, settings
-// sorted by key, values in manifest order.
+// facadeModels publishes only chat models verified with the production OET
+// credential. Native target/settings APIs remain available to operators; settings,
+// mocks and unverified providers must not appear as working assistant models.
 func (s *Server) facadeModels() []openAIFacadeModel {
-	models := []openAIFacadeModel{}
-	for _, entry := range targetCatalog() {
-		key, _ := entry["key"].(string)
-		if key == "" {
-			continue
-		}
-		models = append(models, openAIFacadeModel{ID: key, Object: "model", OwnedBy: "ubag"})
-		for _, id := range facadeChoiceModelIDs(key) {
-			models = append(models, openAIFacadeModel{ID: id, Object: "model", OwnedBy: "ubag"})
-		}
-		// Board-curated composite IDs (not manifest values — see
-		// resolveFacadeModel). Listed here so Discover models surfaces the
-		// operator's recommended pick.
-		for _, id := range facadeCuratedModelIDs(key) {
-			models = append(models, openAIFacadeModel{ID: id, Object: "model", OwnedBy: "ubag"})
-		}
+	ids := []string{"chatgpt_web|GPT-5.6 Sol", "duckai_web|GPT-6 Luna", "deepseek_web"}
+	models := make([]openAIFacadeModel, 0, len(ids))
+	for _, id := range ids {
+		models = append(models, openAIFacadeModel{ID: id, Object: "model", OwnedBy: "ubag"})
 	}
 	return models
 }
