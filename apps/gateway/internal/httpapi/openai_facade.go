@@ -333,7 +333,7 @@ func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 // credential. Native target/settings APIs remain available to operators; settings,
 // mocks and unverified providers must not appear as working assistant models.
 func (s *Server) facadeModels() []openAIFacadeModel {
-	ids := []string{"chatgpt_web|GPT-6", "deepseek_web", "gemini_web|3.8 Flash High"}
+	ids := []string{"chatgpt_web|GPT-6", "deepseek_web", "gemini_web|3.8 Flash High", "gemini_web|4 Argon Low"}
 	models := make([]openAIFacadeModel, 0, len(ids))
 	for _, id := range ids {
 		models = append(models, openAIFacadeModel{ID: id, Object: "model", OwnedBy: "ubag"})
@@ -607,6 +607,12 @@ func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool)
 	if target == "gemini_web" && value == "3.8 Flash High" {
 		if slices.Contains(catalog.Settings["model"].Values, "3.8 Flash") && slices.Contains(catalog.Settings["thinking"].Values, "High") {
 			return target, map[string]any{"model": "3.8 Flash", "thinking": "High"}, true
+		}
+		return "", nil, false
+	}
+	if target == "gemini_web" && value == "4 Argon Low" {
+		if slices.Contains(catalog.Settings["model"].Values, "4 Argon") && slices.Contains(catalog.Settings["thinking"].Values, "Low") {
+			return target, map[string]any{"model": "4 Argon", "thinking": "Low"}, true
 		}
 		return "", nil, false
 	}

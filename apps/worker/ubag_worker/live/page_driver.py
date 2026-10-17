@@ -1422,14 +1422,16 @@ class PlaywrightPageDriver(PageDriver):
     def _setting_satisfied(self, setting, desired) -> bool:  # pragma: no cover
         if setting.kind == "toggle":
             is_on = self._present_any(list(setting.on_when), timeout_ms=1500)
-            return is_on == bool(desired)
+            desired_bool = desired if isinstance(desired, bool) else str(desired).strip().lower() in {"true", "1", "yes", "on", "high", "medium", "extended"}
+            return is_on == desired_bool
         selector = setting.satisfied_when.format(value=desired)
         return self._present_any([selector], timeout_ms=2000)
 
     def _apply_setting(self, setting, desired) -> bool:  # pragma: no cover
         if setting.kind == "toggle":
             is_on = self._present_any(list(setting.on_when), timeout_ms=1200)
-            if is_on == bool(desired):
+            desired_bool = desired if isinstance(desired, bool) else str(desired).strip().lower() in {"true", "1", "yes", "on", "high", "medium", "extended"}
+            if is_on == desired_bool:
                 return True
             return self._click_any(list(setting.toggle_click), timeout_ms=4000)
         selector = setting.apply_click.format(value=desired)

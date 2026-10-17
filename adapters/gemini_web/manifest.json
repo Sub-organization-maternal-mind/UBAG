@@ -29,6 +29,7 @@
         "kind": "choice",
         "values": [
           "3.8 Flash",
+          "4 Argon",
           "3.1 Pro",
           "3.5 Flash-Lite"
         ]
