@@ -58,6 +58,11 @@ class ProviderSetting:
       ``apply_click`` are templates with a ``{value}`` placeholder substituted
       with the desired label; ``open_steps`` clicks open any menu first (each
       step is its own ordered fallback list).
+    * ``slider`` — a keyboard-driven level control (ChatGPT's *Power*). The
+      current level is announced as text (``satisfied_when``, a ``{value}``
+      template); ``apply_click`` is the control to focus, and ``slider_keys``
+      are pressed (one direction fully, then the other) until the announced
+      level matches.
 
     Selectors are plain strings (CSS / Playwright text engines); within a list
     the first visible one wins and the rest are drift fallbacks. NO credentials,
@@ -67,7 +72,7 @@ class ProviderSetting:
     """
 
     key: str
-    kind: str  # "toggle" | "choice"
+    kind: str  # "toggle" | "choice" | "slider"
     desired: object  # bool for toggle, str label for choice
     open_steps: Sequence[Sequence[str]] = ()
     # toggle
@@ -76,6 +81,8 @@ class ProviderSetting:
     # choice (templates; "{value}" -> the desired label)
     satisfied_when: str = ""
     apply_click: str = ""
+    # slider: keys that move the level, tried one direction at a time
+    slider_keys: Sequence[str] = ("ArrowRight", "ArrowLeft")
     # When False, a setting that cannot be confirmed warns instead of blocking
     # the job (keeps a renamed control from killing an otherwise-good answer).
     required: bool = True
@@ -379,10 +386,11 @@ CHATGPT_WEB = ProviderSelectors(
         list_ready="a[href^='/c/']",
         baseline_version="2026-07-17-verified",
     ),
-    # Required GPT-6 model, verified 2026-10-11 on the production account.
-    # The live menu exposes aria-checked radio rows for GPT-6 and older models.
-    # Its effort UI is now Power; the old Thinking effort pill is absent, so
-    # do not advertise or silently pretend to apply the obsolete effort setting.
+    # Required GPT-6 model at Medium power, verified 2026-10-17 on the production account.
+    # The live menu exposes aria-checked radio rows for GPT-6 and older models (GPT-5.6 Sol).
+    # The effort UI is "Power": a keyboard slider (menuitem aria-label="Power",
+    # ArrowLeft/ArrowRight) whose current level is announced in a polite status
+    # span ("Medium, 2 of 5."). The old Thinking effort pill is absent.
     settings=(
         ProviderSetting(
             key="model",
@@ -396,6 +404,19 @@ CHATGPT_WEB = ProviderSelectors(
             ),
             satisfied_when="[role='menuitemradio'][aria-checked='true']:has-text(\"{value}\")",
             apply_click="[role='menuitemradio']:has-text(\"{value}\")",
+        ),
+        ProviderSetting(
+            key="thinking",
+            kind="slider",
+            desired="Medium",
+            open_steps=(
+                (
+                    "button[aria-label*='Select ChatGPT model']",
+                    "[data-composer-layout] button[aria-haspopup='menu']",
+                ),
+            ),
+            satisfied_when="[role='status'][class*='KeyboardAnnouncement']:has-text(\"{value},\")",
+            apply_click="[role='menuitem'][aria-label='Power']",
         ),
     ),
     # GPT-6 can think before answering, so give the reader the longer
@@ -535,7 +556,7 @@ GEMINI_WEB = ProviderSelectors(
     provider_id="gemini_web",
     display_name="Gemini",
     target_url="https://gemini.google.com/app",
-    selector_version="2026-10-11-gemini-high-login-fixed",
+    selector_version="2026-10-17-gemini-argon-low",
     # Re-baselined 2026-07-15 against live gemini.google.com/app. Gemini's
     # composer is a Quill editor whose <rich-textarea> holds TWO contenteditable
     # divs: the real composer (div.ql-editor, ~439x24) and an invisible
@@ -665,13 +686,14 @@ GEMINI_WEB = ProviderSelectors(
     # Same as ChatGPT: no in-call capture (the Gemini voice capture does not
     # even list "Listen"). Empty until a live probe taken during a call.
     voice_readiness=VoiceReadiness(),
-    # Live 2026-10-11: model3.8 Flash and Low/Medium/High effort are independent choices.
-    # Owner requires High; preserve the reasoning response budget.
+    # Live 2026-10-17: the mode picker lists 3.5 Flash-Lite, 3.8 Flash, 3.1 Pro and
+    # "4 Argon"; the Thinking level (Low / Medium / High) is an independent choice.
+    # Owner requires 4 Argon at Low.
     settings=(
         ProviderSetting(
             key="model",
             kind="choice",
-            desired="3.8 Flash",
+            desired="4 Argon",
             open_steps=(
                 (
                     "button[data-test-id='bard-mode-menu-button']",
@@ -685,13 +707,16 @@ GEMINI_WEB = ProviderSelectors(
         ProviderSetting(
             key="thinking",
             kind="choice",
-            desired="High",
+            desired="Low",
             open_steps=(
                 (
                     "button[data-test-id='bard-mode-menu-button']",
                     "button[aria-label*='mode picker']",
                     "button.input-area-switch",
                 ),
+                # Live 2026-10-17: Low / Medium / High sit in a flyout that is collapsed
+                # (zero-size rows) until the "Thinking level" row is clicked.
+                ('gem-menu-item:has-text("Thinking level")',),
             ),
             satisfied_when="gem-menu-item.selected:has-text(\"{value}\")",
             apply_click="gem-menu-item:has-text(\"{value}\")",

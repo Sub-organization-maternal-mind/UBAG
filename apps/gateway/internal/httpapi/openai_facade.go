@@ -333,7 +333,7 @@ func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 // credential. Native target/settings APIs remain available to operators; settings,
 // mocks and unverified providers must not appear as working assistant models.
 func (s *Server) facadeModels() []openAIFacadeModel {
-	ids := []string{"chatgpt_web|GPT-6", "deepseek_web", "gemini_web|3.8 Flash High"}
+	ids := []string{"chatgpt_web|GPT-6 + Medium", "deepseek_web", "gemini_web|4 Argon + Low"}
 	models := make([]openAIFacadeModel, 0, len(ids))
 	for _, id := range ids {
 		models = append(models, openAIFacadeModel{ID: id, Object: "model", OwnedBy: "ubag"})
@@ -585,9 +585,26 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 	}
 }
 
+// facadeComposite is a board-curated pick that binds two settings at once: the
+// operator's recommended model and thinking level as ONE model id, so a stale or
+// wrong-effort combination can never be selected by accident.
+type facadeComposite struct {
+	target   string
+	value    string
+	settings map[string]string
+}
+
+// facadeComposites are the curated picks. Older ids stay resolvable so existing
+// callers keep working after a provider renames its models.
+var facadeComposites = []facadeComposite{
+	{"chatgpt_web", "GPT-6 + Medium", map[string]string{"model": "GPT-6", "thinking": "Medium"}},
+	{"gemini_web", "4 Argon + Low", map[string]string{"model": "4 Argon", "thinking": "Low"}},
+	{"gemini_web", "3.8 Flash High", map[string]string{"model": "3.8 Flash", "thinking": "High"}},
+}
+
 // resolveFacadeModel maps a facade ID to validated native settings.
-// A bare target uses operator defaults; target|value binds a catalog choice.
-// Gemini's curated 3.8 Flash High entry binds both model and thinking settings.
+// A bare target uses operator defaults; target|value binds a catalog choice;
+// a curated composite (facadeComposites) binds model and thinking together.
 func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool) {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -604,11 +621,18 @@ func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool)
 		return target, nil, true
 	}
 	catalog := resolveModelCatalog(target)
-	if target == "gemini_web" && value == "3.8 Flash High" {
-		if slices.Contains(catalog.Settings["model"].Values, "3.8 Flash") && slices.Contains(catalog.Settings["thinking"].Values, "High") {
-			return target, map[string]any{"model": "3.8 Flash", "thinking": "High"}, true
+	for _, c := range facadeComposites {
+		if c.target != target || c.value != value {
+			continue
 		}
-		return "", nil, false
+		bound := make(map[string]any, len(c.settings))
+		for name, want := range c.settings {
+			if !slices.Contains(catalog.Settings[name].Values, want) {
+				return "", nil, false
+			}
+			bound[name] = want
+		}
+		return target, bound, true
 	}
 	for name, setting := range catalog.Settings {
 		if setting.Kind == "choice" && slices.Contains(setting.Values, value) {

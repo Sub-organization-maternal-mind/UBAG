@@ -32,6 +32,12 @@
         "values": [
           "GPT-6"
         ]
+      },
+      "thinking": {
+        "kind": "choice",
+        "values": [
+          "Medium"
+        ]
       }
     }
   },
