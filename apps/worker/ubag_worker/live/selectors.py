@@ -692,6 +692,11 @@ GEMINI_WEB = ProviderSelectors(
                     "button[aria-label*='mode picker']",
                     "button.input-area-switch",
                 ),
+                (
+                    "gem-menu-item:has-text('Thinking level')",
+                    "[role='menuitem']:has-text('Thinking level')",
+                    "button:has-text('Thinking level')",
+                ),
             ),
             satisfied_when="gem-menu-item.selected:has-text(\"{value}\")",
             apply_click="gem-menu-item:has-text(\"{value}\")",
