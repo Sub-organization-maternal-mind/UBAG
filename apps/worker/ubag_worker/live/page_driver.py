@@ -1432,6 +1432,8 @@ class PlaywrightPageDriver(PageDriver):
             if is_on == bool(desired):
                 return True
             return self._click_any(list(setting.toggle_click), timeout_ms=4000)
+        if setting.kind == "slider":
+            return self._apply_slider(setting, desired)
         selector = setting.apply_click.format(value=desired)
         # ChatGPT's visible model rows can be covered by its scroll-track
         # overlay (observed 2026-10-05). Dispatch only a visible radio menu
@@ -1445,6 +1447,29 @@ class PlaywrightPageDriver(PageDriver):
         except Exception:  # noqa: BLE001 - retain the ordinary click fallback
             pass
         return self._click_any([selector], timeout_ms=4000)
+
+    def _apply_slider(self, setting, desired) -> bool:  # pragma: no cover
+        """Move a keyboard slider until its announced level reads ``desired``.
+
+        One direction is tried fully, then the other, checking the announcement
+        after every key press, so the starting level does not matter and a
+        locked (unreachable) level ends in a clean "not satisfied".
+        """
+        satisfied = setting.satisfied_when.format(value=desired)
+        try:
+            control = self._page.locator(_visible(setting.apply_click)).first
+            if control.count() == 0:
+                return False
+            for key in setting.slider_keys:
+                for _ in range(6):
+                    if self._present_any([satisfied], timeout_ms=500):
+                        return True
+                    control.focus()
+                    self._page.keyboard.press(key)
+                    self._page.wait_for_timeout(250)
+            return self._present_any([satisfied], timeout_ms=800)
+        except Exception:  # noqa: BLE001 - the next verification pass decides
+            return False
 
     def _ensure_setting(self, selectors, setting, desired):  # pragma: no cover
         # Read -> act-if-different -> re-verify. The first pass detects an
