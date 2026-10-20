@@ -42,11 +42,11 @@ Self-hostable platform that lets applications drive web-based AI and automation 
 - **Contracts first**: change `packages/openapi` / `shared-schemas` / `proto` before implementations; `pnpm check:blueprint` and `pnpm check:contracts` gate coverage.
 - **PROGRESS.md is the live verification ledger** — read it (and `AGENT_HANDOFF.md`) before implementing; update it whenever scope, commands, runtime status, or remaining work changes.
 - Risky runtime features land behind env flags, inert by default (e.g. `UBAG_WORKER_DAEMON`), layered in small commits.
-- UI work: `design.md` locks the dashboard to the NAJM theme DNA (warm cream paper, terracotta accent, editorial rhythm). Read `design.md` before UI edits; the project-scoped Hallmark skill lives at `.codex/skills/hallmark/SKILL.md`. Don't invent metrics, testimonials, or logos.
+- UI work: `design.md` locks the dashboard to the NAJM theme DNA (warm cream paper, terracotta accent, editorial rhythm). Read `design.md` before UI edits; the project-scoped Hallmark skill lives at `.opencode/skills/hallmark/SKILL.md`. Don't invent metrics, testimonials, or logos.
 
 ## Gotchas
 
-- The repo previously lived at `E:\Projects\UBAG` on a different machine; `AGENTS.md` and older docs contain stale absolute paths (`E:\...`, `C:\Users\Dr Faisal Maqsood PC\...`). The current root is `D:\Projects\UBAG` — translate stale paths, never propagate them.
+- The repo's root path is machine-dependent (it has lived at `E:\Projects\UBAG`, `D:\Projects\UBAG`, `C:\Projects\UBAG`, …), and `AGENTS.md` and older docs contain stale absolute paths (`E:\...`, `D:\...`, `C:\Users\...\...`). Always use repo-relative paths — translate stale paths, never propagate them. The current root is whatever directory holds this file.
 - Web-adapter DOM selectors are brittle and get re-baselined against the live pages (see gemini_web `prompt_input` history) — verify against the live DOM before changing selector baselines.
 
 ## Code navigation

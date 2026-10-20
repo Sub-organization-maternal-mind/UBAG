@@ -673,9 +673,9 @@ Read this file first, then `PROGRESS.md`, then `IMPLEMENTATION_COVERAGE.md`.
 
 ## Current Repository State
 
-- Working directory: `D:\Projects\UBAG`.
+- Working directory: the repo root. The absolute path varies by machine (e.g. `D:\Projects\UBAG`, `C:\Projects\UBAG`) — do not hardcode it.
 - Git is initialized on branch `main`, tracking `origin/main`.
-- Preserve `AGENTS.md`, `design.md`, `.codex`, and all current workspace contents.
+- Preserve `AGENTS.md`, `design.md`, `.opencode/skills` (the Hallmark and provider-refresh agent skills), and all current workspace contents.
 - Do not run `git reset`, `git clean`, or destructive checkout commands unless the user explicitly asks.
 
 ## Latest Slice: Multi-file attachments + faster pipeline (2026-07-23)

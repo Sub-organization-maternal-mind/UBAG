@@ -19,14 +19,13 @@ guessing.
 | `adapters/<id>/manifest.json` → `model_catalog.settings` | WHAT jobs may set (choice values / toggles) | gateway validation + `GET /v1/openai/models` |
 | `apps/worker/ubag_worker/live/selectors.py` → `ProviderSelectors` / `ProviderSetting` | HOW it is clicked in the real DOM + the operator-default `desired` | worker `page_driver.ensure_provider_config` |
 
-Downstream touch points that must move with them (the checker below enforces
-most of this): `apps/worker/ubag_worker/adapter_registry.py`
+Downstream touch points that must move with them: `apps/worker/ubag_worker/adapter_registry.py`
 (`REQUIRED_ADAPTER_IDS`) + `adapters/registry.json` (must match each other),
-`apps/worker/tests/test_provider_config.py` (pins every operator default),
 `apps/gateway/internal/httpapi/server.go` (`targetCatalog`),
 `apps/dashboard/src/lib/components/LiveBrowser.svelte` (`providerShortcuts`).
-The adapters' Python packages are thin delegation shims — they never need
-changes for a selector rebase.
+The operator defaults live in `selectors.py` itself (each
+`ProviderSetting.desired`). The adapters' Python packages are thin delegation
+shims — they never need changes for a selector rebase.
 
 ## Hard rules (violating any of these fails the task)
 
@@ -62,9 +61,16 @@ all` first and decide from the findings.
 node tools/provider-refresh/provider-probe.mjs <id> --open-menus
 # Live canary of the click paths (menus only; needs the provider logged in):
 node tools/provider-refresh/verify-settings.mjs <id>
-# Static cross-file consistency:
-node tools/provider-refresh/check-provider-selectors.mjs
 ```
+
+Static cross-file consistency is a MANUAL check now: the old
+`check-provider-selectors.mjs` gate was removed with the test suites on
+2026-10-08. Compare the provider id sets across `adapters/registry.json`,
+`apps/worker/ubag_worker/adapter_registry.py` (`REQUIRED_ADAPTER_IDS`),
+`apps/gateway/internal/httpapi/server.go` (`targetCatalog`) and
+`apps/dashboard/src/lib/components/LiveBrowser.svelte` (`providerShortcuts`),
+and confirm every declared `model_catalog.settings` value still appears in
+the manifest.
 
 CDP endpoint defaults to `http://127.0.0.1:15923` (the local deployment's
 SSH-tunnelled production Chrome; override with `--cdp` / `UBAG_PROBE_CDP`).
@@ -106,17 +112,20 @@ Interpretation:
    If a setting's control disappears from the UI entirely, remove the
    setting from BOTH files (declaring an unrenderable setting fails every
    job); mark a model-dependent control `required=False` with a comment.
-5. **Update the pins** in `apps/worker/tests/test_provider_config.py` (they
-   assert the exact desired values) and any selector-shape tests in
-   `apps/worker/tests/test_live_adapters.py`.
+5. **Update the operator defaults** in `selectors.py` (each
+   `ProviderSetting.desired`) and re-check every downstream touch point listed
+   above. The unit suites that used to pin these defaults were removed on
+   2026-10-08, so the defaults are now confirmed by the live canary and by
+   reading the four downstream files.
 6. **Verify live**: `verify-settings.mjs <id>` → must show "all settings
    verified" (or only best-effort unverified). Re-run the probe → all
    declared values seen.
-7. **Targeted tests** (never the full suites):
+7. **Targeted checks** (never the full suites; the Python unit suites were
+   removed on 2026-10-08):
    ```bash
-   PYTHONPATH="apps/worker;adapters/mock" python -m unittest discover -s apps/worker/tests -p "test_provider_config.py"
-   PYTHONPATH="apps/worker;adapters/mock" python -m unittest discover -s apps/worker/tests -p "test_live_adapters.py"
-   node tools/provider-refresh/check-provider-selectors.mjs
+   ruff check apps/worker adapters
+   cd apps/gateway && go vet ./...
+   pnpm dashboard:check
    ```
 8. **Ledger + docs**: append a `## <date> — <provider> rebase` entry to
    PROGRESS.md (symptom → live findings → changes → verification); update the
@@ -127,11 +136,15 @@ Interpretation:
 
 ## `providers verify all` — closing checklist
 
-- [ ] `check-provider-selectors.mjs` exits 0
+- [ ] provider id sets agree across `adapters/registry.json`,
+      `apps/worker/ubag_worker/adapter_registry.py`,
+      `apps/gateway/internal/httpapi/server.go` and
+      `apps/dashboard/src/lib/components/LiveBrowser.svelte` (manual — the
+      static gate was removed on 2026-10-08)
 - [ ] probe run for every live target (captures saved under
       `tools/provider-refresh/captures/`)
 - [ ] `verify-settings.mjs` shows no required-unverified settings
-- [ ] targeted worker tests green
+- [ ] targeted worker lint + gateway vet green
 - [ ] PROGRESS.md entry appended (findings + changes + verification)
 - [ ] anything the operator must decide (default changes, removed settings)
       listed explicitly in the final report

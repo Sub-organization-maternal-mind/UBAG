@@ -1,5 +1,8 @@
-@C:\Users\Dr Faisal Maqsood PC\.codex\RTK.md
-@C:\Users\Dr Faisal Maqsood PC\.codex\ANDY_UNIVERSAL_AGENT_RULES.md
+<!-- Operator-level rule files (RTK.md and ANDY_UNIVERSAL_AGENT_RULES.md) live OUTSIDE this
+     repo, under the local user's own .codex directory, so they are deliberately NOT included
+     here by absolute path: that path differs per machine and breaks on every other clone.
+     To load them on a given machine, copy them into this repo's .codex/ folder and add the
+     two include lines directly above this comment. Never hardcode another machine's home. -->
 
 # UBAG Project Instructions
 
@@ -14,11 +17,11 @@ Use the project-scoped Hallmark skill for every frontend, UI, UX, layout, visual
 
 Skill path:
 
-- `D:\Projects\UBAG\.codex\skills\hallmark\SKILL.md`
+- `.opencode/skills/hallmark/SKILL.md`
 
 Project design system:
 
-- `D:\Projects\UBAG\design.md`
+- `design.md`
 
 Default Hallmark mode for this project:
 
@@ -37,7 +40,7 @@ Use the project-scoped provider-refresh skill whenever work touches AI provider 
 
 Skill path:
 
-- `D:\Projects\UBAG\.codex\skills\provider-refresh\SKILL.md`
+- `.opencode/skills/provider-refresh/SKILL.md`
 
 The skill is agent-agnostic (plain markdown — point any coding agent at that path). Default mode: treat "check/fix/update provider selectors or models" as `providers verify all` first, then `providers rebase <id>` per provider with findings. Hard rules inside the skill are binding: human-only logins, menu-only interaction during verification, no guessed selectors, targeted tests only.
 

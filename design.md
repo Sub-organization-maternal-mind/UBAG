@@ -5,9 +5,9 @@ This project is locked to the Hallmark NAJM demo/theme as the default visual dir
 Reference:
 
 - Live demo: `https://www.usehallmark.com/examples/najm/`
-- Local Hallmark example: `D:\Projects\UBAG\.codex\skills\hallmark\site\examples\najm`
-- Source tokens: `D:\Projects\UBAG\.codex\skills\hallmark\site\examples\najm\tokens.css`
-- Source styles: `D:\Projects\UBAG\.codex\skills\hallmark\site\examples\najm\styles.css`
+- Local Hallmark example: `.opencode/skills/hallmark/site/examples/najm`
+- Source tokens: `.opencode/skills/hallmark/site/examples/najm/tokens.css`
+- Source styles: `.opencode/skills/hallmark/site/examples/najm/styles.css`
 
 ## Design DNA
 
