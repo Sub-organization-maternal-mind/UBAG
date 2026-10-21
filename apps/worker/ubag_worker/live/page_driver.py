@@ -1766,6 +1766,15 @@ class PlaywrightPageDriver(PageDriver):
                     return
                 if self._wait_indicator_growth(selectors, before, timeout_s=6.0):
                     return
+                # This input did not feed the composer. Clear what it may have
+                # staged before trying the next one: a file set on an input the
+                # composer does not read can still end up in the composer's own
+                # state, and a second attempt would then leave TWO recordings
+                # in the message (the provider transcribes both).
+                try:
+                    self.clear_attachment_state(selectors)
+                except Exception:  # noqa: BLE001 - best-effort cleanup
+                    pass
                 last_error = DriftDetectedError(indicator.name, selectors.selector_version)
         raise DriftDetectedError(group.name, group.baseline_version) from last_error
 
