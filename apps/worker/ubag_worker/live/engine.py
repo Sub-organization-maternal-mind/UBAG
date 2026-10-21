@@ -834,6 +834,29 @@ class LiveSessionEngine:
             # full list, so all files land in one operation.
             with timer.span("attachment_materialize"):
                 driver.attach_files(self._selectors, attach_paths)
+            # The provider uploads ASYNCHRONOUSLY: the composer shows the chip as
+            # soon as the file is staged while the bytes are still on the wire.
+            # A prompt submitted inside that window reaches the provider
+            # WITHOUT the audio, and the model then answers "No audio attachment
+            # is available in this message." - a successful job with a wrong
+            # answer. Measured live on chatgpt_web (2026-10-21): set_input_files
+            # returned after 0.19 s, the chip appeared at 0.35 s and the upload
+            # spinner only cleared at ~2.0 s. Waiting for the attachment to be
+            # READY removes the race; a provider that never shows a ready
+            # attachment fails loudly instead of submitting blind.
+            if self._selectors.attachment_indicator is not None:
+                if not driver.wait_for_attachment_ready(
+                    self._selectors, timeout_s=_attachment_ready_timeout_s()
+                ):
+                    return {
+                        "reason": "attachment_not_ready",
+                        "retryable": True,
+                        "message": (
+                            "The provider did not finish uploading the attachment "
+                            "in time; submitting now would send the prompt "
+                            "without the file."
+                        ),
+                    }
             attached_keys = [item["key"] for item in job.attachments]
             if not attached_keys and job.audio_artifact_key:
                 attached_keys = [job.audio_artifact_key]
@@ -1049,6 +1072,26 @@ _NO_AUDIO_ANSWER_MARKERS = (
 # A provider that refused to read the file answers in a sentence or two, not
 # in a transcript.
 _NO_AUDIO_ANSWER_MAX_CHARS = 600
+
+
+# How long to wait for the provider to finish uploading an attachment before
+# giving up. The measured upload on chatgpt_web takes ~2 s; the ceiling is
+# generous because a slow link or a big file legitimately takes longer, and a
+# job that waits is better than a job that submits a prompt without its file.
+_ATTACHMENT_READY_TIMEOUT_S = 60.0
+
+
+def _attachment_ready_timeout_s() -> float:
+    """The attachment-upload ceiling, overridable per deployment."""
+    raw = os.environ.get("UBAG_WORKER_ATTACHMENT_READY_TIMEOUT_S", "").strip()
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            return _ATTACHMENT_READY_TIMEOUT_S
+        if value > 0:
+            return value
+    return _ATTACHMENT_READY_TIMEOUT_S
 
 
 def _job_carried_audio(job) -> bool:

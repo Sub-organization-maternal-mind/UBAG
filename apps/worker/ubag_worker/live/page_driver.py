@@ -246,6 +246,18 @@ class PageDriver(ABC):
         """Clear pending file selections before reusing a warm page."""
         return None
 
+    def wait_for_attachment_ready(
+        self, selectors: ProviderSelectors, timeout_s: float = 60.0
+    ) -> bool:
+        """Wait until the provider has accepted AND finished uploading an
+        attachment.
+
+        Concrete (NOT abstract) so existing drivers keep working untouched. The
+        default returns True: a provider that exposes no verified indicator
+        keeps today's behaviour (attach, then submit).
+        """
+        return True
+
     def start_new_chat(self, selectors: ProviderSelectors) -> bool:
         """Start a fresh conversation, if the provider exposes a New-chat control.
 
@@ -1726,6 +1738,46 @@ class PlaywrightPageDriver(PageDriver):
         if file_inputs.evaluate_all("els => els.some(el => el.files && el.files.length)"):
             for locator in file_inputs.all():
                 locator.set_input_files([])
+
+    def wait_for_attachment_ready(  # pragma: no cover - requires real browser
+        self, selectors: ProviderSelectors, timeout_s: float = 60.0
+    ) -> bool:
+        """Wait until the provider has accepted the attachment AND finished
+        uploading it.
+
+        A provider's composer shows the attachment chip as soon as the file is
+        staged, while the bytes are still on the wire. Submitting inside that
+        window sends the prompt WITHOUT the attachment: ChatGPT then answers
+        "No audio attachment is available in this message." and the job
+        "succeeds" with a wrong answer. Measured live on chatgpt_web
+        (2026-10-21): chip at 0.35 s, upload spinner still up at 1.0 s, clear at
+        ~2.0 s.
+
+        Returns True when the provider is ready (or when the provider declares
+        no indicator, in which case there is nothing to wait for) and False
+        when the deadline passed with no ready attachment. The caller turns
+        that into an explicit, non-retryable failure instead of a blind
+        submit.
+        """
+        import time
+
+        indicator = selectors.attachment_indicator
+        if indicator is None:
+            return True
+        uploading = selectors.attachment_uploading
+        deadline = time.monotonic() + timeout_s
+        while True:
+            if self._present(indicator, timeout_ms=500):
+                still_uploading = False
+                if uploading is not None:
+                    still_uploading = self._present_any(
+                        list(uploading.as_list()), timeout_ms=300
+                    )
+                if not still_uploading:
+                    return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.2)
 
     def _click_first(  # pragma: no cover - requires real browser
         self, group: SelectorGroup, timeout_ms: int

@@ -242,6 +242,26 @@ class ProviderSelectors:
     # "Sign in" text the page chrome carries. None = no such marker, and the
     # login signal decides alone.
     signed_in_marker: Optional[SelectorGroup] = None
+    # Optional: the provider's OWN attachment indicator (the chip the composer
+    # renders for an attached file). When set, the engine WAITS for it to
+    # appear after attaching and for the upload to finish before it submits.
+    #
+    # It exists because a provider uploads ASYNCHRONOUSLY. Measured live on
+    # chatgpt_web (2026-10-21): set_input_files returned after 0.19 s, the
+    # chip appeared after 0.35 s, and the upload spinner was still running at
+    # t+1.0 s and only cleared at ~t+2.0 s. A prompt submitted inside that
+    # window reaches the provider WITHOUT the audio, and the model then
+    # answers "No audio attachment is available in this message." - a
+    # successful job with a wrong answer. Waiting for the indicator (and for
+    # the upload to complete) removes the race.
+    #
+    # None = the provider exposes no verified indicator, so the engine keeps
+    # today's behaviour (attach and submit).
+    attachment_indicator: Optional[SelectorGroup] = None
+    # Optional: markers that are present while the attachment is still
+    # UPLOADING (the indicator is there, the bytes are not yet on the wire).
+    # The engine waits until none of them is visible.
+    attachment_uploading: Optional[SelectorGroup] = None
 
     def all_groups(self) -> List[SelectorGroup]:
         return [
@@ -353,6 +373,29 @@ CHATGPT_WEB = ProviderSelectors(
             "input[type='file']",
             "input[accept*='audio']",
         ),
+    ),
+    # The composer's attachment chip. Measured live 2026-10-21: it appears
+    # ~0.35 s after set_input_files and carries an audio icon
+    # (svg.text-file-audio) for a recording. The worker waits for it before
+    # submitting, because ChatGPT uploads asynchronously.
+    attachment_indicator=SelectorGroup(
+        "attachment_indicator",
+        (
+            "[class*='composer-attachment']",
+            "[class*='ttachment']",
+        ),
+        baseline_version="2026-10-21-live-attach-timing",
+    ),
+    # Present while the chip's upload is still in flight.
+    attachment_uploading=SelectorGroup(
+        "attachment_uploading",
+        (
+            "[class*='composer-attachment'] [role='progressbar']",
+            "[class*='composer-attachment'] svg[class*='spin']",
+            "[class*='ttachment'] [role='progressbar']",
+            "[class*='ttachment'] svg[class*='spin']",
+        ),
+        baseline_version="2026-10-21-live-attach-timing",
     ),
     new_chat=SelectorGroup(
         "new_chat",

@@ -699,13 +699,17 @@ func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool)
 // be present in the catalog, so a curated id that outlived its model resolves
 // to "not found" (an honest model_not_found) instead of silently binding a
 // model the provider no longer offers.
+//
+// The split is on the LAST space, not the first: Gemini's model names contain
+// spaces themselves ("3.8 Flash"), so "3.8 Flash Low" must split into
+// "3.8 Flash" + "Low" and not into "3.8" + "Flash Low".
 func resolveCuratedFacadeSettings(target string, value string, catalog jobcore.ModelCatalog) (map[string]any, bool) {
-	model, thinking, found := strings.Cut(value, " ")
-	if !found {
+	cut := strings.LastIndex(value, " ")
+	if cut <= 0 || cut >= len(value)-1 {
 		return nil, false
 	}
-	model = strings.TrimSpace(model)
-	thinking = strings.TrimSpace(thinking)
+	model := strings.TrimSpace(value[:cut])
+	thinking := strings.TrimSpace(value[cut+1:])
 	if model == "" || thinking == "" {
 		return nil, false
 	}
