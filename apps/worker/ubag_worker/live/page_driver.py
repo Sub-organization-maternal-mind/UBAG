@@ -250,6 +250,11 @@ class PageDriver(ABC):
         """How many attachment indicators the provider currently shows."""
         return 0
 
+    def reload(self, selectors: ProviderSelectors, timeout_ms: int = 20000) -> bool:
+        """Re-open the provider's home page. The default cannot, so the caller
+        keeps today's behaviour."""
+        return False
+
     def wait_for_attachment_ready(
         self, selectors: ProviderSelectors, timeout_s: float = 60.0
     ) -> bool:
@@ -1774,6 +1779,26 @@ class PlaywrightPageDriver(PageDriver):
         if group is None:
             return 0
         return self._count_visible(list(group.as_list()))
+
+    def reload(self, selectors: ProviderSelectors, timeout_ms: int = 20000) -> bool:
+        """Re-open the provider's home page, giving a pristine composer.
+
+        The escape hatch for a composer that will not accept an upload: a page
+        that has been through several attach/remove cycles can hold a stale
+        input ahead of the current one, and a full navigation is the only
+        reliable way to get a clean one. Verified live on chatgpt_web
+        (2026-10-21): after a reload the chip appears as usual.
+        """
+        try:
+            self._page.goto(
+                selectors.target_url,
+                wait_until="domcontentloaded",
+                timeout=timeout_ms,
+            )
+            self._first_visible(selectors.prompt_input, timeout_ms=10000)
+            return True
+        except Exception:  # noqa: BLE001 - the caller reports the failure
+            return False
 
     def _wait_indicator_growth(  # pragma: no cover - requires real browser
         self,

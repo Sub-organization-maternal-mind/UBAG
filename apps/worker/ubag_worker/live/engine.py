@@ -840,29 +840,46 @@ class LiveSessionEngine:
             # was empty, so the next job's file landed NEXT to the stale ones
             # and the provider received more than one recording - the
             # intermittent "no audio attachment is available" answers.
-            upload_baseline = driver.attachment_uploading_count(self._selectors)
-            try:
-                driver.clear_attachment_state(self._selectors)
-            except Exception:  # noqa: BLE001 - a clean composer is best-effort
-                pass
-            with timer.span("attachment_materialize"):
-                driver.attach_files(self._selectors, attach_paths)
-            # The provider uploads ASYNCHRONOUSLY: the composer shows the chip as
-            # soon as the file is staged while the bytes are still on the wire.
-            # A prompt submitted inside that window reaches the provider
-            # WITHOUT the audio, and the model then answers "No audio attachment
-            # is available in this message." - a successful job with a wrong
-            # answer. Measured live on chatgpt_web (2026-10-21): set_input_files
-            # returned after 0.19 s, the chip appeared at 0.35 s and the upload
-            # spinner only cleared at ~2.0 s. Waiting for the attachment to be
-            # READY removes the race; a provider that never shows a ready
-            # attachment fails loudly instead of submitting blind.
-            if self._selectors.attachment_indicator is not None:
-                if not driver.wait_for_attachment_ready(
+            #
+            # A composer that still refuses the file after that is given a
+            # PRISTINE page (one navigation) and asked again: a page that has
+            # been through several attach/remove cycles can hold a stale input
+            # ahead of the current one, and only a navigation clears it.
+            attached = False
+            for attempt in (1, 2):
+                upload_baseline = driver.attachment_uploading_count(self._selectors)
+                try:
+                    driver.clear_attachment_state(self._selectors)
+                except Exception:  # noqa: BLE001 - a clean composer is best-effort
+                    pass
+                with timer.span("attachment_materialize"):
+                    try:
+                        driver.attach_files(self._selectors, attach_paths)
+                        attached = True
+                    except DriftDetectedError:
+                        if attempt == 2:
+                            raise
+                if not attached:
+                    break
+                # The provider uploads ASYNCHRONOUSLY: the composer shows the
+                # chip as soon as the file is staged while the bytes are still
+                # on the wire. A prompt submitted inside that window reaches
+                # the provider WITHOUT the audio, and the model then answers
+                # "No audio attachment is available in this message." - a
+                # successful job with a wrong answer. Measured live on
+                # chatgpt_web (2026-10-21): set_input_files returned after
+                # 0.19 s, the chip appeared at 0.35 s and the upload spinner
+                # only cleared at ~2.0 s.
+                if self._selectors.attachment_indicator is None:
+                    break
+                if driver.wait_for_attachment_ready(
                     self._selectors,
                     timeout_s=_attachment_ready_timeout_s(),
                     baseline_uploads=upload_baseline,
                 ):
+                    break
+                attached = False
+                if attempt == 2:
                     return {
                         "reason": "attachment_not_ready",
                         "retryable": True,
@@ -872,6 +889,11 @@ class LiveSessionEngine:
                             "without the file."
                         ),
                     }
+                # A pristine page, then one more try.
+                try:
+                    driver.reload(self._selectors)
+                except Exception:  # noqa: BLE001 - the retry still runs
+                    pass
             attached_keys = [item["key"] for item in job.attachments]
             if not attached_keys and job.audio_artifact_key:
                 attached_keys = [job.audio_artifact_key]
