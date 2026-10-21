@@ -7,14 +7,43 @@ worker_id="${UBAG_TOPOLOGY_WORKER_ID:-browser-viewer}"
 browser_ip="${UBAG_BROWSER_PRIVATE_IP:-172.31.0.5}"
 remote_endpoint="${UBAG_REMOTE_BROWSER_ENDPOINT:-http://${browser_ip}:9223}"
 
-psql -v ON_ERROR_STOP=1 \
+# Credentials: the platform issues ONE DSN per project and that DSN is the
+# authoritative credential (the standalone POSTGRES_* keys are a fallback for
+# a self-hosted database and drift out of date when the password is rotated).
+# Reading the DSN first is what makes this script work against the shared
+# platform Postgres instead of failing with a password error every 60 s.
+postgres_host="${POSTGRES_HOST:-postgres}"
+postgres_user="${POSTGRES_USER:-ubag}"
+postgres_db="${POSTGRES_DB:-ubag}"
+postgres_pass="${POSTGRES_PASSWORD:-}"
+if [ -n "${UBAG_POSTGRES_DSN:-}" ]; then
+  dsn_rest="${UBAG_POSTGRES_DSN#*://}"      # user[:pass]@host[:port]/db?params
+  dsn_userinfo="${dsn_rest%%@*}"
+  dsn_hostpart="${dsn_rest#*@}"
+  if [ "$dsn_userinfo" != "$dsn_rest" ]; then
+    dsn_user="${dsn_userinfo%%:*}"
+    case "$dsn_userinfo" in
+      *:*) dsn_pass="${dsn_userinfo#*:}" ;;
+    esac
+    dsn_host="${dsn_hostpart%%/*}"
+    dsn_host="${dsn_host%%:*}"   # strip the port: psql takes it separately
+    dsn_db="${dsn_hostpart#*/}"
+    dsn_db="${dsn_db%%\?*}"
+    [ -n "$dsn_user" ] && postgres_user="$dsn_user"
+    [ -n "$dsn_host" ] && postgres_host="$dsn_host"
+    [ -n "$dsn_db" ] && postgres_db="$dsn_db"
+    [ -n "$dsn_pass" ] && postgres_pass="$dsn_pass"
+  fi
+fi
+
+PGPASSWORD="$postgres_pass" psql -v ON_ERROR_STOP=1 \
   -v tenant_id="${tenant_id}" \
   -v instance_id="${instance_id}" \
   -v worker_id="${worker_id}" \
   -v remote_endpoint="${remote_endpoint}" \
-  -h "${POSTGRES_HOST:-postgres}" \
-  -U "${POSTGRES_USER:-ubag}" \
-  -d "${POSTGRES_DB:-ubag}" <<SQL
+  -h "${postgres_host}" \
+  -U "${postgres_user}" \
+  -d "${postgres_db}" <<SQL
 INSERT INTO gateway_browser_instances (
   instance_id, worker_id, tenant_id, engine, remote_endpoint, state,
   context_count, tab_count, created_at

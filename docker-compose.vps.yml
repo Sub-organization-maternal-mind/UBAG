@@ -539,6 +539,10 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-ubag}
       POSTGRES_USER: ${POSTGRES_USER:-ubag}
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/vps/env.local}
+      # The platform issues one DSN per project; it is the authoritative
+      # credential and the register script prefers it over the POSTGRES_*
+      # keys (which drift when the password is rotated).
+      UBAG_POSTGRES_DSN: ${UBAG_POSTGRES_DSN:-}
       UBAG_TOPOLOGY_TENANT_ID: ${UBAG_TOPOLOGY_TENANT_ID:-tenant_edge}
       UBAG_TOPOLOGY_INSTANCE_ID: ${UBAG_TOPOLOGY_INSTANCE_ID:-br_prod_browser_viewer}
       UBAG_TOPOLOGY_WORKER_ID: ${UBAG_TOPOLOGY_WORKER_ID:-browser-viewer}

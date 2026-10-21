@@ -16,7 +16,10 @@ fi
 echo "browser topology sync started; interval=${interval}s"
 
 while :; do
-  if ! /scripts/register-browser-topology.sh; then
+  # `sh <script>` rather than a bare exec: the script is bind-mounted read-only
+  # and its execute bit depends on how the file was copied onto the host, so
+  # invoking it through the shell works whatever the mode is.
+  if ! sh /scripts/register-browser-topology.sh; then
     echo "browser topology sync failed; retrying in ${interval}s" >&2
   fi
   sleep "$interval"
