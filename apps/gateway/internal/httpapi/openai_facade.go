@@ -1398,6 +1398,13 @@ type openAITranscriptionResponse struct {
 // bytes server-side (no second client round-trip) -> wait terminal ->
 // completion text. Anything that cannot transcribe fails with an
 // OpenAI-shaped error; native codes ride in the message for debuggability.
+//
+// The idempotency nonce is the SHA-256 of the AUDIO BYTES. Without it the
+// fingerprint would only cover the file name and content type, so a second
+// upload of DIFFERENT audio under the same name would replay the FIRST job's
+// transcript - a silent wrong answer for the caller. Hashing the bytes keeps
+// a genuine retry idempotent while making two different recordings two
+// different jobs.
 func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Request) {
 	outcome := facadeOutcomeError
 	defer func() { s.facadeOutcomes.add(outcome) }()
@@ -1530,7 +1537,7 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 		"kind":         kind,
 	}}
 
-	facadeReq := openAIFacadeRequest{Model: target}
+	facadeReq := openAIFacadeRequest{Model: target, UbagNonce: hashBytes(audioBytes)}
 	jobID, status, errType, code, message, ok := s.createFacadeJob(r, facadeReq, target, nil, prompt, attachmentDecls, "")
 	if !ok {
 		s.writeFacadeError(w, status, errType, code, message)
