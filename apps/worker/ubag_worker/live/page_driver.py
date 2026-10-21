@@ -1723,46 +1723,57 @@ class PlaywrightPageDriver(PageDriver):
             chooser_info.value.set_files(paths, timeout=timeout_ms)
             return
 
-        # A provider renders SEVERAL hidden file inputs and only one of them
-        # feeds its composer. ChatGPT renders four (and eight on a chat page),
-        # and a file set on the wrong one is accepted by the DOM but never
-        # staged in the composer: no chip, no upload, and the prompt goes out
-        # without the recording. So every candidate is VERIFIED with the
-        # provider's own indicator, and the next candidate is tried when
-        # nothing appeared. Verified live on chatgpt_web (2026-10-21): the
-        # composer chip is the only proof that the file was really staged.
+        # A provider renders SEVERAL hidden file inputs and only ONE of them
+        # feeds its composer. ChatGPT renders four on the home page and eight
+        # on a chat page, and a warm page can carry the PREVIOUS chat's inputs
+        # ahead of the current composer. A file set on the wrong one is
+        # accepted by the DOM but never staged in the composer: no chip, no
+        # upload, and the prompt goes out without the recording.
+        #
+        # So every matching input is tried, and every attempt is VERIFIED with
+        # the provider's own indicator: the composer chip is the only proof that
+        # the file was really staged. Verified live on chatgpt_web (2026-10-21).
         indicator = selectors.attachment_indicator
         last_error: Optional[Exception] = None
+        attempts = 0
         for candidate in group.as_list():
-            before = self.attachment_indicator_count(selectors) if indicator is not None else 0
             try:
-                locator = self._page.locator(candidate).first
-                # set_input_files settles on the attached (often hidden) <input>,
-                # which is exactly how chat UIs expose their upload control — so we
-                # deliberately do NOT wait for visibility here.
-                locator.set_input_files(paths, timeout=timeout_ms)
+                matches = self._page.locator(candidate)
+                total = matches.count()
             except Exception as exc:  # noqa: BLE001 - try next fallback
                 last_error = exc
                 continue
-            if indicator is None:
-                return
-            if self._wait_indicator_growth(selectors, before, timeout_s=6.0):
-                return
-            last_error = DriftDetectedError(indicator.name, selectors.selector_version)
+            for index in range(min(total, 12)):
+                if attempts >= 16:
+                    break
+                before = self.attachment_indicator_count(selectors) if indicator is not None else 0
+                try:
+                    # set_input_files settles on the attached (often hidden)
+                    # <input>, which is exactly how chat UIs expose their
+                    # upload control — so we deliberately do NOT wait for
+                    # visibility here.
+                    matches.nth(index).set_input_files(paths, timeout=timeout_ms)
+                except Exception as exc:  # noqa: BLE001 - try next fallback
+                    last_error = exc
+                    continue
+                attempts += 1
+                if indicator is None:
+                    return
+                if self._wait_indicator_growth(selectors, before, timeout_s=6.0):
+                    return
+                last_error = DriftDetectedError(indicator.name, selectors.selector_version)
         raise DriftDetectedError(group.name, group.baseline_version) from last_error
 
     def attachment_indicator_count(self, selectors: ProviderSelectors) -> int:
-        """How many attachment indicators the provider currently shows."""
+        """How many attachment indicators the provider currently SHOWS.
+
+        Only VISIBLE indicators count: a stale composer that is still in the
+        DOM must not be mistaken for the current one.
+        """
         group = selectors.attachment_indicator
         if group is None:
             return 0
-        count = 0
-        for candidate in group.as_list():
-            try:
-                count += self._page.locator(candidate).count()
-            except Exception:  # noqa: BLE001
-                continue
-        return count
+        return self._count_visible(list(group.as_list()))
 
     def _wait_indicator_growth(  # pragma: no cover - requires real browser
         self,
