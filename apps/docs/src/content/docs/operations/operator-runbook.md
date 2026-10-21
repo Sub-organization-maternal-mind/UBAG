@@ -115,6 +115,39 @@ A `queued` job carries a coarse `queue_reason` (see [Job Lifecycle](/contracts/j
 
 Provider logins stay out-of-band human logins; never automate them.
 
+## Restoring a provider sign-in
+
+A provider session can lapse while the gateway is running. The symptom is honest
+now: a job for that target reports `provider_login_required` ("Sign-in required
+for <provider>") and the account's context shows `login_state` of `unknown` or
+`login_required` in `GET /v1/browser/contexts`. A provider whose composer
+renders for anonymous visitors (Google does) is judged by the sign-in
+affordance, so a lapsed session is reported at the start of the job instead of
+inside the model picker.
+
+To restore it, as the account owner:
+
+1. Open the dashboard's live browser view (the noVNC viewer behind the
+   dashboard's basic auth). The same Chrome profile the worker drives is on
+   screen - one profile, one session, no separate browser.
+2. Navigate to the provider and sign in by hand. UBAG never types credentials,
+   never reads them, and never solves a challenge.
+3. Leave the tab on the provider's home page. The worker reuses the profile on
+   the next job, and the worker's own detection flips the context's
+   `login_state` back to `authenticated`.
+4. Confirm with `GET /v1/browser/contexts` (the target's `login_state`) and by
+   running one small job against that target.
+
+Notes:
+
+- A signed-out provider changes what the platform can do, and the capability
+  record shows it: `GET /v1/capabilities` publishes the target's `audio`
+  contract, and Gemini's audio-capable model (`3.8 Flash`) is absent from an
+  anonymous session's picker - so a signed-out Gemini refuses audio with
+  "model ... cannot ingest audio" rather than pretending to listen.
+- Do not clear the profile's cookies to "fix" a job: that removes the session
+  for every target at once.
+
 ## Event wake rollback
 
 `UBAG_EVENT_NOTIFY=local` enables the in-process wake hub (with a `UBAG_EVENT_FALLBACK_MS` safety poll, default 2000). To roll back, set `UBAG_EVENT_NOTIFY=off` (the default) and restart the gateway: event waiters return to the 50 ms poll. Nothing is stored, so rollback needs no data change.

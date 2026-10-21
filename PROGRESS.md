@@ -4685,3 +4685,94 @@ shared browser.
 - **The relay secret was printed into one session transcript** while probing (my mistake; it
   should have been length-only). Per the owner's decision it stays until the next deploy
   window, where it must be rotated (gateway + browser, together).
+
+### 2026-10-21/22 - The audio path, end to end: six real defects found by measurement
+
+Nine commits (`c617b60` .. `7e4d47f`), all deployed to production and verified live. Every
+claim below was MEASURED on the production gateway + browser, not inferred.
+
+**Why "UBAG models cannot process audio" was true.** Six independent defects, only the
+first of which was visible in the code:
+
+1. **The container was never the contract.** Every adapter manifest declared the same SIX
+   audio content types for every provider. The live matrix on ``chatgpt_web`` (real 16-bit
+   PCM recording, facade ``POST /v1/openai/audio/transcriptions``) showed:
+   ``audio/wav`` HEARD, ``audio/mpeg`` HEARD, ``audio/mp4`` DROPPED, ``audio/ogg`` DROPPED,
+   ``audio/webm`` DROPPED. The dropped ones were accepted by the composer (a chip appeared -
+   the provider's file-input ``accept`` attribute is ``image/*`` and Playwright bypasses it
+   anyway) and then answered "No audio attachment is available in this message." The job was
+   reported COMPLETED with that refusal as its answer. The provider's picker is not the
+   contract; the MODEL's decoder is.
+2. **The model axis did not exist.** On ``gemini_web`` only ``3.8 Flash`` ingests audio
+   (``4 Argon`` answered "no audio attached" 5 of 5, recorded in the 2026-10-21 entry
+   above). Nothing in the catalog said so, so an audio job pinned to a deaf model was
+   accepted and then failed.
+3. **The published model list was a hardcoded literal** while the helpers written to derive
+   it from the manifests (``facadeChoiceModelIDs`` / ``facadeCuratedModelIDs``) were DEAD
+   CODE. A model the provider no longer offers could be advertised forever.
+4. **The transcription endpoint's idempotency key ignored the audio bytes**: it covered the
+   model, the attachment DECLARATION (key, content type, kind) and an empty message list.
+   A second upload of DIFFERENT audio under the same file name replayed the FIRST job's
+   transcript. Found live: a fresh upload came back in 0.0 s with the transcript of a job
+   created hours earlier.
+5. **The attach was a race.** Measured on the production browser: ``set_input_files``
+   returned after 0.19 s, the composer chip appeared at 0.35 s, and the upload spinner was
+   still running at t+1.0 s and only cleared at ~2.0 s. The worker submitted immediately,
+   so a prompt sent inside that window reached the provider WITHOUT the audio.
+6. **The attach could land nowhere.** A provider renders SEVERAL hidden file inputs and only
+   one feeds its composer (ChatGPT: four on the home page, eight on a chat page, and a warm
+   page can carry the previous chat's inputs first). The worker tried the first match of two
+   selectors - two of eight. The file was set on an input nobody reads: the DOM accepted it,
+   the composer never staged it, no chip appeared, and the prompt went out without the
+   recording. Additionally the composer's chip is the PROVIDER's state and survives an empty
+   file input, so chips accumulated across jobs and the provider received several
+   recordings (or the wrong one).
+
+Plus, in the live-voice direction, three production defects: the browser audio stack was
+off, the browser topology was never registered (three separate causes: the script had no
+execute bit, it authenticated with a stale password instead of the platform DSN, and the DSN
+host carried its port), and no WebRTC UDP range or TURN was published.
+
+**The fixes (all in the repo, all deployed):**
+
+- Per-target, MEASURED audio contract in the manifests. Anything else is refused at create
+  time with the accepted list and a pointer to ``GET /v1/capabilities``.
+- The model axis is enforced: ``UBAG-VALIDATION-AUDIO-MODEL-UNAVAILABLE-001`` refuses an
+  audio job pinned to a model outside the target's ``audio.models``.
+- A silent drop can no longer pass as success: the worker recognises the provider's own
+  "no audio" refusal on an audio job and fails it with ``provider_audio_not_ingested``
+  (mapped to a 400 by the facade).
+- ``facadeModels()`` derives the published ids from the manifests plus the curated
+  composites, so a dead model cannot be advertised. The curated composite split moved from
+  the FIRST space to the LAST one (Gemini's model names contain spaces: "3.8 Flash Low" is
+  "3.8 Flash" + "Low").
+- The transcription nonce is the SHA-256 of the uploaded bytes.
+- The attach is now EVIDENCE-BASED: the composer's chips are cleared first, every matching
+  file input is tried, each attempt is VERIFIED with the provider's own visible attachment
+  chip, the upload is awaited before the prompt is submitted, and a stubborn composer gets
+  a pristine page and one more attempt.
+- Live voice can actually be brought up: the VPS compose gained the browser topology sync
+  service, the published gateway media UDP range (50000-50039) and the opt-in coturn
+  profile; ``ci-deploy.sh`` recreates the topology service and starts coturn when a TURN
+  secret is configured. The browser now runs PulseAudio with the virtual mic
+  (``ubag_virtual_mic``) and the provider sink (``ubag_provider_sink``), and the relay
+  listens on 9099.
+
+**Verified live on production after the fix** (the acceptance suite in the session log):
+``chatgpt_web`` transcribes ``audio/wav`` and ``audio/mpeg`` end to end through all three
+client paths (facade inline ``input_audio``, facade multipart transcription, native job +
+artifact PUT), an unverified container is refused with the verified list in the message, a
+deaf model is refused with the audio-capable model in the message, ``/v1/capabilities``
+publishes the measured audio contract per target, and the live-voice plane reports
+``configured: true`` and ``available: true`` with the browser topology registered (four
+provider contexts) and a live voice session that reaches "connecting" with an instance
+placement.
+
+**Still open (human-only, by design):** the Google account for ``gemini_web`` and the
+Mistral account for ``mistral_lechat`` are SIGNED OUT on the shared browser profile. Until a
+human signs them back in, Gemini cannot reach its audio-capable model (``3.8 Flash`` is
+absent from the anonymous picker) and Mistral cannot be measured at all. The relay secret
+was printed into one session transcript while probing (my mistake; it should have been
+length-only) and stays until the next deploy window, where it must be rotated on the
+gateway and the browser together.
+
