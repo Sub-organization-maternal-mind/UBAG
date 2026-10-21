@@ -647,6 +647,10 @@ export const UBAG_ERROR_CODES = {
     "category": "validation",
     "retryable": false
   },
+  "UBAG-VALIDATION-AUDIO-MODEL-UNAVAILABLE-001": {
+    "category": "validation",
+    "retryable": false
+  },
   "UBAG-VALIDATION-ATTACHMENT-FILENAME-001": {
     "category": "validation",
     "retryable": false

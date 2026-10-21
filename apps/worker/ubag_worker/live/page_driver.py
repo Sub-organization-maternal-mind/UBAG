@@ -1464,7 +1464,15 @@ class PlaywrightPageDriver(PageDriver):
                     "desired": desired,
                     "state": "already_set" if attempt == 1 else "set",
                 }
-            if self._present(selectors.login_signal, timeout_ms=500):
+            # A login wall is only reported as one when it IS one. A provider
+            # whose page chrome always carries a "Sign in" label (Google does)
+            # used to abort EVERY job with "manual_login_required" the moment
+            # its model picker was opened, hiding the real cause - a model the
+            # provider no longer offers - behind a sign-in request that could
+            # not fix it. The decisive-login rule below keeps the honest
+            # sign-in report for a genuinely signed-out provider, and a
+            # missing model is now reported as drift, with the live options.
+            if self._login_wall_visible(selectors):
                 self._dismiss_menus()
                 raise ManualActionRequired(
                     "manual_login_required",
@@ -1487,8 +1495,41 @@ class PlaywrightPageDriver(PageDriver):
                 pass
         return {"key": setting.key, "desired": desired, "state": "unknown"}
 
+    def _login_wall_visible(self, selectors: ProviderSelectors) -> bool:
+        """True only when the page really shows a sign-in wall.
+
+        On a provider whose login signal is decisive ("Sign in" on Google), a
+        visible match IS the wall. On every other provider the sign-in signal
+        is only a wall while the page is NOT showing authenticated markers -
+        otherwise a stray label aborts an otherwise-good job.
+        """
+        if not self._present(selectors.login_signal, timeout_ms=500):
+            return False
+        if selectors.login_decisive:
+            return True
+        if selectors.signed_in_marker is not None and self._present(
+            selectors.signed_in_marker, timeout_ms=300
+        ):
+            return False
+        return not self._present(selectors.authenticated_signal, timeout_ms=300)
+
     # -- login state -----------------------------------------------------
     def detect_login_state(self, selectors: ProviderSelectors) -> str:  # pragma: no cover
+        # A decisive provider (Google renders its full composer to anonymous
+        # visitors) must be judged by the SIGN-IN affordance, not by the
+        # composer: otherwise a signed-out profile is reported as
+        # authenticated and the job only fails later, inside the model picker,
+        # with a message that points at the wrong thing.
+        if selectors.login_decisive:
+            if selectors.signed_in_marker is not None and self._present(
+                selectors.signed_in_marker, timeout_ms=1500
+            ):
+                return AUTHENTICATED
+            if self._present(selectors.login_signal, timeout_ms=2000):
+                return LOGIN_REQUIRED
+            if self._present(selectors.authenticated_signal, timeout_ms=4000):
+                return AUTHENTICATED
+            return UNKNOWN
         if self._present(selectors.authenticated_signal, timeout_ms=4000):
             return AUTHENTICATED
         if self._present(selectors.login_signal, timeout_ms=2000):

@@ -183,6 +183,7 @@ var UbagErrorCodes = map[string]ManifestErrorCode{
 	"UBAG-VALIDATION-ATTACHMENT-DUPLICATE-KEY-001": {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-ATTACHMENTS-COUNT-001":        {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001":  {Category: "validation", Retryable: false, RetryAfterMs: 0},
+	"UBAG-VALIDATION-AUDIO-MODEL-UNAVAILABLE-001":  {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-ATTACHMENT-FILENAME-001":      {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-ATTACHMENT-IMMUTABLE-001":     {Category: "validation", Retryable: false, RetryAfterMs: 0},
 	"UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001":  {Category: "validation", Retryable: false, RetryAfterMs: 0},

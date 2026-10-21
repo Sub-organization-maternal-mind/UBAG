@@ -106,6 +106,7 @@
           { "code": "UBAG-VALIDATION-ATTACHMENT-DUPLICATE-KEY-001","message": "Duplicate attachment key in job.input.attachments",   "retryable": false },
           { "code": "UBAG-VALIDATION-ATTACHMENTS-COUNT-001",       "message": "Number of attachments exceeds the target adapter's max_files", "retryable": false },
           { "code": "UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001", "message": "Attachment content_type is not accepted by the target adapter", "retryable": false },
+          { "code": "UBAG-VALIDATION-AUDIO-MODEL-UNAVAILABLE-001",  "message": "The requested model cannot ingest audio on this target adapter", "retryable": false, "note": "A provider can accept an audio attachment and still hand the model bytes it cannot decode; the manifest's audio.models list is the verified set" },
           { "code": "UBAG-VALIDATION-ATTACHMENT-FILENAME-001",     "message": "Attachment filename must be 1-256 characters without control characters", "retryable": false },
           { "code": "UBAG-VALIDATION-ATTACHMENT-IMMUTABLE-001",    "message": "Declared attachment bytes cannot change after dispatch", "retryable": false },
           { "code": "UBAG-VALIDATION-ATTACHMENTS-UNSUPPORTED-001", "message": "Target adapter does not accept attachments",             "retryable": false },

@@ -61,23 +61,17 @@
       {
         "kind": "audio",
         "content_types": [
-          "audio/webm",
           "audio/wav",
           "audio/x-wav",
-          "audio/mpeg",
-          "audio/mp4",
-          "audio/ogg"
+          "audio/mpeg"
         ]
       },
       {
         "kind": "voice",
         "content_types": [
-          "audio/webm",
           "audio/wav",
           "audio/x-wav",
-          "audio/mpeg",
-          "audio/mp4",
-          "audio/ogg"
+          "audio/mpeg"
         ]
       },
       {
@@ -88,6 +82,12 @@
         ]
       }
     ]
+  },
+  "audio": {
+    "models": [
+      "GPT-6"
+    ],
+    "verified": "2026-10-21 live E2E against the production chatgpt_web account (facade POST /v1/openai/audio/transcriptions, real 16-bit PCM recording): audio/wav and audio/mpeg were transcribed verbatim (exact sentence match). audio/mp4, audio/ogg and audio/webm were accepted by the composer (a chip appeared) but the model answered 'No audio attachment is accessible in this message' - a silent drop - so they are NOT declared. The provider's own file-input accept attribute is NOT the contract: it is 'image/*' while the unfiltered input accepts any file."
   },
   "voice": {
     "live": true,

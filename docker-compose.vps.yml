@@ -123,6 +123,21 @@ services:
       UBAG_VOICE_MAX_SESSIONS_PER_TENANT: ${UBAG_VOICE_MAX_SESSIONS_PER_TENANT:-4}
       UBAG_VOICE_MAX_QUEUED_PER_TENANT: ${UBAG_VOICE_MAX_QUEUED_PER_TENANT:-32}
       UBAG_VOICE_SESSION_TTL_SECONDS: ${UBAG_VOICE_SESSION_TTL_SECONDS:-600}
+      # Live-voice media plane (client <-> gateway). The gateway's WebRTC media
+      # listens on a bounded UDP range that MUST be published for a remote
+      # client to reach it (a container-internal port is unreachable from the
+      # internet). The range is small on purpose: every published port costs a
+      # docker-proxy process on the host.
+      UBAG_VOICE_MEDIA_PORT_MIN: ${UBAG_VOICE_MEDIA_PORT_MIN:-50000}
+      UBAG_VOICE_MEDIA_PORT_MAX: ${UBAG_VOICE_MEDIA_PORT_MAX:-50039}
+      # The address a client can reach the gateway's media on (1:1 NAT).
+      UBAG_VOICE_NAT_1TO1_IP: ${UBAG_VOICE_NAT_1TO1_IP:-}
+      # ICE servers handed to clients. TURN is only offered when both the URL
+      # list and the shared secret are set (the secret never leaves the box).
+      UBAG_VOICE_STUN_URLS: ${UBAG_VOICE_STUN_URLS:-}
+      UBAG_VOICE_TURN_URLS: ${UBAG_VOICE_TURN_URLS:-}
+      UBAG_VOICE_TURN_SECRET: ${UBAG_VOICE_TURN_SECRET:-}
+      UBAG_VOICE_SERVER_VIA_TURN: ${UBAG_VOICE_SERVER_VIA_TURN:-}
       # Shared secret authenticating media sessions to the browser audio relay
       # (the relay refuses all sessions when unset). Same value on both services.
       UBAG_VOICE_RELAY_SECRET: ${UBAG_VOICE_RELAY_SECRET:-}
@@ -286,6 +301,13 @@ services:
       - antigravity_ipc_slot_1:/run/ubag-antigravity/${UBAG_ANTIGRAVITY_SLOT_1_ID:-acct_1}
       - antigravity_ipc_slot_2:/run/ubag-antigravity/${UBAG_ANTIGRAVITY_SLOT_2_ID:-acct_2}
       - antigravity_ipc_slot_3:/run/ubag-antigravity/${UBAG_ANTIGRAVITY_SLOT_3_ID:-acct_3}
+    ports:
+      # Live-voice media (WebRTC/Opus) to remote clients. UDP only, and a
+      # deliberately SMALL range (one port per concurrent session plus
+      # headroom): each published port costs a docker-proxy process on a host
+      # that also serves live traffic. The firewall must open exactly this
+      # range; nothing else about the gateway is published here.
+      - "${UBAG_VOICE_MEDIA_BIND_HOST:-0.0.0.0}:${UBAG_VOICE_MEDIA_PORT_MIN:-50000}-${UBAG_VOICE_MEDIA_PORT_MAX:-50039}:${UBAG_VOICE_MEDIA_PORT_MIN:-50000}-${UBAG_VOICE_MEDIA_PORT_MAX:-50039}/udp"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/v1/ready"]
       interval: 15s
@@ -453,6 +475,83 @@ services:
       - 'while true; do python3 /app/apps/worker/run_chat_reaper.py || echo "chat-reaper: cycle failed"; sleep "${UBAG_CHAT_REAPER_INTERVAL_SECONDS:-900}"; done'
     networks:
       - ubag-private
+
+  # Optional TURN relay for live-voice clients behind restrictive NAT
+  # (opt-in: docker compose --profile turn). Time-limited credentials only
+  # (use-auth-secret): the gateway derives them from UBAG_VOICE_TURN_SECRET,
+  # which must carry the same value here. The secret, realm and addresses come
+  # from env and are never written to a file. Peers inside private ranges are
+  # denied except the gateway media address, so the relay can never be used to
+  # reach the Docker networks or the host LAN.
+  coturn:
+    image: ${UBAG_COTURN_IMAGE:-coturn/coturn:4.6.3}
+    restart: unless-stopped
+    profiles: ["turn"]
+    mem_limit: 256m
+    environment:
+      UBAG_VOICE_TURN_SECRET: ${UBAG_VOICE_TURN_SECRET:-}
+      UBAG_PUBLIC_DOMAIN: ${UBAG_PUBLIC_DOMAIN:-}
+      UBAG_VOICE_NAT_1TO1_IP: ${UBAG_VOICE_NAT_1TO1_IP:-}
+      UBAG_TURN_EXTERNAL_IP: ${UBAG_TURN_EXTERNAL_IP:-}
+      UBAG_TURN_RELAY_PORT_MIN: ${UBAG_TURN_RELAY_PORT_MIN:-49160}
+      UBAG_TURN_RELAY_PORT_MAX: ${UBAG_TURN_RELAY_PORT_MAX:-49199}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        : "$${UBAG_VOICE_TURN_SECRET:?set UBAG_VOICE_TURN_SECRET (same value as the gateway)}"
+        : "$${UBAG_PUBLIC_DOMAIN:?set UBAG_PUBLIC_DOMAIN (TURN realm)}"
+        : "$${UBAG_VOICE_NAT_1TO1_IP:?set UBAG_VOICE_NAT_1TO1_IP (the gateway media address)}"
+        exec turnserver -c /etc/coturn/turnserver.conf \
+          --static-auth-secret="$${UBAG_VOICE_TURN_SECRET}" \
+          --realm="$${UBAG_PUBLIC_DOMAIN}" \
+          --external-ip="$${UBAG_TURN_EXTERNAL_IP:-$${UBAG_VOICE_NAT_1TO1_IP}}" \
+          --allowed-peer-ip="$${UBAG_VOICE_NAT_1TO1_IP}" \
+          --min-port="$${UBAG_TURN_RELAY_PORT_MIN}" \
+          --max-port="$${UBAG_TURN_RELAY_PORT_MAX}"
+    ports:
+      - "${UBAG_TURN_BIND_HOST:-0.0.0.0}:${UBAG_TURN_PORT:-3478}:3478/udp"
+      - "${UBAG_TURN_BIND_HOST:-0.0.0.0}:${UBAG_TURN_PORT:-3478}:3478/tcp"
+      - "${UBAG_TURN_BIND_HOST:-0.0.0.0}:${UBAG_TURN_RELAY_PORT_MIN:-49160}-${UBAG_TURN_RELAY_PORT_MAX:-49199}:${UBAG_TURN_RELAY_PORT_MIN:-49160}-${UBAG_TURN_RELAY_PORT_MAX:-49199}/udp"
+    volumes:
+      - "./deploy/small/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro"
+    networks:
+      - ubag-private
+
+  # Registers the browser's context/tab structure in the topology store and
+  # keeps it fresh. WITHOUT it the topology tables stay empty, and every
+  # consumer of them degrades: GET /v1/browser/contexts answers with an empty
+  # list, a live voice session can never find a browser to place itself on
+  # (voice.available stays false and the session queues forever), and the
+  # dashboard's browser panel is blank.
+  #
+  # The script registers the STRUCTURE only. It never re-asserts login_state:
+  # the worker's own detection owns that column (the cron used to re-stamp
+  # "authenticated" every 60 s, which masked a dead session for as long as it
+  # stayed dead).
+  browser-topology-sync:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      browser:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-ubag}
+      POSTGRES_USER: ${POSTGRES_USER:-ubag}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in deploy/vps/env.local}
+      UBAG_TOPOLOGY_TENANT_ID: ${UBAG_TOPOLOGY_TENANT_ID:-tenant_edge}
+      UBAG_TOPOLOGY_INSTANCE_ID: ${UBAG_TOPOLOGY_INSTANCE_ID:-br_prod_browser_viewer}
+      UBAG_TOPOLOGY_WORKER_ID: ${UBAG_TOPOLOGY_WORKER_ID:-browser-viewer}
+      UBAG_BROWSER_PRIVATE_IP: ${UBAG_BROWSER_PRIVATE_IP:-172.28.0.10}
+      UBAG_REMOTE_BROWSER_ENDPOINT: ${UBAG_REMOTE_BROWSER_ENDPOINT:-http://172.28.0.10:9223}
+      UBAG_TOPOLOGY_SYNC_INTERVAL_SECONDS: ${UBAG_TOPOLOGY_SYNC_INTERVAL_SECONDS:-60}
+    volumes:
+      - ./deploy/small/register-browser-topology.sh:/scripts/register-browser-topology.sh:ro
+      - ./deploy/small/sync-browser-topology.sh:/scripts/sync-browser-topology.sh:ro
+    entrypoint: ["/bin/sh", "/scripts/sync-browser-topology.sh"]
+    networks:
+      - ubag-private
+      - platform
 
 networks:
   ubag-private:

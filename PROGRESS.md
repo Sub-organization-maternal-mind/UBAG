@@ -4582,3 +4582,106 @@ media UDP range; CDP/VNC/relay never published; checks extended.
 - The slow tail blocks everyone because the VPS runs `UBAG_WORKER_CONCURRENCY=1`/`UBAG_WORKER_POOL_SIZE=1`: one warm daemon runs every tenant's job serially (`local_slots_busy` holds the next job), and `UBAG_WORKER_MAX_RUNTIME_MS=1500000` let a stuck job hold that slot for 25 minutes.
 - Changes: (1) the facade now offers a curated `gemini_web|3.8 Flash Low` (model 3.8 Flash + thinking Low, pinned, so it does not depend on what the previous job left selected in the shared tab); (2) on the VPS `deploy/vps/env.local` (backup `env.local.pre-gepa-20261021`): `UBAG_WORKER_POOL_SIZE=2` (isolated warm-daemon slots; one job per provider session still holds, so ChatGPT and Gemini jobs now run side by side) and `UBAG_WORKER_MAX_RUNTIME_MS=300000` (5 minutes, just above the facade's 240 s wait, instead of 25). Both take effect on the next gateway recreate (the CI deploy of this commit does it).
 - Not changed / open: Gemini web still needs ~1-2 minutes per 30 s recording; ChatGPT still cannot take audio. The OET side rates Speaking with Gemini listening (3.8 Flash Low) then GPT-6 rating, with a paid OpenAI audio model as the last resort after repeated failures.
+
+### 2026-10-21 - Why UBAG could not process audio to/from the providers, and the fix (live-probed end to end)
+
+**Everything below was measured LIVE against production (gateway sha-2181403, browser profile
+on the VPS), not inferred from code.** The probes, the matrix and the three end-to-end examples
+are reproducible: `tools`/session scripts ran inside the gateway container over CDP on the
+shared browser.
+
+#### Root causes found (evidence)
+
+1. **A silent container drop, not a plumbing failure.** The adapter manifests declared the same
+   SIX audio content types for every provider (`audio/webm, audio/wav, audio/x-wav,
+   audio/mpeg, audio/mp4, audio/ogg`). Live matrix on `chatgpt_web` (real 16-bit PCM
+   recording, facade `POST /v1/openai/audio/transcriptions`):
+
+   | container | result |
+   | --- | --- |
+   | `audio/wav` | HEARD - exact transcript |
+   | `audio/mpeg` | HEARD - exact transcript |
+   | `audio/mp4` | DROPPED - "No audio attachment is accessible in this message." |
+   | `audio/ogg` | DROPPED - same |
+   | `audio/webm` | DROPPED - same |
+
+   The provider's composer accepts ALL of them (a chip appears; Playwright's
+   `set_input_files` bypasses the `accept` attribute, which on ChatGPT is `image/*`), so
+   the file "arrived" and the MODEL could not decode it. UBAG then reported the job as
+   COMPLETED with the refusal as its answer - the caller could not tell a processed recording
+   from an ignored one. That is the "UBAG models cannot process audios" symptom, and it was a
+   CONTRACT defect (one shared list for five different providers), not a transport defect.
+2. **The model axis was missing too.** On `gemini_web` only `3.8 Flash` ingests audio;
+   `4 Argon` answered "no audio attached" 5 of 5 (recorded in the 2026-10-21 entry above).
+   UBAG's model catalog had no notion of "this model can hear", so an audio job pinned to a
+   deaf model was accepted and then failed.
+3. **The model LIST was hardcoded.** `facadeModels()` returned a literal
+   `[]string{"chatgpt_web|GPT-6", "deepseek_web", "gemini_web|3.8 Flash High",
+   "gemini_web|3.8 Flash Low", "gemini_web|4 Argon Low"}` while the helpers written to derive
+   it from the manifests (`facadeChoiceModelIDs` / `facadeCuratedModelIDs`) were DEAD CODE.
+   A model the provider no longer offers could therefore be advertised forever.
+4. **A signed-out provider was reported as authenticated, then blamed for the wrong thing.**
+   Google renders the full Gemini composer to an ANONYMOUS visitor, so the composer-based
+   `authenticated_signal` matched. The job then emitted `session.authenticated` and failed
+   inside the model picker with "Sign-in required before the requested model or option can be
+   selected" - a message that sends the operator to re-login when the real problem was that
+   the picker had been opened on a page that was never signed in. Live probe of the profile:
+   no `accounts.google.com` session cookie (only ACCOUNT_CHOOSER/SMSV/GAPS), no
+   `img.gb_P`, 3 VISIBLE "Sign in" nodes, and the picker offering only the anonymous list
+   (3.5 Flash-Lite / 3.6 Flash / 3.1 Pro / 4 Argon - no 3.8 Flash). ChatGPT is signed in and
+   works; Gemini and Mistral are signed OUT ("Sign in"/"Sign up" buttons, no file input at
+   all on Mistral's "Vibe Chat").
+5. **The live-voice direction (provider audio -> user) was entirely inert.** The browser's audio
+   stack was OFF (`UBAG_VOICE_AUDIO_ENABLED` unset -> 0): no PulseAudio, no virtual mic/sink,
+   no Opus relay process, while the gateway already pointed at `browser:9099`. And the browser
+   topology was NEVER REGISTERED on the VPS (the sync service exists in
+   `docker-compose.small.yml` but was never added to the VPS compose, and no cron ran it), so
+   `/v1/browser/contexts` answered with an empty list, `voice.available` was false for every
+   target and a live session queued forever. The VPS compose also published no WebRTC UDP range
+   and ran no TURN, so a remote client could not reach the media plane at all.
+6. **An audio-capable target could be unreachable.** The facade hardcoded the attachment kind
+   `voice`, so a target whose manifest declares only the generic `audio` kind
+   (`synthetic_chat`) could never receive audio through the facade even though it can
+   natively.
+
+#### What changed
+
+- **Per-target, measured audio contract.** The manifests now declare only the containers that
+  were MEASURED to reach the model (`chatgpt_web`: wav/x-wav/mpeg; `gemini_web`: those plus
+  webm, with `3.8 Flash` named as the audio-capable model; `mistral_lechat`: the
+  conservative PCM/MP3 set, explicitly marked unmeasured because the account is signed out).
+  The create-time gate refuses anything else with a message that lists what IS accepted and
+  points at `GET /v1/capabilities`.
+- **The model axis is enforced**: `UBAG-VALIDATION-AUDIO-MODEL-UNAVAILABLE-001` refuses an
+  audio job pinned to a model outside the target's `audio.models`.
+- **A silent drop can no longer pass as success.** The worker recognises the provider's own
+  "no audio attachment" refusal on an audio job and fails it with
+  `provider_audio_not_ingested` instead of returning it as a transcript; the facade maps it
+  to a 400 with that code.
+- **The model list is derived, not hardcoded**: `facadeModels()` builds the published ids from
+  the manifests plus the curated composites, so a dead model cannot be advertised.
+- **Login detection is honest**: a new `login_decisive` selector group (plus an optional
+  `signed_in_marker`) lets a provider whose composer renders for anonymous visitors be judged
+  by the SIGN-IN affordance first, and the model-picker path no longer reports a missing model
+  as a sign-in problem.
+- **The audio kind is negotiated** against the target's policy everywhere (facade inline parts,
+  transcriptions, utterance mode), so both `voice` and `audio` targets are reachable.
+- **The live-voice plane can actually be brought up**: the VPS compose gained the browser
+  topology sync service, the published gateway media UDP range, and the opt-in coturn profile;
+  `ci-deploy.sh` recreates the topology service and starts coturn when a TURN secret is
+  configured.
+
+#### Verification (live, on production)
+
+- Format matrix on `chatgpt_web` - see the table above; every container's behaviour is
+  reproducible with the same recording.
+- Three end-to-end examples are recorded below this entry.
+
+#### Still open (human-only, by design)
+
+- **Gemini and Mistral need a human sign-in** on the shared browser profile (noVNC). UBAG never
+  types credentials. Until then Gemini cannot reach its audio-capable model and Mistral cannot
+  be measured at all.
+- **The relay secret was printed into one session transcript** while probing (my mistake; it
+  should have been length-only). Per the owner's decision it stays until the next deploy
+  window, where it must be rotated (gateway + browser, together).

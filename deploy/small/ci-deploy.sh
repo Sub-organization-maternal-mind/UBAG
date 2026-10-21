@@ -106,6 +106,24 @@ deploy_gateway() {
   log "recreating browser, gateway, and chat reaper"
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --no-deps --force-recreate browser gateway chat-reaper
 
+  # The browser topology registration is a SERVICE, not a one-shot: without it
+  # the topology tables stay empty, GET /v1/browser/contexts answers with an
+  # empty list, and a live voice session can never find a browser to place
+  # itself on (voice.available stays false and the session queues forever).
+  # It is recreated here so a deploy never leaves it stale.
+  log "recreating browser topology sync"
+  docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --no-deps --force-recreate browser-topology-sync
+
+  # The TURN relay is opt-in through the "turn" compose profile and is only
+  # started when the operator configured a TURN secret. A client behind a
+  # restrictive NAT cannot reach the media plane without it.
+  if grep -qE '^UBAG_VOICE_TURN_SECRET=.+' "$ENV_FILE"; then
+    log "starting coturn (TURN profile configured)"
+    docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" --profile turn up -d --no-deps --force-recreate coturn
+  else
+    log "coturn not started: UBAG_VOICE_TURN_SECRET is not set in env.local"
+  fi
+
   # --- verify -------------------------------------------------------------------
   # Health is checked through nginx -> gateway, the same docker-network path
   # RadioPad uses, so a pass means RadioPad's real route works.

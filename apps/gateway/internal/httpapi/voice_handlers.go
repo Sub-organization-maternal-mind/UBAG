@@ -425,12 +425,18 @@ func (s *Server) handleVoiceSessionCreate(w http.ResponseWriter, r *http.Request
 		policy := resolveAttachmentPolicy(target)
 		if !attachmentKindsAllowAudio(policy) {
 			utteranceTarget = defaultTranscriptionTarget
+			policy = resolveAttachmentPolicy(utteranceTarget)
 		}
+		// The declared kind is negotiated against the target's own policy so an
+		// audio-capable target that declares only the generic "audio" kind is
+		// still reachable, and a target that takes no audio is refused by the
+		// shared create-time gate with a clear message.
+		kind := policy.audioKindFor()
 		prompt := "Transcribe the attached audio verbatim. Return plain text only, no commentary."
 		decls := []any{map[string]any{
 			"key":          "utterance.wav",
 			"content_type": "audio/wav",
-			"kind":         "voice",
+			"kind":         kind,
 		}}
 		jobID, status, errType, code, message, ok := s.createFacadeJob(r, openAIFacadeRequest{Model: utteranceTarget}, utteranceTarget, nil, prompt, decls, "")
 		if !ok {

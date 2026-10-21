@@ -117,6 +117,11 @@ func trimManifestBOM(raw []byte) []byte {
 // facadeInlineMedia describes the multimodal message parts the facade accepts,
 // intersected with this target's attachment policy: an inline part only
 // advertises when the target would accept the same bytes declared natively.
+//
+// An audio type is advertised when the target accepts it under EITHER
+// audio-bearing kind ("voice" or "audio"): the facade negotiates the kind
+// against the target's own policy, so a target that only declares the
+// generic "audio" kind is reachable instead of silently excluded.
 func facadeInlineMedia(policy attachmentPolicy) map[string]any {
 	images := make([]string, 0, len(facadeInlineImageMIMEs))
 	for mime := range facadeInlineImageMIMEs {
@@ -127,7 +132,7 @@ func facadeInlineMedia(policy attachmentPolicy) map[string]any {
 	sort.Strings(images)
 	audio := make([]string, 0, 2)
 	for _, spec := range facadeInlineAudioFormats {
-		if policy.accepts("voice", spec.ContentType) {
+		if policy.accepts("voice", spec.ContentType) || policy.accepts("audio", spec.ContentType) {
 			audio = append(audio, spec.ContentType)
 		}
 	}
@@ -137,6 +142,34 @@ func facadeInlineMedia(policy attachmentPolicy) map[string]any {
 		"input_audio": audio,
 		"remote_urls": false, // remote media fetching is excluded from this release
 	}
+}
+
+// audioCapabilityView publishes what this target can actually DO with audio,
+// as distinct from what it merely accepts:
+//
+//   - formats: the verified audio containers the provider's MODEL can decode.
+//     A provider's composer accepts far more than its model can read (the
+//     chatgpt_web composer accepted webm/ogg/m4a and the model then answered
+//     "No audio attachment is accessible in this message"), so the list is the
+//     measured set, not the picker's accept attribute.
+//   - models: the provider models that can ingest audio on this target. On
+//     gemini_web only "3.8 Flash" could ("4 Argon" answered "no audio
+//     attached" 5 of 5), so an audio job pinned to a deaf model is refused at
+//     create time instead of producing a confident wrong answer.
+//   - verified: the manifest's evidence note, published verbatim so an
+//     operator can see WHICH measurement backs the claim.
+func audioCapabilityView(policy attachmentPolicy) map[string]any {
+	view := map[string]any{
+		"formats": policy.audioContentTypes(),
+		"kind":    policy.audioKindFor(),
+	}
+	if len(policy.audioModels) > 0 {
+		view["models"] = append([]string(nil), policy.audioModels...)
+	}
+	if policy.audioVerified != "" {
+		view["verified"] = policy.audioVerified
+	}
+	return view
 }
 
 // handleCapabilities implements GET /v1/capabilities (job:read).
@@ -172,6 +205,7 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 			"safe_mode":             target["safe_mode"],
 			"manual_login_required": target["manual_login_required"],
 			"attachments":           attachmentPolicyView(policy),
+			"audio":                 audioCapabilityView(policy),
 			"inline_message_parts":  facadeInlineMedia(policy),
 			"voice":                 s.voiceCapabilityView(r.Context(), tenantID, key, voice),
 		}

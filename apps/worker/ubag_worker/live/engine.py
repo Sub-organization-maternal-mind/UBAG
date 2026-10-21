@@ -939,6 +939,34 @@ class LiveSessionEngine:
             result_text = driver.read_final_response(self._selectors, return_mode=return_mode)
             dom_signature = driver.dom_signature(self._selectors)
 
+        # A provider whose composer accepts a file but whose MODEL cannot
+        # decode it answers with a refusal ("No audio attachment is accessible
+        # in this message."). Measured live on chatgpt_web (2026-10-21):
+        # audio/wav and audio/mpeg were transcribed, while audio/mp4,
+        # audio/ogg and audio/webm were accepted by the picker and then
+        # dropped - the job "succeeded" with that refusal as its answer, and
+        # the caller could not tell a processed recording from an ignored
+        # one. A job that carried audio and got such an answer is now a
+        # terminal failure with the real reason, so an audio pipeline can
+        # never report success on bytes the provider never heard.
+        if _job_carried_audio(job) and _provider_reports_no_audio(result_text):
+            yield ("failed_terminal", {
+                "status": "failed_terminal",
+                "target": job.target,
+                "adapter": self._selectors.provider_id,
+                "reason": "provider_audio_not_ingested",
+                "error_class": "provider_audio_not_ingested",
+                "retryable": False,
+                "submitted": True,
+                "message": (
+                    "the provider accepted the audio attachment but did not "
+                    "ingest it (it answered that no audio was accessible); the "
+                    "container or the model cannot decode this recording - use "
+                    "a verified container/model (see GET /v1/capabilities)"
+                ),
+            })
+            return
+
         yield ("completed", {
             "status": "completed",
             "target": job.target,
@@ -996,6 +1024,54 @@ class LiveSessionEngine:
                 pass
 
         return None
+
+
+# The provider's own wording for "I received your file but could not read the
+# audio in it". Measured live on chatgpt_web (2026-10-21) for audio/mp4,
+# audio/ogg and audio/webm, which the composer accepted and the model then
+# dropped. The list is intentionally tight and the check additionally requires
+# a SHORT answer, so a provider that heard the recording and is talking ABOUT
+# it ("there is no audio in this sentence") is not mistaken for a drop.
+_NO_AUDIO_ANSWER_MARKERS = (
+    "no audio attachment",
+    "audio attachment is not accessible",
+    "no audio file",
+    "no audio was attached",
+    "no audio attached",
+    "cannot access the audio",
+    "can't access the audio",
+    "no recording attached",
+    "no recording was attached",
+    "speechpresent:false",
+    "no speech detected",
+)
+
+# A provider that refused to read the file answers in a sentence or two, not
+# in a transcript.
+_NO_AUDIO_ANSWER_MAX_CHARS = 600
+
+
+def _job_carried_audio(job) -> bool:
+    """True when the job carried an audio or voice attachment."""
+    for item in getattr(job, "attachments", ()) or ():
+        try:
+            kind = str(item.get("kind", "")).strip().lower()
+        except AttributeError:
+            continue
+        if kind in ("audio", "voice"):
+            return True
+    return bool(getattr(job, "audio_artifact_key", ""))
+
+
+def _provider_reports_no_audio(text: str) -> bool:
+    """True when the provider's answer says it could not read the audio."""
+    if not text:
+        return False
+    stripped = text.strip()
+    if len(stripped) > _NO_AUDIO_ANSWER_MAX_CHARS:
+        return False
+    lowered = stripped.lower()
+    return any(marker in lowered for marker in _NO_AUDIO_ANSWER_MARKERS)
 
 
 def _normalize_payload(payload: Mapping[str, Any], provider_id: str) -> _NormalizedJob:

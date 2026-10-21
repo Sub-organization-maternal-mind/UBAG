@@ -14,11 +14,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/ubag/ubag/apps/gateway/internal/attachments"
+	"github.com/ubag/ubag/apps/gateway/internal/jobcore"
 	jobstore "github.com/ubag/ubag/apps/gateway/internal/jobs"
 )
 
@@ -329,11 +329,45 @@ func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, openAIFacadeModelList{Object: "list", Data: s.facadeModels()})
 }
 
-// facadeModels publishes only chat models verified with the production OET
-// credential. Native target/settings APIs remain available to operators; settings,
-// mocks and unverified providers must not appear as working assistant models.
+// facadePublishedTargets are the targets whose models the production OET
+// credential has verified end to end. Only these appear in /v1/openai/models:
+// an unverified provider must never be advertised as a working assistant
+// model.
+var facadePublishedTargets = []string{"chatgpt_web", "deepseek_web", "gemini_web"}
+
+// facadeModels publishes the chat-addressable model ids for the verified
+// targets.
+//
+// Every id is DERIVED from the target's own adapter manifest (the
+// model_catalog block) plus the board-curated composites, so the list can
+// never advertise a model the provider does not offer and can never drift
+// away from what resolveFacadeModel accepts. The list used to be a
+// hardcoded literal, which is how "gemini_web|3.8 Flash Low" survived in the
+// catalogue while the live picker had moved on - a dead id that every audio
+// job aimed at it.
 func (s *Server) facadeModels() []openAIFacadeModel {
-	ids := []string{"chatgpt_web|GPT-6", "deepseek_web", "gemini_web|3.8 Flash High", "gemini_web|3.8 Flash Low", "gemini_web|4 Argon Low"}
+	ids := make([]string, 0, 16)
+	seen := make(map[string]struct{}, 16)
+	add := func(id string) {
+		if id == "" {
+			return
+		}
+		if _, dup := seen[id]; dup {
+			return
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	for _, target := range facadePublishedTargets {
+		// The bare target: "use the operator's default model".
+		add(target)
+		for _, id := range facadeCuratedModelIDs(target) {
+			add(id)
+		}
+		for _, id := range facadeChoiceModelIDs(target, "model") {
+			add(id)
+		}
+	}
 	models := make([]openAIFacadeModel, 0, len(ids))
 	for _, id := range ids {
 		models = append(models, openAIFacadeModel{ID: id, Object: "model", OwnedBy: "ubag"})
@@ -342,27 +376,19 @@ func (s *Server) facadeModels() []openAIFacadeModel {
 }
 
 // facadeChoiceModelIDs lists the chat-addressable target|value IDs for one
-// target: one per value of every kind=choice catalog setting, in sorted
-// setting-key order with manifest value order preserved. Toggle-kind
-// settings are skipped — they carry no labelled values and cannot be chat
-// model IDs. Shared with resolveFacadeModel so the models list and the
-// resolver can never disagree on what is addressable.
-func facadeChoiceModelIDs(target string) []string {
+// target and ONE kind=choice catalog setting, in manifest value order.
+// Toggle-kind settings are skipped - they carry no labelled values and cannot
+// be chat model IDs. Shared with resolveFacadeModel so the models list and
+// the resolver can never disagree on what is addressable.
+func facadeChoiceModelIDs(target string, setting string) []string {
 	catalog := resolveModelCatalog(target)
-	settingKeys := make([]string, 0, len(catalog.Settings))
-	for name := range catalog.Settings {
-		settingKeys = append(settingKeys, name)
+	definition, ok := catalog.Settings[setting]
+	if !ok || definition.Kind != "choice" {
+		return nil
 	}
-	sort.Strings(settingKeys)
-	ids := []string{}
-	for _, name := range settingKeys {
-		setting := catalog.Settings[name]
-		if setting.Kind != "choice" {
-			continue
-		}
-		for _, value := range setting.Values {
-			ids = append(ids, target+facadeModelSeparator+value)
-		}
+	ids := make([]string, 0, len(definition.Values))
+	for _, value := range definition.Values {
+		ids = append(ids, target+facadeModelSeparator+value)
 	}
 	return ids
 }
@@ -371,14 +397,45 @@ func facadeChoiceModelIDs(target string) []string {
 // operator-recommended setting combinations that are not single manifest
 // values (see resolveFacadeModel). Shared with facadeModels so the list and
 // the resolver agree.
+//
+// A curated id is published only when every part of it is in the target's
+// manifest catalog, so a composite can never outlive the model it pins.
 func facadeCuratedModelIDs(target string) []string {
-
-	if target == "antigravity_sdk" {
+	switch target {
+	case "antigravity_sdk":
 		return []string{
 			"antigravity_sdk" + facadeModelSeparator + "gemini-3.8-flash",
 			"antigravity_sdk" + facadeModelSeparator + "gemini-3.7-flash",
 			"antigravity_sdk" + facadeModelSeparator + "gemini-3.6-flash",
 		}
+	case "gemini_web":
+		// Gemini binds the model AND the thinking level. A bare model value
+		// leaves the thinking level at whatever the previous job left selected
+		// in the shared browser tab, so the curated entries pin both.
+		//
+		// "3.8 Flash Low" exists for the audio path: at "High" the measured
+		// first-token latency on a 30 s recording was 187.8 s (job 1342), which
+		// blows the facade's wait budget; the same model at Low answered in
+		// 65-158 s. "3.8 Flash High" stays published because the OET
+		// credential discovers exactly that id.
+		catalog := resolveModelCatalog(target)
+		pairs := [][2]string{
+			{"3.8 Flash", "Low"},
+			{"3.8 Flash", "High"},
+			{"4 Argon", "Low"},
+		}
+		out := make([]string, 0, len(pairs))
+		for _, pair := range pairs {
+			model, thinking := pair[0], pair[1]
+			if !slices.Contains(catalog.Settings["model"].Values, model) {
+				continue
+			}
+			if !slices.Contains(catalog.Settings["thinking"].Values, thinking) {
+				continue
+			}
+			out = append(out, target+facadeModelSeparator+model+" "+thinking)
+		}
+		return out
 	}
 	return nil
 }
@@ -467,6 +524,25 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 	// the shared create path enforces per-target manifest policy (kind +
 	// content type) and the 32-attachment cap, so provider capability limits
 	// apply unchanged. Caller-declared keys always keep their own names.
+	//
+	// An inline AUDIO part's attachment kind is resolved against the target's
+	// own policy ("voice" when the target declares it, else the generic
+	// "audio"): a target that only declares "audio" is still reachable, and a
+	// target that declares neither is refused here with a clear error instead
+	// of a job that "succeeds" with the provider saying it heard nothing.
+	policy := resolveAttachmentPolicy(target)
+	for i := range inlineParts {
+		if inlineParts[i].Kind != facadeInlineAudioKind {
+			continue
+		}
+		kind := policy.audioKindFor()
+		if kind == "" {
+			s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "unsupported_audio_type", fmt.Sprintf("target %q does not accept audio attachments; see GET /v1/capabilities", target))
+			outcome = facadeOutcomeRejected
+			return
+		}
+		inlineParts[i].Kind = kind
+	}
 	callerDecls := attachmentDecls
 	if len(inlineParts) > 0 {
 		merged := make([]any, 0, len(callerDecls)+len(inlineParts))
@@ -587,7 +663,7 @@ func (s *Server) handleOpenAIChatCompletion(w http.ResponseWriter, r *http.Reque
 
 // resolveFacadeModel maps a facade ID to validated native settings.
 // A bare target uses operator defaults; target|value binds a catalog choice.
-// Gemini's curated 3.8 Flash High entry binds both model and thinking settings.
+// Gemini's curated "<model> <thinking>" entry binds both settings.
 func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool) {
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -604,28 +680,11 @@ func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool)
 		return target, nil, true
 	}
 	catalog := resolveModelCatalog(target)
-	if target == "gemini_web" && value == "3.8 Flash High" {
-		if slices.Contains(catalog.Settings["model"].Values, "3.8 Flash") && slices.Contains(catalog.Settings["thinking"].Values, "High") {
-			return target, map[string]any{"model": "3.8 Flash", "thinking": "High"}, true
-		}
-		return "", nil, false
-	}
-	// 3.8 Flash Low binds the same model as High with the lowest thinking effort. Measured live 2026-10-21 with real
-	// 30-second recordings: High spent 3 to 5 minutes thinking before the first token and could time out, while an
-	// audio-listening job (a short factual report, not a reasoning task) needs no deep thinking. Unlike a bare
-	// "gemini_web|3.8 Flash", it also pins the thinking effort, so the result never depends on what the previous job
-	// left selected in the shared browser tab.
-	if target == "gemini_web" && value == "3.8 Flash Low" {
-		if slices.Contains(catalog.Settings["model"].Values, "3.8 Flash") && slices.Contains(catalog.Settings["thinking"].Values, "Low") {
-			return target, map[string]any{"model": "3.8 Flash", "thinking": "Low"}, true
-		}
-		return "", nil, false
-	}
-	if target == "gemini_web" && value == "4 Argon Low" {
-		if slices.Contains(catalog.Settings["model"].Values, "4 Argon") && slices.Contains(catalog.Settings["thinking"].Values, "Low") {
-			return target, map[string]any{"model": "4 Argon", "thinking": "Low"}, true
-		}
-		return "", nil, false
+	// Curated composites ("<model> <thinking>") resolve first: their value is
+	// not a single catalog value, so the generic choice lookup below would
+	// never match them.
+	if settings, ok := resolveCuratedFacadeSettings(target, value, catalog); ok {
+		return target, settings, true
 	}
 	for name, setting := range catalog.Settings {
 		if setting.Kind == "choice" && slices.Contains(setting.Values, value) {
@@ -633,6 +692,30 @@ func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool)
 		}
 	}
 	return "", nil, false
+}
+
+// resolveCuratedFacadeSettings resolves a board-curated composite value of
+// the form "<model> <thinking>" against the target's catalog. Both halves must
+// be present in the catalog, so a curated id that outlived its model resolves
+// to "not found" (an honest model_not_found) instead of silently binding a
+// model the provider no longer offers.
+func resolveCuratedFacadeSettings(target string, value string, catalog jobcore.ModelCatalog) (map[string]any, bool) {
+	model, thinking, found := strings.Cut(value, " ")
+	if !found {
+		return nil, false
+	}
+	model = strings.TrimSpace(model)
+	thinking = strings.TrimSpace(thinking)
+	if model == "" || thinking == "" {
+		return nil, false
+	}
+	if !slices.Contains(catalog.Settings["model"].Values, model) {
+		return nil, false
+	}
+	if !slices.Contains(catalog.Settings["thinking"].Values, thinking) {
+		return nil, false
+	}
+	return map[string]any{"model": model, "thinking": thinking}, true
 }
 
 func facadeTargetKnown(target string) bool {
@@ -740,6 +823,13 @@ func parseFacadeDataURLImage(raw string) (facadeInlinePart, bool) {
 	return facadeInlinePart{Key: "inline-image-" + ext, ContentType: mimeType, Kind: "image", Data: payload}, true
 }
 
+// facadeInlineAudioKind marks an inline part that carries AUDIO bytes. It is
+// a marker, not the declared attachment kind: the kind is resolved against
+// the TARGET's attachment policy once the target is known (see
+// attachmentPolicy.audioKindFor), so an audio-capable target that only
+// declares the generic "audio" kind is still reachable.
+const facadeInlineAudioKind = "audio"
+
 // parseFacadeInputAudio decodes an OpenAI input_audio part
 // ({data: <base64>, format: wav|mp3}).
 func parseFacadeInputAudio(data, format string) (facadeInlinePart, bool) {
@@ -754,7 +844,7 @@ func parseFacadeInputAudio(data, format string) (facadeInlinePart, bool) {
 	if len(payload) > maxFacadeInlinePartBytes {
 		return facadeInlinePart{}, false
 	}
-	return facadeInlinePart{Key: "inline-audio-" + spec.Ext, ContentType: spec.ContentType, Kind: "voice", Data: payload}, true
+	return facadeInlinePart{Key: "inline-audio-" + spec.Ext, ContentType: spec.ContentType, Kind: facadeInlineAudioKind, Data: payload}, true
 }
 
 // flattenFacadeMessages collapses OpenAI message history into one prompt plus
@@ -1225,6 +1315,13 @@ func (s *Server) facadeCompletion(model, prompt string, job jobstore.Job, jsonMo
 		if signals.ErrorClass == loginRequiredErrorClass {
 			return openAIFacadeCompletion{}, http.StatusServiceUnavailable, "provider_error", "provider_login_required", detail, ""
 		}
+		if signals.ErrorClass == audioNotIngestedErrorClass {
+			// The bytes reached the provider and its model could not decode
+			// them. Retrying the same request cannot help: the fix is on the
+			// request side (a verified container, a model that can hear), so
+			// this is a client-correctable 400, not a 503.
+			return openAIFacadeCompletion{}, http.StatusBadRequest, "invalid_request_error", "provider_audio_not_ingested", detail, ""
+		}
 		switch job.Status {
 		case jobstore.StatusFailedRetryable:
 			return openAIFacadeCompletion{}, http.StatusServiceUnavailable, "provider_error", "provider_transient", detail, ""
@@ -1392,6 +1489,28 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 	}
 
 	target := transcriptionTargetForModel(modelField)
+	contentType := strings.ToLower(strings.TrimSpace(audioMIME))
+	policy := resolveAttachmentPolicy(target)
+	// The attachment KIND is negotiated against the target's own policy: a
+	// target that declares the generic "audio" kind (and not "voice") is still
+	// reachable, and a target that declares neither is refused here with the
+	// formats it does accept instead of a job that "succeeds" with the
+	// provider saying it heard nothing.
+	kind := policy.audioKindFor()
+	if kind == "" {
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "unsupported_audio_type", fmt.Sprintf(
+			"target %q does not accept audio attachments; it accepts %s (see GET /v1/capabilities)",
+			target, strings.Join(policy.acceptedKinds(), ", ")))
+		outcome = facadeOutcomeRejected
+		return
+	}
+	if !policy.accepts(kind, contentType) {
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "unsupported_audio_type", fmt.Sprintf(
+			"target %q cannot ingest %s; verified audio containers for this target: %s (see GET /v1/capabilities)",
+			target, contentType, strings.Join(policy.audioContentTypes(), ", ")))
+		outcome = facadeOutcomeRejected
+		return
+	}
 
 	prompt := "Transcribe the attached audio verbatim. Return plain text only, no commentary."
 	if promptHint != "" {
@@ -1407,8 +1526,8 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 	}
 	attachmentDecls := []any{map[string]any{
 		"key":          key,
-		"content_type": strings.ToLower(strings.TrimSpace(audioMIME)),
-		"kind":         "voice",
+		"content_type": contentType,
+		"kind":         kind,
 	}}
 
 	facadeReq := openAIFacadeRequest{Model: target}
@@ -1420,7 +1539,7 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 		}
 		return
 	}
-	if err := s.putFacadeAttachmentBytes(r.Context(), jobID, key, strings.ToLower(strings.TrimSpace(audioMIME)), "voice", audioBytes); err != nil {
+	if err := s.putFacadeAttachmentBytes(r.Context(), jobID, key, contentType, kind, audioBytes); err != nil {
 		s.writeFacadeError(w, http.StatusInternalServerError, "server_error", "attachment_store_failed", "transcription audio could not be stored")
 		outcome = facadeOutcomeError
 		return

@@ -89,3 +89,28 @@ Runnable versions: `examples/javascript/multimodal-chat.mjs`,
 Audio clips can also be sent through [utterance mode](/guides/live-voice#utterance-mode)
 or `POST /v1/openai/audio/transcriptions` (multipart) when you only need a
 transcript.
+
+## Which audio actually gets transcribed
+
+Not every container reaches the model. A provider's composer accepts a file it
+cannot decode, and the model then answers "No audio attachment is accessible
+in this message." — a confident wrong answer, not an error. UBAG therefore
+publishes the measured contract per target and enforces it:
+
+- `GET /v1/capabilities` → `audio.formats` lists the containers the target's
+  model can actually read; `audio.models` lists the models that can ingest
+  audio at all.
+- A container outside `audio.formats` is refused at create time with
+  `UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001` and the verified list in the
+  message. Nothing is uploaded and no provider is billed.
+- A model outside `audio.models` is refused with
+  `UBAG-VALIDATION-AUDIO-MODEL-UNAVAILABLE-001`.
+- If a provider still drops a file that passed both checks, the job fails with
+  `provider_audio_not_ingested` rather than reporting a transcript that was
+  never produced.
+
+Measured on the production account (2026-10-21): `chatgpt_web` transcribes
+`audio/wav` and `audio/mpeg`; `audio/mp4`, `audio/ogg` and `audio/webm` are
+accepted by its composer and then dropped. `gemini_web` ingests audio on
+`3.8 Flash` only. Send WAV or MP3 unless the capability record says
+otherwise.

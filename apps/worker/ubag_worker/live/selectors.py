@@ -222,6 +222,26 @@ class ProviderSelectors:
     # Extended thinking); the engine lengthens the response timeout accordingly so
     # a long think is not mistaken for a hang.
     reasoning: bool = False
+    # True when this provider's login signal is DECISIVE: a visible match means
+    # the session really is signed out, so the engine checks it BEFORE the
+    # authenticated signal and reports the job as needing a manual sign-in.
+    #
+    # It exists because "the composer is present" is not authentication. Google
+    # renders the full Gemini composer for an ANONYMOUS visitor, so the
+    # composer-based authenticated signal matched a signed-out profile and the
+    # job claimed "session.authenticated" - then failed later with a confusing
+    # "sign-in required before the requested model can be selected", because the
+    # model picker was opened on a page that was never signed in.
+    #
+    # On such a provider the login signal MUST be a real sign-in affordance
+    # ("Sign in" / an email field) and never chrome that is always present.
+    login_decisive: bool = False
+    # Optional marker that is present ONLY while the account is signed in (the
+    # account avatar). On a decisive provider this outranks the login signal:
+    # if the avatar is on screen the session IS authenticated, whatever stray
+    # "Sign in" text the page chrome carries. None = no such marker, and the
+    # login signal decides alone.
+    signed_in_marker: Optional[SelectorGroup] = None
 
     def all_groups(self) -> List[SelectorGroup]:
         return [
@@ -591,6 +611,19 @@ GEMINI_WEB = ProviderSelectors(
             "img.gb_P",
         ),
     ),
+    # The account avatar: present only while the Google account is signed in.
+    # Measured live 2026-10-21 on a signed-out profile: img.gb_P count=0 and
+    # a[aria-label*='Google Account'] count=0, while the composer and THREE
+    # visible "Sign in" nodes were present. That is the exact evidence that
+    # the composer alone never proved a session.
+    signed_in_marker=SelectorGroup(
+        "signed_in_marker",
+        (
+            "img.gb_P",
+            "a[aria-label*='Google Account']",
+        ),
+        baseline_version="2026-10-21-live-signed-out-probe",
+    ),
     login_signal=SelectorGroup(
         "login_signal",
         (
@@ -598,6 +631,15 @@ GEMINI_WEB = ProviderSelectors(
             "text=Sign in",
             "input[type='email']",
         ),
+        # Google renders the full composer for an anonymous visitor, so the
+        # composer-based authenticated signal cannot prove a session. A visible
+        # "Sign in" affordance IS decisive here: it appears on the signed-out
+        # page (measured live 2026-10-21: 3 visible "Sign in" nodes and no
+        # account avatar) and disappears once the account is signed in. The
+        # engine therefore checks this signal FIRST and reports the job as
+        # needing a manual sign-in instead of claiming "session.authenticated"
+        # and then failing inside the model picker.
+        baseline_version="2026-10-21-live-signin-affordance",
     ),
     streaming_indicator=SelectorGroup(
         "streaming_indicator",
@@ -703,6 +745,12 @@ GEMINI_WEB = ProviderSelectors(
         ),
     ),
     reasoning=True,
+    # Google's signed-out page renders the full composer, so the composer
+    # signal cannot prove a session: the engine must check the decisive
+    # sign-in affordance first, or a signed-out profile is reported as
+    # "authenticated" and then fails inside the model picker with a
+    # misleading "sign-in required before the model can be selected".
+    login_decisive=True,
 )
 
 MISTRAL_LECHAT = ProviderSelectors(

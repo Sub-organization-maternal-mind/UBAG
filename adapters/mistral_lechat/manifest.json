@@ -31,10 +31,13 @@
     "accepted": [
       { "kind": "document", "content_types": ["application/pdf", "text/plain", "text/markdown", "text/csv", "application/json"] },
       { "kind": "image", "content_types": ["image/png", "image/jpeg", "image/gif", "image/webp"] },
-      { "kind": "audio", "content_types": ["audio/webm", "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/ogg"] },
-      { "kind": "voice", "content_types": ["audio/webm", "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp4", "audio/ogg"] },
+      { "kind": "audio", "content_types": ["audio/wav", "audio/x-wav", "audio/mpeg"] },
+      { "kind": "voice", "content_types": ["audio/wav", "audio/x-wav", "audio/mpeg"] },
       { "kind": "video", "content_types": ["video/mp4", "video/webm"] }
     ]
+  },
+  "audio": {
+    "verified": "2026-10-21 live probe: the production Mistral account is SIGNED OUT (the page shows 'Sign in'/'Sign up' and renders no <input type=file> at all), so no container could be measured on this target. The accepted list is therefore the conservative PCM/MP3 set - the containers every measured provider (chatgpt_web) decodes - and no model is claimed audio-capable, so no audio job is pinned to a model here. Re-measure and widen this block once a signed-in session exists."
   },
   "selector_strategy": {
     "type": "provider_specific",

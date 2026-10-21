@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -75,6 +76,63 @@ type attachmentPolicy struct {
 	maxFiles     int
 	maxFileBytes int64
 	accepted     map[string][]string // kind -> content-type patterns (exact or "family/*")
+	// audioModels lists the provider models of THIS target that can actually
+	// ingest an audio file. It is empty when the manifest makes no claim (no
+	// model-level restriction). It exists because a provider can accept an
+	// audio attachment in its composer and still hand the MODEL bytes it
+	// cannot decode: the job then "succeeds" with an answer like "No audio
+	// attachment is accessible in this message." Measured live on chatgpt_web
+	// (2026-10-21): the composer accepted wav/mp3/m4a/ogg/webm, but only
+	// wav/mp3 were transcribed - the rest were silently dropped. The same
+	// happened on gemini_web per model: "4 Argon" answered "no audio
+	// attached" 5 of 5 while "3.8 Flash" transcribed the same file.
+	audioModels []string
+	// audioVerified carries the manifest's evidence note for the audio
+	// declaration, published verbatim by /v1/capabilities so an operator can
+	// see WHICH measurement backs the accepted formats.
+	audioVerified string
+}
+
+// acceptsAudioKind reports whether the policy accepts audio bytes under the
+// given kind. "voice" is the facade's kind for a spoken-message recording and
+// "audio" for a generic audio file; they carry the same content types, so a
+// target may accept one and not the other.
+func (p attachmentPolicy) acceptsAudioKind(kind string) bool {
+	return len(p.accepted[kind]) > 0
+}
+
+// audioKindFor returns the kind to declare for an audio attachment on this
+// target: "voice" when the target accepts it, else "audio" when it accepts
+// that, else "" when the target takes no audio at all. It is what makes an
+// audio-capable target reachable even when its manifest only declares the
+// generic "audio" kind (e.g. the synthetic fixture), and it keeps a target
+// that declares neither from being fed audio it would drop.
+func (p attachmentPolicy) audioKindFor() string {
+	if p.acceptsAudioKind("voice") {
+		return "voice"
+	}
+	if p.acceptsAudioKind("audio") {
+		return "audio"
+	}
+	return ""
+}
+
+// audioContentTypes returns the union of the audio content types this target
+// accepts under either audio-bearing kind, sorted for stable publication.
+func (p attachmentPolicy) audioContentTypes() []string {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, kind := range []string{"voice", "audio"} {
+		for _, ct := range p.accepted[kind] {
+			if _, ok := seen[ct]; ok {
+				continue
+			}
+			seen[ct] = struct{}{}
+			out = append(out, ct)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 type labeledMetric struct {
@@ -209,6 +267,14 @@ func loadAttachmentPolicyFromDisk(target string) attachmentPolicy {
 				ContentTypes []string `json:"content_types"`
 			} `json:"accepted"`
 		} `json:"attachments"`
+		// The optional top-level "audio" block carries the MODEL dimension of
+		// the audio contract (which provider models can ingest audio) plus the
+		// evidence note. It is additive: a manifest without it keeps the
+		// historical behaviour (no model-level restriction).
+		Audio *struct {
+			Models   []string `json:"models"`
+			Verified string   `json:"verified"`
+		} `json:"audio"`
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil || manifest.Attachments == nil {
 		return attachmentPolicy{}
@@ -226,13 +292,38 @@ func loadAttachmentPolicyFromDisk(target string) attachmentPolicy {
 		}
 		policy.accepted[kind] = append(policy.accepted[kind], entry.ContentTypes...)
 	}
+	if manifest.Audio != nil {
+		for _, model := range manifest.Audio.Models {
+			if trimmed := strings.TrimSpace(model); trimmed != "" {
+				policy.audioModels = append(policy.audioModels, trimmed)
+			}
+		}
+		policy.audioVerified = strings.TrimSpace(manifest.Audio.Verified)
+	}
 	return policy
 }
 
 // validateAttachmentsForCreate checks a job's declared attachments against the
 // target adapter's policy at create time, mirroring validateModelSettingsForCreate.
 // It returns ("", "", true) when the job declares no attachments.
-func validateAttachmentsForCreate(target string, input map[string]any) (code, message string, ok bool) {
+//
+// Two audio-specific rules live here, both learned from live provider
+// measurements (2026-10-21) rather than guesses:
+//
+//  1. The declared CONTENT TYPE must be one the provider can actually decode.
+//     A provider's composer accepts far more than its model can read: ChatGPT
+//     showed a chip for webm/ogg/m4a and then answered "No audio attachment
+//     is accessible in this message." The manifest's per-kind content-type
+//     list is the measured, verified set, so an unverified container is
+//     refused here instead of producing a confident wrong answer.
+//
+//  2. When the job pins a MODEL, that model must be one that can ingest audio
+//     on this target ("3.8 Flash" can, "4 Argon" cannot). A model that cannot
+//     hear is refused with the list of models that can.
+//
+// modelSettings is the caller's validated job.model_settings (may be empty:
+// the operator default then applies and the worker's own guard covers it).
+func validateAttachmentsForCreate(target string, input map[string]any, modelSettings map[string]any) (code, message string, ok bool) {
 	declared, err := attachments.DeclaredAttachments(input)
 	if err != nil {
 		return attachments.ErrorCode(err), err.Error(), false
@@ -247,15 +338,87 @@ func validateAttachmentsForCreate(target string, input map[string]any) (code, me
 	if max := policy.effectiveMaxFiles(); len(declared) > max {
 		return "UBAG-VALIDATION-ATTACHMENTS-COUNT-001", fmt.Sprintf("job declares %d attachments; target allows at most %d", len(declared), max), false
 	}
+	hasAudio := false
 	for _, att := range declared {
 		if att.LegacyAudio {
+			hasAudio = true
 			continue
 		}
 		if !policy.accepts(att.Kind, att.ContentType) {
-			return "UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001", fmt.Sprintf("attachment content_type %q is not accepted for kind %q by this target", att.ContentType, att.Kind), false
+			return "UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001", unsupportedAttachmentMessage(target, policy, att), false
+		}
+		if att.Kind == "audio" || att.Kind == "voice" {
+			hasAudio = true
+		}
+	}
+	if hasAudio && len(policy.audioModels) > 0 {
+		if model, pinned := pinnedModelValue(modelSettings); pinned {
+			if !slices.Contains(policy.audioModels, model) {
+				return "UBAG-VALIDATION-AUDIO-MODEL-UNAVAILABLE-001", fmt.Sprintf(
+					"model %q cannot ingest audio on target %q; audio-capable models: %s (see GET /v1/capabilities)",
+					model, strings.TrimSpace(target), strings.Join(policy.audioModels, ", ")), false
+			}
 		}
 	}
 	return "", "", true
+}
+
+// pinnedModelValue returns the model a job pins through model_settings, and
+// whether one was pinned at all. Only the "model" key counts: other settings
+// (thinking level, reasoning, toggles) do not change what the provider can
+// ingest.
+func pinnedModelValue(modelSettings map[string]any) (string, bool) {
+	raw, ok := modelSettings["model"]
+	if !ok {
+		return "", false
+	}
+	value, ok := raw.(string)
+	if !ok {
+		return "", false
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	return value, true
+}
+
+// unsupportedAttachmentMessage explains WHY an attachment was refused and what
+// the target does accept. The old message ("content_type X is not accepted
+// for kind Y by this target") left the caller with no way to fix the call, and
+// the audio case in particular failed with the same wording for a target that
+// takes no audio at all and for one that takes audio in other containers.
+func unsupportedAttachmentMessage(target string, policy attachmentPolicy, att attachments.Attachment) string {
+	target = strings.TrimSpace(target)
+	if att.Kind == "audio" || att.Kind == "voice" {
+		if supported := policy.audioContentTypes(); len(supported) > 0 {
+			return fmt.Sprintf(
+				"target %q cannot ingest %s; verified audio containers for this target: %s (see GET /v1/capabilities)",
+				target, att.ContentType, strings.Join(supported, ", "))
+		}
+		return fmt.Sprintf(
+			"target %q does not accept audio attachments; it accepts %s (see GET /v1/capabilities)",
+			target, strings.Join(policy.acceptedKinds(), ", "))
+	}
+	accepted := policy.accepted[att.Kind]
+	if len(accepted) == 0 {
+		return fmt.Sprintf(
+			"target %q does not accept %s attachments; it accepts %s (see GET /v1/capabilities)",
+			target, att.Kind, strings.Join(policy.acceptedKinds(), ", "))
+	}
+	return fmt.Sprintf(
+		"content_type %q is not accepted for kind %q by target %q; accepted for %q: %s (see GET /v1/capabilities)",
+		att.ContentType, att.Kind, target, att.Kind, strings.Join(accepted, ", "))
+}
+
+// acceptedKinds lists the attachment kinds a target accepts, sorted.
+func (p attachmentPolicy) acceptedKinds() []string {
+	kinds := make([]string, 0, len(p.accepted))
+	for kind := range p.accepted {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	return kinds
 }
 
 // jobDeclaresAttachments reports whether a job input carries any attachments

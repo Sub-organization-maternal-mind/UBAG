@@ -1768,7 +1768,7 @@ func (s *Server) processBatchEntry(
 	// Attachments require the two-step upload or multipart one-shot, neither of
 	// which fits a JSON batch Ã¢â‚¬â€ reject rather than create a job that would hang
 	// held until its TTL.
-	if code, msg, ok := validateAttachmentsForCreate(req.Job.Target, req.Job.Input); !ok {
+	if code, msg, ok := validateAttachmentsForCreate(req.Job.Target, req.Job.Input, req.Job.ModelSettings); !ok {
 		e := validationError(code, msg)
 		return batchJobOutcome{Index: index, Status: "rejected", Error: &e}, http.StatusBadRequest
 	}
@@ -2038,7 +2038,7 @@ func (s *Server) prepareCreateJob(w http.ResponseWriter, r *http.Request, reques
 		s.writeError(w, r, http.StatusBadRequest, validationError(code, msg))
 		return preparedCreateJob{}, false
 	}
-	if code, msg, ok := validateAttachmentsForCreate(request.Job.Target, request.Job.Input); !ok {
+	if code, msg, ok := validateAttachmentsForCreate(request.Job.Target, request.Job.Input, request.Job.ModelSettings); !ok {
 		s.writeError(w, r, http.StatusBadRequest, validationError(code, msg))
 		return preparedCreateJob{}, false
 	}
@@ -3042,6 +3042,13 @@ const manualLoginRequiredReason = "manual_login_required"
 // logged-out provider session. It lets consumers (e.g. RadioPad) distinguish an
 // actionable "please sign in" stall from a genuine execution failure.
 const loginRequiredErrorClass = "provider_login_required"
+
+// audioNotIngestedErrorClass is the error_class for a job that carried audio
+// the provider accepted but could not decode ("No audio attachment is
+// accessible in this message."). It is a distinct, actionable class: the
+// recording never reached the model, so the caller must change the container
+// or the model - retrying the same request would fail the same way.
+const audioNotIngestedErrorClass = "provider_audio_not_ingested"
 
 // providerDisplayNames maps internal provider/target ids to human-facing names.
 // Unlisted providers fall back to a title-cased form of the id (see
