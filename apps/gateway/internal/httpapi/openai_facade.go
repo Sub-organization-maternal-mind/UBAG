@@ -333,7 +333,7 @@ func (s *Server) handleOpenAIModels(w http.ResponseWriter, r *http.Request) {
 // credential. Native target/settings APIs remain available to operators; settings,
 // mocks and unverified providers must not appear as working assistant models.
 func (s *Server) facadeModels() []openAIFacadeModel {
-	ids := []string{"chatgpt_web|GPT-6", "deepseek_web", "gemini_web|3.8 Flash High", "gemini_web|4 Argon Low"}
+	ids := []string{"chatgpt_web|GPT-6", "deepseek_web", "gemini_web|3.8 Flash High", "gemini_web|3.8 Flash Low", "gemini_web|4 Argon Low"}
 	models := make([]openAIFacadeModel, 0, len(ids))
 	for _, id := range ids {
 		models = append(models, openAIFacadeModel{ID: id, Object: "model", OwnedBy: "ubag"})
@@ -607,6 +607,17 @@ func (s *Server) resolveFacadeModel(model string) (string, map[string]any, bool)
 	if target == "gemini_web" && value == "3.8 Flash High" {
 		if slices.Contains(catalog.Settings["model"].Values, "3.8 Flash") && slices.Contains(catalog.Settings["thinking"].Values, "High") {
 			return target, map[string]any{"model": "3.8 Flash", "thinking": "High"}, true
+		}
+		return "", nil, false
+	}
+	// 3.8 Flash Low binds the same model as High with the lowest thinking effort. Measured live 2026-10-21 with real
+	// 30-second recordings: High spent 3 to 5 minutes thinking before the first token and could time out, while an
+	// audio-listening job (a short factual report, not a reasoning task) needs no deep thinking. Unlike a bare
+	// "gemini_web|3.8 Flash", it also pins the thinking effort, so the result never depends on what the previous job
+	// left selected in the shared browser tab.
+	if target == "gemini_web" && value == "3.8 Flash Low" {
+		if slices.Contains(catalog.Settings["model"].Values, "3.8 Flash") && slices.Contains(catalog.Settings["thinking"].Values, "Low") {
+			return target, map[string]any{"model": "3.8 Flash", "thinking": "Low"}, true
 		}
 		return "", nil, false
 	}
