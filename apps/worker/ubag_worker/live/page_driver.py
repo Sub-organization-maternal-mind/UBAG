@@ -258,6 +258,11 @@ class PageDriver(ABC):
         """
         return True
 
+    def attachment_uploading_count(self, selectors: ProviderSelectors) -> int:
+        """How many upload markers are visible right now (0 when the provider
+        declares none). Used as the baseline for the attach wait."""
+        return 0
+
     def start_new_chat(self, selectors: ProviderSelectors) -> bool:
         """Start a fresh conversation, if the provider exposes a New-chat control.
 
@@ -1740,7 +1745,10 @@ class PlaywrightPageDriver(PageDriver):
                 locator.set_input_files([])
 
     def wait_for_attachment_ready(  # pragma: no cover - requires real browser
-        self, selectors: ProviderSelectors, timeout_s: float = 60.0
+        self,
+        selectors: ProviderSelectors,
+        timeout_s: float = 60.0,
+        baseline_uploads: int = 0,
     ) -> bool:
         """Wait until the provider has accepted the attachment AND finished
         uploading it.
@@ -1753,11 +1761,16 @@ class PlaywrightPageDriver(PageDriver):
         (2026-10-21): chip at 0.35 s, upload spinner still up at 1.0 s, clear at
         ~2.0 s.
 
+        ``baseline_uploads`` is the number of upload markers that were ALREADY
+        visible before the attach (a warm page can carry a chip from the
+        previous job, whose spinner may never clear). The wait is therefore
+        relative: the NEW upload is done when the marker count falls back to
+        the baseline, not when the page shows no spinner at all.
+
         Returns True when the provider is ready (or when the provider declares
         no indicator, in which case there is nothing to wait for) and False
         when the deadline passed with no ready attachment. The caller turns
-        that into an explicit, non-retryable failure instead of a blind
-        submit.
+        that into an explicit failure instead of a blind submit.
         """
         import time
 
@@ -1768,16 +1781,38 @@ class PlaywrightPageDriver(PageDriver):
         deadline = time.monotonic() + timeout_s
         while True:
             if self._present(indicator, timeout_ms=500):
-                still_uploading = False
+                still_uploading = 0
                 if uploading is not None:
-                    still_uploading = self._present_any(
-                        list(uploading.as_list()), timeout_ms=300
-                    )
-                if not still_uploading:
+                    still_uploading = self._count_visible(list(uploading.as_list()))
+                if still_uploading <= baseline_uploads:
                     return True
             if time.monotonic() >= deadline:
                 return False
             time.sleep(0.2)
+
+    def attachment_uploading_count(self, selectors: ProviderSelectors) -> int:
+        """How many upload markers are visible right now (0 when the provider
+        declares none). Used as the baseline for the attach wait."""
+        group = selectors.attachment_uploading
+        if group is None:
+            return 0
+        return self._count_visible(list(group.as_list()))
+
+    def _count_visible(self, selectors: Sequence[str]) -> int:  # pragma: no cover
+        count = 0
+        for candidate in selectors:
+            try:
+                matches = self._page.locator(candidate)
+                total = matches.count()
+                for index in range(min(total, 4)):
+                    try:
+                        if matches.nth(index).is_visible():
+                            count += 1
+                    except Exception:  # noqa: BLE001 - a racing node is not visible
+                        continue
+            except Exception:  # noqa: BLE001 - a bad selector is simply not visible
+                continue
+        return count
 
     def _click_first(  # pragma: no cover - requires real browser
         self, group: SelectorGroup, timeout_ms: int

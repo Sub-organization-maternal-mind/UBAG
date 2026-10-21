@@ -832,6 +832,11 @@ class LiveSessionEngine:
             # A missing/drifted file input raises DriftDetectedError, caught by the
             # existing drift handler — never a silent hang. attach_files takes the
             # full list, so all files land in one operation.
+            #
+            # The upload markers that are ALREADY visible (a warm page can carry a
+            # chip from the previous job) are the baseline: the wait ends when
+            # the NEW upload is done, not when the page shows no spinner at all.
+            upload_baseline = driver.attachment_uploading_count(self._selectors)
             with timer.span("attachment_materialize"):
                 driver.attach_files(self._selectors, attach_paths)
             # The provider uploads ASYNCHRONOUSLY: the composer shows the chip as
@@ -846,7 +851,9 @@ class LiveSessionEngine:
             # attachment fails loudly instead of submitting blind.
             if self._selectors.attachment_indicator is not None:
                 if not driver.wait_for_attachment_ready(
-                    self._selectors, timeout_s=_attachment_ready_timeout_s()
+                    self._selectors,
+                    timeout_s=_attachment_ready_timeout_s(),
+                    baseline_uploads=upload_baseline,
                 ):
                     return {
                         "reason": "attachment_not_ready",
