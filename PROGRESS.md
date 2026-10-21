@@ -4776,3 +4776,26 @@ was printed into one session transcript while probing (my mistake; it should hav
 length-only) and stays until the next deploy window, where it must be rotated on the
 gateway and the browser together.
 
+
+#### Acceptance (production, build 97ccae0)
+
+The acceptance suite runs inside the gateway container against the live
+gateway and the shared browser. Result: **19 passed, 0 failed**.
+
+| Check | What it proves |
+|---|---|
+| E1 facade inline `input_audio` -> `chatgpt_web` | HTTP 200 with the exact transcript, 21 s |
+| E2 facade multipart `/v1/openai/audio/transcriptions` -> `chatgpt_web` | HTTP 200 with the exact transcript, 32 s |
+| E3 native `POST /v1/jobs` + `PUT` artifact -> `chatgpt_web` | 202 + 201, job completed with the exact transcript |
+| N1 `audio/webm` | refused at create time: `unsupported_audio_type` + "verified audio containers for this target: audio/mpeg, audio/wav, audio/x-wav" |
+| N2 `gemini_web\|4 Argon Low` + audio | refused: `UBAG-VALIDATION-AUDIO-MODEL-UNAVAILABLE-001` + "audio-capable models: 3.8 Flash" |
+| D1 discovery | `/v1/openai/models` derived from the manifests; `/v1/capabilities` publishes the measured audio contract per target |
+| V1 live voice | 4 provider contexts registered, `configured: true` and `available: true`, a live session reaches "connecting" with an instance placement |
+
+The recording is a real 16-bit PCM WAV with spoken content ("UBAG audio
+pipeline verification. The quick brown fox jumps over the lazy dog. One two
+three four five."), so a passing transcription proves the bytes were decoded
+by the provider's MODEL, not merely accepted by the composer.
+
+A second consecutive run reproduced 19/19 with a SINGLE copy of the
+transcript in every answer.
