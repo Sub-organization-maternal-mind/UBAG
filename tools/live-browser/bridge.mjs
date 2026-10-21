@@ -519,7 +519,7 @@ async function main() {
   }
   function broadcastMeta(meta) {
     const frame = encodeFrame(Buffer.from(JSON.stringify({ type: 'meta', ...meta })), 0x1);
-    for (const sock of clients) {
+    for (const sock of clients.keys()) {
       if (!sock.destroyed) sock.write(frame);
     }
   }
@@ -556,7 +556,7 @@ async function main() {
     if (!force && payload === lastTargetsPayload) return;
     lastTargetsPayload = payload;
     const frame = encodeFrame(Buffer.from(payload), 0x1);
-    for (const sock of clients) {
+    for (const sock of clients.keys()) {
       if (!sock.destroyed) sock.write(frame);
     }
   }
