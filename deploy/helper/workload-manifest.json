@@ -42,6 +42,7 @@
     { "name": "tls", "type": "bind", "source": "{{tls_dir}}", "target": "/etc/ubag-helper/tls", "read_only": true },
     { "name": "profiles", "type": "volume", "source": "ubag-helper-profiles", "target": "/var/lib/ubag-helper/profiles", "read_only": false },
     { "name": "home", "type": "tmpfs", "target": "/var/lib/ubag-helper/home", "read_only": false },
+    { "name": "state", "type": "tmpfs", "target": "/var/lib/ubag", "read_only": false },
     { "name": "tmp", "type": "tmpfs", "target": "/tmp", "read_only": false }
   ],
   "resources": {

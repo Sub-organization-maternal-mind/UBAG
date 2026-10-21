@@ -21,6 +21,10 @@ What UBAG hands the external fleet manager so it can run a Helper Node: one cont
 
 The helper refuses a wildcard or hostname listen address (`UBAG_HELPER_LISTEN` must be one interface IP). A bridge-networked container cannot name its WireGuard address, so the manifest asks for `network.mode: host` and the listener binds `{{wireguard_address}}:7443` directly. There are no published ports. Voice (UDP range, NAT address) is not part of this manifest; it arrives with the helper voice slice.
 
+## Writable state under /var/lib/ubag
+
+The image root is read-only, but the worker keeps state under `/var/lib/ubag` — the open-pages registry and the identity locks both live in the chat ledger's directory (`os.path.dirname(ledger_path())`), whatever the ledger path is set to. Without a writable `/var/lib/ubag` every attempt fails immediately with `[Errno 30] Read-only file system: '/var/lib/ubag'`, before a browser is ever launched. The manifest therefore asks for a tmpfs there; `home` and `tmp` are tmpfs for the same reason.
+
 ## Operator login
 
 Provider logins on a helper are human, out of band (noVNC over WireGuard or an SSH tunnel). That access is not provisioned here and the image ships no viewer. Safe-mode applies: no automated login, credential storage or CAPTCHA solving.
