@@ -1856,18 +1856,22 @@ class PlaywrightPageDriver(PageDriver):
         is the provider's own state and survives an empty input. Measured live
         on chatgpt_web (2026-10-21): after two attaches the composer showed two
         chips while every input was empty, so the next job's file landed next
-        to the stale ones and the provider received more than one recording
-        (or the wrong one) - the intermittent "no audio attachment is
-        available" answers.
+        to the stale ones and the provider received MORE THAN ONE recording -
+        the answer then carried the transcript once per recording (three
+        copies in one answer).
 
         The provider's own "Remove" control is used, scoped to the composer so
         the message history is never touched, and it is clicked ONE at a time
-        (the list shifts after every removal).
+        (the list shifts after every removal). The element can detach between
+        the lookup and the click, so a detached control is a RE-QUERY, not the
+        end of the removal: stopping there left the stale chips behind.
         """
         group = selectors.attachment_remove
         if group is None:
             return
-        for _ in range(8):  # bounded: a page never holds more than a few
+        for _ in range(12):  # bounded: a page never holds more than a few
+            if self._attachment_remove_count(selectors) == 0:
+                return
             clicked = False
             for candidate in group.as_list():
                 try:
@@ -1876,17 +1880,33 @@ class PlaywrightPageDriver(PageDriver):
                         continue
                     # A synthetic click: the control is an overlay that only
                     # exists on hover, so a pointer click times out.
-                    locator.first.evaluate("e => e.click()", timeout=3000)
+                    locator.first.evaluate("e => e.click()", timeout=2000)
                     clicked = True
                     break
                 except Exception:  # noqa: BLE001 - a detached node is gone
                     continue
             if not clicked:
-                return
+                # The control detached between the lookup and the click and the
+                # list was re-rendered: look again instead of giving up with
+                # chips still on the page.
+                continue
             try:
-                self._page.wait_for_timeout(400)
+                self._page.wait_for_timeout(350)
             except Exception:  # noqa: BLE001
                 pass
+
+    def _attachment_remove_count(self, selectors: ProviderSelectors) -> int:
+        """How many removable attachment chips the composer holds."""
+        group = selectors.attachment_remove
+        if group is None:
+            return 0
+        count = 0
+        for candidate in group.as_list():
+            try:
+                count += self._page.locator(candidate).count()
+            except Exception:  # noqa: BLE001
+                continue
+        return count
 
     def wait_for_attachment_ready(  # pragma: no cover - requires real browser
         self,

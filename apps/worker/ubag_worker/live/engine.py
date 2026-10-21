@@ -885,6 +885,16 @@ class LiveSessionEngine:
                     driver.clear_attachment_state(self._selectors)
                 except Exception:  # noqa: BLE001 - a clean composer is best-effort
                     pass
+                # The composer must be EMPTY before the attach: a leftover chip
+                # means the provider would receive a recording this job never
+                # sent, and the answer would carry the transcript once per
+                # recording. When the chips survive the clear, a pristine page
+                # is the only reliable way to get rid of them.
+                if driver.attachment_indicator_count(self._selectors) > 0:
+                    try:
+                        driver.reload(self._selectors)
+                    except Exception:  # noqa: BLE001 - the retry still runs
+                        pass
                 with timer.span("attachment_materialize"):
                     try:
                         driver.attach_files(self._selectors, attach_paths)
