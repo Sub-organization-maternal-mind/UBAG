@@ -246,6 +246,10 @@ class PageDriver(ABC):
         """Clear pending file selections before reusing a warm page."""
         return None
 
+    def attachment_indicator_count(self, selectors: ProviderSelectors) -> int:
+        """How many attachment indicators the provider currently shows."""
+        return 0
+
     def wait_for_attachment_ready(
         self, selectors: ProviderSelectors, timeout_s: float = 60.0
     ) -> bool:
@@ -1719,19 +1723,73 @@ class PlaywrightPageDriver(PageDriver):
             chooser_info.value.set_files(paths, timeout=timeout_ms)
             return
 
+        # A provider renders SEVERAL hidden file inputs and only one of them
+        # feeds its composer. ChatGPT renders four (and eight on a chat page),
+        # and a file set on the wrong one is accepted by the DOM but never
+        # staged in the composer: no chip, no upload, and the prompt goes out
+        # without the recording. So every candidate is VERIFIED with the
+        # provider's own indicator, and the next candidate is tried when
+        # nothing appeared. Verified live on chatgpt_web (2026-10-21): the
+        # composer chip is the only proof that the file was really staged.
+        indicator = selectors.attachment_indicator
         last_error: Optional[Exception] = None
         for candidate in group.as_list():
+            before = self.attachment_indicator_count(selectors) if indicator is not None else 0
             try:
                 locator = self._page.locator(candidate).first
                 # set_input_files settles on the attached (often hidden) <input>,
                 # which is exactly how chat UIs expose their upload control — so we
                 # deliberately do NOT wait for visibility here.
                 locator.set_input_files(paths, timeout=timeout_ms)
-                return
             except Exception as exc:  # noqa: BLE001 - try next fallback
                 last_error = exc
                 continue
+            if indicator is None:
+                return
+            if self._wait_indicator_growth(selectors, before, timeout_s=6.0):
+                return
+            last_error = DriftDetectedError(indicator.name, selectors.selector_version)
         raise DriftDetectedError(group.name, group.baseline_version) from last_error
+
+    def attachment_indicator_count(self, selectors: ProviderSelectors) -> int:
+        """How many attachment indicators the provider currently shows."""
+        group = selectors.attachment_indicator
+        if group is None:
+            return 0
+        count = 0
+        for candidate in group.as_list():
+            try:
+                count += self._page.locator(candidate).count()
+            except Exception:  # noqa: BLE001
+                continue
+        return count
+
+    def _wait_indicator_growth(  # pragma: no cover - requires real browser
+        self,
+        selectors: ProviderSelectors,
+        before: int,
+        timeout_s: float = 6.0,
+    ) -> bool:
+        """Wait until the provider shows MORE attachment indicators than before.
+
+        The count is of DOM nodes, so it grows when the composer stages a new
+        attachment even if the provider renders the chip with several nested
+        elements. A stale chip from a previous job is not mistaken for the new
+        one: the composer is cleared before the attach, so the count starts at
+        zero.
+        """
+        import time
+
+        deadline = time.monotonic() + timeout_s
+        while True:
+            if self.attachment_indicator_count(selectors) > before:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            try:
+                self._page.wait_for_timeout(150)
+            except Exception:  # noqa: BLE001
+                time.sleep(0.15)
 
     def clear_attachment_state(self, selectors: Optional[ProviderSelectors] = None) -> None:  # pragma: no cover - requires real browser
         if not self._page_is_live():
