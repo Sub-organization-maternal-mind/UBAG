@@ -262,6 +262,16 @@ class ProviderSelectors:
     # UPLOADING (the indicator is there, the bytes are not yet on the wire).
     # The engine waits until none of them is visible.
     attachment_uploading: Optional[SelectorGroup] = None
+    # Optional: the control that removes an attachment the provider is holding
+    # in its composer. Needed because a provider's composer KEEPS the chip
+    # after the file inputs are cleared: the chip is the provider's own state,
+    # not the input's. Measured live on chatgpt_web (2026-10-21): after two
+    # attaches the composer showed two chips while every file input was empty,
+    # so the next job attached its file NEXT to the stale ones and the
+    # provider received several recordings (or the wrong one). The chip is
+    # removed with the provider's own "Remove" control, scoped to the
+    # composer so the message history is never touched.
+    attachment_remove: Optional[SelectorGroup] = None
 
     def all_groups(self) -> List[SelectorGroup]:
         return [
@@ -394,6 +404,17 @@ CHATGPT_WEB = ProviderSelectors(
             "[class*='composer-attachment'] svg[class*='spin']",
             "[class*='ttachment'] [role='progressbar']",
             "[class*='ttachment'] svg[class*='spin']",
+        ),
+        baseline_version="2026-10-21-live-attach-timing",
+    ),
+    # The provider's own per-chip "Remove" control (aria-label "Remove
+    # <file>"), scoped to the composer so a chip in the message history is
+    # never touched. Verified live 2026-10-21: a synthetic click on it removes
+    # exactly one attachment.
+    attachment_remove=SelectorGroup(
+        "attachment_remove",
+        (
+            "[class*='composer-attachment'] button[aria-label*='Remove']",
         ),
         baseline_version="2026-10-21-live-attach-timing",
     ),

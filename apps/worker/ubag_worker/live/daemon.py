@@ -285,7 +285,7 @@ class WarmWorkerDaemon:
                 selectors
             ):
                 try:
-                    warm.clear_attachment_state()
+                    warm.clear_attachment_state(selectors)
                     return warm
                 except Exception:  # noqa: BLE001
                     _close_quietly(warm)

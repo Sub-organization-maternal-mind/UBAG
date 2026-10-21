@@ -833,10 +833,18 @@ class LiveSessionEngine:
             # existing drift handler — never a silent hang. attach_files takes the
             # full list, so all files land in one operation.
             #
-            # The upload markers that are ALREADY visible (a warm page can carry a
-            # chip from the previous job) are the baseline: the wait ends when
-            # the NEW upload is done, not when the page shows no spinner at all.
+            # The composer's own attachment chips are cleared FIRST: the chip
+            # is the provider's state, not the input's, so it survives an empty
+            # file input. Measured live on chatgpt_web (2026-10-21): after two
+            # attaches the composer still showed two chips while every input
+            # was empty, so the next job's file landed NEXT to the stale ones
+            # and the provider received more than one recording - the
+            # intermittent "no audio attachment is available" answers.
             upload_baseline = driver.attachment_uploading_count(self._selectors)
+            try:
+                driver.clear_attachment_state(self._selectors)
+            except Exception:  # noqa: BLE001 - a clean composer is best-effort
+                pass
             with timer.span("attachment_materialize"):
                 driver.attach_files(self._selectors, attach_paths)
             # The provider uploads ASYNCHRONOUSLY: the composer shows the chip as

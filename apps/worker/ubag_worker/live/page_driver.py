@@ -242,7 +242,7 @@ class PageDriver(ABC):
             "page driver %s does not support file attachment" % type(self).__name__
         )
 
-    def clear_attachment_state(self) -> None:
+    def clear_attachment_state(self, selectors: Optional[ProviderSelectors] = None) -> None:
         """Clear pending file selections before reusing a warm page."""
         return None
 
@@ -537,7 +537,7 @@ class MockPageDriver(PageDriver):
         self.used_attach_trigger = bool(selectors.file_attach_trigger)
         self.attached_files = list(file_paths)
 
-    def clear_attachment_state(self) -> None:
+    def clear_attachment_state(self, selectors: Optional[ProviderSelectors] = None) -> None:
         self.attached_files = []
         self.used_attach_trigger = False
 
@@ -1733,9 +1733,11 @@ class PlaywrightPageDriver(PageDriver):
                 continue
         raise DriftDetectedError(group.name, group.baseline_version) from last_error
 
-    def clear_attachment_state(self) -> None:  # pragma: no cover - requires real browser
+    def clear_attachment_state(self, selectors: Optional[ProviderSelectors] = None) -> None:  # pragma: no cover - requires real browser
         if not self._page_is_live():
             return
+        if selectors is not None:
+            self._remove_attachment_chips(selectors)
         file_inputs = self._page.locator("input[type='file']")
         # One round trip to see whether any input still holds files: clearing
         # every input unconditionally cost ~130ms each, and ChatGPT renders five
@@ -1743,6 +1745,45 @@ class PlaywrightPageDriver(PageDriver):
         if file_inputs.evaluate_all("els => els.some(el => el.files && el.files.length)"):
             for locator in file_inputs.all():
                 locator.set_input_files([])
+
+    def _remove_attachment_chips(self, selectors: ProviderSelectors) -> None:  # pragma: no cover
+        """Remove the attachments the provider is still holding in its composer.
+
+        Clearing the file INPUTS is not enough: the chip the composer renders
+        is the provider's own state and survives an empty input. Measured live
+        on chatgpt_web (2026-10-21): after two attaches the composer showed two
+        chips while every input was empty, so the next job's file landed next
+        to the stale ones and the provider received more than one recording
+        (or the wrong one) - the intermittent "no audio attachment is
+        available" answers.
+
+        The provider's own "Remove" control is used, scoped to the composer so
+        the message history is never touched, and it is clicked ONE at a time
+        (the list shifts after every removal).
+        """
+        group = selectors.attachment_remove
+        if group is None:
+            return
+        for _ in range(8):  # bounded: a page never holds more than a few
+            clicked = False
+            for candidate in group.as_list():
+                try:
+                    locator = self._page.locator(candidate)
+                    if locator.count() == 0:
+                        continue
+                    # A synthetic click: the control is an overlay that only
+                    # exists on hover, so a pointer click times out.
+                    locator.first.evaluate("e => e.click()", timeout=3000)
+                    clicked = True
+                    break
+                except Exception:  # noqa: BLE001 - a detached node is gone
+                    continue
+            if not clicked:
+                return
+            try:
+                self._page.wait_for_timeout(400)
+            except Exception:  # noqa: BLE001
+                pass
 
     def wait_for_attachment_ready(  # pragma: no cover - requires real browser
         self,
