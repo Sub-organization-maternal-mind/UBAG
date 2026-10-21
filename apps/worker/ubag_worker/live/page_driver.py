@@ -1731,16 +1731,24 @@ class PlaywrightPageDriver(PageDriver):
         # A provider renders SEVERAL hidden file inputs and only ONE of them
         # feeds its composer. ChatGPT renders four on the home page and eight
         # on a chat page, and a warm page can carry the PREVIOUS chat's inputs
-        # ahead of the current composer. A file set on the wrong one is
-        # accepted by the DOM but never staged in the composer: no chip, no
-        # upload, and the prompt goes out without the recording.
+        # (and its hidden composer) ahead of the current one. A file set on the
+        # wrong input is accepted by the DOM but never staged in the visible
+        # composer: no chip, no upload, and the prompt goes out without the
+        # recording.
         #
-        # So every matching input is tried, and every attempt is VERIFIED with
-        # the provider's own indicator: the composer chip is the only proof that
-        # the file was really staged. Verified live on chatgpt_web (2026-10-21).
+        # So every matching input of the FIRST candidate is tried, and each
+        # attempt is VERIFIED with the provider's own visible attachment chip.
+        # The first candidate that produces a chip wins.
+        #
+        # When NO input works, the caller is expected to retry on a PRISTINE
+        # page rather than to keep spraying the file: an input that is not the
+        # composer's can still stage the file in a hidden composer, and a
+        # hidden composer is never cleaned by the chip removal - so spraying
+        # leaves recordings behind that the provider then answers with
+        # (measured live on chatgpt_web 2026-10-21: the answer carried the
+        # transcript three times over, one per staged recording).
         indicator = selectors.attachment_indicator
         last_error: Optional[Exception] = None
-        attempts = 0
         for candidate in group.as_list():
             try:
                 matches = self._page.locator(candidate)
@@ -1748,9 +1756,9 @@ class PlaywrightPageDriver(PageDriver):
             except Exception as exc:  # noqa: BLE001 - try next fallback
                 last_error = exc
                 continue
-            for index in range(min(total, 12)):
-                if attempts >= 16:
-                    break
+            if total == 0:
+                continue
+            for index in range(min(total, 4)):
                 before = self.attachment_indicator_count(selectors) if indicator is not None else 0
                 try:
                     # set_input_files settles on the attached (often hidden)
@@ -1761,21 +1769,20 @@ class PlaywrightPageDriver(PageDriver):
                 except Exception as exc:  # noqa: BLE001 - try next fallback
                     last_error = exc
                     continue
-                attempts += 1
                 if indicator is None:
                     return
-                if self._wait_indicator_growth(selectors, before, timeout_s=6.0):
+                if self._wait_indicator_growth(selectors, before, timeout_s=3.0):
                     return
-                # This input did not feed the composer. Clear what it may have
-                # staged before trying the next one: a file set on an input the
-                # composer does not read can still end up in the composer's own
-                # state, and a second attempt would then leave TWO recordings
-                # in the message (the provider transcribes both).
+                # This input did not feed the visible composer. Undo what it
+                # may have staged before trying the next one.
                 try:
                     self.clear_attachment_state(selectors)
                 except Exception:  # noqa: BLE001 - best-effort cleanup
                     pass
                 last_error = DriftDetectedError(indicator.name, selectors.selector_version)
+            # The first candidate that matched any input has been tried: a
+            # pristine page is a better answer than spraying the file.
+            break
         raise DriftDetectedError(group.name, group.baseline_version) from last_error
 
     def attachment_indicator_count(self, selectors: ProviderSelectors) -> int:

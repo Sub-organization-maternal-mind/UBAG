@@ -900,8 +900,17 @@ class LiveSessionEngine:
                         driver.attach_files(self._selectors, attach_paths)
                         attached = True
                     except DriftDetectedError:
+                        # The page would not take the file. A PRISTINE page is
+                        # the second chance (a page that has been through
+                        # several attach cycles can hold a stale input ahead of
+                        # the composer's); a second failure is a real drift.
                         if attempt == 2:
                             raise
+                        try:
+                            driver.reload(self._selectors)
+                        except Exception:  # noqa: BLE001 - the retry still runs
+                            pass
+                        continue
                 if not attached:
                     break
                 # The provider uploads ASYNCHRONOUSLY: the composer shows the
