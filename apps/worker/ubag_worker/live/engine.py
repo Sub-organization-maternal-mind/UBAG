@@ -403,16 +403,43 @@ class LiveSessionEngine:
                     steps.close()
             else:
                 attempts = _interaction_attempts()
+                progress: JsonObject = {"events": [], "submitted": False}
                 for attempt in range(1, attempts + 1):
                     try:
-                        interaction = self._run_interaction(driver, job, timer)
+                        interaction = self._run_interaction(driver, job, timer, progress)
                         break
                     except (DriftDetectedError, ManualActionRequired, LiveSessionError):
                         raise
-                    except Exception:  # noqa: BLE001 - transient browser/CDP hiccup
+                    except Exception as exc:  # noqa: BLE001 - transient browser/CDP hiccup
+                        if progress.get("submitted"):
+                            # The prompt is ALREADY with the provider. Retrying
+                            # the whole interaction would re-attach the file and
+                            # submit it again, so the provider answers twice and
+                            # the final answer carries both copies (measured
+                            # live on chatgpt_web 2026-10-21: the transcript
+                            # came back three times over). A post-submit failure
+                            # is reported with the reconcile flag instead, so
+                            # the thread is reconciled before any retry.
+                            event_type, data = self._post_submit_failure(
+                                driver, job, exc, reason="provider_interaction_failed"
+                            )
+                            yield emit(event_type, data)
+                            return
                         if attempt >= attempts:
                             raise
+                        # The retry is recorded: without it the only visible
+                        # trace of a re-run is a repeated side effect.
+                        yield emit("session.retry", {
+                            "status": "retrying",
+                            "target": job.target,
+                            "adapter": self._selectors.provider_id,
+                            "attempt": attempt,
+                            "reason": "transient_interaction_error",
+                            "error_type": type(exc).__name__,
+                        })
                         driver.reset(self._selectors.target_url)
+                        # A fresh interaction starts with a fresh submit marker.
+                        progress = {"events": [], "submitted": False}
                 blocked = interaction.get("blocked") if interaction else None
 
             if blocked is not None:
@@ -559,6 +586,7 @@ class LiveSessionEngine:
         driver: PageDriver,
         job: "_NormalizedJob",
         timer: Optional[StageTimer] = None,
+        progress: Optional[JsonObject] = None,
     ) -> JsonObject:
         """Run the interaction; with UBAG_WORKER_STRICT_SUBMIT a post-submit failure is terminal.
 
@@ -568,8 +596,13 @@ class LiveSessionEngine:
         exception can no longer be retried (the provider may already be answering),
         so it becomes a terminal ``failed_terminal`` with ``submitted`` and
         ``reconcile_required``. Pre-submit failures still raise and retry.
+
+        ``progress`` is the submit marker. The caller owns it so it can see
+        whether the prompt was already sent when an exception arrives (a
+        post-submit failure must not be retried into a second submission).
         """
-        progress: JsonObject = {"events": [], "submitted": False}
+        if progress is None:
+            progress = {"events": [], "submitted": False}
         try:
             return self._run_interaction_inner(driver, job, timer, progress)
         except (DriftDetectedError, ManualActionRequired, LiveSessionError) as exc:
@@ -907,6 +940,11 @@ class LiveSessionEngine:
                 "artifact_keys": attached_keys,
                 "attachment_kinds": attached_kinds,
                 "count": len(attach_paths),
+                # How many attachment indicators the provider is showing now.
+                # It must be ONE per attached file: more means the provider is
+                # holding a recording this job did not send, and the answer will
+                # carry the transcript more than once.
+                "attachment_indicators": driver.attachment_indicator_count(self._selectors),
             })
 
         with timer.span("provider_submit"):
