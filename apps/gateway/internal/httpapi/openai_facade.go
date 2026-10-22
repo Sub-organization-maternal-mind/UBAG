@@ -1392,6 +1392,18 @@ type openAITranscriptionResponse struct {
 	UbagJobID string `json:"ubag_job_id"`
 }
 
+// transcriptionNonce is the idempotency nonce for one transcription: the
+// SHA-256 of the audio bytes, or the caller's explicit nonce when one is
+// given. The caller's nonce exists for the retry-after-a-failure case: the
+// idempotency store replays a terminal state, so without it the SAME
+// recording would replay the SAME failure forever.
+func transcriptionNonce(audioBytes []byte, callerNonce string) string {
+	if trimmed := strings.TrimSpace(callerNonce); trimmed != "" {
+		return trimmed
+	}
+	return hashBytes(audioBytes)
+}
+
 // handleOpenAITranscription implements POST /v1/openai/audio/transcriptions:
 // an OpenAI-shaped multipart upload (file + optional model/language/prompt)
 // bridged onto one native job with the audio attached, resolved into plain
@@ -1409,6 +1421,11 @@ type openAITranscriptionResponse struct {
 // transcript - a silent wrong answer for the caller. Hashing the bytes keeps
 // a genuine retry idempotent while making two different recordings two
 // different jobs.
+//
+// A caller can also pass an explicit "nonce" part: the SAME recording retried
+// after a transient failure would otherwise replay that failure forever (the
+// idempotency store replays the terminal state, so a failed job is sticky
+// for the same bytes). With a nonce, the retry is a fresh job.
 func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Request) {
 	outcome := facadeOutcomeError
 	defer func() { s.facadeOutcomes.add(outcome) }()
@@ -1437,7 +1454,7 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 	defer releaseUpload()
 	reader := multipart.NewReader(io.LimitReader(r.Body, int64(maxTranscriptionAudioBytes)+s.maxBody), params["boundary"])
 	var audioBytes []byte
-	var audioMIME, audioFilename, modelField, language, promptHint string
+	var audioMIME, audioFilename, modelField, language, promptHint, nonceField string
 	for {
 		part, err := reader.NextPart()
 		if err == io.EOF {
@@ -1478,6 +1495,10 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 			raw, _ := io.ReadAll(io.LimitReader(part, s.maxBody))
 			_ = part.Close()
 			promptHint = strings.TrimSpace(string(raw))
+		case "nonce", "ubag_nonce":
+			raw, _ := io.ReadAll(io.LimitReader(part, 256))
+			_ = part.Close()
+			nonceField = strings.TrimSpace(string(raw))
 		default:
 			_ = part.Close()
 		}
@@ -1558,7 +1579,7 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 		"kind":         kind,
 	}}
 
-	facadeReq := openAIFacadeRequest{Model: target, UbagNonce: hashBytes(audioBytes)}
+	facadeReq := openAIFacadeRequest{Model: target, UbagNonce: transcriptionNonce(audioBytes, nonceField)}
 	jobID, status, errType, code, message, ok := s.createFacadeJob(r, facadeReq, target, modelSettings, prompt, attachmentDecls, "")
 	if !ok {
 		s.writeFacadeError(w, status, errType, code, message)
