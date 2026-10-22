@@ -1501,6 +1501,23 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 
 	target := transcriptionTargetForModel(modelField)
 	contentType := strings.ToLower(strings.TrimSpace(audioMIME))
+	var modelSettings map[string]any
+	// A caller may pin the provider model the way the chat endpoint does
+	// ("gemini_web|3.8 Flash Low"). It matters for audio: the model that can
+	// hear is not always the operator default, and the default's thinking
+	// effort can be too slow for a recording (measured live 2026-10-21 on
+	// gemini_web: 3.8 Flash at thinking High took 187.8 s to the first token,
+	// while the same model at Low answered in 65-158 s).
+	if strings.Contains(modelField, facadeModelSeparator) {
+		resolved, settings, ok := s.resolveFacadeModel(modelField)
+		if !ok {
+			s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "model_not_found",
+				fmt.Sprintf("model %q is not available", modelField))
+			outcome = facadeOutcomeRejected
+			return
+		}
+		target, modelSettings = resolved, settings
+	}
 	policy := resolveAttachmentPolicy(target)
 	// The attachment KIND is negotiated against the target's own policy: a
 	// target that declares the generic "audio" kind (and not "voice") is still
@@ -1542,7 +1559,7 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 	}}
 
 	facadeReq := openAIFacadeRequest{Model: target, UbagNonce: hashBytes(audioBytes)}
-	jobID, status, errType, code, message, ok := s.createFacadeJob(r, facadeReq, target, nil, prompt, attachmentDecls, "")
+	jobID, status, errType, code, message, ok := s.createFacadeJob(r, facadeReq, target, modelSettings, prompt, attachmentDecls, "")
 	if !ok {
 		s.writeFacadeError(w, status, errType, code, message)
 		if status == http.StatusBadRequest {
