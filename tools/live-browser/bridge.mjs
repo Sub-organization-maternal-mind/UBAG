@@ -565,8 +565,12 @@ async function main() {
   // Self-healing: relaunch Chrome (if it was closed/crashed) and re-attach the
   // page session. Debounced by `recovering` so overlapping triggers coalesce.
   let recovering = false;
-  async function recover() {
-    if (recovering || visibleClientCount() === 0) return;
+  // `force` re-attaches even when nobody is watching: the page session must follow Chrome, not the
+  // audience. Without it a Chrome restart (crash, "Reset browser") that happened while the
+  // dashboard tab counted as hidden left the bridge attached to the dead page for good: the live view
+  // stayed on "Waiting for first frame" and Reset browser could not fix it.
+  async function recover(force = false) {
+    if (recovering || (!force && visibleClientCount() === 0)) return;
     recovering = true;
     try {
       broadcastMeta({ status: 'recovering' });
@@ -582,7 +586,7 @@ async function main() {
     }
     broadcastTargets(true);
   }
-  triggerRecover = () => { recover(); };
+  triggerRecover = () => { recover(true); };
 
   // Operator "Reset browser": quit Chrome cleanly, wait until its DevTools
   // endpoint is really gone (so recovery attaches to the NEW Chrome, not the
@@ -603,8 +607,24 @@ async function main() {
     } finally {
       recovering = false;
     }
-    await recover();
+    await recover(true);
   }
+
+  // Watchdog: independent of viewers. If Chrome is answering but the page this bridge is attached to
+  // no longer exists (Chrome was restarted by its supervisor or by "Reset browser"), re-attach.
+  setInterval(async () => {
+    if (recovering) return;
+    try {
+      if (!(await cdpAlive())) return; // the supervisor is relaunching Chrome; check again next tick
+      const targets = await page.listPageTargets();
+      if (!page.targetId || !targets.some((t) => t.id === page.targetId)) {
+        log('watchdog: the attached page is gone; re-attaching');
+        await recover(true);
+      }
+    } catch (e) {
+      log('watchdog check failed', e instanceof Error ? e.message : String(e));
+    }
+  }, 5000);
 
   // Keepalive: while clients are connected, if the change-driven screencast has
   // been quiet for ~700ms, push a one-shot capture so the canvas stays live
@@ -615,7 +635,7 @@ async function main() {
     if (Date.now() - lastFrameAt < 700) return;
     const shot = await page.captureOnce();
     if (shot) { lastFrameAt = Date.now(); broadcastFrame(shot); }
-    else recover();
+    else recover(true);
   }, 700);
 
   const server = http.createServer((req, res) => {
@@ -639,9 +659,12 @@ async function main() {
     );
     socket.setNoDelay(true);
     const clientId = String(nextClientId++);
-    clients.set(socket, { id: clientId, since: Date.now(), hidden: true });
-    // Start hidden: the client announces its real visibility right after open
-    // (a backgrounded dashboard tab must not hold the screencast hot).
+    // Visible until the client says otherwise: a dashboard whose first visibility message is lost used
+    // to stay "hidden" for good and never receive a frame. A backgrounded tab announces `hidden`
+    // right after it connects, which stops the screencast again.
+    clients.set(socket, { id: clientId, since: Date.now(), hidden: false });
+    // The client announces its real visibility right after open (a backgrounded dashboard tab
+    // must not hold the screencast hot).
     log(`dashboard connected (${visibleClientCount()} live / ${clients.size} total)`);
     syncStreaming();
     broadcastClients();
