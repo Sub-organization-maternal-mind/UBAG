@@ -255,6 +255,11 @@ class PageDriver(ABC):
         keeps today's behaviour."""
         return False
 
+    def normalize_audio(self, path: str, timeout_ms: int = 60000) -> Optional[str]:
+        """Convert an audio file to 16-bit PCM WAV. The default cannot, so the
+        caller keeps today's behaviour."""
+        return None
+
     def wait_for_attachment_ready(
         self, selectors: ProviderSelectors, timeout_s: float = 60.0
     ) -> bool:
@@ -1815,6 +1820,32 @@ class PlaywrightPageDriver(PageDriver):
             return True
         except Exception:  # noqa: BLE001 - the caller reports the failure
             return False
+
+    def normalize_audio(self, path: str, timeout_ms: int = 60000) -> Optional[str]:
+        """Convert an audio file to 16-bit PCM WAV with the browser's decoder.
+
+        The conversion runs in a THROWAWAY blank tab of the same browser
+        context, so the provider's own page is never touched. Returns the path
+        of the converted file, or None when the browser could not decode the
+        recording.
+        """
+        from .audio_normalize import normalize_with_browser
+
+        if not self._page_is_live():
+            return None
+        page = None
+        try:
+            page = self._context.new_page()
+            page.goto("about:blank", timeout=timeout_ms)
+            return normalize_with_browser(page, path)
+        except Exception:  # noqa: BLE001 - the caller reports the failure
+            return None
+        finally:
+            if page is not None:
+                try:
+                    page.close()
+                except Exception:  # noqa: BLE001
+                    pass
 
     def _wait_indicator_growth(  # pragma: no cover - requires real browser
         self,

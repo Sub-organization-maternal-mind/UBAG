@@ -37,7 +37,15 @@
     ]
   },
   "audio": {
-    "verified": "2026-10-21 live probe: the production Mistral account is SIGNED OUT (the page shows 'Sign in'/'Sign up' and renders no <input type=file> at all), so no container could be measured on this target. The accepted list is therefore the conservative PCM/MP3 set - the containers every measured provider (chatgpt_web) decodes - and no model is claimed audio-capable, so no audio job is pinned to a model here. Re-measure and widen this block once a signed-in session exists."
+    "input_formats": [
+      "audio/mpeg",
+      "audio/mp4",
+      "audio/ogg",
+      "audio/wav",
+      "audio/webm",
+      "audio/x-wav"
+    ],
+    "verified": "2026-10-21 live probe: the production Mistral account is SIGNED OUT (the page shows 'Sign in'/'Sign up' and renders no <input type=file> at all), so no container could be measured on this target. The accepted list is therefore the conservative PCM/MP3 set - the containers every measured provider (chatgpt_web) decodes - and no model is claimed audio-capable, so no audio job is pinned to a model here. input_formats is the set the caller may SEND: the worker converts the rest into 16-bit PCM WAV with the browser's own decoder. Re-measure and widen this block once a signed-in session exists."
   },
   "selector_strategy": {
     "type": "provider_specific",

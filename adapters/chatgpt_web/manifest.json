@@ -87,7 +87,15 @@
     "models": [
       "GPT-6"
     ],
-    "verified": "2026-10-21 live E2E against the production chatgpt_web account (facade POST /v1/openai/audio/transcriptions, real 16-bit PCM recording): audio/wav and audio/mpeg were transcribed verbatim (exact sentence match). audio/mp4, audio/ogg and audio/webm were accepted by the composer (a chip appeared) but the model answered 'No audio attachment is accessible in this message' - a silent drop - so they are NOT declared. The provider's own file-input accept attribute is NOT the contract: it is 'image/*' while the unfiltered input accepts any file."
+    "input_formats": [
+      "audio/mpeg",
+      "audio/mp4",
+      "audio/ogg",
+      "audio/wav",
+      "audio/webm",
+      "audio/x-wav"
+    ],
+    "verified": "2026-10-21 live E2E against the production chatgpt_web account (facade POST /v1/openai/audio/transcriptions, real 16-bit PCM recording): audio/wav and audio/mpeg were transcribed verbatim (exact sentence match). audio/mp4, audio/ogg and audio/webm were accepted by the composer (a chip appeared) but the model answered 'No audio attachment is accessible in this message' - a silent drop. input_formats is the set the caller may SEND: the worker converts the containers the model cannot read into 16-bit PCM WAV with the browser's own decoder, so a voice message (webm/ogg/m4a) works here too. The provider's own file-input accept attribute is NOT the contract: it is 'image/*' while the unfiltered input accepts any file."
   },
   "voice": {
     "live": true,

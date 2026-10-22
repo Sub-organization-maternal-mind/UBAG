@@ -98,7 +98,15 @@
     "models": [
       "3.8 Flash"
     ],
-    "verified": "2026-10-21 live: on the production account '3.8 Flash' transcribed the attached recording (job 1342: first_token 187.8s at thinking High, 65-158s at Low) while '4 Argon' answered 'no audio attached' 5 of 5 - so the model axis is part of the audio contract, not just the container. audio/webm is the measured container (browser recordings); audio/wav, audio/x-wav and audio/mpeg are the PCM/MP3 forms the same ingest path accepts. NOT re-verified while the Google account is signed out; the '3.8 Flash' entry disappears from the picker for an anonymous session, which is how a signed-out profile is recognised."
+    "input_formats": [
+      "audio/mpeg",
+      "audio/mp4",
+      "audio/ogg",
+      "audio/wav",
+      "audio/webm",
+      "audio/x-wav"
+    ],
+    "verified": "2026-10-21 live: on the production account '3.8 Flash' transcribed the attached recording (job 1342: first_token 187.8s at thinking High, 65-158s at Low) while '4 Argon' answered 'no audio attached' 5 of 5 - so the model axis is part of the audio contract, not just the container. input_formats is the set the caller may SEND: the worker converts the containers the model cannot read into 16-bit PCM WAV with the browser's own decoder, so a voice message (webm/ogg/m4a) works here too. NOT re-verified while the Google account is signed out; the '3.8 Flash' entry disappears from the picker for an anonymous session, which is how a signed-out profile is recognised."
   },
   "voice": {
     "live": true,

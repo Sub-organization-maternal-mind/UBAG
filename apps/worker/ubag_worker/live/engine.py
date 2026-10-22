@@ -615,6 +615,51 @@ class LiveSessionEngine:
             progress["events"].append(self._post_submit_failure(driver, job, exc))
             return {"events": progress["events"], "blocked": None}
 
+    def _normalize_audio_attachments(
+        self,
+        driver: PageDriver,
+        job: "_NormalizedJob",
+        attach_paths: List[str],
+    ):
+        """Convert the audio attachments the provider cannot decode.
+
+        Returns ``(paths, error_message)``. The error is set when a recording
+        could not be decoded at all (an unsupported codec): the job then fails
+        with that reason instead of attaching bytes the provider would drop.
+
+        Only the containers the TARGET's model cannot read are converted: a
+        provider that reads webm natively gets the webm, and one that reads
+        only wav/mp3 gets a 16-bit PCM WAV (the container every measured
+        provider reads).
+        """
+        from .audio_normalize import needs_normalization
+
+        manifest = list(getattr(job, "attachments", ()) or ())
+        if not manifest:
+            return attach_paths, None
+        native = _provider_native_audio_formats(self._selectors.provider_id)
+        paths = list(attach_paths)
+        for index, item in enumerate(manifest):
+            if index >= len(paths):
+                break
+            kind = str(item.get("kind", "")).strip().lower()
+            if kind not in ("audio", "voice"):
+                continue
+            content_type = str(item.get("content_type", "")).strip().lower()
+            if not needs_normalization(content_type):
+                continue
+            if content_type in native:
+                continue
+            converted = driver.normalize_audio(paths[index])
+            if not converted:
+                return paths, (
+                    "the recording could not be decoded into PCM (%s); the "
+                    "provider only reads the recording when it is converted"
+                    % (content_type or "unknown container")
+                )
+            paths[index] = converted
+        return paths, None
+
     def _post_submit_failure(
         self,
         driver: PageDriver,
@@ -861,6 +906,24 @@ class LiveSessionEngine:
                         "or the attachments were not materialized to local files); "
                         "refusing to submit without the requested attachments."
                     ),
+                }
+            # Normalize the audio containers the target's model cannot decode.
+            # A voice message arrives as webm/ogg/mp4 (WhatsApp, Telegram, iOS
+            # voice memos) and every provider decodes a different set - measured
+            # live 2026-10-21: chatgpt_web read wav and mp3 and silently dropped
+            # mp4, ogg and webm. Chrome decodes all of them, so the recording is
+            # converted to 16-bit PCM WAV (the one container every measured
+            # provider reads) before it is attached. Without this, "attach a
+            # voice message" only worked on the provider whose decoder happened
+            # to like the sender's container.
+            attach_paths, normalize_error = self._normalize_audio_attachments(
+                driver, job, attach_paths
+            )
+            if normalize_error is not None:
+                return {
+                    "reason": "audio_container_unsupported",
+                    "retryable": False,
+                    "message": normalize_error,
                 }
             # A missing/drifted file input raises DriftDetectedError, caught by the
             # existing drift handler — never a silent hang. attach_files takes the
@@ -1173,6 +1236,38 @@ _NO_AUDIO_ANSWER_MAX_CHARS = 600
 # generous because a slow link or a big file legitimately takes longer, and a
 # job that waits is better than a job that submits a prompt without its file.
 _ATTACHMENT_READY_TIMEOUT_S = 60.0
+
+# The audio containers each provider's MODEL reads, read from the adapter
+# manifest (the attachments block's audio/voice kinds). Cached per target:
+# the manifests do not change while the worker runs.
+_AUDIO_NATIVE_FORMATS_CACHE: dict = {}
+
+
+def _provider_native_audio_formats(provider_id: str) -> set:
+    """The audio containers the target's model reads directly.
+
+    An empty set means "unknown": the caller then converts everything that is
+    not already WAV, which is the safe direction (a converted recording is
+    always readable).
+    """
+    cached = _AUDIO_NATIVE_FORMATS_CACHE.get(provider_id)
+    if cached is not None:
+        return cached
+    formats = set()
+    try:
+        from ..adapter_registry import load_manifest_index
+
+        manifest = load_manifest_index().get(provider_id)
+        if manifest:
+            attachments = manifest.get("attachments") or {}
+            for entry in attachments.get("accepted") or []:
+                if str(entry.get("kind", "")).strip().lower() in ("audio", "voice"):
+                    for content_type in entry.get("content_types") or []:
+                        formats.add(str(content_type).strip().lower())
+    except Exception:  # noqa: BLE001 - an unreadable manifest means "convert"
+        formats = set()
+    _AUDIO_NATIVE_FORMATS_CACHE[provider_id] = formats
+    return formats
 
 
 def _attachment_ready_timeout_s() -> float:

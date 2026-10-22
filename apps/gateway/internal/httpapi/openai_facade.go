@@ -1532,10 +1532,10 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 		outcome = facadeOutcomeRejected
 		return
 	}
-	if !policy.accepts(kind, contentType) {
+	if !policy.acceptsAudioInput(kind, contentType) {
 		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "unsupported_audio_type", fmt.Sprintf(
-			"target %q cannot ingest %s; verified audio containers for this target: %s (see GET /v1/capabilities)",
-			target, contentType, strings.Join(policy.audioContentTypes(), ", ")))
+			"target %q cannot ingest %s; send one of %s (the worker converts the ones the model cannot read into PCM WAV)",
+			target, contentType, strings.Join(policy.audioInputFormats, ", ")))
 		outcome = facadeOutcomeRejected
 		return
 	}

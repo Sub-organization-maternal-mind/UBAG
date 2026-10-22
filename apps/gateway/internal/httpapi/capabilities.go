@@ -163,6 +163,9 @@ func audioCapabilityView(policy attachmentPolicy) map[string]any {
 		"formats": policy.audioContentTypes(),
 		"kind":    policy.audioKindFor(),
 	}
+	if len(policy.audioInputFormats) > 0 {
+		view["input_formats"] = append([]string(nil), policy.audioInputFormats...)
+	}
 	if len(policy.audioModels) > 0 {
 		view["models"] = append([]string(nil), policy.audioModels...)
 	}

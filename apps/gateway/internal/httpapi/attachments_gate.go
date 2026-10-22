@@ -87,6 +87,13 @@ type attachmentPolicy struct {
 	// happened on gemini_web per model: "4 Argon" answered "no audio
 	// attached" 5 of 5 while "3.8 Flash" transcribed the same file.
 	audioModels []string
+	// audioInputFormats lists the containers the CALLER may send. It is the
+	// provider's own set PLUS the containers the worker can convert into one
+	// the provider's model reads (16-bit PCM WAV, decoded by the browser the
+	// worker already drives). It is what makes "attach a voice message" work
+	// on every provider: a voice message arrives as webm/ogg/m4a, and each
+	// provider's decoder likes a different subset.
+	audioInputFormats []string
 	// audioVerified carries the manifest's evidence note for the audio
 	// declaration, published verbatim by /v1/capabilities so an operator can
 	// see WHICH measurement backs the accepted formats.
@@ -272,8 +279,9 @@ func loadAttachmentPolicyFromDisk(target string) attachmentPolicy {
 		// evidence note. It is additive: a manifest without it keeps the
 		// historical behaviour (no model-level restriction).
 		Audio *struct {
-			Models   []string `json:"models"`
-			Verified string   `json:"verified"`
+			Models       []string `json:"models"`
+			InputFormats []string `json:"input_formats"`
+			Verified     string   `json:"verified"`
 		} `json:"audio"`
 	}
 	if err := json.Unmarshal(raw, &manifest); err != nil || manifest.Attachments == nil {
@@ -298,9 +306,32 @@ func loadAttachmentPolicyFromDisk(target string) attachmentPolicy {
 				policy.audioModels = append(policy.audioModels, trimmed)
 			}
 		}
+		for _, format := range manifest.Audio.InputFormats {
+			if trimmed := strings.TrimSpace(format); trimmed != "" {
+				policy.audioInputFormats = append(policy.audioInputFormats, trimmed)
+			}
+		}
 		policy.audioVerified = strings.TrimSpace(manifest.Audio.Verified)
 	}
 	return policy
+}
+
+// acceptsAudioInput reports whether a container may be sent for an audio or
+// voice attachment on this target: either the provider's model reads it
+// directly, or the worker can convert it into one the model does read.
+func (p attachmentPolicy) acceptsAudioInput(kind, contentType string) bool {
+	if p.accepts(kind, contentType) {
+		return true
+	}
+	if kind != "audio" && kind != "voice" {
+		return false
+	}
+	for _, format := range p.audioInputFormats {
+		if contentTypeMatches(format, contentType) {
+			return true
+		}
+	}
+	return false
 }
 
 // validateAttachmentsForCreate checks a job's declared attachments against the
@@ -344,11 +375,15 @@ func validateAttachmentsForCreate(target string, input map[string]any, modelSett
 			hasAudio = true
 			continue
 		}
+		if att.Kind == "audio" || att.Kind == "voice" {
+			if !policy.acceptsAudioInput(att.Kind, att.ContentType) {
+				return "UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001", unsupportedAttachmentMessage(target, policy, att), false
+			}
+			hasAudio = true
+			continue
+		}
 		if !policy.accepts(att.Kind, att.ContentType) {
 			return "UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001", unsupportedAttachmentMessage(target, policy, att), false
-		}
-		if att.Kind == "audio" || att.Kind == "voice" {
-			hasAudio = true
 		}
 	}
 	if hasAudio && len(policy.audioModels) > 0 {
@@ -391,6 +426,11 @@ func pinnedModelValue(modelSettings map[string]any) (string, bool) {
 func unsupportedAttachmentMessage(target string, policy attachmentPolicy, att attachments.Attachment) string {
 	target = strings.TrimSpace(target)
 	if att.Kind == "audio" || att.Kind == "voice" {
+		if supported := policy.audioInputFormats; len(supported) > 0 {
+			return fmt.Sprintf(
+				"target %q cannot ingest %s; send one of %s (the worker converts the ones the model cannot read into PCM WAV)",
+				target, att.ContentType, strings.Join(supported, ", "))
+		}
 		if supported := policy.audioContentTypes(); len(supported) > 0 {
 			return fmt.Sprintf(
 				"target %q cannot ingest %s; verified audio containers for this target: %s (see GET /v1/capabilities)",
