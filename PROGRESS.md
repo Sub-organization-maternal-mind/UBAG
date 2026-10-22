@@ -4837,3 +4837,47 @@ mistral_lechat is still signed out (its page shows "Sign in"/"Sign up" and
 renders no file input at all); duckai_web's page does not render for this
 browser at all (it shows "Reload Duck.ai"), so its adapter reports selector
 drift - a separate issue from the audio work.
+
+#### 2026-10-22 - Voice messages: the container is converted, so every provider hears them
+
+The remaining question was the one a caller actually has: "I attach a voice
+message and the provider does not hear it." A voice message is a short clip in
+whatever the sender's app produced - webm/opus (WhatsApp, Telegram, Chrome's
+MediaRecorder), ogg/opus (Telegram), m4a/AAC (iOS voice memos) - and the
+PROVIDER's model decodes a different subset. Measured live on the production
+account:
+
+| container | chatgpt_web | gemini_web |
+| --- | --- | --- |
+| `audio/wav` | transcribed | transcribed |
+| `audio/mpeg` | transcribed | transcribed |
+| `audio/webm` | DROPPED | DROPPED |
+| `audio/ogg` | DROPPED | DROPPED |
+| `audio/mp4` | DROPPED | DROPPED |
+
+("DROPPED" = the composer accepted the file, the model answered that no
+audio was accessible, and the job was reported COMPLETED with that refusal.)
+
+So the container a voice message arrives in was exactly the one the models
+could not read - which is why attaching one failed while attaching a WAV
+worked. The fix: Chrome decodes every one of those containers and the worker
+already drives Chrome, so the recording is converted to 16-bit PCM WAV (the
+container every measured provider reads) BEFORE it is attached. The
+conversion runs in a throwaway tab of the same browser context, never in the
+provider's page, and only for the containers the TARGET's model cannot read
+(the provider's native set comes from the adapter manifest).
+
+**Voice message acceptance: 6 passed, 0 failed** - webm, ogg and m4a on
+chatgpt_web (20 s, 23 s, 63 s) and on gemini_web (100 s, 64 s, 53 s), every
+one with the exact transcript.
+
+Two defects the same run exposed and fixed:
+
+- The transcription endpoint had no way to force a fresh job, so a retry after
+  a transient failure replayed that failure (the idempotency store replays a
+  terminal state). It now accepts a `nonce` part.
+- The gemini_web manifest claimed audio/webm was read by the model. That claim
+  came from an old ledger entry, not from a measurement, and the live test
+  contradicted it. The native list is now the measured one and webm moved to
+  `input_formats`, where it is converted - which is what made the gemini
+  webm case work (90 s, exact transcript).
