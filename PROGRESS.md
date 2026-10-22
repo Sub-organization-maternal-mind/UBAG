@@ -4799,3 +4799,41 @@ by the provider's MODEL, not merely accepted by the composer.
 
 A second consecutive run reproduced 19/19 with a SINGLE copy of the
 transcript in every answer.
+
+#### 2026-10-22 - Gemini is signed in again: the audio path works on BOTH providers
+
+The Google account was signed in by a human, so the picker offers the
+audio-capable model again (measured live: the signed-OUT picker offered
+3.5 Flash-Lite / 3.6 Flash / 3.1 Pro / 4 Argon and NO 3.8 Flash; the
+signed-IN picker offers 3.5 Flash-Lite / **3.8 Flash** / 3.1 Pro / 4 Argon,
+and the "Sign in" affordance is gone while the account menu is present).
+
+**Gemini acceptance: 9 passed, 0 failed** (build 96d9822).
+
+| Check | Result |
+|---|---|
+| facade inline `input_audio` -> `gemini_web\|3.8 Flash Low` | HTTP 200 in 52.8 s, transcript: "UBAG audio pipeline verification. The quick brown fox jumps over the lazy dog. 1 2 3 4 5" |
+| facade multipart `/v1/openai/audio/transcriptions` -> `gemini_web\|3.8 Flash Low` | HTTP 200 in 58.7 s, same transcript |
+| native `POST /v1/jobs` + `PUT` artifact -> `gemini_web` | 202 + 201, completed with the same transcript |
+| `gemini_web\|4 Argon Low` + audio | refused: `UBAG-VALIDATION-AUDIO-MODEL-UNAVAILABLE-001` + "audio-capable models: 3.8 Flash" |
+| `deepseek_web` + audio | refused: "does not accept audio attachments; it accepts document, image" |
+
+**One gap closed for it:** the transcription endpoint could not pin a model
+(it took a bare target or "whisper-1"), so Gemini's default thinking effort
+("High") applied - measured live at 187.8 s to the first token, which is a
+timeout waiting to happen. It now accepts a model id exactly like the chat
+endpoint ("gemini_web|3.8 Flash Low"), which is what brings the answer down
+to 53-59 s.
+
+**chatgpt_web re-verified on the same build: 19 passed, 0 failed**, one copy
+of the transcript in every answer.
+
+**Provider status now:** chatgpt_web signed in and audio-capable; gemini_web
+signed in and audio-capable on 3.8 Flash; deepseek_web signed in and working
+(a text job answers in 9.4 s) but its picker offers documents and images
+ONLY - its live file input's accept list has 985 patterns and not one of them
+is an audio type, so refusing audio there is correct, not a gap;
+mistral_lechat is still signed out (its page shows "Sign in"/"Sign up" and
+renders no file input at all); duckai_web's page does not render for this
+browser at all (it shows "Reload Duck.ai"), so its adapter reports selector
+drift - a separate issue from the audio work.
