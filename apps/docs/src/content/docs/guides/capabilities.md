@@ -34,16 +34,17 @@ publishes the measured contract.
 | Field | Meaning |
 | --- | --- |
 | `formats` | The audio containers the provider's model can decode. Measured, not guessed: a container that the composer accepts but the model drops (ChatGPT accepted `audio/webm`, `audio/ogg` and `audio/mp4` and then answered "No audio attachment is accessible in this message.") is not listed. |
+| `input_formats` | The containers you may **send**. It is `formats` plus the ones UBAG converts for you: the worker decodes the recording with the browser it already drives and re-encodes it as 16-bit PCM WAV, the container every measured provider reads. This is what makes a voice message (webm/opus from WhatsApp or Telegram, m4a/AAC from an iOS voice memo) work on every provider. |
 | `kind` | The attachment kind to declare for audio on this target (`voice` or `audio`). |
 | `models` | The provider models that can ingest audio here, when the target makes that claim. On Gemini only `3.8 Flash` could; `4 Argon` answered "no audio attached" every time. A job pinned to a model outside this list is refused at create time with `UBAG-VALIDATION-AUDIO-MODEL-UNAVAILABLE-001`. |
 | `verified` | The measurement note behind the claim. |
 
-Send one of the listed `formats`. A container outside the list is refused at
-create time (`UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001`) with the verified
-list in the message, rather than travelling to the provider and coming back
-as a confident wrong answer. If a provider still drops a file that IS in the
-list, the job fails with `provider_audio_not_ingested` instead of reporting
-success.
+Send one of the listed `input_formats`. A container outside the list is
+refused at create time (`UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001`) with
+the accepted list in the message, rather than travelling to the provider and
+coming back as a confident wrong answer. If a provider still drops a file
+that IS in the list, the job fails with `provider_audio_not_ingested`
+instead of reporting success.
 
 ## The `voice` object
 

@@ -98,10 +98,11 @@ in this message." — a confident wrong answer, not an error. UBAG therefore
 publishes the measured contract per target and enforces it:
 
 - `GET /v1/capabilities` → `audio.formats` lists the containers the target's
-  model can actually read; `audio.models` lists the models that can ingest
-  audio at all.
-- A container outside `audio.formats` is refused at create time with
-  `UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001` and the verified list in the
+  model can read, `audio.input_formats` lists the containers you may send
+  (the rest are converted for you), and `audio.models` lists the models that
+  can ingest audio at all.
+- A container outside `audio.input_formats` is refused at create time with
+  `UBAG-VALIDATION-ATTACHMENT-CONTENT-TYPE-001` and the accepted list in the
   message. Nothing is uploaded and no provider is billed.
 - A model outside `audio.models` is refused with
   `UBAG-VALIDATION-AUDIO-MODEL-UNAVAILABLE-001`.
@@ -109,8 +110,18 @@ publishes the measured contract per target and enforces it:
   `provider_audio_not_ingested` rather than reporting a transcript that was
   never produced.
 
-Measured on the production account (2026-10-21): `chatgpt_web` transcribes
-`audio/wav` and `audio/mpeg`; `audio/mp4`, `audio/ogg` and `audio/webm` are
-accepted by its composer and then dropped. `gemini_web` ingests audio on
-`3.8 Flash` only. Send WAV or MP3 unless the capability record says
-otherwise.
+### Voice messages
+
+A voice message is a short clip in whatever the sender's app produced:
+webm/opus (WhatsApp, Telegram, Chrome's MediaRecorder), ogg/opus (Telegram)
+or m4a/AAC (iOS voice memos). Providers disagree about which of those they
+can decode — measured on the production account (2026-10-21), `chatgpt_web`
+transcribed `audio/wav` and `audio/mpeg` and silently dropped `audio/mp4`,
+`audio/ogg` and `audio/webm`, while `gemini_web` read `audio/webm`.
+
+So UBAG converts the recording before it attaches it: the worker decodes it
+with the browser it already drives and re-encodes it as 16-bit PCM WAV, the
+container every measured provider reads. The conversion happens in a
+throwaway tab and never touches the provider's page. A recording that cannot
+be decoded at all fails the job with `audio_container_unsupported` instead of
+being attached and quietly ignored.
