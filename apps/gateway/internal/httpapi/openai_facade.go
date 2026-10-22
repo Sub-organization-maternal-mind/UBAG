@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -1515,7 +1516,14 @@ func (s *Server) handleOpenAITranscription(w http.ResponseWriter, r *http.Reques
 	}
 	ext, ok := transcriptionAudioMIMEs[strings.ToLower(strings.TrimSpace(audioMIME))]
 	if !ok {
-		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "unsupported_audio_type", fmt.Sprintf("audio content type %q is not accepted for transcription", audioMIME))
+		accepted := make([]string, 0, len(transcriptionAudioMIMEs))
+		for mimeType := range transcriptionAudioMIMEs {
+			accepted = append(accepted, mimeType)
+		}
+		sort.Strings(accepted)
+		s.writeFacadeError(w, http.StatusBadRequest, "invalid_request_error", "unsupported_audio_type", fmt.Sprintf(
+			"audio content type %q is not accepted for transcription; send one of %s (see GET /v1/capabilities for the per-target list)",
+			audioMIME, strings.Join(accepted, ", ")))
 		outcome = facadeOutcomeRejected
 		return
 	}
