@@ -424,6 +424,7 @@ func facadeCuratedModelIDs(target string) []string {
 			{"3.8 Flash", "Low"},
 			{"3.8 Flash", "High"},
 			{"4 Argon", "Low"},
+			{"4 Argon", "Medium"},
 		}
 		out := make([]string, 0, len(pairs))
 		for _, pair := range pairs {
@@ -716,6 +717,11 @@ func resolveCuratedFacadeSettings(target string, value string, catalog jobcore.M
 	}
 	if !slices.Contains(catalog.Settings["model"].Values, model) {
 		return nil, false
+	}
+	// Operator decision (2026-10-23): the published "4 Argon Low" id keeps working
+	// for every tenant but runs at Medium, the level the Gemini web app should use.
+	if model == "4 Argon" && thinking == "Low" {
+		thinking = "Medium"
 	}
 	if !slices.Contains(catalog.Settings["thinking"].Values, thinking) {
 		return nil, false
